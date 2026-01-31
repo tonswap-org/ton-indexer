@@ -1,0 +1,9 @@
+import assert from 'node:assert/strict';
+import { buildDocsHtml } from '../api/docsHtml';
+
+const html = buildDocsHtml();
+assert.ok(html.includes('TONSWAP Indexer API'));
+assert.ok(html.includes('/api/indexer/v1/openapi.json'));
+assert.ok(html.includes('fetch('));
+
+console.log('docs html ok');

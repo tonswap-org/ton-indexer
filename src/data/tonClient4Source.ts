@@ -1,0 +1,196 @@
+import { JettonMaster, JettonWallet, TonClient4 } from 'ton';
+import { Address, Cell } from 'ton-core';
+import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
+import { Network } from '../models';
+import { AccountStateResponse, MasterchainInfo, RawMessage, RawTransaction, TonDataSource } from './dataSource';
+import { parseJettonMetadata } from '../utils/jettonMetadata';
+
+const decodeOp = (bodyBase64?: string): number | undefined => {
+  if (!bodyBase64) return undefined;
+  try {
+    const cell = Cell.fromBase64(bodyBase64);
+    const slice = cell.beginParse();
+    if (slice.remainingBits < 32) return undefined;
+    const op = slice.loadUint(32);
+    return Number(op);
+  } catch {
+    return undefined;
+  }
+};
+
+const parseAddress = (raw?: string | null): string | undefined => {
+  if (!raw) return undefined;
+  return raw;
+};
+
+const mapMessage = (message: any): RawMessage | undefined => {
+  if (!message) return undefined;
+  const info = message.info;
+  let source: string | undefined;
+  let destination: string | undefined;
+  let value: string | undefined;
+
+  if (info?.type === 'internal') {
+    source = parseAddress(info.src);
+    destination = parseAddress(info.dest);
+    value = info.value;
+  } else if (info?.type === 'external-in') {
+    destination = parseAddress(info.dest);
+  } else if (info?.type === 'external-out') {
+    // external-out dest can be null or an object; keep it undefined for now.
+  }
+
+  const op = decodeOp(message.body);
+
+  return {
+    source,
+    destination,
+    value,
+    op,
+    body: message.body ?? undefined,
+  };
+};
+
+export class TonClient4DataSource implements TonDataSource {
+  network: Network;
+  private client: TonClient4;
+  private endpoints: string[];
+  private endpointIndex = 0;
+
+  private constructor(network: Network, client: TonClient4, endpoints: string[]) {
+    this.network = network;
+    this.client = client;
+    this.endpoints = endpoints;
+  }
+
+  static async create(network: Network, endpoint?: string) {
+    if (endpoint) {
+      const client = new TonClient4({ endpoint });
+      return new TonClient4DataSource(network, client, [endpoint]);
+    }
+
+    let endpoints = await getHttpV4Endpoints({ network });
+    if (!endpoints || endpoints.length === 0) {
+      endpoints = [await getHttpV4Endpoint({ network })];
+    }
+    const client = new TonClient4({ endpoint: endpoints[0] });
+    return new TonClient4DataSource(network, client, endpoints);
+  }
+
+  async getMasterchainInfo(): Promise<MasterchainInfo> {
+    const last = await this.call((client) => client.getLastBlock());
+    return {
+      seqno: last.last.seqno,
+      timestamp: last.now,
+    };
+  }
+
+  async getAccountState(address: string): Promise<AccountStateResponse> {
+    const last = await this.call((client) => client.getLastBlock());
+    const parsed = Address.parse(address);
+    const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
+    const lastTx = account.account.last;
+    return {
+      balance: account.account.balance.coins,
+      lastTxLt: lastTx?.lt ?? undefined,
+      lastTxHash: lastTx?.hash ?? undefined,
+    };
+  }
+
+  async getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]> {
+    const parsed = Address.parse(address);
+
+    let cursorLt = lt;
+    let cursorHash = hash;
+
+    if (!cursorLt || !cursorHash) {
+      const last = await this.call((client) => client.getLastBlock());
+      const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
+      const lastTx = account.account.last;
+      if (!lastTx) return [];
+      cursorLt = lastTx.lt;
+      cursorHash = lastTx.hash;
+    }
+
+    const txs = await this.call((client) =>
+      client.getAccountTransactionsParsed(
+        parsed,
+        BigInt(cursorLt),
+        Buffer.from(cursorHash, 'base64'),
+        limit
+      )
+    );
+
+    return txs.transactions.map((tx: any) => {
+      const parsedStatus = tx.parsed?.status;
+      const status = parsedStatus === 'success' ? 'success' : parsedStatus === 'failed' ? 'failed' : 'pending';
+      return {
+        lt: tx.lt,
+        hash: tx.hash,
+        utime: tx.time,
+        success: status === 'success',
+        status,
+        inMessage: mapMessage(tx.inMessage),
+        outMessages: (tx.outMessages ?? []).map(mapMessage).filter(Boolean),
+      };
+    });
+  }
+
+  async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
+    try {
+      const ownerAddr = Address.parse(owner);
+      const masterAddr = Address.parse(master);
+      return await this.call(async (client) => {
+        const masterContract = client.open(JettonMaster.create(masterAddr));
+        const walletAddr = await masterContract.getWalletAddress(ownerAddr);
+        const walletContract = client.open(JettonWallet.create(walletAddr));
+        const balance = await walletContract.getBalance();
+        return {
+          wallet: walletAddr.toString({ urlSafe: true, bounceable: true }),
+          balance: balance.toString(),
+        };
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  async getJettonMetadata(master: string) {
+    try {
+      const masterAddr = Address.parse(master);
+      return await this.call(async (client) => {
+        const masterContract = client.open(JettonMaster.create(masterAddr));
+        const data = await masterContract.getJettonData();
+        return parseJettonMetadata(data.content);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  private async call<T>(fn: (client: TonClient4) => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    const attempts = Math.max(1, this.endpoints.length);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await fn(this.client);
+      } catch (error) {
+        lastError = error;
+        if (this.endpoints.length <= 1) break;
+        this.rotateEndpoint();
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+      }
+    }
+    throw lastError;
+  }
+
+  private rotateEndpoint() {
+    if (this.endpoints.length <= 1) return;
+    this.endpointIndex = (this.endpointIndex + 1) % this.endpoints.length;
+    this.client = new TonClient4({ endpoint: this.endpoints[this.endpointIndex] });
+  }
+
+  async close(): Promise<void> {
+    // TonClient4 has no explicit close.
+  }
+}

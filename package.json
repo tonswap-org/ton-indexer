@@ -1,0 +1,38 @@
+{
+  "name": "ton-indexer",
+  "version": "1.0.0",
+  "description": "Indexer for faster/more reliable data from TON",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "tsx src/scripts/smoke.ts && tsx src/scripts/classifier-test.ts && tsx src/scripts/metadata-test.ts && tsx src/scripts/snapshot-test.ts && tsx src/scripts/snapshot-service-test.ts && tsx src/scripts/admin-guard-test.ts && tsx src/scripts/debug-service-test.ts && tsx src/scripts/rate-limit-test.ts && tsx src/scripts/validation-test.ts && tsx src/scripts/response-cache-test.ts && tsx src/scripts/metrics-cache-test.ts && tsx src/scripts/openapi-test.ts && tsx src/scripts/docs-html-test.ts",
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "sync-registry": "tsx src/scripts/refresh-registry.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tonswap-org/ton-indexer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/tonswap-org/ton-indexer/issues"
+  },
+  "homepage": "https://github.com/tonswap-org/ton-indexer#readme",
+  "dependencies": {
+    "@orbs-network/ton-access": "^2.3.3",
+    "fastify": "^5.7.2",
+    "lru-cache": "^11.2.5",
+    "pino": "^10.3.0",
+    "ton": "^13.9.0",
+    "ton-lite-client": "^3.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.1.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
