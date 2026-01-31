@@ -1,4 +1,4 @@
-import { Address } from 'ton-core';
+import { Address } from '@ton/core';
 
 export const isValidAddress = (value: string): boolean => {
   try {

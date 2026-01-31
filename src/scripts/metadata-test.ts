@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { beginCell, Dictionary } from 'ton-core';
+import { beginCell, Dictionary } from '@ton/core';
 import { createHash } from 'node:crypto';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 

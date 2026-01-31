@@ -1,5 +1,5 @@
 import { JettonMaster, JettonWallet, TonClient4 } from 'ton';
-import { Address, Cell } from 'ton-core';
+import { Address, Cell } from '@ton/core';
 import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
 import { Network } from '../models';
 import { AccountStateResponse, MasterchainInfo, RawMessage, RawTransaction, TonDataSource } from './dataSource';

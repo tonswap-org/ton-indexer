@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { Address, beginCell } from 'ton-core';
+import { Address, beginCell } from '@ton/core';
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 import { RawTransaction } from '../data/dataSource';

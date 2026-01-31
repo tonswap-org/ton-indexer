@@ -23,11 +23,12 @@
   },
   "homepage": "https://github.com/tonswap-org/ton-indexer#readme",
   "dependencies": {
+    "@ton/core": "^0.63.0",
     "@orbs-network/ton-access": "^2.3.3",
     "fastify": "^5.7.2",
     "lru-cache": "^11.2.5",
     "pino": "^10.3.0",
-    "ton": "^13.9.0",
+    "ton": "^6.13.1",
     "ton-lite-client": "^3.1.1"
   },
   "devDependencies": {

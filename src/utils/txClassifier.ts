@@ -1,6 +1,6 @@
 import { OpcodeSets } from './opcodes';
 import { IndexedTx, MessageSummary, TxAction, TxKind, UiDetail, UiTx } from '../models';
-import { Address, Cell } from 'ton-core';
+import { Address, Cell } from '@ton/core';
 import { RawTransaction } from '../data/dataSource';
 
 const buildTxType = (kind: TxKind): string => {

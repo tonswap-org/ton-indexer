@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Dictionary } from 'ton-core';
+import { Dictionary } from '@ton/core';
 import { JettonMetadata } from '../models';
 
 const KEY_FIELDS = ['name', 'description', 'image', 'symbol', 'decimals', 'uri'] as const;
