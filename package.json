@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "test": "tsx src/scripts/smoke.ts && tsx src/scripts/classifier-test.ts && tsx src/scripts/metadata-test.ts && tsx src/scripts/snapshot-test.ts && tsx src/scripts/snapshot-service-test.ts && tsx src/scripts/admin-guard-test.ts && tsx src/scripts/debug-service-test.ts && tsx src/scripts/rate-limit-test.ts && tsx src/scripts/validation-test.ts && tsx src/scripts/response-cache-test.ts && tsx src/scripts/metrics-cache-test.ts && tsx src/scripts/openapi-test.ts && tsx src/scripts/docs-html-test.ts",
-    "dev": "tsx src/index.ts",
+    "dev": "TON_NETWORK=testnet TON_DATASOURCE=lite LITESERVER_POOL_TESTNET=https://ton.org/global.config.json tsx src/index.ts",
+    "dev:mainnet": "TON_NETWORK=mainnet TON_DATASOURCE=lite LITESERVER_POOL_MAINNET=https://ton.org/global.config.json tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "sync-registry": "tsx src/scripts/refresh-registry.ts"

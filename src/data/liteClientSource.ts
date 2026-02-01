@@ -1,7 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Address, Cell, loadTransaction } from '@ton/core';
-import { JettonMaster, JettonWallet } from 'ton';
+import { Address, Cell, TupleItem, TupleReader, beginCell, loadTransaction, parseTuple, serializeTuple } from '@ton/core';
 import { LiteClient, LiteRoundRobinEngine, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
 import { Network } from '../models';
 import {
@@ -251,6 +250,17 @@ export class LiteClientDataSource implements TonDataSource {
     throw lastError;
   }
 
+  private async runGetMethod(address: Address, method: string, args: TupleItem[] = []): Promise<TupleReader> {
+    const master = await this.call((client) => client.getMasterchainInfo());
+    const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
+    const res = await this.call((client) => client.runMethod(address, method, params, master.last));
+    if (res.exitCode !== 0 && res.exitCode !== 1) {
+      throw new Error(`runMethod ${method} failed with exit code ${res.exitCode}`);
+    }
+    const tuple = res.result ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0]) : [];
+    return new TupleReader(tuple);
+  }
+
   async getMasterchainInfo(): Promise<MasterchainInfo> {
     const master = await this.call((client) => client.getMasterchainInfoExt());
     return {
@@ -310,10 +320,11 @@ export class LiteClientDataSource implements TonDataSource {
     try {
       const ownerAddr = Address.parse(owner);
       const masterAddr = Address.parse(master);
-      const masterContract = this.client.open(JettonMaster.create(masterAddr as any) as any) as any;
-      const walletAddr = await this.call<any>(() => masterContract.getWalletAddress(ownerAddr as any));
-      const walletContract = this.client.open(JettonWallet.create(walletAddr as any) as any) as any;
-      const balance = await this.call<any>(() => walletContract.getBalance());
+      const args: TupleItem[] = [{ type: 'slice', cell: beginCell().storeAddress(ownerAddr).endCell() }];
+      const walletReader = await this.runGetMethod(masterAddr, 'get_wallet_address', args);
+      const walletAddr = walletReader.readAddress();
+      const balanceReader = await this.runGetMethod(walletAddr, 'get_wallet_data');
+      const balance = balanceReader.readBigNumber();
       return {
         wallet: walletAddr.toString({ urlSafe: true, bounceable: true }),
         balance: balance.toString(),
@@ -326,9 +337,12 @@ export class LiteClientDataSource implements TonDataSource {
   async getJettonMetadata(master: string) {
     try {
       const masterAddr = Address.parse(master);
-      const masterContract = this.client.open(JettonMaster.create(masterAddr as any) as any) as any;
-      const data = await this.call<any>(() => masterContract.getJettonData());
-      return parseJettonMetadata(data.content);
+      const reader = await this.runGetMethod(masterAddr, 'get_jetton_data');
+      reader.readBigNumber();
+      reader.readBoolean();
+      reader.readAddressOpt();
+      const content = reader.readCell();
+      return parseJettonMetadata(content);
     } catch {
       return null;
     }

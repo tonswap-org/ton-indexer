@@ -65,8 +65,13 @@ const start = async () => {
     }
   }
   const metricsCollector = new MetricsCollector();
+  const canUseHttp = TonClient4DataSource.isAvailable();
+  if (!canUseHttp && config.dataSource !== 'lite') {
+    logger.warn('TonClient4 unavailable; falling back to lite client');
+    config.dataSource = 'lite';
+  }
   const source =
-    config.dataSource === 'lite' || config.liteserverPool
+    config.dataSource === 'lite' || config.liteserverPool || !canUseHttp
       ? await LiteClientDataSource.create(config.network, config.liteserverPool)
       : await TonClient4DataSource.create(config.network, config.httpEndpoint);
   const service = new IndexerService(config, store, source, opcodes, jettonRoots, metricsCollector, poolTracker);

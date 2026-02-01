@@ -12,8 +12,14 @@ npm install
 ```
 
 ## Run (dev)
+Default dev now runs on testnet with the lite client enabled.
 ```bash
 npm run dev
+```
+
+Run dev on mainnet (lite client):
+```bash
+npm run dev:mainnet
 ```
 
 ## Build + Run

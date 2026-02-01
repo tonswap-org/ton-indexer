@@ -1,9 +1,30 @@
-import { JettonMaster, JettonWallet, TonClient4 } from 'ton';
 import { Address, Cell } from '@ton/core';
 import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
 import { Network } from '../models';
 import { AccountStateResponse, MasterchainInfo, RawMessage, RawTransaction, TonDataSource } from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
+
+type TonClient4Like = {
+  getLastBlock(): Promise<any>;
+  getAccount(seqno: number, address: Address): Promise<any>;
+  getAccountTransactionsParsed(address: Address, lt: bigint, hash: Buffer, limit: number): Promise<any>;
+  open<T>(contract: T): T;
+};
+
+type TonClient4Ctor = new (args: { endpoint: string }) => TonClient4Like;
+
+const tonExports = require('ton') as {
+  TonClient4?: TonClient4Ctor;
+  JettonMaster?: { create: (address: Address) => any };
+  JettonWallet?: { create: (address: Address) => any };
+};
+
+const TonClient4Ctor = tonExports.TonClient4;
+const JettonMaster = tonExports.JettonMaster;
+const JettonWallet = tonExports.JettonWallet;
+
+const hasTonClient4 =
+  typeof TonClient4Ctor === 'function' && typeof (TonClient4Ctor as any).prototype === 'object';
 
 const decodeOp = (bodyBase64?: string): number | undefined => {
   if (!bodyBase64) return undefined;
@@ -53,19 +74,33 @@ const mapMessage = (message: any): RawMessage | undefined => {
 
 export class TonClient4DataSource implements TonDataSource {
   network: Network;
-  private client: TonClient4;
+  private client: TonClient4Like;
   private endpoints: string[];
   private endpointIndex = 0;
 
-  private constructor(network: Network, client: TonClient4, endpoints: string[]) {
+  private constructor(network: Network, client: TonClient4Like, endpoints: string[]) {
     this.network = network;
     this.client = client;
     this.endpoints = endpoints;
   }
 
+  static isAvailable() {
+    return hasTonClient4;
+  }
+
   static async create(network: Network, endpoint?: string) {
+    if (!hasTonClient4) {
+      throw new Error(
+        'TonClient4 is not available from the installed "ton" package. Set TON_DATASOURCE=lite or upgrade "ton".'
+      );
+    }
+    if (!TonClient4Ctor) {
+      throw new Error(
+        'TonClient4 is not available from the installed "ton" package. Set TON_DATASOURCE=lite or upgrade "ton".'
+      );
+    }
     if (endpoint) {
-      const client = new TonClient4({ endpoint });
+      const client = new TonClient4Ctor({ endpoint });
       return new TonClient4DataSource(network, client, [endpoint]);
     }
 
@@ -73,7 +108,7 @@ export class TonClient4DataSource implements TonDataSource {
     if (!endpoints || endpoints.length === 0) {
       endpoints = [await getHttpV4Endpoint({ network })];
     }
-    const client = new TonClient4({ endpoint: endpoints[0] });
+    const client = new TonClient4Ctor({ endpoint: endpoints[0] });
     return new TonClient4DataSource(network, client, endpoints);
   }
 
@@ -138,6 +173,7 @@ export class TonClient4DataSource implements TonDataSource {
 
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
     try {
+      if (!JettonMaster || !JettonWallet) return null;
       const ownerAddr = Address.parse(owner);
       const masterAddr = Address.parse(master);
       return await this.call(async (client) => {
@@ -157,6 +193,7 @@ export class TonClient4DataSource implements TonDataSource {
 
   async getJettonMetadata(master: string) {
     try {
+      if (!JettonMaster) return null;
       const masterAddr = Address.parse(master);
       return await this.call(async (client) => {
         const masterContract = client.open(JettonMaster.create(masterAddr));
@@ -168,7 +205,7 @@ export class TonClient4DataSource implements TonDataSource {
     }
   }
 
-  private async call<T>(fn: (client: TonClient4) => Promise<T>): Promise<T> {
+  private async call<T>(fn: (client: TonClient4Like) => Promise<T>): Promise<T> {
     let lastError: unknown;
     const attempts = Math.max(1, this.endpoints.length);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -187,7 +224,10 @@ export class TonClient4DataSource implements TonDataSource {
   private rotateEndpoint() {
     if (this.endpoints.length <= 1) return;
     this.endpointIndex = (this.endpointIndex + 1) % this.endpoints.length;
-    this.client = new TonClient4({ endpoint: this.endpoints[this.endpointIndex] });
+    if (!TonClient4Ctor) {
+      throw new Error('TonClient4 unavailable while rotating endpoint');
+    }
+    this.client = new TonClient4Ctor({ endpoint: this.endpoints[this.endpointIndex] });
   }
 
   async close(): Promise<void> {
