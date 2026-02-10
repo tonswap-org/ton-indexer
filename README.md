@@ -110,6 +110,8 @@ npm run sync-registry
 
 ### Liteserver Pool Format
 `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` can be one of:
-- URL to a TON global config JSON (e.g., `https://ton.org/global.config.json`)
+- URL to a TON global config JSON
+  - mainnet: `https://ton.org/global.config.json`
+  - testnet: `https://ton.org/testnet-global.config.json`
 - Local path to a config JSON file
 - Comma-separated `ip:port:pubkey` entries (pubkey is base64); ip can be dotted or integer

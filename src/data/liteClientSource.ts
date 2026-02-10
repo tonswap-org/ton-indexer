@@ -75,16 +75,29 @@ const parsePoolList = (pool: string): LiteServer[] => {
   return servers;
 };
 
+const normalizePoolInput = (network: Network, pool?: string): string | undefined => {
+  if (!pool) return pool;
+  const trimmed = pool.trim();
+  if (
+    network === 'testnet' &&
+    /^https?:\/\/ton\.org\/global\.config\.json\/?$/i.test(trimmed)
+  ) {
+    return 'https://ton.org/testnet-global.config.json';
+  }
+  return trimmed;
+};
+
 const resolveLiteServers = async (network: Network, pool?: string): Promise<LiteServer[]> => {
-  if (pool) {
-    if (pool.startsWith('http://') || pool.startsWith('https://')) {
-      return await readConfigFromUrl(pool);
+  const normalizedPool = normalizePoolInput(network, pool);
+  if (normalizedPool) {
+    if (normalizedPool.startsWith('http://') || normalizedPool.startsWith('https://')) {
+      return await readConfigFromUrl(normalizedPool);
     }
-    const resolvedPath = resolve(process.cwd(), pool);
-    if (pool.endsWith('.json') || existsSync(resolvedPath)) {
-      return readConfigFromPath(pool.endsWith('.json') ? pool : resolvedPath);
+    const resolvedPath = resolve(process.cwd(), normalizedPool);
+    if (normalizedPool.endsWith('.json') || existsSync(resolvedPath)) {
+      return readConfigFromPath(normalizedPool.endsWith('.json') ? normalizedPool : resolvedPath);
     }
-    const list = parsePoolList(pool);
+    const list = parsePoolList(normalizedPool);
     if (list.length > 0) return list;
   }
 

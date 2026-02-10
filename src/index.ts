@@ -70,8 +70,11 @@ const start = async () => {
     logger.warn('TonClient4 unavailable; falling back to lite client');
     config.dataSource = 'lite';
   }
+  if (config.dataSource !== 'lite' && config.liteserverPool) {
+    logger.info('liteserver pool configured but ignored because TON_DATASOURCE is http');
+  }
   const source =
-    config.dataSource === 'lite' || config.liteserverPool || !canUseHttp
+    config.dataSource === 'lite' || !canUseHttp
       ? await LiteClientDataSource.create(config.network, config.liteserverPool)
       : await TonClient4DataSource.create(config.network, config.httpEndpoint);
   const service = new IndexerService(config, store, source, opcodes, jettonRoots, metricsCollector, poolTracker);
