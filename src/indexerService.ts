@@ -324,7 +324,23 @@ export class IndexerService {
 
   async getTransactions(address: string, page: number) {
     this.store.touch(address);
-    await this.ensureInitialTransactions(address);
+    try {
+      await this.ensureInitialTransactions(address);
+    } catch (_error) {
+      const fallback = this.store.getPage(address, page);
+      if (!fallback) {
+        return {
+          page,
+          page_size: this.config.pageSize,
+          total_txs: 0,
+          total_pages: null,
+          total_pages_min: 0,
+          history_complete: false,
+          txs: [],
+          network: this.network,
+        };
+      }
+    }
 
     const entry = this.store.get(address);
     const signature = this.getTxPageSignature(entry, page);
@@ -374,7 +390,23 @@ export class IndexerService {
 
   async getTransactionsByCursor(address: string, lt: string, hash: string) {
     this.store.touch(address);
-    await this.ensureInitialTransactions(address);
+    try {
+      await this.ensureInitialTransactions(address);
+    } catch (_error) {
+      const fallback = this.store.getPageByCursor(address, { lt, hash });
+      if (!fallback) {
+        return {
+          page: 1,
+          page_size: this.config.pageSize,
+          total_txs: 0,
+          total_pages: null,
+          total_pages_min: 0,
+          history_complete: false,
+          txs: [],
+          network: this.network,
+        };
+      }
+    }
 
     const entry = this.store.get(address);
     const signature = this.getTxCursorSignature(entry, lt, hash);

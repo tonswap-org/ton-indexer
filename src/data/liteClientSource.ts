@@ -206,6 +206,31 @@ const evaluateStatus = (tx: any): { status: RawTransactionStatus; reason?: strin
   return { status: 'pending', success: false };
 };
 
+const decodeTransactions = (payload: Buffer): any[] => {
+  const cells = Cell.fromBoc(payload);
+  const parsed: any[] = [];
+  let parseFailures = 0;
+  let lastParseError: Error | null = null;
+
+  for (const cell of cells) {
+    try {
+      parsed.push(loadTransaction(cell.beginParse()));
+    } catch (error) {
+      parseFailures += 1;
+      if (error instanceof Error) {
+        lastParseError = error;
+      }
+    }
+  }
+
+  if (parseFailures > 0 && parsed.length === 0 && cells.length > 0) {
+    const suffix = lastParseError?.message ? `: ${lastParseError.message}` : '';
+    throw new Error(`Failed to decode transaction page${suffix}`);
+  }
+
+  return parsed;
+};
+
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 200;
 
@@ -299,7 +324,7 @@ export class LiteClientDataSource implements TonDataSource {
       client.getAccountTransactions(parsed, cursorLt, Buffer.from(cursorHash, 'base64'), limit)
     );
 
-    const parsedTxs = Cell.fromBoc(txs.transactions).map((tx) => loadTransaction(tx.beginParse()));
+    const parsedTxs = decodeTransactions(txs.transactions);
 
     return parsedTxs.map((tx) => {
       const statusInfo = evaluateStatus(tx);
