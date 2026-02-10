@@ -147,6 +147,10 @@ export class TonClient4DataSource implements TonDataSource {
       cursorHash = lastTx.hash;
     }
 
+    if (!cursorLt || !cursorHash) {
+      return [];
+    }
+
     const txs = await this.call((client) =>
       client.getAccountTransactionsParsed(
         parsed,

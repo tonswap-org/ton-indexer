@@ -103,6 +103,38 @@ export const registerRoutes = (
   );
 
   app.get(
+    '/api/indexer/v1/accounts/:addr/balances',
+    { schema: { params: addressParamsSchema } },
+    async (request, reply) => {
+      const addr = (request.params as { addr: string }).addr;
+      if (!isValidAddress(addr)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid address');
+      }
+      try {
+        return await service.getBalances(addr);
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/accounts/:addr/assets',
+    { schema: { params: addressParamsSchema } },
+    async (request, reply) => {
+      const addr = (request.params as { addr: string }).addr;
+      if (!isValidAddress(addr)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid address');
+      }
+      try {
+        return await service.getBalances(addr);
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
     '/api/indexer/v1/accounts/:addr/txs',
     { schema: { params: addressParamsSchema, querystring: txQuerySchema } },
     async (request, reply) => {

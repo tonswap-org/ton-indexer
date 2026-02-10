@@ -72,6 +72,8 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 
 ## API
 - `GET /api/indexer/v1/accounts/{addr}/balance`
+- `GET /api/indexer/v1/accounts/{addr}/balances`
+- `GET /api/indexer/v1/accounts/{addr}/assets` (alias of `/balances`)
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
 - `GET /api/indexer/v1/accounts/{addr}/state`
 - `GET /api/indexer/v1/health`

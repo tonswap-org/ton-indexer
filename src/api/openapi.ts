@@ -71,6 +71,32 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['ton', 'jettons', 'confirmed', 'updated_at', 'network'],
         },
+        AssetBalanceResponse: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['native', 'jetton'] },
+            symbol: { type: ['string', 'null'] },
+            address: { type: ['string', 'null'] },
+            wallet: { type: ['string', 'null'] },
+            balance_raw: { type: 'string' },
+            balance: { type: 'string' },
+            decimals: { type: 'integer' },
+          },
+          required: ['kind', 'balance_raw', 'balance', 'decimals'],
+        },
+        BalancesResponse: {
+          type: 'object',
+          properties: {
+            address: { type: 'string' },
+            ton_raw: { type: 'string' },
+            ton: { type: 'string' },
+            assets: { type: 'array', items: { $ref: '#/components/schemas/AssetBalanceResponse' } },
+            confirmed: { type: 'boolean' },
+            updated_at: { type: 'integer' },
+            network: { type: 'string' },
+          },
+          required: ['address', 'ton_raw', 'ton', 'assets', 'confirmed', 'updated_at', 'network'],
+        },
         TxEntry: {
           type: 'object',
           properties: {
@@ -201,6 +227,38 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Balance response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/BalanceResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/accounts/{addr}/balances': {
+        get: {
+          summary: 'Account balances (formatted)',
+          parameters: [{ $ref: '#/components/parameters/addr' }],
+          responses: {
+            200: {
+              description: 'Balances response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/BalancesResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/accounts/{addr}/assets': {
+        get: {
+          summary: 'Account assets (alias of balances)',
+          parameters: [{ $ref: '#/components/parameters/addr' }],
+          responses: {
+            200: {
+              description: 'Balances response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/BalancesResponse' } } },
             },
             400: {
               description: 'Bad request',

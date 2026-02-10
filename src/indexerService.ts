@@ -2,7 +2,7 @@ import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
 import { TonDataSource } from './data/dataSource';
 import { OpcodeSets } from './utils/opcodes';
-import { AccountBalance, AccountState, HealthStatus, IndexedTx, Network, UiTx } from './models';
+import { AccountBalance, AccountBalances, AccountState, HealthStatus, IndexedTx, Network, UiTx } from './models';
 import { classifyTransaction } from './utils/txClassifier';
 import { JettonMetadata } from './models';
 import { MetricsCollector } from './metricsCollector';
@@ -156,6 +156,47 @@ export class IndexerService {
     return response;
   }
 
+  async getBalances(address: string): Promise<AccountBalances> {
+    const snapshot = await this.getBalance(address);
+    const tonRaw = snapshot.ton.balance ?? '0';
+    const ton = this.formatRawAmount(tonRaw, 9);
+    const assets = [
+      {
+        kind: 'native' as const,
+        symbol: 'TON',
+        address,
+        wallet: address,
+        balance_raw: tonRaw,
+        balance: ton,
+        decimals: 9,
+      },
+      ...snapshot.jettons.map((jetton) => {
+        const decimals = typeof jetton.decimals === 'number' && Number.isFinite(jetton.decimals)
+          ? Math.max(0, Math.trunc(jetton.decimals))
+          : 9;
+        return {
+          kind: 'jetton' as const,
+          symbol: jetton.symbol,
+          address: jetton.master,
+          wallet: jetton.wallet,
+          balance_raw: jetton.balance,
+          balance: this.formatRawAmount(jetton.balance, decimals),
+          decimals,
+        };
+      }),
+    ];
+
+    return {
+      address,
+      ton_raw: tonRaw,
+      ton,
+      assets,
+      confirmed: snapshot.confirmed,
+      updated_at: snapshot.updated_at,
+      network: snapshot.network,
+    };
+  }
+
   private async getJettonMetadata(master: string): Promise<JettonMetadata | null> {
     const cached = this.jettonMetaCache.get(master);
     const now = Date.now();
@@ -181,6 +222,31 @@ export class IndexerService {
       entry.stats.historyComplete ? '1' : '0',
       entry.stats.totalPagesMin,
     ].join(':');
+  }
+
+  private formatRawAmount(rawValue: string, decimals: number) {
+    let raw: bigint;
+    try {
+      raw = BigInt(rawValue);
+    } catch (_err) {
+      return '0';
+    }
+    const safeDecimals = Math.max(0, Math.trunc(decimals));
+    if (safeDecimals === 0) return raw.toString(10);
+
+    const divisor = 10n ** BigInt(safeDecimals);
+    const negative = raw < 0n;
+    const abs = negative ? -raw : raw;
+    const whole = abs / divisor;
+    const fraction = abs % divisor;
+    if (fraction === 0n) {
+      return `${negative ? '-' : ''}${whole.toString(10)}`;
+    }
+    const fractionStr = fraction
+      .toString(10)
+      .padStart(safeDecimals, '0')
+      .replace(/0+$/, '');
+    return `${negative ? '-' : ''}${whole.toString(10)}.${fractionStr}`;
   }
 
   private getTxPageSignature(

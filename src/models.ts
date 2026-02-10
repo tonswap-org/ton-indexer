@@ -119,6 +119,26 @@ export type AccountBalance = {
   network: Network;
 };
 
+export type AccountAssetBalance = {
+  kind: 'native' | 'jetton';
+  symbol?: string;
+  address?: string;
+  wallet?: string;
+  balance_raw: string;
+  balance: string;
+  decimals: number;
+};
+
+export type AccountBalances = {
+  address: string;
+  ton_raw: string;
+  ton: string;
+  assets: AccountAssetBalance[];
+  confirmed: boolean;
+  updated_at: number;
+  network: Network;
+};
+
 export type JettonMetadata = {
   symbol?: string;
   name?: string;
