@@ -128,13 +128,18 @@ export class IndexerService {
       this.jettonRoots.map(async (root) => {
         const balance = await this.source.getJettonBalance(address, root.master);
         if (!balance) return null;
+        try {
+          if (BigInt(balance.balance) === 0n) return null;
+        } catch {
+          // Keep malformed balances visible so issues can be diagnosed upstream.
+        }
         const meta = await this.getJettonMetadata(root.master);
         return {
           master: root.master,
           wallet: balance.wallet,
           balance: balance.balance,
           symbol: meta?.symbol ?? root.symbol,
-          decimals: meta?.decimals,
+          decimals: meta?.decimals ?? this.fallbackJettonDecimals(meta?.symbol ?? root.symbol),
         };
       })
     );
@@ -173,7 +178,7 @@ export class IndexerService {
       ...snapshot.jettons.map((jetton) => {
         const decimals = typeof jetton.decimals === 'number' && Number.isFinite(jetton.decimals)
           ? Math.max(0, Math.trunc(jetton.decimals))
-          : 9;
+          : this.fallbackJettonDecimals(jetton.symbol) ?? 9;
         return {
           kind: 'jetton' as const,
           symbol: jetton.symbol,
@@ -207,6 +212,14 @@ export class IndexerService {
     const meta = await this.source.getJettonMetadata(master);
     this.jettonMetaCache.set(master, { meta, updatedAt: now });
     return meta;
+  }
+
+  private fallbackJettonDecimals(symbol?: string | null): number | null {
+    const normalized = (symbol ?? '').trim().toUpperCase();
+    if (!normalized) return null;
+    if (normalized === 'USDT' || normalized === 'USDC' || normalized === 'KUSD') return 6;
+    if (normalized === 'T3' || normalized === 'TS' || normalized === 'DLMMX') return 9;
+    return null;
   }
 
   private getAccountSignature(entry?: {

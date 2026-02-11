@@ -359,10 +359,28 @@ export class LiteClientDataSource implements TonDataSource {
       const ownerAddr = Address.parse(owner);
       const masterAddr = Address.parse(master);
       const args: TupleItem[] = [{ type: 'slice', cell: beginCell().storeAddress(ownerAddr).endCell() }];
-      const walletReader = await this.runGetMethod(masterAddr, 'get_wallet_address', args);
-      const walletAddr = walletReader.readAddress();
-      const balanceReader = await this.runGetMethod(walletAddr, 'get_wallet_data');
-      const balance = balanceReader.readBigNumber();
+      let walletAddr: Address | null = null;
+      for (const method of ['wallet_address', 'get_wallet_address']) {
+        try {
+          const walletReader = await this.runGetMethod(masterAddr, method, args);
+          walletAddr = walletReader.readAddress();
+          break;
+        } catch {
+          continue;
+        }
+      }
+      if (!walletAddr) return null;
+      let balance: bigint | null = null;
+      for (const method of ['wallet_data', 'get_wallet_data']) {
+        try {
+          const balanceReader = await this.runGetMethod(walletAddr, method);
+          balance = balanceReader.readBigNumber();
+          break;
+        } catch {
+          continue;
+        }
+      }
+      if (balance === null) return null;
       return {
         wallet: walletAddr.toString({ urlSafe: true, bounceable: true }),
         balance: balance.toString(),
