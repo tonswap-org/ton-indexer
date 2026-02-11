@@ -246,10 +246,15 @@ const decodeTransactions = (payload: Buffer): any[] => {
 
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 200;
+const MASTERCHAIN_INFO_TTL_MS = 1_000;
+type LiteMasterchainRef = Awaited<ReturnType<LiteClient['getMasterchainInfo']>>;
 
 export class LiteClientDataSource implements TonDataSource {
   network: Network;
   private client: LiteClient;
+  private masterchainRef: LiteMasterchainRef | null = null;
+  private masterchainRefExpiresAt = 0;
+  private masterchainRefPending: Promise<LiteMasterchainRef> | null = null;
 
   private constructor(network: Network, client: LiteClient) {
     this.network = network;
@@ -288,8 +293,29 @@ export class LiteClientDataSource implements TonDataSource {
     throw lastError;
   }
 
+  private async getMasterchainRef(force = false): Promise<LiteMasterchainRef> {
+    const now = Date.now();
+    if (!force && this.masterchainRef && this.masterchainRefExpiresAt > now) {
+      return this.masterchainRef;
+    }
+    if (!force && this.masterchainRefPending) {
+      return this.masterchainRefPending;
+    }
+    const pending = this.call((client) => client.getMasterchainInfo())
+      .then((master) => {
+        this.masterchainRef = master;
+        this.masterchainRefExpiresAt = Date.now() + MASTERCHAIN_INFO_TTL_MS;
+        return master;
+      })
+      .finally(() => {
+        this.masterchainRefPending = null;
+      });
+    this.masterchainRefPending = pending;
+    return pending;
+  }
+
   private async runGetMethod(address: Address, method: string, args: TupleItem[] = []): Promise<TupleReader> {
-    const master = await this.call((client) => client.getMasterchainInfo());
+    const master = await this.getMasterchainRef();
     const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
     const res = await this.call((client) => client.runMethod(address, method, params, master.last));
     if (res.exitCode !== 0 && res.exitCode !== 1) {
@@ -308,7 +334,7 @@ export class LiteClientDataSource implements TonDataSource {
   }
 
   async getAccountState(address: string): Promise<AccountStateResponse> {
-    const master = await this.call((client) => client.getMasterchainInfo());
+    const master = await this.getMasterchainRef();
     const parsed = Address.parse(address);
     const state = await this.call((client) => client.getAccountState(parsed, master.last));
     const lastTx = state.lastTx;
@@ -325,7 +351,7 @@ export class LiteClientDataSource implements TonDataSource {
     let cursorHash = hash;
 
     if (!cursorLt || !cursorHash) {
-      const master = await this.call((client) => client.getMasterchainInfo());
+      const master = await this.getMasterchainRef();
       const state = await this.call((client) => client.getAccountState(parsed, master.last));
       const lastTx = state.lastTx;
       if (!lastTx) return [];

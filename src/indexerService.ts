@@ -147,12 +147,8 @@ export class IndexerService {
       }
     }
 
-    if (!cached) {
-      await this.refreshAccountState(address);
-    }
-
-    const updated = this.store.get(address)?.balance;
-    const jettons = await Promise.all(
+    const refreshStatePromise = cached ? Promise.resolve() : this.refreshAccountState(address);
+    const jettonPromise = Promise.all(
       this.jettonRoots.map(async (root) => {
         const balance = await this.source.getJettonBalance(address, root.master);
         if (!balance) return null;
@@ -171,6 +167,8 @@ export class IndexerService {
         };
       })
     );
+    const [jettons] = await Promise.all([jettonPromise, refreshStatePromise]);
+    const updated = this.store.get(address)?.balance;
     const now = Math.floor(Date.now() / 1000);
 
     const response = {
