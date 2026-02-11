@@ -1,3 +1,4 @@
+import { Address } from '@ton/core';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { IndexerService } from '../indexerService';
 import { MetricsService } from '../metrics';
@@ -10,6 +11,36 @@ import { addressParamsSchema, debugQuerySchema, txQuerySchema } from './schemas'
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
 import { sendError } from './errors';
+
+const BALANCE_STREAM_POLL_MS = 1_500;
+const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
+const BALANCE_STREAM_MAX_ADDRESSES = 8;
+
+const parseStreamAddresses = (query: { address?: string; wallet?: string; addresses?: string }) => {
+  const fromCsv = query.addresses
+    ? query.addresses
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    : [];
+  const candidates = [query.address, query.wallet, ...fromCsv]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  const normalized: string[] = [];
+  for (const candidate of candidates) {
+    if (!isValidAddress(candidate)) continue;
+    let raw = candidate;
+    try {
+      raw = Address.parse(candidate).toRawString();
+    } catch {
+      // fall back to original value when parse unexpectedly fails
+    }
+    if (!normalized.includes(raw)) {
+      normalized.push(raw);
+    }
+  }
+  return normalized.slice(0, BALANCE_STREAM_MAX_ADDRESSES);
+};
 
 export const registerRoutes = (
   app: FastifyInstance,
@@ -133,6 +164,131 @@ export const registerRoutes = (
       }
     }
   );
+
+  const handleBalanceStream = async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as { address?: string; wallet?: string; addresses?: string };
+    const addresses = parseStreamAddresses(query);
+    if (addresses.length === 0) {
+      return sendError(reply, 400, 'invalid_address', 'at least one valid address is required');
+    }
+
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+
+    let closed = false;
+    let seq = 0;
+    let inFlight = false;
+    const signatures = new Map<string, string>();
+
+    const writeEvent = (payload: unknown, eventName?: string) => {
+      if (closed) return;
+      if (eventName) {
+        reply.raw.write(`event: ${eventName}\n`);
+      }
+      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const pollSnapshots = async (targets: string[]) => {
+      if (closed || inFlight) return;
+      inFlight = true;
+      try {
+        for (const address of targets) {
+          const balances = await service.getBalances(address);
+          const signature = service.getBalancesSignature(balances);
+          const previous = signatures.get(address);
+          const changed = previous !== undefined && previous !== signature;
+          signatures.set(address, signature);
+
+          const jettons = balances.assets
+            .filter((asset) => asset.kind === 'jetton' && typeof asset.address === 'string' && asset.address.length > 0)
+            .map((asset) => asset.address as string);
+          const ts = Date.now();
+
+          if (changed) {
+            writeEvent({
+              type: 'balances_changed',
+              address,
+              seq: ++seq,
+              ts,
+              hints: {
+                ton: true,
+                jettons: jettons.length > 0 ? jettons : null,
+              },
+            });
+          }
+
+          if (previous === undefined || changed) {
+            writeEvent({
+              type: 'balances_snapshot',
+              address,
+              seq: ++seq,
+              ts,
+              balances,
+            });
+          }
+        }
+      } catch (error) {
+        writeEvent(
+          {
+            type: 'error',
+            address: null,
+            seq: ++seq,
+            ts: Date.now(),
+            message: (error as Error).message,
+          },
+          'error'
+        );
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const unsubscribe = service.subscribeBalanceChanges(addresses, (event) => {
+      if (closed) return;
+      void pollSnapshots([event.address]);
+    });
+
+    const pollTimer = setInterval(() => {
+      void pollSnapshots(addresses);
+    }, BALANCE_STREAM_POLL_MS);
+
+    const keepAliveTimer = setInterval(() => {
+      if (closed) return;
+      reply.raw.write(': keepalive\n\n');
+    }, BALANCE_STREAM_KEEPALIVE_MS);
+
+    const closeStream = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(pollTimer);
+      clearInterval(keepAliveTimer);
+      unsubscribe();
+      try {
+        reply.raw.end();
+      } catch {
+        // ignore close errors
+      }
+    };
+
+    request.raw.on('close', closeStream);
+    reply.raw.on('close', closeStream);
+    writeEvent({
+      type: 'subscribed',
+      addresses,
+      seq: ++seq,
+      ts: Date.now(),
+    });
+    void pollSnapshots(addresses);
+    return reply;
+  };
+
+  app.get('/api/indexer/v1/stream/balances', handleBalanceStream);
+  app.get('/api/indexer/v1/stream', handleBalanceStream);
 
   app.get(
     '/api/indexer/v1/accounts/:addr/txs',

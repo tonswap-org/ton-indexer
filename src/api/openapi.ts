@@ -308,6 +308,54 @@ export const buildOpenApi = (config: Config) => {
           },
         },
       },
+      '/api/indexer/v1/stream/balances': {
+        get: {
+          summary: 'Balance stream (SSE)',
+          parameters: [
+            { name: 'address', in: 'query', schema: { type: 'string' } },
+            { name: 'wallet', in: 'query', schema: { type: 'string' } },
+            { name: 'addresses', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            200: {
+              description: 'SSE event stream',
+              content: {
+                'text/event-stream': {
+                  schema: { type: 'string' },
+                },
+              },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/stream': {
+        get: {
+          summary: 'Balance stream alias (SSE)',
+          parameters: [
+            { name: 'address', in: 'query', schema: { type: 'string' } },
+            { name: 'wallet', in: 'query', schema: { type: 'string' } },
+            { name: 'addresses', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            200: {
+              description: 'SSE event stream',
+              content: {
+                'text/event-stream': {
+                  schema: { type: 'string' },
+                },
+              },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
       '/api/indexer/v1/snapshot/save': {
         post: {
           summary: 'Save in-memory snapshot',

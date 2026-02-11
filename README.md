@@ -76,6 +76,8 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 - `GET /api/indexer/v1/accounts/{addr}/assets` (alias of `/balances`)
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
 - `GET /api/indexer/v1/accounts/{addr}/state`
+- `GET /api/indexer/v1/stream/balances?address={addr}` (Server-Sent Events stream)
+- `GET /api/indexer/v1/stream?address={addr}` (alias of `/stream/balances`)
 - `GET /api/indexer/v1/health`
 - `GET /api/indexer/v1/metrics`
 - `GET /api/indexer/v1/metrics/prometheus`
@@ -91,6 +93,11 @@ Debug endpoint also requires admin auth when enabled.
 Optional tx cursor query params:
 - `cursor_lt`
 - `cursor_hash`
+
+Stream query params:
+- `address` (single address)
+- `wallet` (single address alias)
+- `addresses` (comma-separated addresses)
 
 Metrics payload highlights:
 - `request_stats`: count, avg, p50, p95, max (ms)

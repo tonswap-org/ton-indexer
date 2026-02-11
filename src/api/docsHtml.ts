@@ -27,6 +27,8 @@ export const buildDocsHtml = () => {
     '        <option value=\"/api/indexer/v1/accounts/{addr}/assets\">/accounts/{addr}/assets</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/txs\">/accounts/{addr}/txs</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/state\">/accounts/{addr}/state</option>',
+    '        <option value=\"/api/indexer/v1/stream/balances\">/stream/balances</option>',
+    '        <option value=\"/api/indexer/v1/stream\">/stream</option>',
     '        <option value=\"/api/indexer/v1/debug\">/debug</option>',
     '      </select>',
     '    </div>',

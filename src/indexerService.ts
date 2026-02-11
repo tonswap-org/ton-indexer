@@ -1,3 +1,5 @@
+import { Address } from '@ton/core';
+import { EventEmitter } from 'node:events';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
 import { TonDataSource } from './data/dataSource';
@@ -8,6 +10,30 @@ import { JettonMetadata } from './models';
 import { MetricsCollector } from './metricsCollector';
 import { PoolTracker } from './poolTracker';
 import { LRUCache } from 'lru-cache';
+
+export type BalanceChangeEvent = {
+  type: 'balances_changed';
+  address: string;
+  seq: number;
+  ts: number;
+  hints: {
+    ton: boolean;
+    jettons: string[] | null;
+  };
+};
+
+const normalizeAddress = (value: string) => {
+  try {
+    return Address.parse(value).toRawString();
+  } catch {
+    return value.trim().toLowerCase();
+  }
+};
+
+const balanceStateSignature = (state?: AccountState) => {
+  if (!state) return '';
+  return [state.balance ?? '', state.lastTxLt ?? '', state.lastTxHash ?? ''].join(':');
+};
 
 export class IndexerService {
   private config: Config;
@@ -26,6 +52,8 @@ export class IndexerService {
   private txCache: LRUCache<string, { value: any; signature: string }>;
   private stateCache: LRUCache<string, { value: any; signature: string }>;
   private healthCache?: { value: HealthStatus; expiresAt: number };
+  private balanceEventEmitter = new EventEmitter();
+  private balanceEventSeq = 0;
 
   constructor(
     config: Config,
@@ -200,6 +228,42 @@ export class IndexerService {
       updated_at: snapshot.updated_at,
       network: snapshot.network,
     };
+  }
+
+  getBalancesSignature(snapshot: AccountBalances) {
+    const assetsSignature = [...snapshot.assets]
+      .map((asset) => {
+        const kind = asset.kind ?? 'unknown';
+        const key = asset.address ?? asset.wallet ?? asset.symbol ?? '';
+        return `${kind}:${key}:${asset.balance_raw ?? ''}`;
+      })
+      .sort()
+      .join('|');
+    return `${snapshot.ton_raw ?? ''}:${assetsSignature}`;
+  }
+
+  subscribeBalanceChanges(addresses: string[], listener: (event: BalanceChangeEvent) => void) {
+    const normalized = new Set(addresses.map((value) => normalizeAddress(value)));
+    const handler = (event: BalanceChangeEvent) => {
+      const target = normalizeAddress(event.address);
+      if (normalized.size > 0 && !normalized.has(target)) return;
+      listener(event);
+    };
+    this.balanceEventEmitter.on('balances_changed', handler);
+    return () => {
+      this.balanceEventEmitter.off('balances_changed', handler);
+    };
+  }
+
+  private emitBalanceChanged(address: string) {
+    const event: BalanceChangeEvent = {
+      type: 'balances_changed',
+      address,
+      seq: ++this.balanceEventSeq,
+      ts: Date.now(),
+      hints: { ton: true, jettons: null },
+    };
+    this.balanceEventEmitter.emit('balances_changed', event);
   }
 
   private async getJettonMetadata(master: string): Promise<JettonMetadata | null> {
@@ -460,6 +524,8 @@ export class IndexerService {
   }
 
   async refreshAccountState(address: string) {
+    const previous = this.store.get(address)?.balance;
+    const previousSignature = balanceStateSignature(previous);
     const state = await this.source.getAccountState(address);
     const accountState: AccountState = {
       address,
@@ -469,6 +535,10 @@ export class IndexerService {
       updatedAt: Date.now(),
     };
     this.store.setBalance(address, accountState);
+    const nextSignature = balanceStateSignature(accountState);
+    if (nextSignature !== previousSignature) {
+      this.emitBalanceChanged(address);
+    }
   }
 
   async ensureInitialTransactions(address: string) {
