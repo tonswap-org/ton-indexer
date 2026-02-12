@@ -1,4 +1,4 @@
-import { Address, TupleItem, beginCell } from '@ton/core';
+import { Address, Cell, TupleItem, beginCell } from '@ton/core';
 import { EventEmitter } from 'node:events';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
@@ -58,6 +58,14 @@ const tupleItemBool = (item?: TupleItem): boolean => {
   return value !== null && value !== 0n;
 };
 
+const tupleItemCell = (item?: TupleItem): Cell | null => {
+  if (!item || item.type === 'null') return null;
+  if (item.type === 'cell' || item.type === 'slice' || item.type === 'builder') {
+    return item.cell as Cell;
+  }
+  return null;
+};
+
 const tupleItemAddress = (item?: TupleItem): string | null => {
   if (!item || item.type === 'null') return null;
   if (item.type !== 'cell' && item.type !== 'slice' && item.type !== 'builder') return null;
@@ -106,6 +114,57 @@ const tupleItemToToncenterStackEntry = (item: TupleItem): ToncenterStackEntry =>
   return ['unknown', null];
 };
 
+const unwrapTupleStack = (stack: TupleItem[]): TupleItem[] => {
+  if (stack.length === 1 && stack[0].type === 'tuple') {
+    return stack[0].items;
+  }
+  return stack;
+};
+
+const buildSliceCell = (addressRaw: string) => beginCell().storeAddress(Address.parse(addressRaw)).endCell();
+
+const parseAnchorStateCell = (cell: Cell): AnchorStateSnapshot | null => {
+  try {
+    const slice = cell.beginParse();
+    const quorumBps = slice.loadUintBig(16);
+    const maxAgeSeconds = slice.loadIntBig(32);
+    const epsilonExtBps = slice.loadIntBig(32);
+    const epsilonClipBps = slice.loadIntBig(32);
+    const trimCount = slice.loadUintBig(8);
+    const totalWeight = slice.loadUintBig(64);
+    const ready = slice.loadBit();
+    const quorumMet = slice.loadBit();
+    const price = slice.loadIntBig(128);
+    const minPrice = slice.loadIntBig(128);
+    const maxPrice = slice.loadIntBig(128);
+    const varianceBps = slice.loadIntBig(32);
+    const weight = slice.loadUintBig(64);
+    const quorumWeight = slice.loadUintBig(64);
+    const sampleCount = slice.loadUintBig(32);
+    const latestTimestamp = slice.loadIntBig(64);
+    return {
+      quorumBps: quorumBps.toString(10),
+      maxAgeSeconds: maxAgeSeconds.toString(10),
+      epsilonExtBps: epsilonExtBps.toString(10),
+      epsilonClipBps: epsilonClipBps.toString(10),
+      trimCount: trimCount.toString(10),
+      totalWeight: totalWeight.toString(10),
+      ready,
+      quorumMet,
+      price: price.toString(10),
+      minPrice: minPrice.toString(10),
+      maxPrice: maxPrice.toString(10),
+      varianceBps: varianceBps.toString(10),
+      weight: weight.toString(10),
+      quorumWeight: quorumWeight.toString(10),
+      sampleCount: sampleCount.toString(10),
+      latestTimestamp: latestTimestamp.toString(10)
+    };
+  } catch {
+    return null;
+  }
+};
+
 const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const GOVERNANCE_MAX_SCAN_DEFAULT = 20;
 const GOVERNANCE_MAX_SCAN_LIMIT = 64;
@@ -128,6 +187,9 @@ const COVER_SCAN_BATCH_SIZE = 5;
 const GET_METHOD_CACHE_TTL_MS = 1_000;
 const GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS = 30_000;
 const GET_METHOD_CACHE_ENTRY_MIN_TTL_MS = 60_000;
+
+const DEFI_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
 
 type GovernanceLockSnapshot = {
   amount: string | null;
@@ -254,6 +316,320 @@ type CoverSnapshotResponse = {
   updated_at: number;
 };
 
+type DefiSnapshotSectionOk<T> = {
+  ok: true;
+  data: T;
+};
+
+type DefiSnapshotSectionErr = {
+  ok: false;
+  error: string;
+  data: null;
+};
+
+type DefiSnapshotSection<T> = DefiSnapshotSectionOk<T> | DefiSnapshotSectionErr;
+
+type DefiSnapshotRequest = {
+  owner?: string | null;
+  include?: {
+    activation?: boolean;
+    dlmmRegistry?: boolean;
+    reserveBalances?: boolean;
+    systemHealth?: boolean;
+    systemHealthDetailed?: boolean;
+    modules?: boolean;
+    moduleGovernance?: boolean;
+    governance?: boolean;
+    farms?: boolean;
+    cover?: boolean;
+  };
+  options?: {
+    governance?: { maxScan?: number; maxMisses?: number };
+    farms?: { maxScan?: number; maxMisses?: number };
+    cover?: { maxScan?: number; maxMisses?: number };
+  };
+  contracts: {
+    activationGate?: string | null;
+    dlmmRegistry?: string | null;
+    t3Hub?: string | null;
+    controlMesh?: string | null;
+    riskVault?: string | null;
+    feeRouter?: string | null;
+    buybackExecutor?: string | null;
+    automationRegistry?: string | null;
+    anchorGuard?: string | null;
+    clusterGuard?: string | null;
+    voting?: string | null;
+    farmFactory?: string | null;
+    coverManager?: string | null;
+  };
+  modules?: Array<{
+    key: string;
+    address: string;
+    enabledGetter?: string | null;
+    governanceGetter?: string | null;
+  }>;
+};
+
+type ActivationGateSnapshot = {
+  burned: string | null;
+  target: string | null;
+  ready: boolean;
+  activated: boolean;
+  activatedAt: string | null;
+};
+
+type DlmmRegistryMetaSnapshot = {
+  governance: string | null;
+  enabled: boolean;
+  withdrawalsOnly: boolean;
+  perpsWeightEnabled: boolean;
+};
+
+type ReserveBalancesSnapshot = {
+  usdt: string | null;
+  usdc: string | null;
+  kusd: string | null;
+};
+
+type ControlStateSnapshot = {
+  governance: string | null;
+  enabled: boolean;
+  withdrawalsOnly: boolean;
+  sequence: string | null;
+  lastHeartbeatTs: string | null;
+  pegMintFeeBps: string | null;
+  pegRedeemFeeBps: string | null;
+  pegQuotaBps: string | null;
+  pegThrottleBps: string | null;
+  pegHaircutBps: string | null;
+  pegLevel: string | null;
+  pegEscalationScore: string | null;
+  pegRecoveryScore: string | null;
+};
+
+type RiskStateSnapshot = {
+  totalLocked: string | null;
+  totalOutstanding: string | null;
+  totalPending: string | null;
+  totalSurplus: string | null;
+  flags: string | null;
+  registryVersion: string | null;
+};
+
+type RiskBucketStateSnapshot = {
+  exists: boolean;
+  controller: string | null;
+  payoutHook: string | null;
+  liquidationHook: string | null;
+  utilisationCapBps: string | null;
+  payoutCapBps: string | null;
+  collateralMultiplierBps: string | null;
+  outstandingNotional: string | null;
+  lockedCollateral: string | null;
+  pendingPayouts: string | null;
+  automationJobId: string | null;
+  automationCadence: string | null;
+  automationBacklog: string | null;
+  registryVersion: string | null;
+  surplus: string | null;
+  utilisationBps: string | null;
+  deficit: boolean;
+  lastReportTs: string | null;
+};
+
+type FeeRouterStateSnapshot = {
+  balance: string | null;
+  lastSequence: string | null;
+  lastTimestamp: string | null;
+  allocationPeg: string | null;
+  allocationLiquidations: string | null;
+  allocationBuyback: string | null;
+  allocationGas: string | null;
+  allocationEmissions: string | null;
+  allocationReferrals: string | null;
+  referralDemand: string | null;
+  referralPriority: string | null;
+  referralFloor: string | null;
+  referralWeightDirectBps: string | null;
+  referralFlags: string | null;
+  referralThrottleMask: string | null;
+};
+
+type FeeRouterTargetsSnapshot = {
+  t3Peg: string | null;
+  t3Liquidations: string | null;
+  peg: string | null;
+  liquidations: string | null;
+  buyback: string | null;
+  gas: string | null;
+  emissions: string | null;
+  referrals: string | null;
+  referralRegistry: string | null;
+};
+
+type BuybackConfigSnapshot = {
+  t3Root: string | null;
+  tsRoot: string | null;
+  tsBurnWallet: string | null;
+  router: string | null;
+  recordTarget: string | null;
+  routerWalletForward: string | null;
+  swapForwardValue: string | null;
+};
+
+type AutomationConfigSnapshot = {
+  queue: string | null;
+};
+
+type AutomationModuleTelemetrySnapshot = {
+  lastTimestamp: string | null;
+  lastStatus: string | null;
+  lastProcessed: string | null;
+  lastRemaining: string | null;
+  successCount: string | null;
+  failureCount: string | null;
+  totalProcessed: string | null;
+};
+
+type JobConfigSnapshot = {
+  maxJobs: string | null;
+  minValue: string | null;
+  maxLaneJobs: string | null;
+  maxPriorityJobs: string | null;
+};
+
+type JobRecordSnapshot = {
+  exists: boolean;
+  jobId: string | null;
+  target: string | null;
+  scheduledAt: string | null;
+  forwardedValue: string | null;
+  dispatchValue: string | null;
+  payloadHash: string | null;
+  attempts: string | null;
+  maxAttempts: string | null;
+  status: string | null;
+  lastDispatchAt: string | null;
+  lastResult: string | null;
+  wakeAt: string | null;
+  ackTimeoutAt: string | null;
+  dispatchHash: string | null;
+  owner: string | null;
+  priority: string | null;
+  lane: string | null;
+  deadlineAt: string | null;
+  maxWork: string | null;
+};
+
+type AnchorConfigSnapshot = {
+  quorumBps: string | null;
+  maxAgeSeconds: string | null;
+  epsilonExtBps: string | null;
+  epsilonClipBps: string | null;
+  trimCount: string | null;
+};
+
+type AnchorStateSnapshot = {
+  quorumBps: string | null;
+  maxAgeSeconds: string | null;
+  epsilonExtBps: string | null;
+  epsilonClipBps: string | null;
+  trimCount: string | null;
+  totalWeight: string | null;
+  ready: boolean;
+  quorumMet: boolean;
+  price: string | null;
+  minPrice: string | null;
+  maxPrice: string | null;
+  varianceBps: string | null;
+  weight: string | null;
+  quorumWeight: string | null;
+  sampleCount: string | null;
+  latestTimestamp: string | null;
+};
+
+type ClusterGuardConfigSnapshot = {
+  reporter: string | null;
+  registry: string | null;
+  vestingSeconds: string | null;
+  warnThreshold: string | null;
+  slashThreshold: string | null;
+};
+
+type SystemHealthSnapshot = {
+  controlState: ControlStateSnapshot | null;
+  riskState: RiskStateSnapshot | null;
+  feeRouterState: FeeRouterStateSnapshot | null;
+  feeRouterTargets: FeeRouterTargetsSnapshot | null;
+  buybackConfig: BuybackConfigSnapshot | null;
+  anchorGuardConfig: AnchorConfigSnapshot | null;
+  anchorGuardState: AnchorStateSnapshot | null;
+  anchorGuardEnabled: boolean | null;
+  anchorGuardGovernance: string | null;
+  clusterGuardConfig: ClusterGuardConfigSnapshot | null;
+};
+
+type SystemHealthDetailedSnapshot = {
+  riskBucketStates: Record<number, RiskBucketStateSnapshot | null>;
+  automationConfig: AutomationConfigSnapshot | null;
+  automationModules: Record<number, AutomationModuleTelemetrySnapshot | null>;
+  jobQueueConfig: JobConfigSnapshot | null;
+  jobQueueJobs: Record<number, JobRecordSnapshot | null>;
+};
+
+type ModuleStatusSnapshot = {
+  governance: string | null;
+  enabled: boolean;
+};
+
+type DefiSnapshotResponse = {
+  owner: string | null;
+  network: Network;
+  updated_at: number;
+  sections: {
+    activation?: DefiSnapshotSection<ActivationGateSnapshot | null>;
+    dlmmRegistry?: DefiSnapshotSection<DlmmRegistryMetaSnapshot | null>;
+    reserveBalances?: DefiSnapshotSection<ReserveBalancesSnapshot | null>;
+    systemHealth?: DefiSnapshotSection<SystemHealthSnapshot>;
+    systemHealthDetailed?: DefiSnapshotSection<SystemHealthDetailedSnapshot>;
+    modules?: DefiSnapshotSection<Record<string, ModuleStatusSnapshot | null>>;
+    governance?: DefiSnapshotSection<GovernanceSnapshotResponse>;
+    farms?: DefiSnapshotSection<FarmSnapshotResponse>;
+    cover?: DefiSnapshotSection<CoverSnapshotResponse>;
+  };
+};
+
+type DlmmPoolsSnapshotRequest = {
+  t3Root: string;
+  dlmmRegistry?: string | null;
+  dlmmFactory?: string | null;
+  tokens: string[];
+};
+
+type DlmmPoolBinReserves = {
+  reserveT: string | null;
+  reserveX: string | null;
+};
+
+type DlmmPoolSnapshotEntry = {
+  token: string;
+  pool: string | null;
+  kind: number | null;
+  status: number | null;
+  activeBinId: number | null;
+  binReserves: DlmmPoolBinReserves | null;
+};
+
+type DlmmPoolsSnapshotResponse = {
+  t3Root: string;
+  registry: string | null;
+  factory: string | null;
+  pools: DlmmPoolSnapshotEntry[];
+  network: Network;
+  updated_at: number;
+};
+
 export class IndexerService {
   private config: Config;
   private store: MemoryStore;
@@ -276,6 +652,10 @@ export class IndexerService {
   private farmSnapshotInFlight = new Map<string, Promise<FarmSnapshotResponse>>();
   private coverSnapshotCache: LRUCache<string, CoverSnapshotResponse>;
   private coverSnapshotInFlight = new Map<string, Promise<CoverSnapshotResponse>>();
+  private defiSnapshotCache: LRUCache<string, DefiSnapshotResponse>;
+  private defiSnapshotInFlight = new Map<string, Promise<DefiSnapshotResponse>>();
+  private dlmmPoolsSnapshotCache: LRUCache<string, DlmmPoolsSnapshotResponse>;
+  private dlmmPoolsSnapshotInFlight = new Map<string, Promise<DlmmPoolsSnapshotResponse>>();
   private getMethodSourceCache: LRUCache<string, { exitCode: number; stack: TupleItem[] }>;
   private getMethodSourceInFlight = new Map<string, Promise<{ exitCode: number; stack: TupleItem[] } | null>>();
   private getMethodCache: LRUCache<string, ToncenterRunResult>;
@@ -337,6 +717,16 @@ export class IndexerService {
     this.coverSnapshotCache = new LRUCache({
       max: 512,
       ttl: COVER_SNAPSHOT_CACHE_TTL_MS,
+      allowStale: false
+    });
+    this.defiSnapshotCache = new LRUCache({
+      max: 512,
+      ttl: DEFI_SNAPSHOT_CACHE_TTL_MS,
+      allowStale: false
+    });
+    this.dlmmPoolsSnapshotCache = new LRUCache({
+      max: 512,
+      ttl: DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS,
       allowStale: false
     });
 
@@ -1342,6 +1732,850 @@ export class IndexerService {
       return result;
     } finally {
       this.coverSnapshotInFlight.delete(cacheKey);
+    }
+  }
+
+  async getDefiSnapshot(request: DefiSnapshotRequest): Promise<DefiSnapshotResponse> {
+    const normalizeValidAddress = (value?: string | null) => {
+      if (!value) return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      try {
+        return Address.parse(trimmed).toRawString();
+      } catch {
+        return null;
+      }
+    };
+
+    const normalizedOwner = normalizeValidAddress(request.owner ?? null);
+    const include = request.include ?? {};
+    const includeActivation = include.activation ?? true;
+    const includeDlmmRegistry = include.dlmmRegistry ?? true;
+    const includeReserveBalances = include.reserveBalances ?? true;
+    const includeSystemHealth = include.systemHealth ?? true;
+    const includeSystemHealthDetailed = include.systemHealthDetailed ?? false;
+    const includeModules = include.modules ?? true;
+    const includeModuleGovernance = include.moduleGovernance ?? false;
+    const includeGovernance = include.governance ?? true;
+    const includeFarms = include.farms ?? true;
+    const includeCover = include.cover ?? true;
+
+    const normalizedContracts = Object.fromEntries(
+      Object.entries(request.contracts ?? {}).map(([key, value]) => [key, normalizeValidAddress(value)])
+    ) as Record<keyof DefiSnapshotRequest['contracts'], string | null>;
+
+    const modulesRequested = Array.isArray(request.modules) ? request.modules : [];
+    const normalizedModules = modulesRequested
+      .map((entry) => ({
+        key: entry.key?.trim() ?? '',
+        address: normalizeValidAddress(entry.address),
+        enabledGetter: entry.enabledGetter ?? null,
+        governanceGetter: entry.governanceGetter ?? null
+      }))
+      .filter((entry) => Boolean(entry.key) && Boolean(entry.address))
+      .sort((a, b) => a.key.localeCompare(b.key));
+
+    const options = request.options ?? {};
+    const govMaxScan =
+      typeof options.governance?.maxScan === 'number' && Number.isFinite(options.governance.maxScan)
+        ? Math.max(1, Math.trunc(options.governance.maxScan))
+        : undefined;
+    const govMaxMisses =
+      typeof options.governance?.maxMisses === 'number' && Number.isFinite(options.governance.maxMisses)
+        ? Math.max(1, Math.trunc(options.governance.maxMisses))
+        : undefined;
+    const farmMaxScan =
+      typeof options.farms?.maxScan === 'number' && Number.isFinite(options.farms.maxScan)
+        ? Math.max(1, Math.trunc(options.farms.maxScan))
+        : undefined;
+    const farmMaxMisses =
+      typeof options.farms?.maxMisses === 'number' && Number.isFinite(options.farms.maxMisses)
+        ? Math.max(1, Math.trunc(options.farms.maxMisses))
+        : undefined;
+    const coverMaxScan =
+      typeof options.cover?.maxScan === 'number' && Number.isFinite(options.cover.maxScan)
+        ? Math.max(1, Math.trunc(options.cover.maxScan))
+        : undefined;
+    const coverMaxMisses =
+      typeof options.cover?.maxMisses === 'number' && Number.isFinite(options.cover.maxMisses)
+        ? Math.max(1, Math.trunc(options.cover.maxMisses))
+        : undefined;
+
+    const cacheKey = [
+      normalizedOwner ?? '',
+      includeActivation ? 'a1' : 'a0',
+      includeDlmmRegistry ? 'd1' : 'd0',
+      includeReserveBalances ? 'r1' : 'r0',
+      includeSystemHealth ? 's1' : 's0',
+      includeSystemHealthDetailed ? 'sd1' : 'sd0',
+      includeModules ? 'm1' : 'm0',
+      includeModuleGovernance ? 'mg1' : 'mg0',
+      includeGovernance ? 'g1' : 'g0',
+      includeFarms ? 'f1' : 'f0',
+      includeCover ? 'c1' : 'c0',
+      `gov:${govMaxScan ?? ''}:${govMaxMisses ?? ''}`,
+      `farm:${farmMaxScan ?? ''}:${farmMaxMisses ?? ''}`,
+      `cover:${coverMaxScan ?? ''}:${coverMaxMisses ?? ''}`,
+      ...Object.entries(normalizedContracts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => `${key}:${value ?? ''}`),
+      `mods:${normalizedModules
+        .map((module) => `${module.key}:${module.address}:${module.enabledGetter ?? ''}:${module.governanceGetter ?? ''}`)
+        .join(',')}`
+    ].join('|');
+
+    if (this.config.responseCacheEnabled) {
+      const cached = this.defiSnapshotCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.defiSnapshotInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+	    const requestPromise = (async () => {
+	      const errorMessage = (error: unknown) => {
+	        if (!error) return 'unknown error';
+	        if (error instanceof Error) return error.message || 'unknown error';
+	        return String(error);
+	      };
+	      const ok = <T>(data: T): DefiSnapshotSectionOk<T> => ({ ok: true, data });
+	      const err = (error: unknown): DefiSnapshotSectionErr => ({ ok: false, error: errorMessage(error), data: null });
+
+	      const sections: DefiSnapshotResponse['sections'] = {};
+	      const tasks: Array<Promise<void>> = [];
+
+	      if (includeActivation) {
+	        tasks.push(
+	          (async () => {
+	            const activationGate = normalizedContracts.activationGate;
+	            if (!activationGate) {
+	              sections.activation = err('activationGate missing');
+	              return;
+	            }
+	            try {
+	              const res = await this.runGetMethodSourceCached(activationGate, 'activation_status', []);
+	              if (!res || res.exitCode !== 0) {
+	                throw new Error('Activation status unavailable.');
+	              }
+	              const stack = res.stack;
+	              sections.activation = ok({
+	                burned: tupleItemBigIntString(stack[0]),
+	                target: tupleItemBigIntString(stack[1]),
+	                ready: tupleItemBool(stack[2]),
+	                activated: tupleItemBool(stack[3]),
+	                activatedAt: tupleItemBigIntString(stack[4])
+	              });
+	            } catch (error) {
+	              sections.activation = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeDlmmRegistry) {
+	        tasks.push(
+	          (async () => {
+	            const registry = normalizedContracts.dlmmRegistry;
+	            if (!registry) {
+	              sections.dlmmRegistry = err('dlmmRegistry missing');
+	              return;
+	            }
+	            try {
+	              const res = await this.runGetMethodSourceCached(registry, 'registry_meta', []);
+	              if (!res || res.exitCode !== 0) {
+	                throw new Error('DLMM registry meta unavailable.');
+	              }
+	              const stack = unwrapTupleStack(res.stack);
+	              sections.dlmmRegistry = ok({
+	                governance: tupleItemAddress(stack[0]),
+	                enabled: tupleItemBool(stack[1]),
+	                withdrawalsOnly: tupleItemBool(stack[2]),
+	                perpsWeightEnabled: tupleItemBool(stack[3])
+	              });
+	            } catch (error) {
+	              sections.dlmmRegistry = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeReserveBalances) {
+	        tasks.push(
+	          (async () => {
+	            const hub = normalizedContracts.t3Hub;
+	            if (!hub) {
+	              sections.reserveBalances = err('t3Hub missing');
+	              return;
+	            }
+	            try {
+	              const res = await this.runGetMethodSourceCached(hub, 'pool_balances', []);
+	              if (!res || res.exitCode !== 0) {
+	                throw new Error('Reserve balances unavailable.');
+	              }
+	              const stack = unwrapTupleStack(res.stack);
+	              sections.reserveBalances = ok({
+	                usdt: tupleItemBigIntString(stack[0]),
+	                usdc: tupleItemBigIntString(stack[1]),
+	                kusd: tupleItemBigIntString(stack[2])
+	              });
+	            } catch (error) {
+	              sections.reserveBalances = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeSystemHealth) {
+	        tasks.push(
+	          (async () => {
+	            const controlMesh = normalizedContracts.controlMesh;
+	            const riskVault = normalizedContracts.riskVault;
+	            const feeRouter = normalizedContracts.feeRouter;
+	            const buybackExecutor = normalizedContracts.buybackExecutor;
+	            const anchorGuard = normalizedContracts.anchorGuard;
+	            const clusterGuard = normalizedContracts.clusterGuard;
+	            try {
+	              const [
+	                controlRes,
+	                riskRes,
+	                feeStateRes,
+	                feeTargetsRes,
+	                buybackRes,
+	                anchorConfigRes,
+	                anchorStateRes,
+	                anchorEnabledRes,
+	                anchorGovRes,
+	                clusterConfigRes
+	              ] = await Promise.all([
+	                controlMesh ? this.runGetMethodSourceCached(controlMesh, 'get_control_state', []) : Promise.resolve(null),
+	                riskVault ? this.runGetMethodSourceCached(riskVault, 'risk_state', []) : Promise.resolve(null),
+	                feeRouter ? this.runGetMethodSourceCached(feeRouter, 'get_router_state', []) : Promise.resolve(null),
+	                feeRouter ? this.runGetMethodSourceCached(feeRouter, 'router_targets', []) : Promise.resolve(null),
+	                buybackExecutor ? this.runGetMethodSourceCached(buybackExecutor, 'buyback_config', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'anchor_config', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'anchor_state', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'enabled', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'governance', []) : Promise.resolve(null),
+	                clusterGuard ? this.runGetMethodSourceCached(clusterGuard, 'cluster_guard_config', []) : Promise.resolve(null)
+	              ]);
+
+	              const responded = Boolean(
+	                controlRes ||
+	                  riskRes ||
+	                  feeStateRes ||
+	                  feeTargetsRes ||
+	                  buybackRes ||
+	                  anchorConfigRes ||
+	                  anchorStateRes ||
+	                  anchorEnabledRes ||
+	                  anchorGovRes ||
+	                  clusterConfigRes
+	              );
+	              if (!responded) {
+	                throw new Error('System health snapshot unavailable.');
+	              }
+
+	              const controlState: ControlStateSnapshot | null =
+	                controlRes?.exitCode === 0
+	                  ? {
+	                      governance: tupleItemAddress(controlRes.stack[0]),
+	                      enabled: tupleItemBool(controlRes.stack[1]),
+	                      withdrawalsOnly: tupleItemBool(controlRes.stack[2]),
+	                      sequence: tupleItemBigIntString(controlRes.stack[3]),
+	                      lastHeartbeatTs: tupleItemBigIntString(controlRes.stack[4]),
+	                      pegMintFeeBps: tupleItemBigIntString(controlRes.stack[5]),
+	                      pegRedeemFeeBps: tupleItemBigIntString(controlRes.stack[6]),
+	                      pegQuotaBps: tupleItemBigIntString(controlRes.stack[7]),
+	                      pegThrottleBps: tupleItemBigIntString(controlRes.stack[8]),
+	                      pegHaircutBps: tupleItemBigIntString(controlRes.stack[9]),
+	                      pegLevel: tupleItemBigIntString(controlRes.stack[10]),
+	                      pegEscalationScore: tupleItemBigIntString(controlRes.stack[11]),
+	                      pegRecoveryScore: tupleItemBigIntString(controlRes.stack[12])
+	                    }
+	                  : null;
+
+	              const riskState: RiskStateSnapshot | null =
+	                riskRes?.exitCode === 0
+	                  ? {
+	                      totalLocked: tupleItemBigIntString(riskRes.stack[0]),
+	                      totalOutstanding: tupleItemBigIntString(riskRes.stack[1]),
+	                      totalPending: tupleItemBigIntString(riskRes.stack[2]),
+	                      totalSurplus: tupleItemBigIntString(riskRes.stack[3]),
+	                      flags: tupleItemBigIntString(riskRes.stack[4]),
+	                      registryVersion: tupleItemBigIntString(riskRes.stack[5])
+	                    }
+	                  : null;
+
+	              const feeRouterState: FeeRouterStateSnapshot | null =
+	                feeStateRes?.exitCode === 0
+	                  ? {
+	                      balance: tupleItemBigIntString(feeStateRes.stack[0]),
+	                      lastSequence: tupleItemBigIntString(feeStateRes.stack[1]),
+	                      lastTimestamp: tupleItemBigIntString(feeStateRes.stack[2]),
+	                      allocationPeg: tupleItemBigIntString(feeStateRes.stack[3]),
+	                      allocationLiquidations: tupleItemBigIntString(feeStateRes.stack[4]),
+	                      allocationBuyback: tupleItemBigIntString(feeStateRes.stack[5]),
+	                      allocationGas: tupleItemBigIntString(feeStateRes.stack[6]),
+	                      allocationEmissions: tupleItemBigIntString(feeStateRes.stack[7]),
+	                      allocationReferrals: tupleItemBigIntString(feeStateRes.stack[8]),
+	                      referralDemand: tupleItemBigIntString(feeStateRes.stack[9]),
+	                      referralPriority: tupleItemBigIntString(feeStateRes.stack[10]),
+	                      referralFloor: tupleItemBigIntString(feeStateRes.stack[11]),
+	                      referralWeightDirectBps: tupleItemBigIntString(feeStateRes.stack[12]),
+	                      referralFlags: tupleItemBigIntString(feeStateRes.stack[13]),
+	                      referralThrottleMask: tupleItemBigIntString(feeStateRes.stack[14])
+	                    }
+	                  : null;
+
+	              const feeRouterTargets: FeeRouterTargetsSnapshot | null =
+	                feeTargetsRes?.exitCode === 0
+	                  ? {
+	                      t3Peg: tupleItemAddress(feeTargetsRes.stack[0]),
+	                      t3Liquidations: tupleItemAddress(feeTargetsRes.stack[1]),
+	                      peg: tupleItemAddress(feeTargetsRes.stack[2]),
+	                      liquidations: tupleItemAddress(feeTargetsRes.stack[3]),
+	                      buyback: tupleItemAddress(feeTargetsRes.stack[4]),
+	                      gas: tupleItemAddress(feeTargetsRes.stack[5]),
+	                      emissions: tupleItemAddress(feeTargetsRes.stack[6]),
+	                      referrals: tupleItemAddress(feeTargetsRes.stack[7]),
+	                      referralRegistry: tupleItemAddress(feeTargetsRes.stack[8])
+	                    }
+	                  : null;
+
+	              const buybackConfig: BuybackConfigSnapshot | null =
+	                buybackRes?.exitCode === 0
+	                  ? {
+	                      t3Root: tupleItemAddress(buybackRes.stack[0]),
+	                      tsRoot: tupleItemAddress(buybackRes.stack[1]),
+	                      tsBurnWallet: tupleItemAddress(buybackRes.stack[2]),
+	                      router: tupleItemAddress(buybackRes.stack[3]),
+	                      recordTarget: tupleItemAddress(buybackRes.stack[4]),
+	                      routerWalletForward: tupleItemBigIntString(buybackRes.stack[5]),
+	                      swapForwardValue: tupleItemBigIntString(buybackRes.stack[6])
+	                    }
+	                  : null;
+
+	              const anchorGuardConfig: AnchorConfigSnapshot | null =
+	                anchorConfigRes?.exitCode === 0
+	                  ? (() => {
+	                      const stack = unwrapTupleStack(anchorConfigRes.stack);
+	                      return {
+	                        quorumBps: tupleItemBigIntString(stack[0]),
+	                        maxAgeSeconds: tupleItemBigIntString(stack[1]),
+	                        epsilonExtBps: tupleItemBigIntString(stack[2]),
+	                        epsilonClipBps: tupleItemBigIntString(stack[3]),
+	                        trimCount: tupleItemBigIntString(stack[4])
+	                      };
+	                    })()
+	                  : null;
+
+	              const anchorCell =
+	                anchorStateRes?.exitCode === 0 ? tupleItemCell(anchorStateRes.stack[0]) : null;
+	              const anchorGuardState = anchorCell ? parseAnchorStateCell(anchorCell) : null;
+	              const anchorGuardEnabled = anchorEnabledRes?.exitCode === 0 ? tupleItemBool(anchorEnabledRes.stack[0]) : null;
+	              const anchorGuardGovernance = anchorGovRes?.exitCode === 0 ? tupleItemAddress(anchorGovRes.stack[0]) : null;
+
+	              const clusterGuardConfig: ClusterGuardConfigSnapshot | null =
+	                clusterConfigRes?.exitCode === 0
+	                  ? (() => {
+	                      const stack = unwrapTupleStack(clusterConfigRes.stack);
+	                      return {
+	                        reporter: tupleItemAddress(stack[0]),
+	                        registry: tupleItemAddress(stack[1]),
+	                        vestingSeconds: tupleItemBigIntString(stack[2]),
+	                        warnThreshold: tupleItemBigIntString(stack[3]),
+	                        slashThreshold: tupleItemBigIntString(stack[4])
+	                      };
+	                    })()
+	                  : null;
+
+	              sections.systemHealth = ok({
+	                controlState,
+	                riskState,
+	                feeRouterState,
+	                feeRouterTargets,
+	                buybackConfig,
+	                anchorGuardConfig,
+	                anchorGuardState,
+	                anchorGuardEnabled,
+	                anchorGuardGovernance,
+	                clusterGuardConfig
+	              });
+	            } catch (error) {
+	              sections.systemHealth = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeSystemHealthDetailed) {
+	        tasks.push(
+	          (async () => {
+	            const riskVault = normalizedContracts.riskVault;
+	            const automationRegistry = normalizedContracts.automationRegistry;
+	            const bucketIds = [1, 2, 3];
+	            const riskBucketStates: Record<number, RiskBucketStateSnapshot | null> = {};
+	            bucketIds.forEach((id) => {
+	              riskBucketStates[id] = null;
+	            });
+	            try {
+	              let responded = false;
+	              if (riskVault) {
+	                const bucketResults = await Promise.all(
+	                  bucketIds.map((id) =>
+	                    this.runGetMethodSourceCached(riskVault, 'bucket_state', [{ type: 'int', value: BigInt(id) }]).catch(
+	                      () => null
+	                    )
+	                  )
+	                );
+	                bucketResults.forEach((res, index) => {
+	                  if (!res || res.exitCode !== 0) return;
+	                  responded = true;
+	                  const stack = res.stack;
+	                  const id = bucketIds[index];
+	                  riskBucketStates[id] = {
+	                    exists: tupleItemBool(stack[0]),
+	                    controller: tupleItemAddress(stack[1]),
+	                    payoutHook: tupleItemAddress(stack[2]),
+	                    liquidationHook: tupleItemAddress(stack[3]),
+	                    utilisationCapBps: tupleItemBigIntString(stack[4]),
+	                    payoutCapBps: tupleItemBigIntString(stack[5]),
+	                    collateralMultiplierBps: tupleItemBigIntString(stack[6]),
+	                    outstandingNotional: tupleItemBigIntString(stack[7]),
+	                    lockedCollateral: tupleItemBigIntString(stack[8]),
+	                    pendingPayouts: tupleItemBigIntString(stack[9]),
+	                    automationJobId: tupleItemBigIntString(stack[10]),
+	                    automationCadence: tupleItemBigIntString(stack[11]),
+	                    automationBacklog: tupleItemBigIntString(stack[12]),
+	                    registryVersion: tupleItemBigIntString(stack[13]),
+	                    surplus: tupleItemBigIntString(stack[14]),
+	                    utilisationBps: tupleItemBigIntString(stack[15]),
+	                    deficit: tupleItemBool(stack[16]),
+	                    lastReportTs: tupleItemBigIntString(stack[17])
+	                  };
+	                });
+	              }
+
+	              let automationConfig: AutomationConfigSnapshot | null = null;
+	              let jobQueueConfig: JobConfigSnapshot | null = null;
+	              const automationModules: Record<number, AutomationModuleTelemetrySnapshot | null> = {};
+	              const jobQueueJobs: Record<number, JobRecordSnapshot | null> = {};
+
+	              const parseJobId = (value: string | null) => {
+	                if (!value) return null;
+	                try {
+	                  const big = BigInt(value);
+	                  if (big <= 0n) return null;
+	                  const asNumber = Number(big);
+	                  return Number.isFinite(asNumber) ? Math.trunc(asNumber) : null;
+	                } catch {
+	                  return null;
+	                }
+	              };
+
+	              const moduleIds = Array.from(
+	                new Set(
+	                  Object.values(riskBucketStates)
+	                    .map((state) => parseJobId(state?.automationJobId ?? null))
+	                    .filter((id): id is number => typeof id === 'number' && Number.isFinite(id))
+	                )
+	              ).sort((a, b) => a - b);
+
+	              let queueAddress: string | null = null;
+	              if (automationRegistry) {
+	                const configRes = await this.runGetMethodSourceCached(automationRegistry, 'config', []).catch(() => null);
+	                if (configRes?.exitCode === 0) {
+	                  responded = true;
+	                  queueAddress = tupleItemAddress(configRes.stack[0]);
+	                  automationConfig = { queue: queueAddress };
+	                } else {
+	                  automationConfig = null;
+	                }
+	              }
+
+	              if (queueAddress) {
+	                const jobConfigRes = await this.runGetMethodSourceCached(queueAddress, 'job_config', []).catch(() => null);
+	                if (jobConfigRes?.exitCode === 0) {
+	                  responded = true;
+	                  jobQueueConfig = {
+	                    maxJobs: tupleItemBigIntString(jobConfigRes.stack[0]),
+	                    minValue: tupleItemBigIntString(jobConfigRes.stack[1]),
+	                    maxLaneJobs: tupleItemBigIntString(jobConfigRes.stack[2]),
+	                    maxPriorityJobs: tupleItemBigIntString(jobConfigRes.stack[3])
+	                  };
+	                }
+	              }
+
+	              if (automationRegistry && moduleIds.length) {
+	                const telemetryRes = await Promise.all(
+	                  moduleIds.map((id) =>
+	                    this.runGetMethodSourceCached(automationRegistry, 'module', [{ type: 'int', value: BigInt(id) }]).catch(
+	                      () => null
+	                    )
+	                  )
+	                );
+	                telemetryRes.forEach((res, index) => {
+	                  const id = moduleIds[index];
+	                  if (!res || res.exitCode !== 0) {
+	                    automationModules[id] = null;
+	                    return;
+	                  }
+	                  responded = true;
+	                  const stack = res.stack;
+	                  automationModules[id] = {
+	                    lastTimestamp: tupleItemBigIntString(stack[0]),
+	                    lastStatus: tupleItemBigIntString(stack[1]),
+	                    lastProcessed: tupleItemBigIntString(stack[2]),
+	                    lastRemaining: tupleItemBigIntString(stack[3]),
+	                    successCount: tupleItemBigIntString(stack[4]),
+	                    failureCount: tupleItemBigIntString(stack[5]),
+	                    totalProcessed: tupleItemBigIntString(stack[6])
+	                  };
+	                });
+	              }
+
+	              if (queueAddress && moduleIds.length) {
+	                const jobRes = await Promise.all(
+	                  moduleIds.map((id) =>
+	                    this.runGetMethodSourceCached(queueAddress, 'job', [{ type: 'int', value: BigInt(id) }]).catch(
+	                      () => null
+	                    )
+	                  )
+	                );
+	                jobRes.forEach((res, index) => {
+	                  const id = moduleIds[index];
+	                  if (!res || res.exitCode !== 0) {
+	                    jobQueueJobs[id] = null;
+	                    return;
+	                  }
+	                  responded = true;
+	                  const stack = res.stack;
+	                  jobQueueJobs[id] = {
+	                    exists: tupleItemBool(stack[0]),
+	                    jobId: tupleItemBigIntString(stack[1]),
+	                    target: tupleItemAddress(stack[2]),
+	                    scheduledAt: tupleItemBigIntString(stack[3]),
+	                    forwardedValue: tupleItemBigIntString(stack[4]),
+	                    dispatchValue: tupleItemBigIntString(stack[5]),
+	                    payloadHash: tupleItemBigIntString(stack[6]),
+	                    attempts: tupleItemBigIntString(stack[7]),
+	                    maxAttempts: tupleItemBigIntString(stack[8]),
+	                    status: tupleItemBigIntString(stack[9]),
+	                    lastDispatchAt: tupleItemBigIntString(stack[10]),
+	                    lastResult: tupleItemBigIntString(stack[11]),
+	                    wakeAt: tupleItemBigIntString(stack[12]),
+	                    ackTimeoutAt: tupleItemBigIntString(stack[13]),
+	                    dispatchHash: tupleItemBigIntString(stack[14]),
+	                    owner: tupleItemAddress(stack[15]),
+	                    priority: tupleItemBigIntString(stack[16]),
+	                    lane: tupleItemBigIntString(stack[17]),
+	                    deadlineAt: tupleItemBigIntString(stack[18]),
+	                    maxWork: tupleItemBigIntString(stack[19])
+	                  };
+	                });
+	              }
+
+	              if (!responded) {
+	                throw new Error('System health detailed snapshot unavailable.');
+	              }
+
+	              sections.systemHealthDetailed = ok({
+	                riskBucketStates,
+	                automationConfig,
+	                automationModules,
+	                jobQueueConfig,
+	                jobQueueJobs
+	              });
+	            } catch (error) {
+	              sections.systemHealthDetailed = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeModules) {
+	        tasks.push(
+	          (async () => {
+	            try {
+	              const statuses: Record<string, ModuleStatusSnapshot | null> = {};
+	              if (normalizedModules.length === 0) {
+	                sections.modules = ok(statuses);
+	              } else {
+	                const results = await Promise.all(
+	                  normalizedModules.map(async (module) => {
+	                    const enabledGetter = module.enabledGetter?.trim() || 'registry_enabled';
+	                    const governanceGetter = includeModuleGovernance ? module.governanceGetter : null;
+	                    const [enabledRes, governanceRes] = await Promise.all([
+	                      this.runGetMethodSourceCached(module.address!, enabledGetter, []).catch(() => null),
+	                      governanceGetter
+	                        ? this.runGetMethodSourceCached(module.address!, governanceGetter.trim(), []).catch(() => null)
+	                        : Promise.resolve(null)
+	                    ]);
+	                    if (!enabledRes || enabledRes.exitCode !== 0) {
+	                      return { key: module.key, status: null };
+	                    }
+	                    const enabled = tupleItemBool(enabledRes.stack[0]);
+	                    const governance =
+	                      governanceRes && governanceRes.exitCode === 0 ? tupleItemAddress(governanceRes.stack[0]) : null;
+	                    return { key: module.key, status: { enabled, governance } as ModuleStatusSnapshot };
+	                  })
+	                );
+	                results.forEach((entry) => {
+	                  statuses[entry.key] = entry.status;
+	                });
+	                sections.modules = ok(statuses);
+	              }
+	            } catch (error) {
+	              sections.modules = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeGovernance) {
+	        tasks.push(
+	          (async () => {
+	            const voting = normalizedContracts.voting;
+	            if (!voting) {
+	              sections.governance = err('voting missing');
+	              return;
+	            }
+	            try {
+	              sections.governance = ok(
+	                await this.getGovernanceSnapshot(voting, {
+	                  owner: normalizedOwner ?? undefined,
+	                  maxScan: govMaxScan,
+	                  maxConsecutiveMisses: govMaxMisses
+	                })
+	              );
+	            } catch (error) {
+	              sections.governance = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeFarms) {
+	        tasks.push(
+	          (async () => {
+	            const factory = normalizedContracts.farmFactory;
+	            if (!factory) {
+	              sections.farms = err('farmFactory missing');
+	              return;
+	            }
+	            try {
+	              sections.farms = ok(
+	                await this.getFarmSnapshot(factory, {
+	                  maxScan: farmMaxScan,
+	                  maxConsecutiveMisses: farmMaxMisses
+	                })
+	              );
+	            } catch (error) {
+	              sections.farms = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      if (includeCover) {
+	        tasks.push(
+	          (async () => {
+	            const manager = normalizedContracts.coverManager;
+	            if (!manager) {
+	              sections.cover = err('coverManager missing');
+	              return;
+	            }
+	            try {
+	              sections.cover = ok(
+	                await this.getCoverSnapshot(manager, {
+	                  owner: normalizedOwner ?? undefined,
+	                  maxScan: coverMaxScan,
+	                  maxConsecutiveMisses: coverMaxMisses
+	                })
+	              );
+	            } catch (error) {
+	              sections.cover = err(error);
+	            }
+	          })()
+	        );
+	      }
+
+	      await Promise.all(tasks);
+
+	      return {
+	        owner: normalizedOwner,
+	        network: this.network,
+        updated_at: Math.floor(Date.now() / 1000),
+        sections
+      };
+    })();
+
+    if (this.config.responseCacheEnabled) {
+      this.defiSnapshotInFlight.set(cacheKey, requestPromise);
+    }
+
+    try {
+      const response = await requestPromise;
+      if (this.config.responseCacheEnabled) {
+        this.defiSnapshotCache.set(cacheKey, response);
+      }
+      return response;
+    } finally {
+      this.defiSnapshotInFlight.delete(cacheKey);
+    }
+  }
+
+  async getDlmmPoolsSnapshot(request: DlmmPoolsSnapshotRequest): Promise<DlmmPoolsSnapshotResponse> {
+    const normalizeValidAddress = (value?: string | null) => {
+      if (!value) return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      try {
+        return Address.parse(trimmed).toRawString();
+      } catch {
+        return null;
+      }
+    };
+
+    const t3Root = normalizeValidAddress(request.t3Root);
+    if (!t3Root) {
+      throw new Error('Invalid t3Root address.');
+    }
+    const registry = normalizeValidAddress(request.dlmmRegistry ?? null);
+    const factory = normalizeValidAddress(request.dlmmFactory ?? null);
+    const tokens = Array.from(
+      new Set((Array.isArray(request.tokens) ? request.tokens : []).map((token) => normalizeValidAddress(token)).filter((token): token is string => Boolean(token)))
+    ).sort((a, b) => a.localeCompare(b));
+
+    const cacheKey = [t3Root, registry ?? '', factory ?? '', tokens.join(',')].join('|');
+    if (this.config.responseCacheEnabled) {
+      const cached = this.dlmmPoolsSnapshotCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.dlmmPoolsSnapshotInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+    const requestPromise = (async () => {
+      const decodeRecord = (res: { exitCode: number; stack: TupleItem[] } | null) => {
+        if (!res || res.exitCode !== 0) return null;
+        const stack = unwrapTupleStack(res.stack);
+        const exists = tupleItemBool(stack[0]);
+        if (!exists) {
+          return { exists: false, pool: null as string | null, kind: null as number | null, status: null as number | null };
+        }
+        const pool = tupleItemAddress(stack[1]);
+        const kindRaw = tupleItemBigInt(stack[2]);
+        const statusRaw = tupleItemBigInt(stack[3]);
+        const kind = kindRaw !== null ? Number(kindRaw) : null;
+        const status = statusRaw !== null ? Number(statusRaw) : null;
+        return {
+          exists: true,
+          pool,
+          kind: Number.isFinite(kind ?? NaN) ? kind : null,
+          status: Number.isFinite(status ?? NaN) ? status : null
+        };
+      };
+
+      const poolEntries: DlmmPoolSnapshotEntry[] = [];
+
+      await Promise.all(
+        tokens.map(async (token) => {
+          const [registryRes, factoryRes] = await Promise.all([
+            registry
+              ? this.runGetMethodSourceCached(registry, 'pool_for', [
+                  { type: 'slice', cell: buildSliceCell(t3Root) },
+                  { type: 'slice', cell: buildSliceCell(token) }
+                ]).catch(() => null)
+              : Promise.resolve(null),
+            factory
+              ? this.runGetMethodSourceCached(factory, 'pool_record', [
+                  { type: 'slice', cell: buildSliceCell(t3Root) },
+                  { type: 'slice', cell: buildSliceCell(token) }
+                ]).catch(() => null)
+              : Promise.resolve(null)
+          ]);
+
+          const registryRecord = decodeRecord(registryRes);
+          const factoryRecord = decodeRecord(factoryRes);
+
+          const registryPool =
+            registryRecord?.exists && (registryRecord.status === null || registryRecord.status === 0)
+              ? registryRecord.pool
+              : null;
+          const factoryPool =
+            factoryRecord?.exists && (factoryRecord.status === null || factoryRecord.status === 0)
+              ? factoryRecord.pool
+              : null;
+
+          const pool = registryPool ?? factoryPool ?? null;
+          const kind = registryPool ? registryRecord?.kind ?? null : factoryPool ? factoryRecord?.kind ?? null : null;
+          const status = registryPool ? registryRecord?.status ?? null : factoryPool ? factoryRecord?.status ?? null : null;
+
+          let resolvedPool: string | null = pool;
+          let activeBinId: number | null = null;
+          let binReserves: DlmmPoolBinReserves | null = null;
+
+          if (resolvedPool) {
+            const activeRes = await this.runGetMethodSourceCached(resolvedPool, 'active_price_q64', []).catch(() => null);
+            if (!activeRes || activeRes.exitCode !== 0) {
+              // Pool address can be deterministic but not actually deployed. Hide it.
+              resolvedPool = null;
+            } else {
+              const stack = unwrapTupleStack(activeRes.stack);
+              const binRaw = tupleItemBigInt(stack[0]);
+              if (binRaw !== null) {
+                const asNumber = Number(binRaw);
+                activeBinId = Number.isFinite(asNumber) ? Math.trunc(asNumber) : null;
+              }
+              if (activeBinId !== null) {
+                const binRes = await this.runGetMethodSourceCached(resolvedPool, 'bin_state', [
+                  { type: 'int', value: BigInt(activeBinId) }
+                ]).catch(() => null);
+                if (binRes && binRes.exitCode === 0) {
+                  const binStack = unwrapTupleStack(binRes.stack);
+                  binReserves = {
+                    reserveT: tupleItemBigIntString(binStack[0]),
+                    reserveX: tupleItemBigIntString(binStack[1])
+                  };
+                }
+              }
+            }
+          }
+
+          poolEntries.push({
+            token,
+            pool: resolvedPool,
+            kind,
+            status,
+            activeBinId,
+            binReserves
+          });
+        })
+      );
+
+      poolEntries.sort((a, b) => a.token.localeCompare(b.token));
+
+      return {
+        t3Root,
+        registry,
+        factory,
+        pools: poolEntries,
+        network: this.network,
+        updated_at: Math.floor(Date.now() / 1000)
+      };
+    })();
+
+    if (this.config.responseCacheEnabled) {
+      this.dlmmPoolsSnapshotInFlight.set(cacheKey, requestPromise);
+    }
+
+    try {
+      const response = await requestPromise;
+      if (this.config.responseCacheEnabled) {
+        this.dlmmPoolsSnapshotCache.set(cacheKey, response);
+      }
+      return response;
+    } finally {
+      this.dlmmPoolsSnapshotInFlight.delete(cacheKey);
     }
   }
 

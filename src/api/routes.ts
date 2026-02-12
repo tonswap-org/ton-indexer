@@ -556,6 +556,146 @@ export const registerRoutes = (
     }
   );
 
+  app.post(
+    '/api/indexer/v1/defi/snapshot',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            owner: { type: ['string', 'null'] },
+            include: { type: 'object', additionalProperties: true },
+            options: { type: 'object', additionalProperties: true },
+            contracts: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+            modules: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  address: { type: 'string' },
+                  enabledGetter: { type: ['string', 'null'] },
+                  governanceGetter: { type: ['string', 'null'] }
+                },
+                required: ['key', 'address']
+              }
+            }
+          },
+          required: ['contracts']
+        }
+      }
+    },
+    async (request, reply) => {
+      const body = request.body as any;
+      const owner = typeof body?.owner === 'string' ? body.owner.trim() : null;
+      if (owner && !isValidAddress(owner)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
+      }
+      const contracts = body?.contracts ?? null;
+      if (!contracts || typeof contracts !== 'object') {
+        return sendError(reply, 400, 'bad_request', 'contracts object is required');
+      }
+      const contractKeys = [
+        'activationGate',
+        'dlmmRegistry',
+        't3Hub',
+        'controlMesh',
+        'riskVault',
+        'feeRouter',
+        'buybackExecutor',
+        'automationRegistry',
+        'anchorGuard',
+        'clusterGuard',
+        'voting',
+        'farmFactory',
+        'coverManager'
+      ] as const;
+      for (const key of contractKeys) {
+        const value = contracts[key];
+        if (typeof value === 'string' && value.trim() && !isValidAddress(value.trim())) {
+          return sendError(reply, 400, 'invalid_address', `invalid contract address for ${key}`);
+        }
+      }
+      const modules = Array.isArray(body?.modules) ? body.modules : [];
+      if (modules.length > 64) {
+        return sendError(reply, 400, 'bad_request', 'too many modules');
+      }
+      for (const entry of modules) {
+        const address = typeof entry?.address === 'string' ? entry.address.trim() : '';
+        if (!address || !isValidAddress(address)) {
+          return sendError(reply, 400, 'invalid_address', 'invalid module address');
+        }
+      }
+      try {
+        return await service.getDefiSnapshot({
+          owner,
+          include: typeof body?.include === 'object' && body.include ? body.include : undefined,
+          options: typeof body?.options === 'object' && body.options ? body.options : undefined,
+          contracts,
+          modules
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.post(
+    '/api/indexer/v1/dlmm/pools/snapshot',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            t3Root: { type: 'string' },
+            dlmmRegistry: { type: ['string', 'null'] },
+            dlmmFactory: { type: ['string', 'null'] },
+            tokens: { type: 'array', items: { type: 'string' } }
+          },
+          required: ['t3Root', 'tokens']
+        }
+      }
+    },
+    async (request, reply) => {
+      const body = request.body as any;
+      const t3Root = typeof body?.t3Root === 'string' ? body.t3Root.trim() : '';
+      if (!t3Root || !isValidAddress(t3Root)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid t3Root address');
+      }
+      const registry = typeof body?.dlmmRegistry === 'string' ? body.dlmmRegistry.trim() : null;
+      if (registry && !isValidAddress(registry)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid dlmmRegistry address');
+      }
+      const factory = typeof body?.dlmmFactory === 'string' ? body.dlmmFactory.trim() : null;
+      if (factory && !isValidAddress(factory)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid dlmmFactory address');
+      }
+      const tokens = Array.isArray(body?.tokens) ? body.tokens : [];
+      if (!tokens.length) {
+        return sendError(reply, 400, 'bad_request', 'tokens array is required');
+      }
+      if (tokens.length > 64) {
+        return sendError(reply, 400, 'bad_request', 'too many tokens');
+      }
+      for (const token of tokens) {
+        const value = typeof token === 'string' ? token.trim() : '';
+        if (!value || !isValidAddress(value)) {
+          return sendError(reply, 400, 'invalid_address', 'invalid token address');
+        }
+      }
+      try {
+        return await service.getDlmmPoolsSnapshot({
+          t3Root,
+          dlmmRegistry: registry,
+          dlmmFactory: factory,
+          tokens
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
   const handleBalanceStream = async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as { address?: string; wallet?: string; addresses?: string };
     const addresses = parseStreamAddresses(query);

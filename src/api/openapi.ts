@@ -105,6 +105,61 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['results'],
         },
+        DefiSnapshotRequest: {
+          type: 'object',
+          properties: {
+            owner: { type: ['string', 'null'] },
+            include: { type: 'object', additionalProperties: true },
+            options: { type: 'object', additionalProperties: true },
+            contracts: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+            modules: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  address: { type: 'string' },
+                  enabledGetter: { type: ['string', 'null'] },
+                  governanceGetter: { type: ['string', 'null'] },
+                },
+                required: ['key', 'address'],
+              },
+            },
+          },
+          required: ['contracts'],
+        },
+        DefiSnapshotResponse: {
+          type: 'object',
+          properties: {
+            owner: { type: ['string', 'null'] },
+            network: { type: 'string' },
+            updated_at: { type: 'integer' },
+            sections: { type: 'object', additionalProperties: true },
+          },
+          required: ['network', 'updated_at', 'sections'],
+        },
+        DlmmPoolsSnapshotRequest: {
+          type: 'object',
+          properties: {
+            t3Root: { type: 'string' },
+            dlmmRegistry: { type: ['string', 'null'] },
+            dlmmFactory: { type: ['string', 'null'] },
+            tokens: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['t3Root', 'tokens'],
+        },
+        DlmmPoolsSnapshotResponse: {
+          type: 'object',
+          properties: {
+            t3Root: { type: 'string' },
+            registry: { type: ['string', 'null'] },
+            factory: { type: ['string', 'null'] },
+            pools: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            network: { type: 'string' },
+            updated_at: { type: 'integer' },
+          },
+          required: ['t3Root', 'pools', 'network', 'updated_at'],
+        },
         BalanceResponse: {
           type: 'object',
           properties: {
@@ -568,6 +623,50 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Run get methods batch response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/RunGetMethodsResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/defi/snapshot': {
+        post: {
+          summary: 'DeFi snapshot',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/DefiSnapshotRequest' } },
+            },
+          },
+          responses: {
+            200: {
+              description: 'DeFi snapshot response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/DefiSnapshotResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/dlmm/pools/snapshot': {
+        post: {
+          summary: 'DLMM pools snapshot',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/DlmmPoolsSnapshotRequest' } },
+            },
+          },
+          responses: {
+            200: {
+              description: 'DLMM pools snapshot response',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/DlmmPoolsSnapshotResponse' } },
+              },
             },
             400: {
               description: 'Bad request',
