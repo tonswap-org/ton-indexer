@@ -68,19 +68,19 @@ const tupleItemAddress = (item?: TupleItem): string | null => {
   }
 };
 
-const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const GOVERNANCE_MAX_SCAN_DEFAULT = 20;
 const GOVERNANCE_MAX_SCAN_LIMIT = 64;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const GOVERNANCE_SCAN_BATCH_SIZE = 5;
-const FARM_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const FARM_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const FARM_MAX_SCAN_DEFAULT = 20;
 const FARM_MAX_SCAN_LIMIT = 64;
 const FARM_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const FARM_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const FARM_SCAN_BATCH_SIZE = 5;
-const COVER_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const COVER_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const COVER_MAX_SCAN_DEFAULT = 20;
 const COVER_MAX_SCAN_LIMIT = 64;
 const COVER_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
@@ -920,8 +920,10 @@ export class IndexerService {
       const nextIdString = nextId !== null ? nextId.toString(10) : null;
       const maxKnownFromNextId = nextId && nextId > 1n ? Number(nextId - 1n) : 0;
       const scanLimit =
-        Number.isFinite(maxKnownFromNextId) && maxKnownFromNextId > 0
-          ? Math.min(maxScan, Math.trunc(maxKnownFromNextId))
+        nextId !== null
+          ? Number.isFinite(maxKnownFromNextId) && maxKnownFromNextId > 0
+            ? Math.min(maxScan, Math.trunc(maxKnownFromNextId))
+            : 0
           : maxScan;
 
       const farms: FarmSnapshotRecord[] = [];
@@ -929,53 +931,55 @@ export class IndexerService {
       let misses = 0;
       let farmResponded = false;
 
-      outer: for (let startId = 1; startId <= scanLimit; startId += FARM_SCAN_BATCH_SIZE) {
-        const endId = Math.min(scanLimit, startId + FARM_SCAN_BATCH_SIZE - 1);
-        const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
-        const batch = await Promise.all(
-          batchIds.map((farmId) =>
-            this.source
-              .runGetMethod(normalizedFactory, 'get_farm', [{ type: 'int', value: BigInt(farmId) }])
-              .catch(() => null)
-          )
-        );
+      if (scanLimit > 0) {
+        outer: for (let startId = 1; startId <= scanLimit; startId += FARM_SCAN_BATCH_SIZE) {
+          const endId = Math.min(scanLimit, startId + FARM_SCAN_BATCH_SIZE - 1);
+          const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
+          const batch = await Promise.all(
+            batchIds.map((farmId) =>
+              this.source
+                .runGetMethod(normalizedFactory, 'get_farm', [{ type: 'int', value: BigInt(farmId) }])
+                .catch(() => null)
+            )
+          );
 
-        for (let index = 0; index < batch.length; index += 1) {
-          scanned += 1;
-          const res = batch[index];
-          if (res) farmResponded = true;
-          if (!res || res.exitCode !== 0) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) break outer;
-            continue;
+          for (let index = 0; index < batch.length; index += 1) {
+            scanned += 1;
+            const res = batch[index];
+            if (res) farmResponded = true;
+            if (!res || res.exitCode !== 0) {
+              misses += 1;
+              if (misses >= maxConsecutiveMisses) break outer;
+              continue;
+            }
+            const stack = res.stack;
+            const farm = tupleItemAddress(stack[0]);
+            if (!farm) {
+              misses += 1;
+              if (misses >= maxConsecutiveMisses) break outer;
+              continue;
+            }
+            misses = 0;
+            const id = batchIds[index];
+            farms.push({
+              id: String(id),
+              farm,
+              staker: tupleItemAddress(stack[1]),
+              sponsor: tupleItemAddress(stack[2]),
+              rewardRoot: tupleItemAddress(stack[3]),
+              rewardWallet: tupleItemAddress(stack[4]),
+              rewardAmount: tupleItemBigIntString(stack[5]),
+              duration: tupleItemBigIntString(stack[6]),
+              sponsorFeeBps: tupleItemBigIntString(stack[7]),
+              startTime: tupleItemBigIntString(stack[8]),
+              endTime: tupleItemBigIntString(stack[9]),
+              gasBudget: tupleItemBigIntString(stack[10]),
+              status: tupleItemBigIntString(stack[11]),
+              createdAt: tupleItemBigIntString(stack[12]),
+              backlogLimit: tupleItemBigIntString(stack[13]),
+              resumeBacklog: tupleItemBigIntString(stack[14])
+            });
           }
-          const stack = res.stack;
-          const farm = tupleItemAddress(stack[0]);
-          if (!farm) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) break outer;
-            continue;
-          }
-          misses = 0;
-          const id = batchIds[index];
-          farms.push({
-            id: String(id),
-            farm,
-            staker: tupleItemAddress(stack[1]),
-            sponsor: tupleItemAddress(stack[2]),
-            rewardRoot: tupleItemAddress(stack[3]),
-            rewardWallet: tupleItemAddress(stack[4]),
-            rewardAmount: tupleItemBigIntString(stack[5]),
-            duration: tupleItemBigIntString(stack[6]),
-            sponsorFeeBps: tupleItemBigIntString(stack[7]),
-            startTime: tupleItemBigIntString(stack[8]),
-            endTime: tupleItemBigIntString(stack[9]),
-            gasBudget: tupleItemBigIntString(stack[10]),
-            status: tupleItemBigIntString(stack[11]),
-            createdAt: tupleItemBigIntString(stack[12]),
-            backlogLimit: tupleItemBigIntString(stack[13]),
-            resumeBacklog: tupleItemBigIntString(stack[14])
-          });
         }
       }
 
@@ -1070,6 +1074,21 @@ export class IndexerService {
           : null;
       const enabled = enabledRes?.exitCode === 0 ? tupleItemBool(enabledRes.stack[0]) : null;
       const totalPoliciesRaw = stateRes?.exitCode === 0 ? tupleItemBigInt(stateRes.stack[0]) : null;
+      if (totalPoliciesRaw !== null && totalPoliciesRaw <= 0n) {
+        const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
+        return {
+          manager: normalizedManager,
+          owner: normalizedOwner,
+          enabled,
+          state,
+          policy_count: 0,
+          scanned: 0,
+          policies: [],
+          source,
+          network: this.network,
+          updated_at: Math.floor(Date.now() / 1000)
+        };
+      }
       const totalPolicies =
         totalPoliciesRaw && totalPoliciesRaw > 0n && Number.isFinite(Number(totalPoliciesRaw))
           ? Math.max(0, Math.trunc(Number(totalPoliciesRaw)))
