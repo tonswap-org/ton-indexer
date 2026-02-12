@@ -293,6 +293,114 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['voting', 'proposal_count', 'scanned', 'proposals', 'source', 'network', 'updated_at'],
         },
+        FarmFactoryStatusResponse: {
+          type: 'object',
+          properties: {
+            governance: { type: ['string', 'null'] },
+            enabled: { type: 'boolean' },
+          },
+          required: ['enabled'],
+        },
+        FarmSnapshotRecordResponse: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            farm: { type: ['string', 'null'] },
+            staker: { type: ['string', 'null'] },
+            sponsor: { type: ['string', 'null'] },
+            rewardRoot: { type: ['string', 'null'] },
+            rewardWallet: { type: ['string', 'null'] },
+            rewardAmount: { type: ['string', 'null'] },
+            duration: { type: ['string', 'null'] },
+            sponsorFeeBps: { type: ['string', 'null'] },
+            startTime: { type: ['string', 'null'] },
+            endTime: { type: ['string', 'null'] },
+            gasBudget: { type: ['string', 'null'] },
+            status: { type: ['string', 'null'] },
+            createdAt: { type: ['string', 'null'] },
+            backlogLimit: { type: ['string', 'null'] },
+            resumeBacklog: { type: ['string', 'null'] },
+          },
+          required: ['id'],
+        },
+        FarmSnapshotResponse: {
+          type: 'object',
+          properties: {
+            factory: { type: 'string' },
+            status: {
+              oneOf: [{ $ref: '#/components/schemas/FarmFactoryStatusResponse' }, { type: 'null' }],
+            },
+            next_id: { type: ['string', 'null'] },
+            farm_count: { type: 'integer' },
+            scanned: { type: 'integer' },
+            farms: { type: 'array', items: { $ref: '#/components/schemas/FarmSnapshotRecordResponse' } },
+            source: { type: 'string' },
+            network: { type: 'string' },
+            updated_at: { type: 'integer' },
+          },
+          required: ['factory', 'farm_count', 'scanned', 'farms', 'source', 'network', 'updated_at'],
+        },
+        CoverStateResponse: {
+          type: 'object',
+          properties: {
+            totalPolicies: { type: ['string', 'null'] },
+            activePolicies: { type: ['string', 'null'] },
+            breachingPolicies: { type: ['string', 'null'] },
+            claimablePolicies: { type: ['string', 'null'] },
+            claimedPolicies: { type: ['string', 'null'] },
+            nextWakeTimestamp: { type: ['string', 'null'] },
+            lastSender: { type: ['string', 'null'] },
+            lastJobId: { type: ['string', 'null'] },
+            lastWork: { type: ['string', 'null'] },
+            lastTimestamp: { type: ['string', 'null'] },
+            lastProcessed: { type: ['string', 'null'] },
+            lastRemaining: { type: ['string', 'null'] },
+            vault: { type: ['string', 'null'] },
+            admin: { type: ['string', 'null'] },
+            riskVault: { type: ['string', 'null'] },
+            riskBucketId: { type: ['string', 'null'] },
+          },
+        },
+        CoverPolicyResponse: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            owner: { type: ['string', 'null'] },
+            pool: { type: ['string', 'null'] },
+            lowerBound: { type: ['string', 'null'] },
+            upperBound: { type: ['string', 'null'] },
+            payout: { type: ['string', 'null'] },
+            windowSeconds: { type: ['string', 'null'] },
+            requiredObservations: { type: ['string', 'null'] },
+            breachStart: { type: ['string', 'null'] },
+            breachSeconds: { type: ['string', 'null'] },
+            lastObservation: { type: ['string', 'null'] },
+            lastHealthyObservation: { type: ['string', 'null'] },
+            breachObservations: { type: ['string', 'null'] },
+            status: { type: ['string', 'null'] },
+            riskVault: { type: ['string', 'null'] },
+            riskBucketId: { type: ['string', 'null'] },
+          },
+          required: ['id'],
+        },
+        CoverSnapshotResponse: {
+          type: 'object',
+          properties: {
+            manager: { type: 'string' },
+            owner: { type: ['string', 'null'] },
+            enabled: { type: ['boolean', 'null'] },
+            state: {
+              oneOf: [{ $ref: '#/components/schemas/CoverStateResponse' }, { type: 'null' }],
+            },
+            policy_count: { type: 'integer' },
+            scanned: { type: 'integer' },
+            policies: { type: 'array', items: { $ref: '#/components/schemas/CoverPolicyResponse' } },
+            source: { type: 'string' },
+            network: { type: 'string' },
+            updated_at: { type: 'integer' },
+          },
+          required: ['manager', 'policy_count', 'scanned', 'policies', 'source', 'network', 'updated_at'],
+        },
         SnapshotResponse: {
           type: 'object',
           properties: {
@@ -493,6 +601,51 @@ export const buildOpenApi = (config: Config) => {
               description: 'Governance snapshot response',
               content: {
                 'application/json': { schema: { $ref: '#/components/schemas/GovernanceSnapshotResponse' } },
+              },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/farms/{factory}/snapshot': {
+        get: {
+          summary: 'Farm factory snapshot',
+          parameters: [
+            { name: 'factory', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'max_scan', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
+            { name: 'max_misses', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8 } },
+          ],
+          responses: {
+            200: {
+              description: 'Farm snapshot response',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/FarmSnapshotResponse' } },
+              },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/cover/{manager}/snapshot': {
+        get: {
+          summary: 'Cover manager snapshot',
+          parameters: [
+            { name: 'manager', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'owner', in: 'query', schema: { type: 'string' } },
+            { name: 'max_scan', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
+            { name: 'max_misses', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8 } },
+          ],
+          responses: {
+            200: {
+              description: 'Cover snapshot response',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/CoverSnapshotResponse' } },
               },
             },
             400: {

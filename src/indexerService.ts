@@ -74,6 +74,18 @@ const GOVERNANCE_MAX_SCAN_LIMIT = 64;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const GOVERNANCE_SCAN_BATCH_SIZE = 5;
+const FARM_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const FARM_MAX_SCAN_DEFAULT = 20;
+const FARM_MAX_SCAN_LIMIT = 64;
+const FARM_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
+const FARM_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
+const FARM_SCAN_BATCH_SIZE = 5;
+const COVER_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const COVER_MAX_SCAN_DEFAULT = 20;
+const COVER_MAX_SCAN_LIMIT = 64;
+const COVER_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
+const COVER_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
+const COVER_SCAN_BATCH_SIZE = 5;
 
 type GovernanceLockSnapshot = {
   amount: string | null;
@@ -113,6 +125,93 @@ type GovernanceSnapshotResponse = {
   updated_at: number;
 };
 
+type FarmFactoryStatusSnapshot = {
+  governance: string | null;
+  enabled: boolean;
+};
+
+type FarmSnapshotRecord = {
+  id: string;
+  farm: string | null;
+  staker: string | null;
+  sponsor: string | null;
+  rewardRoot: string | null;
+  rewardWallet: string | null;
+  rewardAmount: string | null;
+  duration: string | null;
+  sponsorFeeBps: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  gasBudget: string | null;
+  status: string | null;
+  createdAt: string | null;
+  backlogLimit: string | null;
+  resumeBacklog: string | null;
+};
+
+type FarmSnapshotResponse = {
+  factory: string;
+  status: FarmFactoryStatusSnapshot | null;
+  next_id: string | null;
+  farm_count: number;
+  scanned: number;
+  farms: FarmSnapshotRecord[];
+  source: 'lite' | 'http4';
+  network: Network;
+  updated_at: number;
+};
+
+type CoverStateSnapshot = {
+  totalPolicies: string | null;
+  activePolicies: string | null;
+  breachingPolicies: string | null;
+  claimablePolicies: string | null;
+  claimedPolicies: string | null;
+  nextWakeTimestamp: string | null;
+  lastSender: string | null;
+  lastJobId: string | null;
+  lastWork: string | null;
+  lastTimestamp: string | null;
+  lastProcessed: string | null;
+  lastRemaining: string | null;
+  vault: string | null;
+  admin: string | null;
+  riskVault: string | null;
+  riskBucketId: string | null;
+};
+
+type CoverPolicySnapshot = {
+  id: string;
+  owner: string | null;
+  pool: string | null;
+  lowerBound: string | null;
+  upperBound: string | null;
+  payout: string | null;
+  windowSeconds: string | null;
+  requiredObservations: string | null;
+  breachStart: string | null;
+  breachSeconds: string | null;
+  lastObservation: string | null;
+  lastHealthyObservation: string | null;
+  breachObservations: string | null;
+  status: string | null;
+  riskVault: string | null;
+  riskBucketId: string | null;
+};
+
+type CoverSnapshotResponse = {
+  manager: string;
+  owner: string | null;
+  enabled: boolean | null;
+  state: CoverStateSnapshot | null;
+  policy_count: number;
+  scanned: number;
+  policies: CoverPolicySnapshot[];
+  source: 'lite' | 'http4';
+  network: Network;
+  updated_at: number;
+};
+
 export class IndexerService {
   private config: Config;
   private store: MemoryStore;
@@ -131,6 +230,10 @@ export class IndexerService {
   private stateCache: LRUCache<string, { value: any; signature: string }>;
   private governanceSnapshotCache: LRUCache<string, GovernanceSnapshotResponse>;
   private governanceSnapshotInFlight = new Map<string, Promise<GovernanceSnapshotResponse>>();
+  private farmSnapshotCache: LRUCache<string, FarmSnapshotResponse>;
+  private farmSnapshotInFlight = new Map<string, Promise<FarmSnapshotResponse>>();
+  private coverSnapshotCache: LRUCache<string, CoverSnapshotResponse>;
+  private coverSnapshotInFlight = new Map<string, Promise<CoverSnapshotResponse>>();
   private healthCache?: { value: HealthStatus; expiresAt: number };
   private balanceEventEmitter = new EventEmitter();
   private balanceEventSeq = 0;
@@ -178,6 +281,16 @@ export class IndexerService {
     this.governanceSnapshotCache = new LRUCache({
       max: 512,
       ttl: GOVERNANCE_SNAPSHOT_CACHE_TTL_MS,
+      allowStale: false
+    });
+    this.farmSnapshotCache = new LRUCache({
+      max: 512,
+      ttl: FARM_SNAPSHOT_CACHE_TTL_MS,
+      allowStale: false
+    });
+    this.coverSnapshotCache = new LRUCache({
+      max: 512,
+      ttl: COVER_SNAPSHOT_CACHE_TTL_MS,
       allowStale: false
     });
   }
@@ -763,6 +876,297 @@ export class IndexerService {
       return result;
     } finally {
       this.governanceSnapshotInFlight.delete(cacheKey);
+    }
+  }
+
+  async getFarmSnapshot(
+    factoryAddress: string,
+    options: { maxScan?: number; maxConsecutiveMisses?: number } = {}
+  ): Promise<FarmSnapshotResponse> {
+    const normalizedFactory = normalizeAddress(factoryAddress);
+    const maxScan = Math.max(1, Math.min(FARM_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? FARM_MAX_SCAN_DEFAULT)));
+    const maxConsecutiveMisses = Math.max(
+      1,
+      Math.min(
+        FARM_MAX_CONSECUTIVE_MISSES_LIMIT,
+        Math.trunc(options.maxConsecutiveMisses ?? FARM_MAX_CONSECUTIVE_MISSES_DEFAULT)
+      )
+    );
+    const cacheKey = [normalizedFactory, maxScan, maxConsecutiveMisses].join('|');
+
+    if (this.config.responseCacheEnabled) {
+      const cached = this.farmSnapshotCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.farmSnapshotInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+    const request = (async () => {
+      const [governanceRes, enabledRes, nextIdRes] = await Promise.all([
+        this.source.runGetMethod(normalizedFactory, 'governance', []).catch(() => null),
+        this.source.runGetMethod(normalizedFactory, 'registry_enabled', []).catch(() => null),
+        this.source.runGetMethod(normalizedFactory, 'next_farm_id', []).catch(() => null)
+      ]);
+
+      const status =
+        governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
+          ? {
+              governance: tupleItemAddress(governanceRes.stack[0]),
+              enabled: tupleItemBool(enabledRes.stack[0])
+            }
+          : null;
+
+      const nextId = nextIdRes?.exitCode === 0 ? tupleItemBigInt(nextIdRes.stack[0]) : null;
+      const nextIdString = nextId !== null ? nextId.toString(10) : null;
+      const maxKnownFromNextId = nextId && nextId > 1n ? Number(nextId - 1n) : 0;
+      const scanLimit =
+        Number.isFinite(maxKnownFromNextId) && maxKnownFromNextId > 0
+          ? Math.min(maxScan, Math.trunc(maxKnownFromNextId))
+          : maxScan;
+
+      const farms: FarmSnapshotRecord[] = [];
+      let scanned = 0;
+      let misses = 0;
+      let farmResponded = false;
+
+      outer: for (let startId = 1; startId <= scanLimit; startId += FARM_SCAN_BATCH_SIZE) {
+        const endId = Math.min(scanLimit, startId + FARM_SCAN_BATCH_SIZE - 1);
+        const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
+        const batch = await Promise.all(
+          batchIds.map((farmId) =>
+            this.source
+              .runGetMethod(normalizedFactory, 'get_farm', [{ type: 'int', value: BigInt(farmId) }])
+              .catch(() => null)
+          )
+        );
+
+        for (let index = 0; index < batch.length; index += 1) {
+          scanned += 1;
+          const res = batch[index];
+          if (res) farmResponded = true;
+          if (!res || res.exitCode !== 0) {
+            misses += 1;
+            if (misses >= maxConsecutiveMisses) break outer;
+            continue;
+          }
+          const stack = res.stack;
+          const farm = tupleItemAddress(stack[0]);
+          if (!farm) {
+            misses += 1;
+            if (misses >= maxConsecutiveMisses) break outer;
+            continue;
+          }
+          misses = 0;
+          const id = batchIds[index];
+          farms.push({
+            id: String(id),
+            farm,
+            staker: tupleItemAddress(stack[1]),
+            sponsor: tupleItemAddress(stack[2]),
+            rewardRoot: tupleItemAddress(stack[3]),
+            rewardWallet: tupleItemAddress(stack[4]),
+            rewardAmount: tupleItemBigIntString(stack[5]),
+            duration: tupleItemBigIntString(stack[6]),
+            sponsorFeeBps: tupleItemBigIntString(stack[7]),
+            startTime: tupleItemBigIntString(stack[8]),
+            endTime: tupleItemBigIntString(stack[9]),
+            gasBudget: tupleItemBigIntString(stack[10]),
+            status: tupleItemBigIntString(stack[11]),
+            createdAt: tupleItemBigIntString(stack[12]),
+            backlogLimit: tupleItemBigIntString(stack[13]),
+            resumeBacklog: tupleItemBigIntString(stack[14])
+          });
+        }
+      }
+
+      if (!farmResponded && !governanceRes && !enabledRes && !nextIdRes) {
+        throw new Error('Farm snapshot is unavailable from the configured data source.');
+      }
+
+      farms.sort((left, right) => {
+        const leftId = BigInt(left.id);
+        const rightId = BigInt(right.id);
+        if (leftId === rightId) return 0;
+        return leftId > rightId ? 1 : -1;
+      });
+      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
+      return {
+        factory: normalizedFactory,
+        status,
+        next_id: nextIdString,
+        farm_count: farms.length,
+        scanned,
+        farms,
+        source,
+        network: this.network,
+        updated_at: Math.floor(Date.now() / 1000)
+      };
+    })();
+
+    if (this.config.responseCacheEnabled) {
+      this.farmSnapshotInFlight.set(cacheKey, request);
+    }
+
+    try {
+      const result = await request;
+      if (this.config.responseCacheEnabled) {
+        this.farmSnapshotCache.set(cacheKey, result);
+      }
+      return result;
+    } finally {
+      this.farmSnapshotInFlight.delete(cacheKey);
+    }
+  }
+
+  async getCoverSnapshot(
+    managerAddress: string,
+    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number } = {}
+  ): Promise<CoverSnapshotResponse> {
+    const normalizedManager = normalizeAddress(managerAddress);
+    const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
+    const maxScan = Math.max(1, Math.min(COVER_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? COVER_MAX_SCAN_DEFAULT)));
+    const maxConsecutiveMisses = Math.max(
+      1,
+      Math.min(
+        COVER_MAX_CONSECUTIVE_MISSES_LIMIT,
+        Math.trunc(options.maxConsecutiveMisses ?? COVER_MAX_CONSECUTIVE_MISSES_DEFAULT)
+      )
+    );
+    const cacheKey = [normalizedManager, normalizedOwner ?? '', maxScan, maxConsecutiveMisses].join('|');
+
+    if (this.config.responseCacheEnabled) {
+      const cached = this.coverSnapshotCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.coverSnapshotInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+    const request = (async () => {
+      const [stateRes, enabledRes] = await Promise.all([
+        this.source.runGetMethod(normalizedManager, 'get_state', []).catch(() => null),
+        this.source.runGetMethod(normalizedManager, 'registry_enabled', []).catch(() => null)
+      ]);
+
+      const state =
+        stateRes?.exitCode === 0
+          ? {
+              totalPolicies: tupleItemBigIntString(stateRes.stack[0]),
+              activePolicies: tupleItemBigIntString(stateRes.stack[1]),
+              breachingPolicies: tupleItemBigIntString(stateRes.stack[2]),
+              claimablePolicies: tupleItemBigIntString(stateRes.stack[3]),
+              claimedPolicies: tupleItemBigIntString(stateRes.stack[4]),
+              nextWakeTimestamp: tupleItemBigIntString(stateRes.stack[5]),
+              lastSender: tupleItemAddress(stateRes.stack[6]),
+              lastJobId: tupleItemBigIntString(stateRes.stack[7]),
+              lastWork: tupleItemBigIntString(stateRes.stack[8]),
+              lastTimestamp: tupleItemBigIntString(stateRes.stack[9]),
+              lastProcessed: tupleItemBigIntString(stateRes.stack[10]),
+              lastRemaining: tupleItemBigIntString(stateRes.stack[11]),
+              vault: tupleItemAddress(stateRes.stack[12]),
+              admin: tupleItemAddress(stateRes.stack[13]),
+              riskVault: tupleItemAddress(stateRes.stack[14]),
+              riskBucketId: tupleItemBigIntString(stateRes.stack[15])
+            }
+          : null;
+      const enabled = enabledRes?.exitCode === 0 ? tupleItemBool(enabledRes.stack[0]) : null;
+      const totalPoliciesRaw = stateRes?.exitCode === 0 ? tupleItemBigInt(stateRes.stack[0]) : null;
+      const totalPolicies =
+        totalPoliciesRaw && totalPoliciesRaw > 0n && Number.isFinite(Number(totalPoliciesRaw))
+          ? Math.max(0, Math.trunc(Number(totalPoliciesRaw)))
+          : 0;
+      const scanCount = totalPolicies > 0 ? Math.min(maxScan, totalPolicies) : maxScan;
+      const startPolicyId = totalPolicies > 0 ? totalPolicies : maxScan;
+      const scanFloor = Math.max(1, startPolicyId - scanCount + 1);
+
+      const policies: CoverPolicySnapshot[] = [];
+      let scanned = 0;
+      let misses = 0;
+      let policyResponded = false;
+
+      outer: for (let startId = startPolicyId; startId >= scanFloor; startId -= COVER_SCAN_BATCH_SIZE) {
+        const endId = Math.max(scanFloor, startId - COVER_SCAN_BATCH_SIZE + 1);
+        const batchIds = Array.from({ length: startId - endId + 1 }, (_, index) => startId - index);
+        const batch = await Promise.all(
+          batchIds.map((policyId) =>
+            this.source
+              .runGetMethod(normalizedManager, 'get_policy', [{ type: 'int', value: BigInt(policyId) }])
+              .catch(() => null)
+          )
+        );
+
+        for (let index = 0; index < batch.length; index += 1) {
+          scanned += 1;
+          const res = batch[index];
+          if (res) policyResponded = true;
+          if (!res || res.exitCode !== 0) {
+            misses += 1;
+            if (misses >= maxConsecutiveMisses) break outer;
+            continue;
+          }
+          const stack = res.stack;
+          const exists = tupleItemBool(stack[0]);
+          if (!exists) {
+            misses += 1;
+            if (misses >= maxConsecutiveMisses) break outer;
+            continue;
+          }
+          const owner = tupleItemAddress(stack[1]);
+          misses = 0;
+          if (normalizedOwner && owner !== normalizedOwner) {
+            continue;
+          }
+          policies.push({
+            id: String(batchIds[index]),
+            owner,
+            pool: tupleItemAddress(stack[2]),
+            lowerBound: tupleItemBigIntString(stack[3]),
+            upperBound: tupleItemBigIntString(stack[4]),
+            payout: tupleItemBigIntString(stack[5]),
+            windowSeconds: tupleItemBigIntString(stack[6]),
+            requiredObservations: tupleItemBigIntString(stack[7]),
+            breachStart: tupleItemBigIntString(stack[8]),
+            breachSeconds: tupleItemBigIntString(stack[9]),
+            lastObservation: tupleItemBigIntString(stack[10]),
+            lastHealthyObservation: tupleItemBigIntString(stack[11]),
+            breachObservations: tupleItemBigIntString(stack[12]),
+            status: tupleItemBigIntString(stack[13]),
+            riskVault: tupleItemAddress(stack[14]),
+            riskBucketId: tupleItemBigIntString(stack[15])
+          });
+        }
+      }
+
+      if (!policyResponded && !stateRes && !enabledRes) {
+        throw new Error('Cover snapshot is unavailable from the configured data source.');
+      }
+
+      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
+      return {
+        manager: normalizedManager,
+        owner: normalizedOwner,
+        enabled,
+        state,
+        policy_count: policies.length,
+        scanned,
+        policies,
+        source,
+        network: this.network,
+        updated_at: Math.floor(Date.now() / 1000)
+      };
+    })();
+
+    if (this.config.responseCacheEnabled) {
+      this.coverSnapshotInFlight.set(cacheKey, request);
+    }
+
+    try {
+      const result = await request;
+      if (this.config.responseCacheEnabled) {
+        this.coverSnapshotCache.set(cacheKey, result);
+      }
+      return result;
+    } finally {
+      this.coverSnapshotInFlight.delete(cacheKey);
     }
   }
 

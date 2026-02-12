@@ -9,7 +9,9 @@ import { RateLimiter } from './rateLimit';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from './validation';
 import {
   addressParamsSchema,
+  coverSnapshotQuerySchema,
   debugQuerySchema,
+  farmsSnapshotQuerySchema,
   governanceSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
   txQuerySchema
@@ -241,6 +243,95 @@ export const registerRoutes = (
 
       try {
         return await service.getGovernanceSnapshot(voting, {
+          owner,
+          maxScan,
+          maxConsecutiveMisses
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/farms/:factory/snapshot',
+    {
+      schema: {
+        params: { type: 'object', properties: { factory: { type: 'string' } }, required: ['factory'] },
+        querystring: farmsSnapshotQuerySchema
+      }
+    },
+    async (request, reply) => {
+      const factory = (request.params as { factory: string }).factory;
+      if (!isValidAddress(factory)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid factory address');
+      }
+
+      const query = request.query as {
+        max_scan?: string | number;
+        max_misses?: string | number;
+      };
+      const maxScanParsed =
+        typeof query.max_scan === 'number'
+          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
+          : parsePositiveInt(query.max_scan);
+      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
+
+      const maxMissesParsed =
+        typeof query.max_misses === 'number'
+          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
+          : parsePositiveInt(query.max_misses);
+      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
+
+      try {
+        return await service.getFarmSnapshot(factory, {
+          maxScan,
+          maxConsecutiveMisses
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/cover/:manager/snapshot',
+    {
+      schema: {
+        params: { type: 'object', properties: { manager: { type: 'string' } }, required: ['manager'] },
+        querystring: coverSnapshotQuerySchema
+      }
+    },
+    async (request, reply) => {
+      const manager = (request.params as { manager: string }).manager;
+      if (!isValidAddress(manager)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid cover manager address');
+      }
+
+      const query = request.query as {
+        owner?: string;
+        max_scan?: string | number;
+        max_misses?: string | number;
+      };
+      const owner = query.owner?.trim() ? query.owner.trim() : undefined;
+      if (owner && !isValidAddress(owner)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
+      }
+
+      const maxScanParsed =
+        typeof query.max_scan === 'number'
+          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
+          : parsePositiveInt(query.max_scan);
+      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
+
+      const maxMissesParsed =
+        typeof query.max_misses === 'number'
+          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
+          : parsePositiveInt(query.max_misses);
+      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
+
+      try {
+        return await service.getCoverSnapshot(manager, {
           owner,
           maxScan,
           maxConsecutiveMisses

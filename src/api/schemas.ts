@@ -38,3 +38,20 @@ export const governanceSnapshotQuerySchema = {
     max_misses: { type: 'integer', minimum: 1, maximum: 8 },
   },
 };
+
+export const farmsSnapshotQuerySchema = {
+  type: 'object',
+  properties: {
+    max_scan: { type: 'integer', minimum: 1, maximum: 64 },
+    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
+  },
+};
+
+export const coverSnapshotQuerySchema = {
+  type: 'object',
+  properties: {
+    owner: { type: 'string' },
+    max_scan: { type: 'integer', minimum: 1, maximum: 64 },
+    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
+  },
+};
