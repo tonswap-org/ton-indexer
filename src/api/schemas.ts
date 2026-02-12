@@ -21,3 +21,11 @@ export const debugQuerySchema = {
     limit: { type: 'integer', minimum: 1, maximum: 500 },
   },
 };
+
+export const perpsSnapshotQuerySchema = {
+  type: 'object',
+  properties: {
+    market_ids: { type: 'string' },
+    max_markets: { type: 'integer', minimum: 1, maximum: 128 },
+  },
+};

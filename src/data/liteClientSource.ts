@@ -314,7 +314,7 @@ export class LiteClientDataSource implements TonDataSource {
     return pending;
   }
 
-  private async runGetMethod(address: Address, method: string, args: TupleItem[] = []): Promise<TupleReader> {
+  private async runGetMethodReader(address: Address, method: string, args: TupleItem[] = []): Promise<TupleReader> {
     const master = await this.getMasterchainRef();
     const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
     const res = await this.call((client) => client.runMethod(address, method, params, master.last));
@@ -380,6 +380,31 @@ export class LiteClientDataSource implements TonDataSource {
     });
   }
 
+  async runGetMethod(
+    address: string,
+    method: string,
+    args: TupleItem[] = []
+  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
+    try {
+      const target = Address.parse(address);
+      const master = await this.getMasterchainRef();
+      const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
+      const res = await this.call((client) => client.runMethod(target, method, params, master.last));
+      const exitCode = typeof res?.exitCode === 'number' ? res.exitCode : Number.NaN;
+      if (!Number.isFinite(exitCode)) return null;
+      const stack =
+        res?.result && typeof res.result === 'string'
+          ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0])
+          : [];
+      return {
+        exitCode,
+        stack
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
     try {
       const ownerAddr = Address.parse(owner);
@@ -388,7 +413,7 @@ export class LiteClientDataSource implements TonDataSource {
       let walletAddr: Address | null = null;
       for (const method of ['wallet_address', 'get_wallet_address']) {
         try {
-          const walletReader = await this.runGetMethod(masterAddr, method, args);
+          const walletReader = await this.runGetMethodReader(masterAddr, method, args);
           walletAddr = walletReader.readAddress();
           break;
         } catch {
@@ -399,7 +424,7 @@ export class LiteClientDataSource implements TonDataSource {
       let balance: bigint | null = null;
       for (const method of ['wallet_data', 'get_wallet_data']) {
         try {
-          const balanceReader = await this.runGetMethod(walletAddr, method);
+          const balanceReader = await this.runGetMethodReader(walletAddr, method);
           balance = balanceReader.readBigNumber();
           break;
         } catch {
@@ -419,7 +444,7 @@ export class LiteClientDataSource implements TonDataSource {
   async getJettonMetadata(master: string) {
     try {
       const masterAddr = Address.parse(master);
-      const reader = await this.runGetMethod(masterAddr, 'get_jetton_data');
+      const reader = await this.runGetMethodReader(masterAddr, 'get_jetton_data');
       reader.readBigNumber();
       reader.readBoolean();
       reader.readAddressOpt();

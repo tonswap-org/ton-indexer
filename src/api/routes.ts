@@ -7,7 +7,7 @@ import { AdminGuard } from './admin';
 import { DebugService } from '../debugService';
 import { RateLimiter } from './rateLimit';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from './validation';
-import { addressParamsSchema, debugQuerySchema, txQuerySchema } from './schemas';
+import { addressParamsSchema, debugQuerySchema, perpsSnapshotQuerySchema, txQuerySchema } from './schemas';
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
 import { sendError } from './errors';
@@ -159,6 +159,39 @@ export const registerRoutes = (
       }
       try {
         return await service.getBalances(addr);
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/perps/:engine/snapshot',
+    { schema: { params: { type: 'object', properties: { engine: { type: 'string' } }, required: ['engine'] }, querystring: perpsSnapshotQuerySchema } },
+    async (request, reply) => {
+      const engine = (request.params as { engine: string }).engine;
+      if (!isValidAddress(engine)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid engine address');
+      }
+
+      const query = request.query as { market_ids?: string; max_markets?: string | number };
+      const marketIds = (query.market_ids ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => /^\d+$/.test(value))
+        .map((value) => Number.parseInt(value, 10))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const maxMarketsParsed =
+        typeof query.max_markets === 'number'
+          ? (Number.isInteger(query.max_markets) && query.max_markets > 0 ? query.max_markets : null)
+          : parsePositiveInt(query.max_markets);
+      const maxMarkets = maxMarketsParsed ? Math.min(128, maxMarketsParsed) : undefined;
+
+      try {
+        return await service.getPerpsSnapshot(engine, {
+          marketIds: marketIds.length ? marketIds : undefined,
+          maxMarkets
+        });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', (error as Error).message);
       }

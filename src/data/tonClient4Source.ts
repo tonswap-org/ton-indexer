@@ -1,4 +1,4 @@
-import { Address, Cell } from '@ton/core';
+import { Address, Cell, TupleItem } from '@ton/core';
 import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
 import { Network } from '../models';
 import { AccountStateResponse, MasterchainInfo, RawMessage, RawTransaction, TonDataSource } from './dataSource';
@@ -8,6 +8,7 @@ type TonClient4Like = {
   getLastBlock(): Promise<any>;
   getAccount(seqno: number, address: Address): Promise<any>;
   getAccountTransactionsParsed(address: Address, lt: bigint, hash: Buffer, limit: number): Promise<any>;
+  runMethod(seqno: number, address: Address, name: string, args?: TupleItem[]): Promise<any>;
   open<T>(contract: T): T;
 };
 
@@ -173,6 +174,39 @@ export class TonClient4DataSource implements TonDataSource {
         outMessages: (tx.outMessages ?? []).map(mapMessage).filter(Boolean),
       };
     });
+  }
+
+  async runGetMethod(
+    address: string,
+    method: string,
+    args: TupleItem[] = []
+  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
+    try {
+      const parsed = Address.parse(address);
+      const last = await this.call((client) => client.getLastBlock());
+      const response = await this.call((client) => client.runMethod(last.last.seqno, parsed, method, args));
+      const exitCode =
+        typeof response?.exitCode === 'number'
+          ? response.exitCode
+          : typeof response?.exit_code === 'number'
+            ? response.exit_code
+            : Number.NaN;
+      if (!Number.isFinite(exitCode)) return null;
+      let stack: TupleItem[] = [];
+      if (Array.isArray(response?.result)) {
+        stack = response.result as TupleItem[];
+      } else if (Array.isArray(response?.stack)) {
+        stack = response.stack as TupleItem[];
+      } else if (response?.reader && Array.isArray(response.reader?.items)) {
+        stack = response.reader.items as TupleItem[];
+      }
+      return {
+        exitCode,
+        stack
+      };
+    } catch {
+      return null;
+    }
   }
 
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {

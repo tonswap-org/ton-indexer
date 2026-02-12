@@ -1,3 +1,4 @@
+import { TupleItem } from '@ton/core';
 import { Network } from '../models';
 import { JettonMetadata } from '../models';
 
@@ -38,6 +39,11 @@ export interface TonDataSource {
   getMasterchainInfo(): Promise<MasterchainInfo>;
   getAccountState(address: string): Promise<AccountStateResponse>;
   getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]>;
+  runGetMethod(
+    address: string,
+    method: string,
+    args?: TupleItem[]
+  ): Promise<{ exitCode: number; stack: TupleItem[] } | null>;
   getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null>;
   getJettonMetadata(master: string): Promise<JettonMetadata | null>;
   close(): Promise<void>;

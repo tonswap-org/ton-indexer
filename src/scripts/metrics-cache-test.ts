@@ -30,6 +30,9 @@ const dummySource: TonDataSource = {
   async getTransactions() {
     return [];
   },
+  async runGetMethod() {
+    return null;
+  },
   async getJettonBalance() {
     return null;
   },

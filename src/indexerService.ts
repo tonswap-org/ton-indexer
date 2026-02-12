@@ -1,4 +1,4 @@
-import { Address } from '@ton/core';
+import { Address, TupleItem } from '@ton/core';
 import { EventEmitter } from 'node:events';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
@@ -33,6 +33,39 @@ const normalizeAddress = (value: string) => {
 const balanceStateSignature = (state?: AccountState) => {
   if (!state) return '';
   return [state.balance ?? '', state.lastTxLt ?? '', state.lastTxHash ?? ''].join(':');
+};
+
+const tupleItemBigInt = (item?: TupleItem): bigint | null => {
+  if (!item) return null;
+  if (item.type === 'int') return item.value;
+  return null;
+};
+
+const tupleItemBigIntString = (item?: TupleItem): string | null => {
+  const value = tupleItemBigInt(item);
+  return value !== null ? value.toString(10) : null;
+};
+
+const tupleItemBool = (item?: TupleItem): boolean => {
+  const value = tupleItemBigInt(item);
+  return value !== null && value !== 0n;
+};
+
+const tupleItemAddress = (item?: TupleItem): string | null => {
+  if (!item || item.type === 'null') return null;
+  if (item.type !== 'cell' && item.type !== 'slice' && item.type !== 'builder') return null;
+  try {
+    const exact = item.cell.beginParse().loadAddress();
+    return exact ? exact.toRawString() : null;
+  } catch {
+    // fall through to maybe-address decoding
+  }
+  try {
+    const maybe = item.cell.beginParse().loadMaybeAddress();
+    return maybe ? maybe.toRawString() : null;
+  } catch {
+    return null;
+  }
 };
 
 export class IndexerService {
@@ -395,6 +428,143 @@ export class IndexerService {
     };
     this.setCached(this.stateCache, address, response, signature, this.config.stateCacheTtlMs);
     return response;
+  }
+
+  async getPerpsSnapshot(
+    engineAddress: string,
+    options: { marketIds?: number[]; maxMarkets?: number } = {}
+  ) {
+    const normalizedEngine = normalizeAddress(engineAddress);
+    const maxMarkets = Math.max(1, Math.min(128, Math.trunc(options.maxMarkets ?? 64)));
+    const requestedMarketIds = Array.from(
+      new Set(
+        (options.marketIds ?? [])
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.trunc(value))
+      )
+    ).slice(0, maxMarkets);
+
+    const [governanceRes, enabledRes, automationRes] = await Promise.all([
+      this.source.runGetMethod(normalizedEngine, 'engine_governance', []),
+      this.source.runGetMethod(normalizedEngine, 'engine_enabled', []),
+      this.source.runGetMethod(normalizedEngine, 'automation_state', [])
+    ]);
+
+    if (!governanceRes && !enabledRes && !automationRes) {
+      throw new Error('Perps snapshot is unavailable from the configured data source.');
+    }
+
+    const status =
+      governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
+        ? {
+            governance: tupleItemAddress(governanceRes.stack[0]),
+            enabled: tupleItemBool(enabledRes.stack[0])
+          }
+        : null;
+
+    const automation =
+      automationRes?.exitCode === 0
+        ? {
+            fundingCursor: tupleItemBigIntString(automationRes.stack[0]),
+            lastFundingTimestamp: tupleItemBigIntString(automationRes.stack[1]),
+            lastFundingProcessed: tupleItemBigIntString(automationRes.stack[2]),
+            lastFundingRemaining: tupleItemBigIntString(automationRes.stack[3]),
+            liquidationCursor: tupleItemBigIntString(automationRes.stack[4]),
+            lastLiquidationTimestamp: tupleItemBigIntString(automationRes.stack[5]),
+            lastLiquidationProcessed: tupleItemBigIntString(automationRes.stack[6]),
+            lastLiquidationRemaining: tupleItemBigIntString(automationRes.stack[7]),
+            maxMarketId: tupleItemBigIntString(automationRes.stack[8]),
+            liquidationNonce: tupleItemBigIntString(automationRes.stack[9]),
+            liquidationBacklog: tupleItemBigIntString(automationRes.stack[10]),
+            controlAuthority: tupleItemAddress(automationRes.stack[11]),
+            controlSequence: tupleItemBigIntString(automationRes.stack[12]),
+            controlTimestamp: tupleItemBigIntString(automationRes.stack[13])
+          }
+        : null;
+
+    const derivedMarketIds =
+      requestedMarketIds.length > 0
+        ? requestedMarketIds
+        : (() => {
+            const maxMarketId = automation?.maxMarketId ? Number(automation.maxMarketId) : 0;
+            if (Number.isFinite(maxMarketId) && maxMarketId > 0) {
+              return Array.from({ length: Math.min(maxMarkets, Math.trunc(maxMarketId)) }, (_, index) => index + 1);
+            }
+            return [1, 2, 3];
+          })();
+
+    const markets: Record<string, any> = {};
+    const marketIds: number[] = [];
+
+    for (const marketId of derivedMarketIds.slice(0, maxMarkets)) {
+      const marketRes = await this.source.runGetMethod(normalizedEngine, 'market_state', [
+        { type: 'int', value: BigInt(marketId) }
+      ]);
+      if (!marketRes || marketRes.exitCode !== 0) continue;
+      const stack = marketRes.stack;
+      markets[String(marketId)] = {
+        exists: tupleItemBool(stack[0]),
+        pool: tupleItemAddress(stack[1]),
+        depthUnit: tupleItemBigIntString(stack[2]),
+        impactAlpha: tupleItemBigIntString(stack[3]),
+        impactBeta: tupleItemBigIntString(stack[4]),
+        baseLeverageBps: tupleItemBigIntString(stack[5]),
+        maxLeverageBps: tupleItemBigIntString(stack[6]),
+        maintenanceBps: tupleItemBigIntString(stack[7]),
+        oiCap: tupleItemBigIntString(stack[8]),
+        fundingCapBps: tupleItemBigIntString(stack[9]),
+        fundingIndex: tupleItemBigIntString(stack[10]),
+        lastFundingTs: tupleItemBigIntString(stack[11]),
+        oiLong: tupleItemBigIntString(stack[12]),
+        oiShort: tupleItemBigIntString(stack[13]),
+        longBase: tupleItemBigIntString(stack[14]),
+        shortBase: tupleItemBigIntString(stack[15]),
+        halted: tupleItemBool(stack[16]),
+        oracleMark: tupleItemBigIntString(stack[17]),
+        oracleMarkTs: tupleItemBigIntString(stack[18]),
+        liquidationSlice: tupleItemBigIntString(stack[19]),
+        liquidationCooldown: tupleItemBigIntString(stack[20]),
+        liquidationPendingBase: tupleItemBigIntString(stack[21]),
+        liquidationLastTs: tupleItemBigIntString(stack[22]),
+        adlDeficit: tupleItemBigIntString(stack[23]),
+        liquidityWeightBps: tupleItemBigIntString(stack[24]),
+        utilizationWeightBps: tupleItemBigIntString(stack[25]),
+        lastDynamicWeightBps: tupleItemBigIntString(stack[26]),
+        rebalanceClampBps: tupleItemBigIntString(stack[27]),
+        lastClampUpdateTs: tupleItemBigIntString(stack[28]),
+        auctionActive: tupleItemBool(stack[29]),
+        auctionOutstandingBase: tupleItemBigIntString(stack[30]),
+        auctionMinPrice: tupleItemBigIntString(stack[31]),
+        auctionMaxPrice: tupleItemBigIntString(stack[32]),
+        auctionExpiryTs: tupleItemBigIntString(stack[33]),
+        auctionClearingPrice: tupleItemBigIntString(stack[34]),
+        controlWeightBps: tupleItemBigIntString(stack[35]),
+        controlFeeDeltaBps: tupleItemBigIntString(stack[36]),
+        marketKind: tupleItemBigIntString(stack[37]),
+        timerVolatilityBps: tupleItemBigIntString(stack[38]),
+        timerEmaVolatilityBps: tupleItemBigIntString(stack[39]),
+        timerLastUpdateTs: tupleItemBigIntString(stack[40]),
+        timerWeightBps: tupleItemBigIntString(stack[41]),
+        correlationBps: tupleItemBigIntString(stack[42]),
+        correlationDispersionBps: tupleItemBigIntString(stack[43]),
+        correlationLastUpdateTs: tupleItemBigIntString(stack[44]),
+        correlationWeightBps: tupleItemBigIntString(stack[45]),
+        lastFundingPayloadHash: tupleItemBigIntString(stack[46]),
+        lastFundingPoolHash: tupleItemBigIntString(stack[47])
+      };
+      marketIds.push(marketId);
+    }
+
+    return {
+      engine: normalizedEngine,
+      status,
+      automation,
+      market_ids: marketIds,
+      markets,
+      source: this.config.dataSource === 'lite' ? 'lite' : 'http4',
+      network: this.network,
+      updated_at: Math.floor(Date.now() / 1000)
+    };
   }
 
   async getTransactions(address: string, page: number) {
