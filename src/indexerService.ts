@@ -1037,6 +1037,9 @@ export class IndexerService {
       last_tx_hash: entry?.balance?.lastTxHash,
       last_seen_utime: latest?.utime ?? null,
       last_confirmed_seqno: this.lastMasterSeqno ?? null,
+      account_state: entry?.balance?.accountState ?? null,
+      code_boc: entry?.balance?.codeBoc ?? null,
+      data_boc: entry?.balance?.dataBoc ?? null,
       network: this.network,
     };
     this.setCached(this.stateCache, address, response, signature, this.config.stateCacheTtlMs);
@@ -2712,6 +2715,9 @@ export class IndexerService {
       balance: state.balance,
       lastTxLt: state.lastTxLt,
       lastTxHash: state.lastTxHash,
+      accountState: state.accountState ?? null,
+      codeBoc: state.codeBoc ?? null,
+      dataBoc: state.dataBoc ?? null,
       updatedAt: Date.now(),
     };
     this.store.setBalance(address, accountState);
@@ -2752,13 +2758,22 @@ export class IndexerService {
     return raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
   }
 
-  private toApiTx(tx: IndexedTx): UiTx & { kind: string; actions: any[]; lt: string; hash: string } {
+  private toApiTx(tx: IndexedTx): UiTx & {
+    kind: string;
+    actions: any[];
+    lt: string;
+    hash: string;
+    inMessage?: IndexedTx['inMessage'];
+    outMessages?: IndexedTx['outMessages'];
+  } {
     return {
       ...tx.ui,
       kind: tx.kind,
       actions: tx.actions,
       lt: tx.lt,
       hash: tx.hash,
+      inMessage: tx.inMessage,
+      outMessages: tx.outMessages,
     };
   }
 }

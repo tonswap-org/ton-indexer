@@ -131,10 +131,43 @@ export class TonClient4DataSource implements TonDataSource {
     const parsed = Address.parse(address);
     const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
     const lastTx = account.account.last;
+    const stateRaw = account?.account?.state;
+
+    const readStateKind = (value: unknown): 'active' | 'uninitialized' | 'frozen' | null => {
+      const type =
+        typeof value === 'string'
+          ? value
+          : value && typeof value === 'object' && 'type' in value
+            ? String((value as Record<string, unknown>).type ?? '')
+            : '';
+      const normalized = type.trim().toLowerCase();
+      if (normalized === 'active') return 'active';
+      if (normalized === 'frozen') return 'frozen';
+      if (normalized === 'uninit' || normalized === 'uninitialized' || normalized === 'inactive') return 'uninitialized';
+      return null;
+    };
+
+    const readBocString = (value: unknown): string | null => {
+      if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+      if (value && typeof value === 'object' && 'bytes' in value) {
+        const bytes = (value as Record<string, unknown>).bytes;
+        if (typeof bytes === 'string' && bytes.trim().length > 0) return bytes.trim();
+      }
+      return null;
+    };
+
+    const stateType = readStateKind(stateRaw);
+    const stateRecord = stateRaw && typeof stateRaw === 'object' ? (stateRaw as Record<string, unknown>) : null;
+    const codeBoc = stateRecord ? readBocString(stateRecord.code) : null;
+    const dataBoc = stateRecord ? readBocString(stateRecord.data) : null;
+
     return {
       balance: account.account.balance.coins,
       lastTxLt: lastTx?.lt ?? undefined,
       lastTxHash: lastTx?.hash ?? undefined,
+      accountState: stateType,
+      codeBoc,
+      dataBoc
     };
   }
 

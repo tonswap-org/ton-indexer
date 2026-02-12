@@ -27,6 +27,9 @@ export type AccountStateResponse = {
   balance: string;
   lastTxLt?: string;
   lastTxHash?: string;
+  accountState?: 'active' | 'uninitialized' | 'frozen' | null;
+  codeBoc?: string | null;
+  dataBoc?: string | null;
 };
 
 export type MasterchainInfo = {

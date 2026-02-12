@@ -338,10 +338,25 @@ export class LiteClientDataSource implements TonDataSource {
     const parsed = Address.parse(address);
     const state = await this.call((client) => client.getAccountState(parsed, master.last));
     const lastTx = state.lastTx;
+    const account = state.state ?? null;
+    const storageState = account?.storage?.state;
+    const storageType = storageState?.type;
+    const accountState =
+      !account || storageType === 'uninit'
+        ? ('uninitialized' as const)
+        : storageType === 'frozen'
+          ? ('frozen' as const)
+          : ('active' as const);
+    const activeState = storageType === 'active' && storageState ? storageState.state : null;
+    const codeCell = activeState?.code ?? null;
+    const dataCell = activeState?.data ?? null;
     return {
       balance: state.balance.coins.toString(),
       lastTxLt: lastTx?.lt?.toString(),
       lastTxHash: lastTx ? bigintToBuffer(lastTx.hash).toString('base64') : undefined,
+      accountState,
+      codeBoc: codeCell ? Buffer.from(codeCell.toBoc()).toString('base64') : null,
+      dataBoc: dataCell ? Buffer.from(dataCell.toBoc()).toString('base64') : null
     };
   }
 
