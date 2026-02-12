@@ -29,3 +29,12 @@ export const perpsSnapshotQuerySchema = {
     max_markets: { type: 'integer', minimum: 1, maximum: 128 },
   },
 };
+
+export const governanceSnapshotQuerySchema = {
+  type: 'object',
+  properties: {
+    owner: { type: 'string' },
+    max_scan: { type: 'integer', minimum: 1, maximum: 64 },
+    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
+  },
+};

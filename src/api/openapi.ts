@@ -242,6 +242,57 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['engine', 'market_ids', 'markets', 'source', 'network', 'updated_at'],
         },
+        GovernanceLockResponse: {
+          type: 'object',
+          properties: {
+            amount: { type: ['string', 'null'] },
+            unlockTime: { type: ['string', 'null'] },
+            tier: { type: ['string', 'null'] },
+            activatedAt: { type: ['string', 'null'] },
+            weight: { type: ['string', 'null'] },
+          },
+        },
+        GovernanceProposalResponse: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            status: { type: ['string', 'null'] },
+            passed: { type: ['string', 'null'] },
+            yesWeight: { type: ['string', 'null'] },
+            noWeight: { type: ['string', 'null'] },
+            abstainWeight: { type: ['string', 'null'] },
+            quorumWeight: { type: ['string', 'null'] },
+            totalWeightSnapshot: { type: ['string', 'null'] },
+            startTime: { type: ['string', 'null'] },
+            minCloseTime: { type: ['string', 'null'] },
+            maxCloseTime: { type: ['string', 'null'] },
+            cooldownEnd: { type: ['string', 'null'] },
+            target: { type: ['string', 'null'] },
+            value: { type: ['string', 'null'] },
+            descriptionHash: { type: ['string', 'null'] },
+          },
+          required: ['id'],
+        },
+        GovernanceSnapshotResponse: {
+          type: 'object',
+          properties: {
+            voting: { type: 'string' },
+            owner: { type: ['string', 'null'] },
+            lock: {
+              oneOf: [{ $ref: '#/components/schemas/GovernanceLockResponse' }, { type: 'null' }],
+            },
+            proposal_count: { type: 'integer' },
+            scanned: { type: 'integer' },
+            proposals: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/GovernanceProposalResponse' },
+            },
+            source: { type: 'string' },
+            network: { type: 'string' },
+            updated_at: { type: 'integer' },
+          },
+          required: ['voting', 'proposal_count', 'scanned', 'proposals', 'source', 'network', 'updated_at'],
+        },
         SnapshotResponse: {
           type: 'object',
           properties: {
@@ -420,6 +471,29 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Perps snapshot response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/PerpsSnapshotResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/governance/{voting}/snapshot': {
+        get: {
+          summary: 'Governance snapshot',
+          parameters: [
+            { name: 'voting', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'owner', in: 'query', schema: { type: 'string' } },
+            { name: 'max_scan', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
+            { name: 'max_misses', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8 } },
+          ],
+          responses: {
+            200: {
+              description: 'Governance snapshot response',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/GovernanceSnapshotResponse' } },
+              },
             },
             400: {
               description: 'Bad request',

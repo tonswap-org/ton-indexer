@@ -7,6 +7,7 @@ assert.equal(spec.openapi, '3.0.3');
 assert.ok(spec.paths['/api/indexer/v1/health']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs']);
 assert.ok(spec.paths['/api/indexer/v1/perps/{engine}/snapshot']);
+assert.ok(spec.paths['/api/indexer/v1/governance/{voting}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/openapi.json']);
 
 console.log('openapi ok');

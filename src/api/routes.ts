@@ -7,7 +7,13 @@ import { AdminGuard } from './admin';
 import { DebugService } from '../debugService';
 import { RateLimiter } from './rateLimit';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from './validation';
-import { addressParamsSchema, debugQuerySchema, perpsSnapshotQuerySchema, txQuerySchema } from './schemas';
+import {
+  addressParamsSchema,
+  debugQuerySchema,
+  governanceSnapshotQuerySchema,
+  perpsSnapshotQuerySchema,
+  txQuerySchema
+} from './schemas';
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
 import { sendError } from './errors';
@@ -191,6 +197,53 @@ export const registerRoutes = (
         return await service.getPerpsSnapshot(engine, {
           marketIds: marketIds.length ? marketIds : undefined,
           maxMarkets
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/governance/:voting/snapshot',
+    {
+      schema: {
+        params: { type: 'object', properties: { voting: { type: 'string' } }, required: ['voting'] },
+        querystring: governanceSnapshotQuerySchema
+      }
+    },
+    async (request, reply) => {
+      const voting = (request.params as { voting: string }).voting;
+      if (!isValidAddress(voting)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid voting address');
+      }
+
+      const query = request.query as {
+        owner?: string;
+        max_scan?: string | number;
+        max_misses?: string | number;
+      };
+      const owner = query.owner?.trim() ? query.owner.trim() : undefined;
+      if (owner && !isValidAddress(owner)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
+      }
+      const maxScanParsed =
+        typeof query.max_scan === 'number'
+          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
+          : parsePositiveInt(query.max_scan);
+      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
+
+      const maxMissesParsed =
+        typeof query.max_misses === 'number'
+          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
+          : parsePositiveInt(query.max_misses);
+      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
+
+      try {
+        return await service.getGovernanceSnapshot(voting, {
+          owner,
+          maxScan,
+          maxConsecutiveMisses
         });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', (error as Error).message);

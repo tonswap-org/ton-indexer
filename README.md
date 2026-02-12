@@ -77,6 +77,7 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
 - `GET /api/indexer/v1/accounts/{addr}/state`
 - `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64`
+- `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/stream/balances?address={addr}` (Server-Sent Events stream)
 - `GET /api/indexer/v1/stream?address={addr}` (alias of `/stream/balances`)
 - `GET /api/indexer/v1/health`

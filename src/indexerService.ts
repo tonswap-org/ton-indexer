@@ -1,4 +1,4 @@
-import { Address, TupleItem } from '@ton/core';
+import { Address, TupleItem, beginCell } from '@ton/core';
 import { EventEmitter } from 'node:events';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
@@ -68,6 +68,51 @@ const tupleItemAddress = (item?: TupleItem): string | null => {
   }
 };
 
+const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 5_000;
+const GOVERNANCE_MAX_SCAN_DEFAULT = 20;
+const GOVERNANCE_MAX_SCAN_LIMIT = 64;
+const GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
+const GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
+const GOVERNANCE_SCAN_BATCH_SIZE = 5;
+
+type GovernanceLockSnapshot = {
+  amount: string | null;
+  unlockTime: string | null;
+  tier: string | null;
+  activatedAt: string | null;
+  weight: string | null;
+};
+
+type GovernanceProposalSnapshot = {
+  id: string;
+  status: string | null;
+  passed: string | null;
+  yesWeight: string | null;
+  noWeight: string | null;
+  abstainWeight: string | null;
+  quorumWeight: string | null;
+  totalWeightSnapshot: string | null;
+  startTime: string | null;
+  minCloseTime: string | null;
+  maxCloseTime: string | null;
+  cooldownEnd: string | null;
+  target: string | null;
+  value: string | null;
+  descriptionHash: string | null;
+};
+
+type GovernanceSnapshotResponse = {
+  voting: string;
+  owner: string | null;
+  lock: GovernanceLockSnapshot | null;
+  proposal_count: number;
+  scanned: number;
+  proposals: GovernanceProposalSnapshot[];
+  source: 'lite' | 'http4';
+  network: Network;
+  updated_at: number;
+};
+
 export class IndexerService {
   private config: Config;
   private store: MemoryStore;
@@ -84,6 +129,8 @@ export class IndexerService {
   private balanceCache: LRUCache<string, { value: AccountBalance; signature: string }>;
   private txCache: LRUCache<string, { value: any; signature: string }>;
   private stateCache: LRUCache<string, { value: any; signature: string }>;
+  private governanceSnapshotCache: LRUCache<string, GovernanceSnapshotResponse>;
+  private governanceSnapshotInFlight = new Map<string, Promise<GovernanceSnapshotResponse>>();
   private healthCache?: { value: HealthStatus; expiresAt: number };
   private balanceEventEmitter = new EventEmitter();
   private balanceEventSeq = 0;
@@ -127,6 +174,11 @@ export class IndexerService {
       max: txCacheMax,
       ttl: config.txCacheTtlMs,
       allowStale: false,
+    });
+    this.governanceSnapshotCache = new LRUCache({
+      max: 512,
+      ttl: GOVERNANCE_SNAPSHOT_CACHE_TTL_MS,
+      allowStale: false
     });
   }
 
@@ -565,6 +617,153 @@ export class IndexerService {
       network: this.network,
       updated_at: Math.floor(Date.now() / 1000)
     };
+  }
+
+  async getGovernanceSnapshot(
+    votingAddress: string,
+    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number } = {}
+  ): Promise<GovernanceSnapshotResponse> {
+    const normalizedVoting = normalizeAddress(votingAddress);
+    const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
+    const maxScan = Math.max(
+      1,
+      Math.min(GOVERNANCE_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? GOVERNANCE_MAX_SCAN_DEFAULT))
+    );
+    const maxConsecutiveMisses = Math.max(
+      1,
+      Math.min(
+        GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT,
+        Math.trunc(options.maxConsecutiveMisses ?? GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT)
+      )
+    );
+    const cacheKey = [normalizedVoting, normalizedOwner ?? '', maxScan, maxConsecutiveMisses].join('|');
+
+    if (this.config.responseCacheEnabled) {
+      const cached = this.governanceSnapshotCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.governanceSnapshotInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+    const request = (async () => {
+      let lockResponded = false;
+      const lockPromise = (async (): Promise<GovernanceLockSnapshot | null> => {
+        if (!normalizedOwner) return null;
+        const owner = Address.parse(normalizedOwner);
+        const ownerCell = beginCell().storeAddress(owner).endCell();
+        const lockRes = await this.source.runGetMethod(normalizedVoting, 'governance_lock', [
+          { type: 'slice', cell: ownerCell }
+        ]);
+        lockResponded = lockRes !== null;
+        if (!lockRes || lockRes.exitCode !== 0) return null;
+        const stack = lockRes.stack;
+        return {
+          amount: tupleItemBigIntString(stack[0]),
+          unlockTime: tupleItemBigIntString(stack[1]),
+          tier: tupleItemBigIntString(stack[2]),
+          activatedAt: tupleItemBigIntString(stack[3]),
+          weight: tupleItemBigIntString(stack[4])
+        };
+      })().catch(() => null);
+
+      const proposals: GovernanceProposalSnapshot[] = [];
+      let scanned = 0;
+      let misses = 0;
+      let proposalResponded = false;
+
+      outer: for (let startId = 1; startId <= maxScan; startId += GOVERNANCE_SCAN_BATCH_SIZE) {
+        const endId = Math.min(maxScan, startId + GOVERNANCE_SCAN_BATCH_SIZE - 1);
+        const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
+        const batch = await Promise.all(
+          batchIds.map((proposalId) =>
+            this.source
+              .runGetMethod(normalizedVoting, 'governance_proposal', [{ type: 'int', value: BigInt(proposalId) }])
+              .catch(() => null)
+          )
+        );
+
+        for (let index = 0; index < batch.length; index += 1) {
+          scanned += 1;
+          const res = batch[index];
+          if (res) {
+            proposalResponded = true;
+          }
+          if (!res || res.exitCode !== 0) {
+            misses += 1;
+            if (misses >= maxConsecutiveMisses && proposals.length > 0) {
+              break outer;
+            }
+            continue;
+          }
+          const stack = res.stack;
+          const id = tupleItemBigIntString(stack[0]);
+          if (!id) {
+            misses += 1;
+            if (misses >= maxConsecutiveMisses && proposals.length > 0) {
+              break outer;
+            }
+            continue;
+          }
+          misses = 0;
+          proposals.push({
+            id,
+            status: tupleItemBigIntString(stack[1]),
+            passed: tupleItemBigIntString(stack[2]),
+            yesWeight: tupleItemBigIntString(stack[3]),
+            noWeight: tupleItemBigIntString(stack[4]),
+            abstainWeight: tupleItemBigIntString(stack[5]),
+            quorumWeight: tupleItemBigIntString(stack[6]),
+            totalWeightSnapshot: tupleItemBigIntString(stack[7]),
+            startTime: tupleItemBigIntString(stack[8]),
+            minCloseTime: tupleItemBigIntString(stack[9]),
+            maxCloseTime: tupleItemBigIntString(stack[10]),
+            cooldownEnd: tupleItemBigIntString(stack[11]),
+            target: tupleItemAddress(stack[12]),
+            value: tupleItemBigIntString(stack[13]),
+            descriptionHash: tupleItemBigIntString(stack[14])
+          });
+        }
+      }
+
+      const lock = await lockPromise;
+      if (!proposalResponded && !lockResponded) {
+        throw new Error('Governance snapshot is unavailable from the configured data source.');
+      }
+
+      proposals.sort((left, right) => {
+        const leftId = BigInt(left.id);
+        const rightId = BigInt(right.id);
+        if (leftId === rightId) return 0;
+        return leftId > rightId ? -1 : 1;
+      });
+      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
+
+      return {
+        voting: normalizedVoting,
+        owner: normalizedOwner,
+        lock,
+        proposal_count: proposals.length,
+        scanned,
+        proposals,
+        source,
+        network: this.network,
+        updated_at: Math.floor(Date.now() / 1000)
+      };
+    })();
+
+    if (this.config.responseCacheEnabled) {
+      this.governanceSnapshotInFlight.set(cacheKey, request);
+    }
+
+    try {
+      const result = await request;
+      if (this.config.responseCacheEnabled) {
+        this.governanceSnapshotCache.set(cacheKey, result);
+      }
+      return result;
+    } finally {
+      this.governanceSnapshotInFlight.delete(cacheKey);
+    }
   }
 
   async getTransactions(address: string, page: number) {
