@@ -690,7 +690,7 @@ export class IndexerService {
           }
           if (!res || res.exitCode !== 0) {
             misses += 1;
-            if (misses >= maxConsecutiveMisses && proposals.length > 0) {
+            if (misses >= maxConsecutiveMisses) {
               break outer;
             }
             continue;
@@ -699,7 +699,7 @@ export class IndexerService {
           const id = tupleItemBigIntString(stack[0]);
           if (!id) {
             misses += 1;
-            if (misses >= maxConsecutiveMisses && proposals.length > 0) {
+            if (misses >= maxConsecutiveMisses) {
               break outer;
             }
             continue;
