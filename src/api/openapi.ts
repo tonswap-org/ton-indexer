@@ -39,6 +39,15 @@ export const buildOpenApi = (config: Config) => {
             liteserverPoolStatus: { type: ['string', 'null'] },
           },
         },
+        ContractsResponse: {
+          type: 'object',
+          properties: {
+            network: { type: ['string', 'null'] },
+            count: { type: 'integer' },
+            contracts: { type: 'object', additionalProperties: { type: 'string' } },
+          },
+          required: ['count', 'contracts'],
+        },
         BalanceResponse: {
           type: 'object',
           properties: {
@@ -453,6 +462,17 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Health status',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/HealthStatus' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/contracts': {
+        get: {
+          summary: 'Loaded contract registry',
+          responses: {
+            200: {
+              description: 'Contract registry response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ContractsResponse' } } },
             },
           },
         },

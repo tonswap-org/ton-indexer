@@ -52,14 +52,18 @@ const parseStreamAddresses = (query: { address?: string; wallet?: string; addres
 
 export const registerRoutes = (
   app: FastifyInstance,
-  config: { adminEnabled: boolean },
+  config: { adminEnabled: boolean; network?: string },
   service: IndexerService,
   metrics?: MetricsService,
   snapshots?: SnapshotService,
   adminGuard?: AdminGuard,
   debug?: DebugService,
-  rateLimiter?: RateLimiter
+  rateLimiter?: RateLimiter,
+  contracts?: Record<string, string>
 ) => {
+  const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  const contractMap = Object.fromEntries(contractEntries);
+
   const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!adminGuard || !adminGuard.isEnabled()) return true;
     if (!adminGuard.authorize(request as any)) {
@@ -91,6 +95,14 @@ export const registerRoutes = (
 
   app.get('/api/indexer/v1/health', async () => {
     return service.getHealth();
+  });
+
+  app.get('/api/indexer/v1/contracts', async () => {
+    return {
+      network: config.network ?? null,
+      count: contractEntries.length,
+      contracts: contractMap
+    };
   });
 
   app.get('/api/indexer/v1/openapi.json', async () => {

@@ -80,6 +80,7 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/farms/{factory}/snapshot?max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/cover/{manager}/snapshot?owner={addr}&max_scan=20&max_misses=2`
+- `GET /api/indexer/v1/contracts`
 - `GET /api/indexer/v1/stream/balances?address={addr}` (Server-Sent Events stream)
 - `GET /api/indexer/v1/stream?address={addr}` (alias of `/stream/balances`)
 - `GET /api/indexer/v1/health`
@@ -113,6 +114,7 @@ If you have `tonswap_tolk` checked out next to this repo, you can refresh testne
 ```bash
 npm run sync-registry
 ```
+`sync-registry` prefers `tmp_debug/referral.registry.repair.address` when present so the indexer tracks the latest repaired referral registry deployment.
 
 ## Notes
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).

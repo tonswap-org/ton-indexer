@@ -20,6 +20,7 @@ export const buildDocsHtml = () => {
     '      <label>Endpoint:</label>',
     '      <select id=\"endpoint\">',
     '        <option value=\"/api/indexer/v1/health\">/health</option>',
+    '        <option value=\"/api/indexer/v1/contracts\">/contracts</option>',
     '        <option value=\"/api/indexer/v1/metrics\">/metrics</option>',
     '        <option value=\"/api/indexer/v1/metrics/prometheus\">/metrics/prometheus</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/balance\">/accounts/{addr}/balance</option>',

@@ -33,6 +33,7 @@ const dlmmRegistry = readText(resolve(debugRoot, 'dlmm.registry.address'));
 const dlmmFactory = readText(resolve(debugRoot, 'dlmm.factory.address'));
 const dlmmTokenX = readText(resolve(debugRoot, 'dlmm.token_x.address'));
 const dlmmPool = readText(resolve(debugRoot, 'dlmm.pool.address'));
+const referralRegistryRepair = readText(resolve(debugRoot, 'referral.registry.repair.address'));
 
 const registryPath = resolve(cwd, 'registry', 'testnet.json');
 const existing = readJson<Record<string, string>>(registryPath) ?? {};
@@ -43,7 +44,7 @@ const mapping: Record<string, string | null | undefined> = {
   ClmmSeedingExecutor: moduleAddresses.ClmmSeedingExecutor,
   FeeRouter: moduleAddresses.FeeRouter,
   Treasury: moduleAddresses.Treasury,
-  ReferralRegistry: moduleAddresses.ReferralRegistry,
+  ReferralRegistry: referralRegistryRepair || moduleAddresses.ReferralRegistry,
   T3Root: t3Root,
   TSRoot: tsRoot,
   UsdtRoot: usdtRoot,

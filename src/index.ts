@@ -103,7 +103,7 @@ const start = async () => {
   const debugService = new DebugService(config, store, backfillWorker, poolTracker);
   const adminGuard = new AdminGuard(config);
   const rateLimiter = new RateLimiter(config);
-  registerRoutes(app, config, service, metrics, snapshotService, adminGuard, debugService, rateLimiter);
+  registerRoutes(app, config, service, metrics, snapshotService, adminGuard, debugService, rateLimiter, registry);
 
   app.addHook('onRequest', async (req) => {
     (req as any).startTime = process.hrtime.bigint();
