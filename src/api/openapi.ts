@@ -48,6 +48,63 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['count', 'contracts'],
         },
+        RunGetMethodRequest: {
+          type: 'object',
+          properties: {
+            address: { type: 'string' },
+            method: { type: 'string' },
+            stack: { type: 'array', items: { type: 'array', items: {} } },
+          },
+          required: ['address', 'method'],
+        },
+        RunGetMethodResponse: {
+          type: 'object',
+          properties: {
+            exit_code: { type: 'integer' },
+            gas_used: { type: 'integer' },
+            stack: { type: 'array', items: { type: 'array', items: {} } },
+          },
+          required: ['exit_code', 'gas_used', 'stack'],
+        },
+        RunGetMethodsRequest: {
+          type: 'object',
+          properties: {
+            calls: { type: 'array', items: { $ref: '#/components/schemas/RunGetMethodRequest' } },
+          },
+          required: ['calls'],
+        },
+        RunGetMethodBatchSuccess: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', enum: [true] },
+            exit_code: { type: 'integer' },
+            gas_used: { type: 'integer' },
+            stack: { type: 'array', items: { type: 'array', items: {} } },
+          },
+          required: ['ok', 'exit_code', 'gas_used', 'stack'],
+        },
+        RunGetMethodBatchError: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', enum: [false] },
+            code: { type: 'string' },
+            error: { type: 'string' },
+          },
+          required: ['ok', 'code', 'error'],
+        },
+        RunGetMethodBatchResult: {
+          oneOf: [
+            { $ref: '#/components/schemas/RunGetMethodBatchSuccess' },
+            { $ref: '#/components/schemas/RunGetMethodBatchError' },
+          ],
+        },
+        RunGetMethodsResponse: {
+          type: 'object',
+          properties: {
+            results: { type: 'array', items: { $ref: '#/components/schemas/RunGetMethodBatchResult' } },
+          },
+          required: ['results'],
+        },
         BalanceResponse: {
           type: 'object',
           properties: {
@@ -473,6 +530,48 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Contract registry response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ContractsResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/runGetMethod': {
+        post: {
+          summary: 'Run get method',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/RunGetMethodRequest' } },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Run get method response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/RunGetMethodResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/runGetMethods': {
+        post: {
+          summary: 'Run get methods batch',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/RunGetMethodsRequest' } },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Run get methods batch response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/RunGetMethodsResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
           },
         },

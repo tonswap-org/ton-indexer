@@ -1,4 +1,4 @@
-import { Address } from '@ton/core';
+import { Address, Cell } from '@ton/core';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { IndexerService } from '../indexerService';
 import { MetricsService } from '../metrics';
@@ -23,6 +23,99 @@ import { sendError } from './errors';
 const BALANCE_STREAM_POLL_MS = 1_500;
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
 const BALANCE_STREAM_MAX_ADDRESSES = 8;
+const GET_METHOD_MAX_STACK_ITEMS = 16;
+const GET_METHOD_MAX_BATCH_CALLS = 64;
+const GET_METHOD_BATCH_CONCURRENCY = 10;
+const GET_METHOD_CALL_TIMEOUT_MS = 6_000;
+
+type ToncenterStackEntry = [string, unknown];
+
+const normalizeBase64 = (input: string) => {
+  let value = input.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = value.length % 4;
+  if (pad === 2) value += '==';
+  if (pad === 3) value += '=';
+  if (pad === 1) return null;
+  return value;
+};
+
+const parseBigIntLike = (value: unknown): bigint | null => {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const signedHexMatch = trimmed.match(/^([+-]?)0x([0-9a-fA-F]+)$/);
+  if (signedHexMatch) {
+    const sign = signedHexMatch[1] === '-' ? -1n : 1n;
+    try {
+      const parsed = BigInt(`0x${signedHexMatch[2]}`);
+      return sign < 0n ? -parsed : parsed;
+    } catch {
+      return null;
+    }
+  }
+  if (!/^[+-]?\d+$/.test(trimmed)) return null;
+  try {
+    return BigInt(trimmed);
+  } catch {
+    return null;
+  }
+};
+
+const parseStackArgs = (stack: unknown): { ok: boolean; args?: any[]; error?: string } => {
+  if (stack === undefined || stack === null) return { ok: true, args: [] };
+  if (!Array.isArray(stack)) return { ok: false, error: 'stack must be an array' };
+  if (stack.length > GET_METHOD_MAX_STACK_ITEMS) return { ok: false, error: 'stack too large' };
+  const args: any[] = [];
+  for (const entry of stack) {
+    if (!Array.isArray(entry) || entry.length < 1) {
+      return { ok: false, error: 'invalid stack entry' };
+    }
+    const typeRaw = entry[0];
+    const value = entry[1];
+    if (typeof typeRaw !== 'string') {
+      return { ok: false, error: 'invalid stack entry type' };
+    }
+    const type = typeRaw.trim();
+    if (type === 'null') {
+      args.push({ type: 'null' });
+      continue;
+    }
+    if (type === 'num' || type === 'int') {
+      const parsed = parseBigIntLike(value);
+      if (parsed === null) {
+        return { ok: false, error: 'invalid int stack value' };
+      }
+      args.push({ type: 'int', value: parsed });
+      continue;
+    }
+    const normalized = type.toLowerCase();
+    if (normalized.includes('cell') || normalized.includes('slice') || normalized.includes('builder')) {
+      if (typeof value !== 'string') {
+        return { ok: false, error: 'invalid cell stack value' };
+      }
+      const normalizedB64 = normalizeBase64(value);
+      if (!normalizedB64) return { ok: false, error: 'invalid base64 stack value' };
+      let cell: Cell;
+      try {
+        cell = Cell.fromBoc(Buffer.from(normalizedB64, 'base64'))[0];
+      } catch {
+        return { ok: false, error: 'invalid boc stack value' };
+      }
+      if (normalized.includes('slice')) {
+        args.push({ type: 'slice', cell });
+      } else if (normalized.includes('builder')) {
+        args.push({ type: 'builder', cell });
+      } else {
+        args.push({ type: 'cell', cell });
+      }
+      continue;
+    }
+    return { ok: false, error: `unsupported stack type: ${type}` };
+  }
+  return { ok: true, args };
+};
 
 const parseStreamAddresses = (query: { address?: string; wallet?: string; addresses?: string }) => {
   const fromCsv = query.addresses
@@ -48,6 +141,43 @@ const parseStreamAddresses = (query: { address?: string; wallet?: string; addres
     }
   }
   return normalized.slice(0, BALANCE_STREAM_MAX_ADDRESSES);
+};
+
+const mapConcurrent = async <T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> => {
+  const results = new Array<R>(items.length);
+  if (items.length === 0) return results;
+
+  const safeConcurrency = Math.max(1, Math.trunc(concurrency));
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(items.length, safeConcurrency) }, () =>
+    (async () => {
+      while (true) {
+        const current = nextIndex;
+        nextIndex += 1;
+        if (current >= items.length) return;
+        results[current] = await fn(items[current], current);
+      }
+    })()
+  );
+  await Promise.all(workers);
+  return results;
+};
+
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  const ms = Math.max(1, Math.trunc(timeoutMs));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
 
 export const registerRoutes = (
@@ -103,6 +233,78 @@ export const registerRoutes = (
       count: contractEntries.length,
       contracts: contractMap
     };
+  });
+
+  app.post('/api/indexer/v1/runGetMethod', async (request, reply) => {
+    const body = request.body as { address?: string; method?: string; stack?: ToncenterStackEntry[] } | null;
+    const address = body?.address?.trim();
+    const method = body?.method?.trim();
+    if (!address || !isValidAddress(address)) {
+      return sendError(reply, 400, 'invalid_address', 'invalid address');
+    }
+    if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method)) {
+      return sendError(reply, 400, 'invalid_method', 'invalid method');
+    }
+    const argsResult = parseStackArgs(body?.stack);
+    if (!argsResult.ok) {
+      return sendError(reply, 400, 'invalid_stack', argsResult.error ?? 'invalid stack');
+    }
+    try {
+      return await service.runGetMethod(address, method, argsResult.args ?? []);
+    } catch (error) {
+      return sendError(reply, 400, 'bad_request', (error as Error).message);
+    }
+  });
+
+  app.post('/api/indexer/v1/runGetMethods', async (request, reply) => {
+    const body = request.body as
+      | { calls?: Array<{ address?: string; method?: string; stack?: ToncenterStackEntry[] }> }
+      | null;
+    const calls = body?.calls;
+    if (!Array.isArray(calls)) {
+      return sendError(reply, 400, 'bad_request', 'calls must be an array');
+    }
+    if (calls.length > GET_METHOD_MAX_BATCH_CALLS) {
+      return sendError(reply, 400, 'bad_request', 'calls too large');
+    }
+
+    type BatchResult =
+      | { ok: true; stack: ToncenterStackEntry[]; exit_code: number; gas_used: number }
+      | { ok: false; code: string; error: string };
+
+    const results = await mapConcurrent(calls, GET_METHOD_BATCH_CONCURRENCY, async (call) => {
+      const address = call.address?.trim();
+      const method = call.method?.trim();
+      if (!address || !isValidAddress(address)) {
+        return { ok: false, code: 'invalid_address', error: 'invalid address' } satisfies BatchResult;
+      }
+      if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method)) {
+        return { ok: false, code: 'invalid_method', error: 'invalid method' } satisfies BatchResult;
+      }
+      const argsResult = parseStackArgs(call.stack);
+      if (!argsResult.ok) {
+        return {
+          ok: false,
+          code: 'invalid_stack',
+          error: argsResult.error ?? 'invalid stack'
+        } satisfies BatchResult;
+      }
+      try {
+        const response = await withTimeout(
+          service.runGetMethod(address, method, argsResult.args ?? []),
+          GET_METHOD_CALL_TIMEOUT_MS
+        );
+        return { ok: true, ...response } satisfies BatchResult;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'bad request';
+        if (message === 'timeout') {
+          return { ok: false, code: 'timeout', error: 'get method timed out' } satisfies BatchResult;
+        }
+        return { ok: false, code: 'bad_request', error: message } satisfies BatchResult;
+      }
+    });
+
+    return { results };
   });
 
   app.get('/api/indexer/v1/openapi.json', async () => {

@@ -11,6 +11,13 @@ import { MetricsCollector } from './metricsCollector';
 import { PoolTracker } from './poolTracker';
 import { LRUCache } from 'lru-cache';
 
+type ToncenterStackEntry = [string, unknown];
+type ToncenterRunResult = {
+  stack: ToncenterStackEntry[];
+  exit_code: number;
+  gas_used: number;
+};
+
 export type BalanceChangeEvent = {
   type: 'balances_changed';
   address: string;
@@ -68,6 +75,37 @@ const tupleItemAddress = (item?: TupleItem): string | null => {
   }
 };
 
+const toBocBase64 = (cell: any): string | null => {
+  if (!cell) return null;
+  try {
+    return Buffer.from(cell.toBoc()).toString('base64');
+  } catch {
+    return null;
+  }
+};
+
+const tupleItemToToncenterStackEntry = (item: TupleItem): ToncenterStackEntry => {
+  if (item.type === 'null') return ['null', null];
+  if (item.type === 'int') return ['num', item.value.toString(10)];
+  if (item.type === 'nan') return ['nan', null];
+  if (item.type === 'cell') {
+    const b64 = toBocBase64(item.cell);
+    return ['tvm.Cell', b64];
+  }
+  if (item.type === 'slice') {
+    const b64 = toBocBase64(item.cell);
+    return ['tvm.Slice', b64];
+  }
+  if (item.type === 'builder') {
+    const b64 = toBocBase64(item.cell);
+    return ['tvm.Builder', b64];
+  }
+  if (item.type === 'tuple') {
+    return ['tuple', item.items.map(tupleItemToToncenterStackEntry)];
+  }
+  return ['unknown', null];
+};
+
 const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const GOVERNANCE_MAX_SCAN_DEFAULT = 20;
 const GOVERNANCE_MAX_SCAN_LIMIT = 64;
@@ -86,6 +124,10 @@ const COVER_MAX_SCAN_LIMIT = 64;
 const COVER_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const COVER_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const COVER_SCAN_BATCH_SIZE = 5;
+
+const GET_METHOD_CACHE_TTL_MS = 1_000;
+const GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS = 30_000;
+const GET_METHOD_CACHE_ENTRY_MIN_TTL_MS = 60_000;
 
 type GovernanceLockSnapshot = {
   amount: string | null;
@@ -234,6 +276,10 @@ export class IndexerService {
   private farmSnapshotInFlight = new Map<string, Promise<FarmSnapshotResponse>>();
   private coverSnapshotCache: LRUCache<string, CoverSnapshotResponse>;
   private coverSnapshotInFlight = new Map<string, Promise<CoverSnapshotResponse>>();
+  private getMethodSourceCache: LRUCache<string, { exitCode: number; stack: TupleItem[] }>;
+  private getMethodSourceInFlight = new Map<string, Promise<{ exitCode: number; stack: TupleItem[] } | null>>();
+  private getMethodCache: LRUCache<string, ToncenterRunResult>;
+  private getMethodInFlight = new Map<string, Promise<ToncenterRunResult>>();
   private healthCache?: { value: HealthStatus; expiresAt: number };
   private balanceEventEmitter = new EventEmitter();
   private balanceEventSeq = 0;
@@ -292,6 +338,18 @@ export class IndexerService {
       max: 512,
       ttl: COVER_SNAPSHOT_CACHE_TTL_MS,
       allowStale: false
+    });
+
+    this.getMethodSourceCache = new LRUCache({
+      max: 5_000,
+      ttl: Math.max(0, Math.trunc(config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS)),
+      allowStale: false,
+    });
+
+    this.getMethodCache = new LRUCache({
+      max: 5_000,
+      ttl: Math.max(0, Math.trunc(config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS)),
+      allowStale: false,
     });
   }
 
@@ -478,7 +536,7 @@ export class IndexerService {
     const normalized = (symbol ?? '').trim().toUpperCase();
     if (!normalized) return null;
     if (normalized === 'USDT' || normalized === 'USDC' || normalized === 'KUSD') return 6;
-    if (normalized === 'T3' || normalized === 'TS' || normalized === 'DLMMX') return 9;
+    if (normalized === 'T3' || normalized === 'TS') return 9;
     return null;
   }
 
@@ -595,6 +653,104 @@ export class IndexerService {
     return response;
   }
 
+  async runGetMethod(
+    address: string,
+    method: string,
+    args: TupleItem[] = []
+  ): Promise<ToncenterRunResult> {
+    const normalized = normalizeAddress(address);
+    const { cacheKey, cacheTtlMs } = this.getMethodCacheKey(normalized, method, args);
+
+    if (this.config.responseCacheEnabled) {
+      const cached = this.getMethodCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.getMethodInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+    const request = (async () => {
+      const result = await this.runGetMethodSourceCached(normalized, method, args);
+      if (!result) {
+        throw new Error('get method call unavailable from configured data source');
+      }
+      return {
+        stack: result.stack.map(tupleItemToToncenterStackEntry),
+        exit_code: result.exitCode,
+        gas_used: 0
+      };
+    })();
+
+    if (this.config.responseCacheEnabled) {
+      this.getMethodInFlight.set(cacheKey, request);
+    }
+
+    try {
+      const response = await request;
+      if (this.config.responseCacheEnabled) {
+        if (cacheTtlMs > 0) {
+          this.getMethodCache.set(cacheKey, response, { ttl: cacheTtlMs });
+        }
+      }
+      return response;
+    } finally {
+      this.getMethodInFlight.delete(cacheKey);
+    }
+  }
+
+  private getMethodCacheKey(normalizedAddress: string, method: string, args: TupleItem[]) {
+    const argsSignature = args
+      .map((arg) => {
+        if (arg.type === 'null') return 'null';
+        if (arg.type === 'int') return `int:${arg.value.toString(10)}`;
+        if (arg.type === 'nan') return 'nan';
+        if (arg.type === 'cell') return `cell:${toBocBase64(arg.cell) ?? ''}`;
+        if (arg.type === 'slice') return `slice:${toBocBase64(arg.cell) ?? ''}`;
+        if (arg.type === 'builder') return `builder:${toBocBase64(arg.cell) ?? ''}`;
+        if (arg.type === 'tuple') return `tuple:[${arg.items.map((item) => item.type).join(',')}]`;
+        return 'unknown';
+      })
+      .join('|');
+    const cacheKey = [normalizedAddress, method, argsSignature].join('|');
+    const baseCacheTtlMs = Math.max(0, Math.trunc(this.config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS));
+    let cacheTtlMs = baseCacheTtlMs;
+    if (method === 'get_entry') {
+      cacheTtlMs = Math.max(baseCacheTtlMs, GET_METHOD_CACHE_ENTRY_MIN_TTL_MS);
+    } else if (args.length === 0) {
+      cacheTtlMs = Math.max(baseCacheTtlMs, GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS);
+    }
+    return { cacheKey, cacheTtlMs };
+  }
+
+  private async runGetMethodSourceCached(
+    normalizedAddress: string,
+    method: string,
+    args: TupleItem[] = []
+  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
+    const { cacheKey, cacheTtlMs } = this.getMethodCacheKey(normalizedAddress, method, args);
+
+    if (this.config.responseCacheEnabled) {
+      const cached = this.getMethodSourceCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.getMethodSourceInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+    const request = this.source.runGetMethod(normalizedAddress, method, args).catch(() => null);
+    if (this.config.responseCacheEnabled) {
+      this.getMethodSourceInFlight.set(cacheKey, request);
+    }
+
+    try {
+      const response = await request;
+      if (this.config.responseCacheEnabled && response && cacheTtlMs > 0) {
+        this.getMethodSourceCache.set(cacheKey, response, { ttl: cacheTtlMs });
+      }
+      return response;
+    } finally {
+      this.getMethodSourceInFlight.delete(cacheKey);
+    }
+  }
+
   async getPerpsSnapshot(
     engineAddress: string,
     options: { marketIds?: number[]; maxMarkets?: number } = {}
@@ -610,9 +766,9 @@ export class IndexerService {
     ).slice(0, maxMarkets);
 
     const [governanceRes, enabledRes, automationRes] = await Promise.all([
-      this.source.runGetMethod(normalizedEngine, 'engine_governance', []),
-      this.source.runGetMethod(normalizedEngine, 'engine_enabled', []),
-      this.source.runGetMethod(normalizedEngine, 'automation_state', [])
+      this.runGetMethodSourceCached(normalizedEngine, 'engine_governance', []),
+      this.runGetMethodSourceCached(normalizedEngine, 'engine_enabled', []),
+      this.runGetMethodSourceCached(normalizedEngine, 'automation_state', [])
     ]);
 
     if (!governanceRes && !enabledRes && !automationRes) {
@@ -662,7 +818,7 @@ export class IndexerService {
     const marketIds: number[] = [];
 
     for (const marketId of derivedMarketIds.slice(0, maxMarkets)) {
-      const marketRes = await this.source.runGetMethod(normalizedEngine, 'market_state', [
+      const marketRes = await this.runGetMethodSourceCached(normalizedEngine, 'market_state', [
         { type: 'int', value: BigInt(marketId) }
       ]);
       if (!marketRes || marketRes.exitCode !== 0) continue;
@@ -764,7 +920,7 @@ export class IndexerService {
         if (!normalizedOwner) return null;
         const owner = Address.parse(normalizedOwner);
         const ownerCell = beginCell().storeAddress(owner).endCell();
-        const lockRes = await this.source.runGetMethod(normalizedVoting, 'governance_lock', [
+        const lockRes = await this.runGetMethodSourceCached(normalizedVoting, 'governance_lock', [
           { type: 'slice', cell: ownerCell }
         ]);
         lockResponded = lockRes !== null;
@@ -789,9 +945,9 @@ export class IndexerService {
         const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
         const batch = await Promise.all(
           batchIds.map((proposalId) =>
-            this.source
-              .runGetMethod(normalizedVoting, 'governance_proposal', [{ type: 'int', value: BigInt(proposalId) }])
-              .catch(() => null)
+            this.runGetMethodSourceCached(normalizedVoting, 'governance_proposal', [
+              { type: 'int', value: BigInt(proposalId) }
+            ]).catch(() => null)
           )
         );
 
@@ -903,9 +1059,9 @@ export class IndexerService {
 
     const request = (async () => {
       const [governanceRes, enabledRes, nextIdRes] = await Promise.all([
-        this.source.runGetMethod(normalizedFactory, 'governance', []).catch(() => null),
-        this.source.runGetMethod(normalizedFactory, 'registry_enabled', []).catch(() => null),
-        this.source.runGetMethod(normalizedFactory, 'next_farm_id', []).catch(() => null)
+        this.runGetMethodSourceCached(normalizedFactory, 'governance', []).catch(() => null),
+        this.runGetMethodSourceCached(normalizedFactory, 'registry_enabled', []).catch(() => null),
+        this.runGetMethodSourceCached(normalizedFactory, 'next_farm_id', []).catch(() => null)
       ]);
 
       const status =
@@ -937,9 +1093,9 @@ export class IndexerService {
           const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
           const batch = await Promise.all(
             batchIds.map((farmId) =>
-              this.source
-                .runGetMethod(normalizedFactory, 'get_farm', [{ type: 'int', value: BigInt(farmId) }])
-                .catch(() => null)
+              this.runGetMethodSourceCached(normalizedFactory, 'get_farm', [{ type: 'int', value: BigInt(farmId) }]).catch(
+                () => null
+              )
             )
           );
 
@@ -1047,8 +1203,8 @@ export class IndexerService {
 
     const request = (async () => {
       const [stateRes, enabledRes] = await Promise.all([
-        this.source.runGetMethod(normalizedManager, 'get_state', []).catch(() => null),
-        this.source.runGetMethod(normalizedManager, 'registry_enabled', []).catch(() => null)
+        this.runGetMethodSourceCached(normalizedManager, 'get_state', []).catch(() => null),
+        this.runGetMethodSourceCached(normalizedManager, 'registry_enabled', []).catch(() => null)
       ]);
 
       const state =
@@ -1105,13 +1261,13 @@ export class IndexerService {
       outer: for (let startId = startPolicyId; startId >= scanFloor; startId -= COVER_SCAN_BATCH_SIZE) {
         const endId = Math.max(scanFloor, startId - COVER_SCAN_BATCH_SIZE + 1);
         const batchIds = Array.from({ length: startId - endId + 1 }, (_, index) => startId - index);
-        const batch = await Promise.all(
-          batchIds.map((policyId) =>
-            this.source
-              .runGetMethod(normalizedManager, 'get_policy', [{ type: 'int', value: BigInt(policyId) }])
-              .catch(() => null)
-          )
-        );
+          const batch = await Promise.all(
+            batchIds.map((policyId) =>
+              this.runGetMethodSourceCached(normalizedManager, 'get_policy', [{ type: 'int', value: BigInt(policyId) }]).catch(
+                () => null
+              )
+            )
+          );
 
         for (let index = 0; index < batch.length; index += 1) {
           scanned += 1;

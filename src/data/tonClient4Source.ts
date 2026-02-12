@@ -78,6 +78,11 @@ export class TonClient4DataSource implements TonDataSource {
   private client: TonClient4Like;
   private endpoints: string[];
   private endpointIndex = 0;
+  private lastBlock: any | null = null;
+  private lastBlockExpiresAt = 0;
+  private lastBlockPending: Promise<any> | null = null;
+
+  private static readonly LAST_BLOCK_TTL_MS = 1_000;
 
   private constructor(network: Network, client: TonClient4Like, endpoints: string[]) {
     this.network = network;
@@ -114,7 +119,7 @@ export class TonClient4DataSource implements TonDataSource {
   }
 
   async getMasterchainInfo(): Promise<MasterchainInfo> {
-    const last = await this.call((client) => client.getLastBlock());
+    const last = await this.getLastBlockCached();
     return {
       seqno: last.last.seqno,
       timestamp: last.now,
@@ -122,7 +127,7 @@ export class TonClient4DataSource implements TonDataSource {
   }
 
   async getAccountState(address: string): Promise<AccountStateResponse> {
-    const last = await this.call((client) => client.getLastBlock());
+    const last = await this.getLastBlockCached();
     const parsed = Address.parse(address);
     const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
     const lastTx = account.account.last;
@@ -140,7 +145,7 @@ export class TonClient4DataSource implements TonDataSource {
     let cursorHash = hash;
 
     if (!cursorLt || !cursorHash) {
-      const last = await this.call((client) => client.getLastBlock());
+      const last = await this.getLastBlockCached();
       const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
       const lastTx = account.account.last;
       if (!lastTx) return [];
@@ -183,7 +188,7 @@ export class TonClient4DataSource implements TonDataSource {
   ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
     try {
       const parsed = Address.parse(address);
-      const last = await this.call((client) => client.getLastBlock());
+      const last = await this.getLastBlockCached();
       const response = await this.call((client) => client.runMethod(last.last.seqno, parsed, method, args));
       const exitCode =
         typeof response?.exitCode === 'number'
@@ -207,6 +212,27 @@ export class TonClient4DataSource implements TonDataSource {
     } catch {
       return null;
     }
+  }
+
+  private async getLastBlockCached(force = false): Promise<any> {
+    const now = Date.now();
+    if (!force && this.lastBlock && this.lastBlockExpiresAt > now) {
+      return this.lastBlock;
+    }
+    if (!force && this.lastBlockPending) {
+      return this.lastBlockPending;
+    }
+    const pending = this.call((client) => client.getLastBlock())
+      .then((last) => {
+        this.lastBlock = last;
+        this.lastBlockExpiresAt = Date.now() + TonClient4DataSource.LAST_BLOCK_TTL_MS;
+        return last;
+      })
+      .finally(() => {
+        this.lastBlockPending = null;
+      });
+    this.lastBlockPending = pending;
+    return pending;
   }
 
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
@@ -266,6 +292,10 @@ export class TonClient4DataSource implements TonDataSource {
       throw new Error('TonClient4 unavailable while rotating endpoint');
     }
     this.client = new TonClient4Ctor({ endpoint: this.endpoints[this.endpointIndex] });
+    // Drop cached masterchain references on endpoint rotation to avoid sticking to a stale instance.
+    this.lastBlock = null;
+    this.lastBlockExpiresAt = 0;
+    this.lastBlockPending = null;
   }
 
   async close(): Promise<void> {

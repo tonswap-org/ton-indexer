@@ -4,6 +4,8 @@ export type ErrorCode =
   | 'invalid_address'
   | 'invalid_cursor'
   | 'cursor_mismatch'
+  | 'invalid_method'
+  | 'invalid_stack'
   | 'rate_limited'
   | 'unauthorized'
   | 'metrics_disabled'

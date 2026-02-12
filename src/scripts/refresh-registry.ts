@@ -31,20 +31,45 @@ const usdcRoot = readText(resolve(debugRoot, 't3.usdc.root.address'));
 const kusdRoot = readText(resolve(debugRoot, 't3.kusd.root.address'));
 const dlmmRegistry = readText(resolve(debugRoot, 'dlmm.registry.address'));
 const dlmmFactory = readText(resolve(debugRoot, 'dlmm.factory.address'));
-const dlmmTokenX = readText(resolve(debugRoot, 'dlmm.token_x.address'));
-const dlmmPool = readText(resolve(debugRoot, 'dlmm.pool.address'));
 const referralRegistryRepair = readText(resolve(debugRoot, 'referral.registry.repair.address'));
+const referralDistributorRepair = readText(resolve(debugRoot, 'referral.distributor.repair.address'));
 
 const registryPath = resolve(cwd, 'registry', 'testnet.json');
 const existing = readJson<Record<string, string>>(registryPath) ?? {};
 
 const mapping: Record<string, string | null | undefined> = {
+  ActivationGate: moduleAddresses.ActivationGate,
+  GovernanceRegistry: moduleAddresses.GovernanceRegistry,
+  GovernanceTimelock: moduleAddresses.GovernanceTimelock,
+  GovernanceProposalExecutor: moduleAddresses.GovernanceProposalExecutor,
   ClmmRouter: moduleAddresses.ClmmRouter,
   ClmmPoolFactory: moduleAddresses.ClmmPoolFactory,
   ClmmSeedingExecutor: moduleAddresses.ClmmSeedingExecutor,
   FeeRouter: moduleAddresses.FeeRouter,
   Treasury: moduleAddresses.Treasury,
+  GasVault: moduleAddresses.GasVault,
+  ControlMesh: moduleAddresses.ControlMesh,
+  RiskController: moduleAddresses.RiskController,
+  RiskVault: moduleAddresses.RiskVault,
+  PerpsEngine: moduleAddresses.PerpsEngine,
+  InsuranceVault: moduleAddresses.InsuranceVault,
+  OptionFactory: moduleAddresses.OptionFactory,
+  OptionSeriesManager: moduleAddresses.OptionSeriesManager,
+  OptionVault: moduleAddresses.OptionVault,
+  ParisianPolicyManager: moduleAddresses.ParisianPolicyManager,
+  CoverVault: moduleAddresses.CoverVault,
   ReferralRegistry: referralRegistryRepair || moduleAddresses.ReferralRegistry,
+  ReferralDistributor: referralDistributorRepair || moduleAddresses.ReferralDistributor,
+  EmissionsSplitter: moduleAddresses.EmissionsSplitter,
+  BuybackExecutor: moduleAddresses.BuybackExecutor,
+  SaleFactory: moduleAddresses.SaleFactory,
+  BootstrapFactory: moduleAddresses.BootstrapFactory,
+  FarmFactory: moduleAddresses.FarmFactory,
+  Voting: moduleAddresses.Voting,
+  AutomationRegistry: moduleAddresses.AutomationRegistry,
+  AutomationJobQueue: moduleAddresses.AutomationJobQueue,
+  AnchorGuard: moduleAddresses.AnchorGuard,
+  ClusterGuard: moduleAddresses.ClusterGuard,
   T3Root: t3Root,
   TSRoot: tsRoot,
   UsdtRoot: usdtRoot,
@@ -52,11 +77,12 @@ const mapping: Record<string, string | null | undefined> = {
   KusdRoot: kusdRoot,
   DlmmRegistry: dlmmRegistry,
   DlmmPoolFactory: dlmmFactory,
-  DlmmTokenX: dlmmTokenX,
-  DlmmPool: dlmmPool,
 };
 
 const next: Record<string, string> = { ...existing };
+// Remove legacy demo values that were previously populated from tmp_debug.
+delete next.DlmmTokenX;
+delete next.DlmmPool;
 for (const [key, value] of Object.entries(mapping)) {
   if (value) next[key] = value;
 }
