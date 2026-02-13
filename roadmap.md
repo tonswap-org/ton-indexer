@@ -29,10 +29,10 @@
   - Reduces repeated backfill load on public liteservers.
 
 ### Network Selection
-- Default: **mainnet**.
-- Optional flag for testnet-only run (separate instance).
+- Default: **testnet** (current TONSWAP deployments).
+- Mainnet mode is supported, but requires real registry/mainnet addresses.
 - Configuration example:
-  - `TON_NETWORK=mainnet|testnet` (default `mainnet`)
+  - `TON_NETWORK=mainnet|testnet` (default `testnet`)
   - `LITESERVER_POOL_MAINNET=...` (TODO until mainnet deploy)
   - `LITESERVER_POOL_TESTNET=127.0.0.1:PORT` (localhost liteserver)
 

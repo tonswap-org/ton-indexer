@@ -18,9 +18,10 @@ const safeParseHex = (value: string): number | null => {
 
 export const loadOpcodes = (path?: string): OpcodeSets => {
   const sets: OpcodeSets = {
-    swap: new Set([0x53574150]), // OP_SWAP
-    lpDeposit: new Set([0x41444c51, 0x49504f53]), // OP_ADD_LIQ, OP_INCREASE_POSITION
-    lpWithdraw: new Set([0x524d4c51, 0x44504f53]), // OP_REMOVE_LIQ, OP_DECREASE_POSITION
+    // Defaults include DLMM (production) + CLMM (legacy/sim) opcodes.
+    swap: new Set([0x53574150, 0x44535750]), // OP_SWAP_FORWARD ('SWAP'), OP_SWAP_EXACT_IN ('DSWP')
+    lpDeposit: new Set([0x41444c51, 0x49504f53, 0x444c4144, 0x44414444, 0x444c4146]), // CLMM: OP_ADD_LIQ/OP_INCREASE_POSITION, DLMM: 'DLAD'/'DADD'/'DLAF'
+    lpWithdraw: new Set([0x524d4c51, 0x44504f53, 0x44524d56]), // CLMM: OP_REMOVE_LIQ/OP_DECREASE_POSITION, DLMM: 'DRMV'
     jettonTransfer: new Set([0x0f8a7ea5]),
     jettonNotify: new Set([0x7362d09c]),
   };

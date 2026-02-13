@@ -68,9 +68,10 @@ const booleanFromEnv = (key: string, fallback: boolean) => {
 };
 
 const networkFromEnv = (): Network => {
-  const raw = (process.env.TON_NETWORK || 'mainnet').toLowerCase();
+  // Default to testnet for current TONSWAP deployments; mainnet requires real registry addresses.
+  const raw = (process.env.TON_NETWORK || 'testnet').toLowerCase();
   if (raw === 'mainnet' || raw === 'testnet') return raw;
-  return 'mainnet';
+  return 'testnet';
 };
 
 const dataSourceFromEnv = (): 'http' | 'lite' => {

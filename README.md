@@ -32,7 +32,7 @@ npm run start
 Environment variables (all optional):
 - `PORT` (default: `8787`)
 - `HOST` (default: `0.0.0.0`)
-- `TON_NETWORK` (`mainnet` | `testnet`, default: `mainnet`)
+- `TON_NETWORK` (`mainnet` | `testnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
 - `TON_HTTP_ENDPOINT` (explicit TonClient4 endpoint; if unset uses `@orbs-network/ton-access`)
 - `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` (lite client pool; see below)
@@ -119,7 +119,7 @@ npm run sync-registry
 ## Notes
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
 - Jetton balances are fetched for registry keys ending with `Root` (e.g., `T3Root`, `TSRoot`, `UsdtRoot`), with metadata pulled from on-chain content and cached in memory.
-- Swap/LP decoding is opcode-based and partial; it can extract basic amounts for `OP_SWAP`, `OP_ADD_LIQ`, `OP_INCREASE_POSITION`, and `OP_DECREASE_POSITION` payloads.
+- Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.
 
 ### Liteserver Pool Format
 `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` can be one of:
