@@ -89,6 +89,12 @@ const start = async () => {
       const origin = request.headers.origin;
       const allowOrigin = config.corsAllowOrigin === 'reflect' ? origin ?? '*' : config.corsAllowOrigin;
       reply.header('access-control-allow-origin', allowOrigin);
+      if (config.corsAllowOrigin === 'reflect') {
+        reply.header('vary', 'origin');
+      }
+      if (allowOrigin !== '*') {
+        reply.header('access-control-allow-credentials', 'true');
+      }
       reply.header('access-control-allow-methods', config.corsAllowMethods);
       reply.header('access-control-allow-headers', config.corsAllowHeaders);
       reply.header('access-control-expose-headers', config.corsExposeHeaders);

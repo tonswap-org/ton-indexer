@@ -94,8 +94,8 @@ export const loadConfig = (): Config => {
     dataSource: dataSourceFromEnv(),
     corsEnabled: booleanFromEnv('CORS_ENABLED', true),
     corsAllowOrigin: stringFromEnv('CORS_ALLOW_ORIGIN', '*')!,
-    corsAllowMethods: stringFromEnv('CORS_ALLOW_METHODS', 'GET,POST,OPTIONS')!,
-    corsAllowHeaders: stringFromEnv('CORS_ALLOW_HEADERS', 'authorization,content-type')!,
+    corsAllowMethods: stringFromEnv('CORS_ALLOW_METHODS', 'GET,HEAD,POST,OPTIONS')!,
+    corsAllowHeaders: stringFromEnv('CORS_ALLOW_HEADERS', 'authorization,content-type,accept')!,
     corsExposeHeaders: stringFromEnv(
       'CORS_EXPOSE_HEADERS',
       'x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset'
