@@ -31,6 +31,9 @@ export type TxAction =
       amountA?: string;
       amountB?: string;
       lpMinted?: string;
+      binId?: number;
+      minLpOut?: string;
+      owner?: string;
     }
   | {
       kind: 'lp_withdraw';
@@ -40,6 +43,7 @@ export type TxAction =
       amountA?: string;
       amountB?: string;
       lpBurned?: string;
+      binId?: number;
     }
   | {
       kind: 'transfer';

@@ -149,6 +149,7 @@ const decodeJettonNotification = (body?: string): DecodedJettonNotification | nu
 
 const OP_SWAP_FORWARD = 0x53574150;
 const OP_DLMM_SWAP_EXACT_IN = 0x44535750;
+const OP_DLMM_ADD_LIQUIDITY_FORWARD = 0x444c4144;
 const OP_ADD_LIQ = 0x41444c51;
 const OP_REMOVE_LIQ = 0x524d4c51;
 const OP_INCREASE_POS = 0x49504f53;
@@ -162,6 +163,35 @@ type DecodedSwap = {
   amountIn?: string;
   minAmountOut?: string;
   recipient?: string;
+};
+
+type DecodedDlmmAddLiquidityForward = {
+  owner?: string;
+  binId?: number;
+  minLpOut?: string;
+};
+
+const decodeDlmmAddLiquidityForward = (payload?: Cell): DecodedDlmmAddLiquidityForward | null => {
+  if (!payload) return null;
+  try {
+    const slice = payload.beginParse();
+    if (slice.remainingBits < 32) return null;
+    const op = slice.loadUint(32);
+    if (op !== OP_DLMM_ADD_LIQUIDITY_FORWARD) return null;
+    const owner = slice.loadAddressAny();
+    if (slice.remainingBits < 32) {
+      return { owner: toFriendlyAddress(owner) };
+    }
+    const rawBin = slice.loadUint(32);
+    const binId = rawBin > 0x7fffffff ? rawBin - 0x1_0000_0000 : rawBin;
+    if (slice.remainingBits < 256) {
+      return { owner: toFriendlyAddress(owner), binId };
+    }
+    const minLpOut = slice.loadUintBig(256);
+    return { owner: toFriendlyAddress(owner), binId, minLpOut: minLpOut.toString() };
+  } catch {
+    return null;
+  }
 };
 
 const decodeSwap = (body?: string | Cell): DecodedSwap | null => {
@@ -236,7 +266,13 @@ const decodeSwap = (body?: string | Cell): DecodedSwap | null => {
   }
 };
 
-const decodeLpDeposit = (body?: string) => {
+type DecodedLpDeposit = {
+  amountA?: string;
+  amountB?: string;
+  binId?: number;
+};
+
+const decodeLpDeposit = (body?: string): DecodedLpDeposit | null => {
   if (!body) return null;
   try {
     const cell = Cell.fromBase64(body);
@@ -244,17 +280,19 @@ const decodeLpDeposit = (body?: string) => {
     if (base.remainingBits < 32) return null;
     const op = base.loadUint(32);
     if (op === OP_DLMM_ADD_LIQUIDITY) {
-      base.loadIntBig(32);
+      const rawBin = base.loadUint(32);
+      const binId = rawBin > 0x7fffffff ? rawBin - 0x1_0000_0000 : rawBin;
       const amountT3 = base.loadUintBig(128);
       const amountX = base.loadUintBig(128);
-      return { amountA: amountT3.toString(), amountB: amountX.toString() };
+      return { amountA: amountT3.toString(), amountB: amountX.toString(), binId };
     }
     if (op === OP_DLMM_ADD_LIQUIDITY_FOR) {
       base.loadAddressAny();
-      base.loadIntBig(32);
+      const rawBin = base.loadUint(32);
+      const binId = rawBin > 0x7fffffff ? rawBin - 0x1_0000_0000 : rawBin;
       const amountT3 = base.loadUintBig(128);
       const amountX = base.loadUintBig(128);
-      return { amountA: amountT3.toString(), amountB: amountX.toString() };
+      return { amountA: amountT3.toString(), amountB: amountX.toString(), binId };
     }
     if (op === OP_ADD_LIQ) {
       base.loadUintBig(64);
@@ -439,20 +477,28 @@ export const classifyTransaction = (
     if (lpDepositViaTransfer.length > 0) {
       const amountA = lpDepositViaTransfer[0]?.decoded.amount;
       const amountB = lpDepositViaTransfer[1]?.decoded.amount;
+      const forward = decodeDlmmAddLiquidityForward(lpDepositViaTransfer[0]?.decoded.forwardPayload);
       actions.push({
         kind: 'lp_deposit',
         pool: lpDepositViaTransfer[0]?.decoded.destination,
         amountA,
         amountB,
+        binId: forward?.binId,
+        minLpOut: forward?.minLpOut,
+        owner: forward?.owner,
       });
       detail = { kind: 'lp', amountA, amountB };
     } else if (lpDepositViaNotify.length > 0) {
       // DLMM pool contracts receive a single JettonTransferNotification per token; liquidity adds usually span two txs.
       const amountA = lpDepositViaNotify[0]?.decoded.amount;
+      const forward = decodeDlmmAddLiquidityForward(lpDepositViaNotify[0]?.decoded.forwardPayload);
       actions.push({
         kind: 'lp_deposit',
         pool: pickPool(lpDepositViaNotify[0]?.msg),
         amountA,
+        binId: forward?.binId,
+        minLpOut: forward?.minLpOut,
+        owner: forward?.owner,
       });
       detail = { kind: 'lp', amountA };
     } else {
@@ -463,6 +509,7 @@ export const classifyTransaction = (
         pool: pickPool(inMsg ?? outMsgs[0]),
         amountA: lp?.amountA,
         amountB: lp?.amountB,
+        binId: lp?.binId,
       });
       detail = { kind: 'lp', amountA: lp?.amountA, amountB: lp?.amountB };
     }
@@ -475,6 +522,7 @@ export const classifyTransaction = (
       amountA: lp?.amountA,
       amountB: lp?.amountB,
       lpBurned: lp?.lpBurned,
+      binId: lp?.binId,
     });
     detail = { kind: 'lp', amountA: lp?.amountA, amountB: lp?.amountB };
   } else if (kind === 'transfer') {
