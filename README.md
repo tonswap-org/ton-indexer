@@ -75,6 +75,7 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 - `GET /api/indexer/v1/accounts/{addr}/balances`
 - `GET /api/indexer/v1/accounts/{addr}/assets` (alias of `/balances`)
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
+- `GET /api/indexer/v1/accounts/{addr}/swaps?limit=100&pay_token=TON&receive_token=T3&include_reverse=true`
 - `GET /api/indexer/v1/accounts/{addr}/state`
 - `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64`
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
@@ -120,6 +121,17 @@ npm run sync-registry
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
 - Jetton balances are fetched for registry keys ending with `Root` (e.g., `T3Root`, `TSRoot`, `UsdtRoot`), with metadata pulled from on-chain content and cached in memory.
 - Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.
+- Swap classifier now also decodes optional execution hints from swap `queryId` (market/limit/twap, optional twap slice/total, and optional token symbol codes) and returns them in both `detail` and `actions` for `kind: "swap"` tx entries.
+- Swap hint decoding also exposes `querySequence` + `queryNonce` (from queryId metadata) so clients can group TWAP slices by run.
+- `/accounts/{addr}/swaps` provides a chart-friendly swap execution feed with server-side filters for pair direction, execution type, and status.
+
+### Swap `queryId` Metadata (Optional)
+- Backward compatible formats:
+  - `0xd1` (v1): mode + twap slice/total + timestamp/nonce.
+  - `0xd2` (v2): mode + twap slice/total + pay/receive token codes + sequence/nonce.
+- v2 token codes currently recognized:
+  - `1=TON`, `2=T3`, `3=USDT`, `4=USDC`, `5=KUSD`, `6=TS`
+- If `queryId` metadata is absent, classifier still falls back to opcode-level swap decoding.
 
 ### Liteserver Pool Format
 `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` can be one of:

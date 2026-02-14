@@ -121,6 +121,104 @@ const run = async () => {
   const txs2 = await service.getTransactions(addr, 1);
   assert.equal(txs2.txs[0]?.lt, '11');
 
+  store.addTransactions(addr, [
+    {
+      address: addr,
+      lt: '12',
+      hash: 'swap1',
+      utime: 100,
+      success: true,
+      inMessage: undefined,
+      outMessages: [],
+      kind: 'swap',
+      actions: [
+        {
+          kind: 'swap',
+          amountIn: '1000',
+          amountOut: '995',
+          queryId: '1',
+          executionType: 'twap',
+          twapSlice: 2,
+          twapTotal: 5,
+          querySequence: 1234,
+          queryNonce: 7,
+        },
+      ],
+      ui: {
+        txId: '12:swap1',
+        utime: 100,
+        status: 'success',
+        txType: 'Swap',
+        outCount: 0,
+        detail: {
+          kind: 'swap',
+          payToken: 'T3',
+          receiveToken: 'TON',
+          payAmount: '1000',
+          receiveAmount: '995',
+          queryId: '1',
+          executionType: 'twap',
+          twapSlice: 2,
+          twapTotal: 5,
+          querySequence: 1234,
+          queryNonce: 7,
+        },
+        kind: 'swap',
+        actions: [],
+      },
+    },
+    {
+      address: addr,
+      lt: '13',
+      hash: 'swap2',
+      utime: 101,
+      success: false,
+      inMessage: undefined,
+      outMessages: [],
+      kind: 'swap',
+      actions: [],
+      ui: {
+        txId: '13:swap2',
+        utime: 101,
+        status: 'failed',
+        reason: 'aborted',
+        txType: 'Swap',
+        outCount: 0,
+        detail: {
+          kind: 'swap',
+          payToken: 'TON',
+          receiveToken: 'T3',
+          payAmount: '10',
+          receiveAmount: '100',
+          queryId: '2',
+          executionType: 'limit',
+          querySequence: 555,
+          queryNonce: 9,
+        },
+        kind: 'swap',
+        actions: [],
+      },
+    },
+  ]);
+
+  const swaps = await service.getSwapExecutions(addr, { limit: 10 });
+  assert.equal(swaps.total_swaps, 2);
+  assert.equal(swaps.returned_swaps, 2);
+  assert.equal(swaps.swaps[0]?.txId, '13:swap2');
+
+  const twapOnly = await service.getSwapExecutions(addr, { limit: 10, executionType: 'twap' });
+  assert.equal(twapOnly.total_swaps, 1);
+  assert.equal(twapOnly.swaps[0]?.twapRunId, 'seq:1234');
+  assert.equal(twapOnly.swaps[0]?.queryNonce, 7);
+
+  const reversedPair = await service.getSwapExecutions(addr, {
+    limit: 10,
+    payToken: 'T3',
+    receiveToken: 'TON',
+    includeReverse: true,
+  });
+  assert.equal(reversedPair.total_swaps, 2);
+
   console.log('response cache ok');
 };
 

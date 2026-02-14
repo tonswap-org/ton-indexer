@@ -4,7 +4,17 @@ import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
 import { TonDataSource } from './data/dataSource';
 import { OpcodeSets } from './utils/opcodes';
-import { AccountBalance, AccountBalances, AccountState, HealthStatus, IndexedTx, Network, UiTx } from './models';
+import {
+  AccountBalance,
+  AccountBalances,
+  AccountState,
+  HealthStatus,
+  IndexedTx,
+  Network,
+  SwapExecutionType,
+  TxAction,
+  UiTx,
+} from './models';
 import { classifyTransaction } from './utils/txClassifier';
 import { JettonMetadata } from './models';
 import { MetricsCollector } from './metricsCollector';
@@ -40,6 +50,43 @@ const normalizeAddress = (value: string) => {
 const balanceStateSignature = (state?: AccountState) => {
   if (!state) return '';
   return [state.balance ?? '', state.lastTxLt ?? '', state.lastTxHash ?? ''].join(':');
+};
+
+const normalizeTokenSymbol = (value?: string | null) => {
+  if (!value) return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+};
+
+type SwapExecutionStatus = UiTx['status'];
+
+export type AccountSwapExecution = {
+  txId: string;
+  lt: string;
+  hash: string;
+  utime: number;
+  status: SwapExecutionStatus;
+  reason?: string;
+  payToken?: string;
+  receiveToken?: string;
+  payAmount?: string;
+  receiveAmount?: string;
+  queryId?: string;
+  executionType: SwapExecutionType;
+  twapSlice?: number;
+  twapTotal?: number;
+  querySequence?: number;
+  queryNonce?: number;
+  twapRunId?: string;
+};
+
+export type AccountSwapsResponse = {
+  address: string;
+  total_swaps: number;
+  returned_swaps: number;
+  history_complete: boolean;
+  network: Network;
+  swaps: AccountSwapExecution[];
 };
 
 const tupleItemBigInt = (item?: TupleItem): bigint | null => {
@@ -2713,6 +2760,78 @@ export class IndexerService {
     return response;
   }
 
+  async getSwapExecutions(
+    address: string,
+    options: {
+      limit?: number;
+      payToken?: string;
+      receiveToken?: string;
+      executionType?: SwapExecutionType;
+      status?: SwapExecutionStatus;
+      includeReverse?: boolean;
+    } = {}
+  ): Promise<AccountSwapsResponse> {
+    this.store.touch(address);
+    try {
+      await this.ensureInitialTransactions(address);
+    } catch (_error) {
+      const fallback = this.store.get(address);
+      if (!fallback) {
+        return {
+          address,
+          total_swaps: 0,
+          returned_swaps: 0,
+          history_complete: false,
+          network: this.network,
+          swaps: [],
+        };
+      }
+    }
+
+    const entry = this.store.get(address);
+    if (!entry) {
+      return {
+        address,
+        total_swaps: 0,
+        returned_swaps: 0,
+        history_complete: false,
+        network: this.network,
+        swaps: [],
+      };
+    }
+
+    const limit = Math.max(1, Math.min(500, Math.trunc(options.limit ?? 100)));
+    const payToken = normalizeTokenSymbol(options.payToken);
+    const receiveToken = normalizeTokenSymbol(options.receiveToken);
+    const includeReverse = Boolean(options.includeReverse);
+    const executionType = options.executionType;
+    const status = options.status;
+
+    const swaps: AccountSwapExecution[] = [];
+    let totalSwaps = 0;
+
+    for (const tx of entry.txs) {
+      const swap = this.toSwapExecution(tx);
+      if (!swap) continue;
+      if (status && swap.status !== status) continue;
+      if (executionType && swap.executionType !== executionType) continue;
+      if (!this.matchesSwapPairFilter(swap, payToken, receiveToken, includeReverse)) continue;
+      totalSwaps += 1;
+      if (swaps.length < limit) {
+        swaps.push(swap);
+      }
+    }
+
+    return {
+      address,
+      total_swaps: totalSwaps,
+      returned_swaps: swaps.length,
+      history_complete: entry.stats.historyComplete,
+      network: this.network,
+      swaps,
+    };
+  }
+
   async refreshAccountState(address: string) {
     const previous = this.store.get(address)?.balance;
     const previousSignature = balanceStateSignature(previous);
@@ -2763,6 +2882,68 @@ export class IndexerService {
 
   classify(address: string, raw: any[]): IndexedTx[] {
     return raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
+  }
+
+  private toSwapExecution(tx: IndexedTx): AccountSwapExecution | null {
+    const detail = tx.ui.detail.kind === 'swap' ? tx.ui.detail : null;
+    const swapAction = tx.actions.find((action): action is Extract<TxAction, { kind: 'swap' }> => action.kind === 'swap');
+    if (!detail && !swapAction) return null;
+
+    const actionPayToken =
+      swapAction?.tokenIn?.kind === 'jetton'
+        ? swapAction.tokenIn.symbol
+        : swapAction?.tokenIn?.kind === 'ton'
+          ? 'TON'
+          : undefined;
+    const actionReceiveToken =
+      swapAction?.tokenOut?.kind === 'jetton'
+        ? swapAction.tokenOut.symbol
+        : swapAction?.tokenOut?.kind === 'ton'
+          ? 'TON'
+          : undefined;
+    const executionType = detail?.executionType ?? swapAction?.executionType ?? 'unknown';
+    const querySequence = detail?.querySequence ?? swapAction?.querySequence;
+    const queryNonce = detail?.queryNonce ?? swapAction?.queryNonce;
+    const twapRunId = executionType === 'twap' && querySequence !== undefined ? `seq:${querySequence}` : undefined;
+
+    return {
+      txId: tx.ui.txId,
+      lt: tx.lt,
+      hash: tx.hash,
+      utime: tx.ui.utime,
+      status: tx.ui.status,
+      reason: tx.ui.reason,
+      payToken: detail?.payToken ?? actionPayToken,
+      receiveToken: detail?.receiveToken ?? actionReceiveToken,
+      payAmount: detail?.payAmount ?? swapAction?.amountIn,
+      receiveAmount: detail?.receiveAmount ?? swapAction?.amountOut ?? swapAction?.minOut,
+      queryId: detail?.queryId ?? swapAction?.queryId,
+      executionType,
+      twapSlice: detail?.twapSlice ?? swapAction?.twapSlice,
+      twapTotal: detail?.twapTotal ?? swapAction?.twapTotal,
+      querySequence,
+      queryNonce,
+      twapRunId,
+    };
+  }
+
+  private matchesSwapPairFilter(
+    swap: AccountSwapExecution,
+    payToken: string | null,
+    receiveToken: string | null,
+    includeReverse: boolean
+  ) {
+    if (!payToken && !receiveToken) return true;
+
+    const swapPayToken = normalizeTokenSymbol(swap.payToken);
+    const swapReceiveToken = normalizeTokenSymbol(swap.receiveToken);
+
+    const directPayMatch = !payToken || swapPayToken === payToken;
+    const directReceiveMatch = !receiveToken || swapReceiveToken === receiveToken;
+    if (directPayMatch && directReceiveMatch) return true;
+
+    if (!includeReverse || !payToken || !receiveToken) return false;
+    return swapPayToken === receiveToken && swapReceiveToken === payToken;
   }
 
   private toApiTx(tx: IndexedTx): UiTx & {

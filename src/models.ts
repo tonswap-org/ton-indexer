@@ -8,6 +8,8 @@ export type TxKind =
   | 'contract_call'
   | 'unknown';
 
+export type SwapExecutionType = 'market' | 'limit' | 'twap' | 'unknown';
+
 export type AssetRef =
   | { kind: 'ton' }
   | { kind: 'jetton'; master: string; wallet?: string; symbol?: string; decimals?: number };
@@ -22,6 +24,12 @@ export type TxAction =
       amountOut?: string;
       minOut?: string;
       sender?: string;
+      queryId?: string;
+      executionType?: SwapExecutionType;
+      twapSlice?: number;
+      twapTotal?: number;
+      querySequence?: number;
+      queryNonce?: number;
     }
   | {
       kind: 'lp_deposit';
@@ -72,7 +80,19 @@ export type MessageSummary = {
 };
 
 export type UiDetail =
-  | { kind: 'swap'; payToken?: string; receiveToken?: string; payAmount?: string; receiveAmount?: string }
+  | {
+      kind: 'swap';
+      payToken?: string;
+      receiveToken?: string;
+      payAmount?: string;
+      receiveAmount?: string;
+      queryId?: string;
+      executionType?: SwapExecutionType;
+      twapSlice?: number;
+      twapTotal?: number;
+      querySequence?: number;
+      queryNonce?: number;
+    }
   | { kind: 'lp'; pair?: string; tokenA?: string; tokenB?: string; amountA?: string; amountB?: string }
   | { kind: 'mint'; mode?: string; inputToken?: string; outputToken?: string; inputAmount?: string; outputAmount?: string }
   | { kind: 'transfer'; asset?: string; amount?: string }

@@ -14,6 +14,7 @@ import {
   farmsSnapshotQuerySchema,
   governanceSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
+  swapQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
@@ -141,6 +142,12 @@ const parseStreamAddresses = (query: { address?: string; wallet?: string; addres
     }
   }
   return normalized.slice(0, BALANCE_STREAM_MAX_ADDRESSES);
+};
+
+const parseBooleanQuery = (value?: string) => {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 };
 
 const mapConcurrent = async <T, R>(
@@ -847,6 +854,45 @@ export const registerRoutes = (
           return await service.getTransactionsByCursor(addr, cursorLt, cursorHash);
         }
         return await service.getTransactions(addr, page);
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/accounts/:addr/swaps',
+    { schema: { params: addressParamsSchema, querystring: swapQuerySchema } },
+    async (request, reply) => {
+      const addr = (request.params as { addr: string }).addr;
+      if (!isValidAddress(addr)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid address');
+      }
+      const query = request.query as {
+        limit?: number | string;
+        pay_token?: string;
+        receive_token?: string;
+        execution_type?: 'market' | 'limit' | 'twap' | 'unknown';
+        status?: 'success' | 'failed' | 'pending';
+        include_reverse?: string;
+      };
+      const limitRaw = query.limit;
+      const limitFromString = typeof limitRaw === 'string' ? parsePositiveInt(limitRaw) : null;
+      const limit =
+        typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+          ? Math.max(1, Math.min(500, Math.trunc(limitRaw)))
+          : limitFromString !== null
+            ? Math.max(1, Math.min(500, limitFromString))
+            : 100;
+      try {
+        return await service.getSwapExecutions(addr, {
+          limit,
+          payToken: query.pay_token,
+          receiveToken: query.receive_token,
+          executionType: query.execution_type,
+          status: query.status,
+          includeReverse: parseBooleanQuery(query.include_reverse),
+        });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', (error as Error).message);
       }

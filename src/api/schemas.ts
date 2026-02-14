@@ -15,6 +15,18 @@ export const txQuerySchema = {
   },
 };
 
+export const swapQuerySchema = {
+  type: 'object',
+  properties: {
+    limit: { type: 'integer', minimum: 1, maximum: 500 },
+    pay_token: { type: 'string', minLength: 1, maxLength: 32 },
+    receive_token: { type: 'string', minLength: 1, maxLength: 32 },
+    execution_type: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
+    status: { type: 'string', enum: ['success', 'failed', 'pending'] },
+    include_reverse: { type: 'string', enum: ['1', '0', 'true', 'false', 'yes', 'no'] },
+  },
+};
+
 export const debugQuerySchema = {
   type: 'object',
   properties: {

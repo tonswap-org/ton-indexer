@@ -1,5 +1,5 @@
 import { OpcodeSets } from './opcodes';
-import { IndexedTx, MessageSummary, TxAction, TxKind, UiDetail, UiTx } from '../models';
+import { IndexedTx, MessageSummary, SwapExecutionType, TxAction, TxKind, UiDetail, UiTx } from '../models';
 import { Address, Cell } from '@ton/core';
 import { RawTransaction } from '../data/dataSource';
 
@@ -159,10 +159,89 @@ const OP_DLMM_ADD_LIQUIDITY_FOR = 0x444c4146;
 const OP_DLMM_REMOVE_LIQUIDITY = 0x44524d56;
 
 type DecodedSwap = {
+  queryId?: string;
   zeroForOne?: number;
   amountIn?: string;
   minAmountOut?: string;
   recipient?: string;
+};
+
+type SwapExecutionHint = {
+  executionType: SwapExecutionType;
+  twapSlice?: number;
+  twapTotal?: number;
+  payTokenSymbol?: string;
+  receiveTokenSymbol?: string;
+  querySequence?: number;
+  queryNonce?: number;
+};
+
+const SWAP_EXECUTION_QUERY_MAGIC_V1 = 0xd1n;
+const SWAP_EXECUTION_QUERY_MAGIC_V2 = 0xd2n;
+const SWAP_EXECUTION_MODE_MARKET = 0;
+const SWAP_EXECUTION_MODE_LIMIT = 1;
+const SWAP_EXECUTION_MODE_TWAP = 2;
+const SWAP_EXECUTION_MAX_STEP_V1 = 255;
+const SWAP_EXECUTION_MAX_STEP_V2 = 31;
+const SWAP_QUERY_TOKEN_SYMBOL_BY_CODE: Record<number, string> = {
+  1: 'TON',
+  2: 'T3',
+  3: 'USDT',
+  4: 'USDC',
+  5: 'KUSD',
+  6: 'TS',
+};
+
+const mapExecutionMode = (
+  mode: number,
+  twapSlice?: number,
+  twapTotal?: number
+): SwapExecutionHint => {
+  if (mode === SWAP_EXECUTION_MODE_LIMIT) {
+    return { executionType: 'limit' };
+  }
+  if (mode === SWAP_EXECUTION_MODE_TWAP) {
+    return { executionType: 'twap', twapSlice, twapTotal };
+  }
+  if (mode === SWAP_EXECUTION_MODE_MARKET) {
+    return { executionType: 'market' };
+  }
+  return { executionType: 'unknown' };
+};
+
+const decodeSwapExecutionHint = (queryId?: bigint | null): SwapExecutionHint | null => {
+  if (queryId === null || queryId === undefined || queryId < 0n) return null;
+  const magic = (queryId >> 56n) & 0xffn;
+  if (magic === SWAP_EXECUTION_QUERY_MAGIC_V2) {
+    const mode = Number((queryId >> 54n) & 0x03n);
+    const rawSlice = Number((queryId >> 49n) & 0x1fn);
+    const rawTotal = Number((queryId >> 44n) & 0x1fn);
+    const payTokenCode = Number((queryId >> 38n) & 0x3fn);
+    const receiveTokenCode = Number((queryId >> 32n) & 0x3fn);
+    const querySequence = Number((queryId >> 8n) & 0xffffffn);
+    const queryNonce = Number(queryId & 0xffn);
+    const twapSlice = rawSlice > 0 && rawSlice <= SWAP_EXECUTION_MAX_STEP_V2 ? rawSlice : undefined;
+    const twapTotal = rawTotal > 0 && rawTotal <= SWAP_EXECUTION_MAX_STEP_V2 ? rawTotal : undefined;
+    const hint = mapExecutionMode(mode, twapSlice, twapTotal);
+    return {
+      ...hint,
+      payTokenSymbol: SWAP_QUERY_TOKEN_SYMBOL_BY_CODE[payTokenCode],
+      receiveTokenSymbol: SWAP_QUERY_TOKEN_SYMBOL_BY_CODE[receiveTokenCode],
+      querySequence,
+      queryNonce,
+    };
+  }
+  if (magic === SWAP_EXECUTION_QUERY_MAGIC_V1) {
+    const mode = Number((queryId >> 54n) & 0x03n);
+    const rawSlice = Number((queryId >> 46n) & 0xffn);
+    const rawTotal = Number((queryId >> 38n) & 0xffn);
+    const querySequence = Number((queryId >> 7n) & 0x7fffffffn);
+    const queryNonce = Number(queryId & 0x7fn);
+    const twapSlice = rawSlice > 0 && rawSlice <= SWAP_EXECUTION_MAX_STEP_V1 ? rawSlice : undefined;
+    const twapTotal = rawTotal > 0 && rawTotal <= SWAP_EXECUTION_MAX_STEP_V1 ? rawTotal : undefined;
+    return { ...mapExecutionMode(mode, twapSlice, twapTotal), querySequence, queryNonce };
+  }
+  return null;
 };
 
 type DecodedDlmmAddLiquidityForward = {
@@ -223,7 +302,7 @@ const decodeSwap = (body?: string | Cell): DecodedSwap | null => {
     const forward = (() => {
       try {
         const slice = base.clone();
-        slice.loadUintBig(64);
+        const queryId = slice.loadUintBig(64);
         if (slice.remainingBits < 2) return null;
         // DLMM swap forward always includes an internal recipient address after queryId.
         const tag = slice.preloadUint(2);
@@ -232,6 +311,7 @@ const decodeSwap = (body?: string | Cell): DecodedSwap | null => {
         const minAmountOut = slice.loadCoins();
         const zeroForOne = slice.loadUint(8);
         return {
+          queryId: queryId.toString(),
           zeroForOne,
           minAmountOut: minAmountOut.toString(),
           recipient: toFriendlyAddress(recipient),
@@ -246,11 +326,12 @@ const decodeSwap = (body?: string | Cell): DecodedSwap | null => {
     const exact = (() => {
       try {
         const slice = base.clone();
-        slice.loadUintBig(64);
+        const queryId = slice.loadUintBig(64);
         const zeroForOne = slice.loadUint(8);
         const amountIn = slice.loadCoins();
         const minAmountOut = slice.loadCoins();
         return {
+          queryId: queryId.toString(),
           zeroForOne,
           amountIn: amountIn.toString(),
           minAmountOut: minAmountOut.toString(),
@@ -417,14 +498,24 @@ export const classifyTransaction = (
   if (kind === 'swap') {
     if (swapViaTransfer?.decoded.forwardPayload) {
       const swap = decodeSwap(swapViaTransfer.decoded.forwardPayload);
+      const queryId = swapViaTransfer.decoded.queryId.toString();
+      const executionHint = decodeSwapExecutionHint(swapViaTransfer.decoded.queryId);
       const amountIn = swapViaTransfer.decoded.amount;
-      const payToken = swap?.zeroForOne === 1 ? 'T3' : swap?.zeroForOne === 0 ? 'X' : undefined;
-      const receiveToken = swap?.zeroForOne === 1 ? 'X' : swap?.zeroForOne === 0 ? 'T3' : undefined;
+      const inferredPayToken = swap?.zeroForOne === 1 ? 'T3' : swap?.zeroForOne === 0 ? 'X' : undefined;
+      const inferredReceiveToken = swap?.zeroForOne === 1 ? 'X' : swap?.zeroForOne === 0 ? 'T3' : undefined;
+      const payToken = executionHint?.payTokenSymbol ?? inferredPayToken;
+      const receiveToken = executionHint?.receiveTokenSymbol ?? inferredReceiveToken;
       actions.push({
         kind: 'swap',
         pool: swapViaTransfer.decoded.destination,
         amountIn,
         minOut: swap?.minAmountOut,
+        queryId,
+        executionType: executionHint?.executionType,
+        twapSlice: executionHint?.twapSlice,
+        twapTotal: executionHint?.twapTotal,
+        querySequence: executionHint?.querySequence,
+        queryNonce: executionHint?.queryNonce,
       });
       detail = {
         kind: 'swap',
@@ -432,12 +523,22 @@ export const classifyTransaction = (
         receiveAmount: swap?.minAmountOut,
         payToken,
         receiveToken,
+        queryId,
+        executionType: executionHint?.executionType,
+        twapSlice: executionHint?.twapSlice,
+        twapTotal: executionHint?.twapTotal,
+        querySequence: executionHint?.querySequence,
+        queryNonce: executionHint?.queryNonce,
       };
     } else if (swapViaNotify?.decoded.forwardPayload) {
       const swap = decodeSwap(swapViaNotify.decoded.forwardPayload);
+      const queryId = swapViaNotify.decoded.queryId.toString();
+      const executionHint = decodeSwapExecutionHint(swapViaNotify.decoded.queryId);
       const amountIn = swapViaNotify.decoded.amount;
-      const payToken = swap?.zeroForOne === 1 ? 'T3' : swap?.zeroForOne === 0 ? 'X' : undefined;
-      const receiveToken = swap?.zeroForOne === 1 ? 'X' : swap?.zeroForOne === 0 ? 'T3' : undefined;
+      const inferredPayToken = swap?.zeroForOne === 1 ? 'T3' : swap?.zeroForOne === 0 ? 'X' : undefined;
+      const inferredReceiveToken = swap?.zeroForOne === 1 ? 'X' : swap?.zeroForOne === 0 ? 'T3' : undefined;
+      const payToken = executionHint?.payTokenSymbol ?? inferredPayToken;
+      const receiveToken = executionHint?.receiveTokenSymbol ?? inferredReceiveToken;
       const recipientWallet = swap?.recipient;
       const amountOut =
         recipientWallet
@@ -450,6 +551,12 @@ export const classifyTransaction = (
         amountOut,
         minOut: swap?.minAmountOut,
         sender: swapViaNotify.decoded.sender,
+        queryId,
+        executionType: executionHint?.executionType,
+        twapSlice: executionHint?.twapSlice,
+        twapTotal: executionHint?.twapTotal,
+        querySequence: executionHint?.querySequence,
+        queryNonce: executionHint?.queryNonce,
       });
       detail = {
         kind: 'swap',
@@ -457,20 +564,47 @@ export const classifyTransaction = (
         receiveAmount: amountOut ?? swap?.minAmountOut,
         payToken,
         receiveToken,
+        queryId,
+        executionType: executionHint?.executionType,
+        twapSlice: executionHint?.twapSlice,
+        twapTotal: executionHint?.twapTotal,
+        querySequence: executionHint?.querySequence,
+        queryNonce: executionHint?.queryNonce,
       };
     } else {
       const swapMsg = [inMsg, ...outMsgs].find((msg) => msg && opMatches(msg, opcodes.swap));
       const swap = decodeSwap(swapMsg?.body);
+      const queryIdRaw = swap?.queryId;
+      const queryIdBigInt = queryIdRaw && /^\d+$/.test(queryIdRaw) ? BigInt(queryIdRaw) : null;
+      const executionHint = decodeSwapExecutionHint(queryIdBigInt);
+      const inferredPayToken = swap?.zeroForOne === 1 ? 'T3' : swap?.zeroForOne === 0 ? 'X' : undefined;
+      const inferredReceiveToken = swap?.zeroForOne === 1 ? 'X' : swap?.zeroForOne === 0 ? 'T3' : undefined;
+      const payToken = executionHint?.payTokenSymbol ?? inferredPayToken;
+      const receiveToken = executionHint?.receiveTokenSymbol ?? inferredReceiveToken;
       actions.push({
         kind: 'swap',
         pool: pickPool(inMsg ?? outMsgs[0]),
         amountIn: swap?.amountIn,
         minOut: swap?.minAmountOut,
+        queryId: queryIdRaw,
+        executionType: executionHint?.executionType,
+        twapSlice: executionHint?.twapSlice,
+        twapTotal: executionHint?.twapTotal,
+        querySequence: executionHint?.querySequence,
+        queryNonce: executionHint?.queryNonce,
       });
       detail = {
         kind: 'swap',
+        payToken,
+        receiveToken,
         payAmount: swap?.amountIn,
         receiveAmount: swap?.minAmountOut,
+        queryId: queryIdRaw,
+        executionType: executionHint?.executionType,
+        twapSlice: executionHint?.twapSlice,
+        twapTotal: executionHint?.twapTotal,
+        querySequence: executionHint?.querySequence,
+        queryNonce: executionHint?.queryNonce,
       };
     }
   } else if (kind === 'lp_deposit') {
