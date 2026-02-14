@@ -188,6 +188,11 @@ const GET_METHOD_CACHE_TTL_MS = 1_000;
 const GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS = 30_000;
 const GET_METHOD_CACHE_ENTRY_MIN_TTL_MS = 60_000;
 
+// Some getters are used as liveness/confirmation signals (e.g. Jetton wallet `wallet_data`).
+// Caching these for 30s makes UI/automation flows flaky because balance changes are invisible
+// during the cache window. Keep these on the base (short) TTL even when they take no args.
+const GET_METHOD_CACHE_NO_ARGS_FAST_METHODS = new Set(['wallet_data']);
+
 const DEFI_SNAPSHOT_CACHE_TTL_MS = 5_000;
 const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
 
@@ -1109,7 +1114,9 @@ export class IndexerService {
     if (method === 'get_entry') {
       cacheTtlMs = Math.max(baseCacheTtlMs, GET_METHOD_CACHE_ENTRY_MIN_TTL_MS);
     } else if (args.length === 0) {
-      cacheTtlMs = Math.max(baseCacheTtlMs, GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS);
+      cacheTtlMs = GET_METHOD_CACHE_NO_ARGS_FAST_METHODS.has(method)
+        ? baseCacheTtlMs
+        : Math.max(baseCacheTtlMs, GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS);
     }
     return { cacheKey, cacheTtlMs };
   }

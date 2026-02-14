@@ -31,10 +31,10 @@
 ### Network Selection
 - Default: **testnet** (current TONSWAP deployments).
 - Mainnet mode is supported, but requires real registry/mainnet addresses.
-- Configuration example:
-  - `TON_NETWORK=mainnet|testnet` (default `testnet`)
-  - `LITESERVER_POOL_MAINNET=...` (TODO until mainnet deploy)
-  - `LITESERVER_POOL_TESTNET=127.0.0.1:PORT` (localhost liteserver)
+  - Configuration example:
+    - `TON_NETWORK=mainnet|testnet` (default `testnet`)
+    - `LITESERVER_POOL_MAINNET=...` (set after mainnet deploy)
+    - `LITESERVER_POOL_TESTNET=127.0.0.1:PORT` (localhost liteserver)
 
 ### High-Level Architecture
 - **Lite client adapter**: queries a pool of public liteservers.
