@@ -205,11 +205,22 @@ const run = async () => {
   assert.equal(swaps.total_swaps, 2);
   assert.equal(swaps.returned_swaps, 2);
   assert.equal(swaps.swaps[0]?.txId, '13:swap2');
+  assert.equal(swaps.summary.status_counts.success, 1);
+  assert.equal(swaps.summary.status_counts.failed, 1);
+  assert.equal(swaps.summary.execution_type_counts.twap, 1);
+  assert.equal(swaps.summary.execution_type_counts.limit, 1);
+  assert.equal(swaps.summary.pending_limit_count, 0);
+  assert.equal(swaps.summary.twap_run_count, 1);
+  assert.equal(swaps.twap_runs[0]?.id, 'seq:1234');
+  assert.equal(swaps.pending_limits.length, 0);
 
   const twapOnly = await service.getSwapExecutions(addr, { limit: 10, executionType: 'twap' });
   assert.equal(twapOnly.total_swaps, 1);
   assert.equal(twapOnly.swaps[0]?.twapRunId, 'seq:1234');
   assert.equal(twapOnly.swaps[0]?.queryNonce, 7);
+  assert.equal(twapOnly.summary.execution_type_counts.twap, 1);
+  assert.equal(twapOnly.summary.twap_run_count, 1);
+  assert.equal(twapOnly.twap_runs[0]?.status, 'partial');
 
   const reversedPair = await service.getSwapExecutions(addr, {
     limit: 10,
@@ -218,6 +229,17 @@ const run = async () => {
     includeReverse: true,
   });
   assert.equal(reversedPair.total_swaps, 2);
+
+  const fromWindow = await service.getSwapExecutions(addr, { limit: 10, fromUtime: 101 });
+  assert.equal(fromWindow.total_swaps, 1);
+  assert.equal(fromWindow.swaps[0]?.txId, '13:swap2');
+  assert.equal(fromWindow.summary.pending_limit_count, 0);
+
+  const fixedWindow = await service.getSwapExecutions(addr, { limit: 10, fromUtime: 100, toUtime: 100 });
+  assert.equal(fixedWindow.total_swaps, 1);
+  assert.equal(fixedWindow.swaps[0]?.txId, '12:swap1');
+  assert.equal(fixedWindow.summary.twap_run_count, 1);
+  assert.equal(fixedWindow.twap_runs[0]?.id, 'seq:1234');
 
   console.log('response cache ok');
 };

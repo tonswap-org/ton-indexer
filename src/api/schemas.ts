@@ -19,6 +19,8 @@ export const swapQuerySchema = {
   type: 'object',
   properties: {
     limit: { type: 'integer', minimum: 1, maximum: 500 },
+    from_utime: { type: 'integer', minimum: 1 },
+    to_utime: { type: 'integer', minimum: 1 },
     pay_token: { type: 'string', minLength: 1, maxLength: 32 },
     receive_token: { type: 'string', minLength: 1, maxLength: 32 },
     execution_type: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },

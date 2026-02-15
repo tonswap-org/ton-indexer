@@ -75,7 +75,7 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 - `GET /api/indexer/v1/accounts/{addr}/balances`
 - `GET /api/indexer/v1/accounts/{addr}/assets` (alias of `/balances`)
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
-- `GET /api/indexer/v1/accounts/{addr}/swaps?limit=100&pay_token=TON&receive_token=T3&include_reverse=true`
+- `GET /api/indexer/v1/accounts/{addr}/swaps?limit=100&from_utime=1700000000&to_utime=1700003600&pay_token=TON&receive_token=T3&include_reverse=true`
 - `GET /api/indexer/v1/accounts/{addr}/state`
 - `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64`
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
@@ -123,7 +123,11 @@ npm run sync-registry
 - Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.
 - Swap classifier now also decodes optional execution hints from swap `queryId` (market/limit/twap, optional twap slice/total, and optional token symbol codes) and returns them in both `detail` and `actions` for `kind: "swap"` tx entries.
 - Swap hint decoding also exposes `querySequence` + `queryNonce` (from queryId metadata) so clients can group TWAP slices by run.
-- `/accounts/{addr}/swaps` provides a chart-friendly swap execution feed with server-side filters for pair direction, execution type, and status.
+- `/accounts/{addr}/swaps` provides a chart-friendly swap execution feed with server-side filters for pair direction, execution type, status, and optional `from_utime` / `to_utime` time windows.
+- `/accounts/{addr}/swaps` also returns chart helpers:
+  - `summary` (status + execution type counters, pending limit count, twap run count)
+  - `twap_runs` (run-level progress/status snapshots)
+  - `pending_limits` (pending limit orders for quick UI overlays)
 
 ### Swap `queryId` Metadata (Optional)
 - Backward compatible formats:

@@ -150,6 +150,15 @@ const parseBooleanQuery = (value?: string) => {
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 };
 
+const parsePositiveIntQuery = (value?: string | number) => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    const next = Math.trunc(value);
+    return next > 0 ? next : null;
+  }
+  return parsePositiveInt(value);
+};
+
 const mapConcurrent = async <T, R>(
   items: T[],
   concurrency: number,
@@ -870,6 +879,8 @@ export const registerRoutes = (
       }
       const query = request.query as {
         limit?: number | string;
+        from_utime?: number | string;
+        to_utime?: number | string;
         pay_token?: string;
         receive_token?: string;
         execution_type?: 'market' | 'limit' | 'twap' | 'unknown';
@@ -884,9 +895,24 @@ export const registerRoutes = (
           : limitFromString !== null
             ? Math.max(1, Math.min(500, limitFromString))
             : 100;
+      const hasFromUtime = query.from_utime !== undefined;
+      const hasToUtime = query.to_utime !== undefined;
+      const fromUtime = parsePositiveIntQuery(query.from_utime);
+      const toUtime = parsePositiveIntQuery(query.to_utime);
+      if (hasFromUtime && fromUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be a positive integer');
+      }
+      if (hasToUtime && toUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'to_utime must be a positive integer');
+      }
+      if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be less than or equal to to_utime');
+      }
       try {
         return await service.getSwapExecutions(addr, {
           limit,
+          fromUtime: fromUtime ?? undefined,
+          toUtime: toUtime ?? undefined,
           payToken: query.pay_token,
           receiveToken: query.receive_token,
           executionType: query.execution_type,

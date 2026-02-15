@@ -80,6 +80,54 @@ export type AccountSwapExecution = {
   twapRunId?: string;
 };
 
+export type AccountSwapStatusCounts = {
+  success: number;
+  failed: number;
+  pending: number;
+};
+
+export type AccountSwapExecutionTypeCounts = {
+  market: number;
+  limit: number;
+  twap: number;
+  unknown: number;
+};
+
+export type AccountSwapsSummary = {
+  status_counts: AccountSwapStatusCounts;
+  execution_type_counts: AccountSwapExecutionTypeCounts;
+  twap_run_count: number;
+  pending_limit_count: number;
+};
+
+export type AccountPendingLimitOrder = {
+  txId: string;
+  lt: string;
+  hash: string;
+  utime: number;
+  status: SwapExecutionStatus;
+  payToken?: string;
+  receiveToken?: string;
+  payAmount?: string;
+  receiveAmount?: string;
+  queryId?: string;
+  querySequence?: number;
+  queryNonce?: number;
+};
+
+export type AccountTwapRunSummary = {
+  id: string;
+  payToken?: string;
+  receiveToken?: string;
+  totalSlices?: number;
+  confirmedSlices: number;
+  pendingSlices: number;
+  failedSlices: number;
+  firstUtime: number;
+  lastUtime: number;
+  status: 'running' | 'completed' | 'partial' | 'failed';
+};
+
 export type AccountSwapsResponse = {
   address: string;
   total_swaps: number;
@@ -87,6 +135,9 @@ export type AccountSwapsResponse = {
   history_complete: boolean;
   network: Network;
   swaps: AccountSwapExecution[];
+  summary: AccountSwapsSummary;
+  twap_runs: AccountTwapRunSummary[];
+  pending_limits: AccountPendingLimitOrder[];
 };
 
 const tupleItemBigInt = (item?: TupleItem): bigint | null => {
@@ -2764,6 +2815,8 @@ export class IndexerService {
     address: string,
     options: {
       limit?: number;
+      fromUtime?: number;
+      toUtime?: number;
       payToken?: string;
       receiveToken?: string;
       executionType?: SwapExecutionType;
@@ -2771,6 +2824,13 @@ export class IndexerService {
       includeReverse?: boolean;
     } = {}
   ): Promise<AccountSwapsResponse> {
+    const emptySummary: AccountSwapsSummary = {
+      status_counts: { success: 0, failed: 0, pending: 0 },
+      execution_type_counts: { market: 0, limit: 0, twap: 0, unknown: 0 },
+      twap_run_count: 0,
+      pending_limit_count: 0,
+    };
+
     this.store.touch(address);
     try {
       await this.ensureInitialTransactions(address);
@@ -2784,6 +2844,9 @@ export class IndexerService {
           history_complete: false,
           network: this.network,
           swaps: [],
+          summary: emptySummary,
+          twap_runs: [],
+          pending_limits: [],
         };
       }
     }
@@ -2797,30 +2860,144 @@ export class IndexerService {
         history_complete: false,
         network: this.network,
         swaps: [],
+        summary: emptySummary,
+        twap_runs: [],
+        pending_limits: [],
       };
     }
 
     const limit = Math.max(1, Math.min(500, Math.trunc(options.limit ?? 100)));
+    const fromUtime =
+      typeof options.fromUtime === 'number' && Number.isFinite(options.fromUtime)
+        ? Math.max(1, Math.trunc(options.fromUtime))
+        : null;
+    const toUtime =
+      typeof options.toUtime === 'number' && Number.isFinite(options.toUtime)
+        ? Math.max(1, Math.trunc(options.toUtime))
+        : null;
     const payToken = normalizeTokenSymbol(options.payToken);
     const receiveToken = normalizeTokenSymbol(options.receiveToken);
     const includeReverse = Boolean(options.includeReverse);
     const executionType = options.executionType;
     const status = options.status;
 
+    const summary: AccountSwapsSummary = {
+      status_counts: { success: 0, failed: 0, pending: 0 },
+      execution_type_counts: { market: 0, limit: 0, twap: 0, unknown: 0 },
+      twap_run_count: 0,
+      pending_limit_count: 0,
+    };
     const swaps: AccountSwapExecution[] = [];
+    const pendingLimits: AccountPendingLimitOrder[] = [];
+    const twapRuns = new Map<
+      string,
+      {
+        id: string;
+        payToken?: string;
+        receiveToken?: string;
+        totalSlices: number;
+        confirmedSlices: number;
+        pendingSlices: number;
+        failedSlices: number;
+        firstUtime: number;
+        lastUtime: number;
+      }
+    >();
     let totalSwaps = 0;
+    const pendingLimitCap = 64;
+    const twapRunCap = 64;
 
     for (const tx of entry.txs) {
       const swap = this.toSwapExecution(tx);
       if (!swap) continue;
+      if (fromUtime !== null && swap.utime < fromUtime) continue;
+      if (toUtime !== null && swap.utime > toUtime) continue;
       if (status && swap.status !== status) continue;
       if (executionType && swap.executionType !== executionType) continue;
       if (!this.matchesSwapPairFilter(swap, payToken, receiveToken, includeReverse)) continue;
       totalSwaps += 1;
+      summary.status_counts[swap.status] += 1;
+      summary.execution_type_counts[swap.executionType] += 1;
+
+      if (swap.executionType === 'limit' && swap.status === 'pending') {
+        summary.pending_limit_count += 1;
+        if (pendingLimits.length < pendingLimitCap) {
+          pendingLimits.push({
+            txId: swap.txId,
+            lt: swap.lt,
+            hash: swap.hash,
+            utime: swap.utime,
+            status: swap.status,
+            payToken: swap.payToken,
+            receiveToken: swap.receiveToken,
+            payAmount: swap.payAmount,
+            receiveAmount: swap.receiveAmount,
+            queryId: swap.queryId,
+            querySequence: swap.querySequence,
+            queryNonce: swap.queryNonce,
+          });
+        }
+      }
+
+      if (swap.executionType === 'twap' && swap.twapRunId) {
+        const run = twapRuns.get(swap.twapRunId) ?? {
+          id: swap.twapRunId,
+          payToken: swap.payToken,
+          receiveToken: swap.receiveToken,
+          totalSlices: 0,
+          confirmedSlices: 0,
+          pendingSlices: 0,
+          failedSlices: 0,
+          firstUtime: swap.utime,
+          lastUtime: swap.utime,
+        };
+        if (!run.payToken && swap.payToken) run.payToken = swap.payToken;
+        if (!run.receiveToken && swap.receiveToken) run.receiveToken = swap.receiveToken;
+        run.totalSlices = Math.max(run.totalSlices, swap.twapTotal ?? 0);
+        run.firstUtime = Math.min(run.firstUtime, swap.utime);
+        run.lastUtime = Math.max(run.lastUtime, swap.utime);
+        if (swap.status === 'success') {
+          run.confirmedSlices += 1;
+        } else if (swap.status === 'failed') {
+          run.failedSlices += 1;
+        } else {
+          run.pendingSlices += 1;
+        }
+        twapRuns.set(run.id, run);
+      }
+
       if (swaps.length < limit) {
         swaps.push(swap);
       }
     }
+
+    summary.twap_run_count = twapRuns.size;
+
+    const twapRunSummaries: AccountTwapRunSummary[] = [...twapRuns.values()]
+      .sort((left, right) => right.lastUtime - left.lastUtime)
+      .slice(0, twapRunCap)
+      .map((run) => {
+        let runStatus: AccountTwapRunSummary['status'] = 'completed';
+        if (run.pendingSlices > 0) {
+          runStatus = 'running';
+        } else if (run.failedSlices > 0 && run.confirmedSlices === 0) {
+          runStatus = 'failed';
+        } else if (run.failedSlices > 0 || (run.totalSlices > 0 && run.confirmedSlices < run.totalSlices)) {
+          runStatus = 'partial';
+        }
+        return {
+          id: run.id,
+          payToken: run.payToken,
+          receiveToken: run.receiveToken,
+          totalSlices: run.totalSlices > 0 ? run.totalSlices : undefined,
+          confirmedSlices: run.confirmedSlices,
+          pendingSlices: run.pendingSlices,
+          failedSlices: run.failedSlices,
+          firstUtime: run.firstUtime,
+          lastUtime: run.lastUtime,
+          status: runStatus,
+        };
+      });
 
     return {
       address,
@@ -2829,6 +3006,9 @@ export class IndexerService {
       history_complete: entry.stats.historyComplete,
       network: this.network,
       swaps,
+      summary,
+      twap_runs: twapRunSummaries,
+      pending_limits: pendingLimits,
     };
   }
 

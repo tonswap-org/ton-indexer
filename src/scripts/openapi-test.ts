@@ -24,5 +24,8 @@ assert.ok('querySequence' in txEntry);
 assert.ok('queryNonce' in txEntry);
 assert.ok(spec.components?.schemas?.SwapsResponse);
 assert.ok(spec.components?.schemas?.SwapExecutionEntry);
+assert.ok(spec.components?.schemas?.SwapsSummary);
+assert.ok(spec.components?.schemas?.TwapRunSummaryEntry);
+assert.ok(spec.components?.schemas?.PendingLimitOrderEntry);
 
 console.log('openapi ok');
