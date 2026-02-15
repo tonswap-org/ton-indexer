@@ -128,6 +128,7 @@ npm run sync-registry
   - `summary` (status + execution type counters, pending limit count, twap run count)
   - `twap_runs` (run-level progress/status snapshots)
   - `pending_limits` (pending limit orders for quick UI overlays)
+  - `synced_at` (server unix timestamp in seconds when the payload was generated)
 
 ### Swap `queryId` Metadata (Optional)
 - Backward compatible formats:

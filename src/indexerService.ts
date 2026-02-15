@@ -133,6 +133,7 @@ export type AccountSwapsResponse = {
   total_swaps: number;
   returned_swaps: number;
   history_complete: boolean;
+  synced_at: number;
   network: Network;
   swaps: AccountSwapExecution[];
   summary: AccountSwapsSummary;
@@ -2824,6 +2825,7 @@ export class IndexerService {
       includeReverse?: boolean;
     } = {}
   ): Promise<AccountSwapsResponse> {
+    const syncedAt = Math.trunc(Date.now() / 1000);
     const emptySummary: AccountSwapsSummary = {
       status_counts: { success: 0, failed: 0, pending: 0 },
       execution_type_counts: { market: 0, limit: 0, twap: 0, unknown: 0 },
@@ -2842,6 +2844,7 @@ export class IndexerService {
           total_swaps: 0,
           returned_swaps: 0,
           history_complete: false,
+          synced_at: syncedAt,
           network: this.network,
           swaps: [],
           summary: emptySummary,
@@ -2858,6 +2861,7 @@ export class IndexerService {
         total_swaps: 0,
         returned_swaps: 0,
         history_complete: false,
+        synced_at: syncedAt,
         network: this.network,
         swaps: [],
         summary: emptySummary,
@@ -3004,6 +3008,7 @@ export class IndexerService {
       total_swaps: totalSwaps,
       returned_swaps: swaps.length,
       history_complete: entry.stats.historyComplete,
+      synced_at: syncedAt,
       network: this.network,
       swaps,
       summary,

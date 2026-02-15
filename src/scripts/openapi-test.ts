@@ -23,6 +23,10 @@ assert.ok('queryId' in txEntry);
 assert.ok('querySequence' in txEntry);
 assert.ok('queryNonce' in txEntry);
 assert.ok(spec.components?.schemas?.SwapsResponse);
+const swapsResponseProps =
+  spec.components?.schemas?.SwapsResponse?.properties ??
+  ({} as Record<string, unknown>);
+assert.ok('synced_at' in swapsResponseProps);
 assert.ok(spec.components?.schemas?.SwapExecutionEntry);
 assert.ok(spec.components?.schemas?.SwapsSummary);
 assert.ok(spec.components?.schemas?.TwapRunSummaryEntry);

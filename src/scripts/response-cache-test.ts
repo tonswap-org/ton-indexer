@@ -204,6 +204,7 @@ const run = async () => {
   const swaps = await service.getSwapExecutions(addr, { limit: 10 });
   assert.equal(swaps.total_swaps, 2);
   assert.equal(swaps.returned_swaps, 2);
+  assert.ok(Number.isInteger(swaps.synced_at) && swaps.synced_at > 0);
   assert.equal(swaps.swaps[0]?.txId, '13:swap2');
   assert.equal(swaps.summary.status_counts.success, 1);
   assert.equal(swaps.summary.status_counts.failed, 1);
@@ -216,6 +217,7 @@ const run = async () => {
 
   const twapOnly = await service.getSwapExecutions(addr, { limit: 10, executionType: 'twap' });
   assert.equal(twapOnly.total_swaps, 1);
+  assert.ok(Number.isInteger(twapOnly.synced_at) && twapOnly.synced_at > 0);
   assert.equal(twapOnly.swaps[0]?.twapRunId, 'seq:1234');
   assert.equal(twapOnly.swaps[0]?.queryNonce, 7);
   assert.equal(twapOnly.summary.execution_type_counts.twap, 1);
