@@ -5,6 +5,7 @@ import { createLogger } from './utils/logger';
 import { MemoryStore } from './store/memoryStore';
 import { TonClient4DataSource } from './data/tonClient4Source';
 import { LiteClientDataSource } from './data/liteClientSource';
+import { ResilientTonDataSource } from './data/resilientSource';
 import { loadOpcodes } from './utils/opcodes';
 import { IndexerService } from './indexerService';
 import { registerRoutes } from './api/routes';
@@ -76,7 +77,22 @@ const start = async () => {
   const source =
     config.dataSource === 'lite' || !canUseHttp
       ? await LiteClientDataSource.create(config.network, config.liteserverPool)
-      : await TonClient4DataSource.create(config.network, config.httpEndpoint);
+      : await (async () => {
+          const primary = await TonClient4DataSource.create(config.network, config.httpEndpoint);
+          try {
+            const fallback = await LiteClientDataSource.create(config.network, config.liteserverPool);
+            logger.info('enabled resilient data source', {
+              primary: config.httpEndpoint ? 'http4:custom' : 'http4:auto',
+              fallback: config.liteserverPool ? 'liteserver:custom' : 'liteserver:ton.org'
+            });
+            return new ResilientTonDataSource(primary, fallback);
+          } catch (error) {
+            logger.warn('lite fallback source unavailable; using http4 only', {
+              error: (error as Error).message
+            });
+            return primary;
+          }
+        })();
   const service = new IndexerService(config, store, source, opcodes, jettonRoots, metricsCollector, poolTracker);
 
   const backfillWorker = new BackfillWorker(config, store, source, opcodes, logger, metricsCollector, poolTracker);

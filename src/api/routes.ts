@@ -30,6 +30,32 @@ const GET_METHOD_BATCH_CONCURRENCY = 10;
 const GET_METHOD_CALL_TIMEOUT_MS = 6_000;
 
 type ToncenterStackEntry = [string, unknown];
+type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; error: string; code?: number };
+type ToncenterRpcCompatRequest = {
+  id?: number | string | null;
+  jsonrpc?: string;
+  method?: string;
+  params?: Record<string, unknown> | null;
+};
+
+type IndexedTxMessageCompat = {
+  source?: string;
+  destination?: string;
+  value?: string;
+  op?: number;
+  body?: string;
+};
+
+type IndexedTxCompat = {
+  txId?: string;
+  lt?: string;
+  hash?: string;
+  utime?: number;
+  status?: 'success' | 'failed' | 'pending';
+  reason?: string;
+  inMessage?: IndexedTxMessageCompat;
+  outMessages?: IndexedTxMessageCompat[];
+};
 
 const normalizeBase64 = (input: string) => {
   let value = input.replace(/-/g, '+').replace(/_/g, '/');
@@ -159,6 +185,68 @@ const parsePositiveIntQuery = (value?: string | number) => {
   return parsePositiveInt(value);
 };
 
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
+const readString = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const mapIndexerMessageToToncenter = (message?: IndexedTxMessageCompat | null) => {
+  if (!message || typeof message !== 'object') return null;
+  const mapped: Record<string, unknown> = {};
+  if (typeof message.source === 'string' && message.source) mapped.source = message.source;
+  if (typeof message.destination === 'string' && message.destination) mapped.destination = message.destination;
+  if (typeof message.value === 'string' && message.value) mapped.value = message.value;
+  if (typeof message.body === 'string' && message.body) {
+    mapped.msg_data = { body: message.body };
+  }
+  return mapped;
+};
+
+const mapIndexerStatusToToncenterDescription = (status?: string, reason?: string) => {
+  if (status === 'success') {
+    return {
+      aborted: false,
+      compute_ph: { success: true, exit_code: 0 },
+      action: { success: true, valid: true, result_code: 0 }
+    };
+  }
+  if (status === 'failed') {
+    return {
+      aborted: false,
+      compute_ph: { type: 'skipped', reason: reason ?? 'Transaction failed.' },
+      action: { success: false, valid: false, result_code: 1 }
+    };
+  }
+  return undefined;
+};
+
+const mapIndexerTxToToncenterTransaction = (entry: IndexedTxCompat) => {
+  const txIdRaw = typeof entry.txId === 'string' ? entry.txId : null;
+  const split = txIdRaw && txIdRaw.includes(':') ? txIdRaw.split(':') : null;
+  const lt = readString(entry.lt) ?? (split ? readString(split[0]) : null) ?? '';
+  const hash = readString(entry.hash) ?? (split ? readString(split[1]) : null) ?? '';
+  const inMsg = mapIndexerMessageToToncenter(entry.inMessage ?? null) ?? undefined;
+  const outMsgs = Array.isArray(entry.outMessages)
+    ? entry.outMessages
+        .map((message) => mapIndexerMessageToToncenter(message))
+        .filter((message): message is Record<string, unknown> => Boolean(message))
+    : [];
+
+  return {
+    transaction_id: { lt, hash },
+    utime: typeof entry.utime === 'number' ? entry.utime : undefined,
+    in_msg: inMsg,
+    out_msgs: outMsgs,
+    description: mapIndexerStatusToToncenterDescription(entry.status, entry.reason)
+  };
+};
+
 const mapConcurrent = async <T, R>(
   items: T[],
   concurrency: number,
@@ -250,6 +338,114 @@ export const registerRoutes = (
       contracts: contractMap
     };
   });
+
+  const sendToncenterCompat = <T>(
+    reply: FastifyReply,
+    payload: ToncenterRpcCompatResponse<T>,
+    id?: number | string | null
+  ) => {
+    reply.code(200);
+    return reply.send({
+      id: id ?? 1,
+      jsonrpc: '2.0',
+      ...payload
+    });
+  };
+
+  const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = (request.body ?? null) as ToncenterRpcCompatRequest | null;
+    const method = body?.method?.trim();
+    const id = body?.id ?? 1;
+    const params = asRecord(body?.params ?? null) ?? {};
+
+    if (!method) {
+      return sendToncenterCompat(reply, { ok: false, code: 400, error: 'missing method' }, id);
+    }
+
+    try {
+      if (method === 'runGetMethod') {
+        const address = readString(params.address);
+        const getter = readString(params.method);
+        if (!address || !isValidAddress(address)) {
+          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
+        }
+        if (!getter || !/^[a-zA-Z0-9_]{1,64}$/.test(getter)) {
+          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid method' }, id);
+        }
+        const argsResult = parseStackArgs(params.stack);
+        if (!argsResult.ok) {
+          return sendToncenterCompat(reply, { ok: false, code: 400, error: argsResult.error ?? 'invalid stack' }, id);
+        }
+        const result = await service.runGetMethod(address, getter, argsResult.args ?? []);
+        return sendToncenterCompat(reply, { ok: true, result }, id);
+      }
+
+      if (method === 'getAddressBalance') {
+        const address = readString(params.address);
+        if (!address || !isValidAddress(address)) {
+          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
+        }
+        const balances = await service.getBalances(address);
+        return sendToncenterCompat(reply, { ok: true, result: balances.ton_raw ?? '0' }, id);
+      }
+
+      if (method === 'getAddressInformation') {
+        const address = readString(params.address);
+        if (!address || !isValidAddress(address)) {
+          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
+        }
+        const [state, balances] = await Promise.all([service.getState(address), service.getBalances(address)]);
+        return sendToncenterCompat(
+          reply,
+          {
+            ok: true,
+            result: {
+              state: state.account_state ?? 'uninitialized',
+              balance: balances.ton_raw ?? '0',
+              code: state.code_boc ?? null,
+              data: state.data_boc ?? null
+            }
+          },
+          id
+        );
+      }
+
+      if (method === 'getTransactions') {
+        const address = readString(params.address);
+        if (!address || !isValidAddress(address)) {
+          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
+        }
+        const limitParsed = parsePositiveIntQuery(params.limit as string | number | undefined);
+        const limit = Math.max(1, Math.min(50, limitParsed ?? 5));
+        const lt = readString(params.lt);
+        const hash = readString(params.hash);
+        if ((lt && !hash) || (!lt && hash)) {
+          return sendToncenterCompat(
+            reply,
+            { ok: false, code: 400, error: 'lt and hash must be provided together' },
+            id
+          );
+        }
+        if (lt && hash && (!isValidLt(lt) || !isValidHashBase64(hash))) {
+          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid cursor' }, id);
+        }
+
+        const response =
+          lt && hash ? await service.getTransactionsByCursor(address, lt, hash) : await service.getTransactions(address, 1);
+        const txs = (response?.txs ?? [])
+          .slice(0, limit)
+          .map((entry: IndexedTxCompat) => mapIndexerTxToToncenterTransaction(entry));
+        return sendToncenterCompat(reply, { ok: true, result: txs }, id);
+      }
+
+      return sendToncenterCompat(reply, { ok: false, code: 404, error: `unsupported method: ${method}` }, id);
+    } catch (error) {
+      return sendToncenterCompat(reply, { ok: false, code: 500, error: (error as Error).message }, id);
+    }
+  };
+
+  app.post('/jsonRPC', handleToncenterCompat);
+  app.post('/api/v2/jsonRPC', handleToncenterCompat);
 
   app.post('/api/indexer/v1/runGetMethod', async (request, reply) => {
     const body = request.body as { address?: string; method?: string; stack?: ToncenterStackEntry[] } | null;

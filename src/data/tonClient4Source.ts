@@ -1,4 +1,5 @@
 import { Address, Cell, TupleItem } from '@ton/core';
+import { Buffer } from 'node:buffer';
 import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
 import { Network } from '../models';
 import { AccountStateResponse, MasterchainInfo, RawMessage, RawTransaction, TonDataSource } from './dataSource';
@@ -43,6 +44,104 @@ const decodeOp = (bodyBase64?: string): number | undefined => {
 const parseAddress = (raw?: string | null): string | undefined => {
   if (!raw) return undefined;
   return raw;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
+const readStateKind = (value: unknown): 'active' | 'uninitialized' | 'frozen' | null => {
+  const record = asRecord(value);
+  const typeRaw = typeof value === 'string' ? value : typeof record?.type === 'string' ? record.type : null;
+  const normalized = (typeRaw ?? '').trim().toLowerCase();
+  if (normalized === 'active') return 'active';
+  if (normalized === 'frozen') return 'frozen';
+  if (normalized === 'uninit' || normalized === 'uninitialized' || normalized === 'inactive') return 'uninitialized';
+  return null;
+};
+
+const readBocString = (value: unknown): string | null => {
+  if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  if (value && typeof value === 'object' && 'bytes' in value) {
+    const bytes = (value as Record<string, unknown>).bytes;
+    if (typeof bytes === 'string' && bytes.trim().length > 0) return bytes.trim();
+  }
+  return null;
+};
+
+const readCellLikeBoc = (value: unknown): string | null => {
+  const direct = readBocString(value);
+  if (direct) return direct;
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as { toBoc?: (...args: unknown[]) => Buffer | Uint8Array };
+  if (typeof candidate.toBoc !== 'function') return null;
+  try {
+    const boc = candidate.toBoc();
+    return Buffer.from(boc).toString('base64');
+  } catch {
+    return null;
+  }
+};
+
+const readNestedRecord = (value: unknown, key: string): Record<string, unknown> | null => {
+  const record = asRecord(value);
+  if (!record) return null;
+  return asRecord(record[key]);
+};
+
+const readBalanceString = (value: unknown): string => {
+  if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
+  if (typeof value === 'bigint') return value.toString(10);
+  const record = asRecord(value);
+  if (!record) return '0';
+  const coins = record.coins;
+  if (typeof coins === 'string' && coins.trim().length > 0) return coins.trim();
+  if (typeof coins === 'number' && Number.isFinite(coins)) return String(Math.trunc(coins));
+  if (typeof coins === 'bigint') return coins.toString(10);
+  return '0';
+};
+
+const readLastTxLt = (lastTx: unknown): string | undefined => {
+  const record = asRecord(lastTx);
+  if (!record) return undefined;
+  const lt = record.lt;
+  if (typeof lt === 'string' && lt.trim().length > 0) return lt.trim();
+  if (typeof lt === 'number' && Number.isFinite(lt)) return String(Math.trunc(lt));
+  if (typeof lt === 'bigint') return lt.toString(10);
+  return undefined;
+};
+
+const readLastTxHash = (lastTx: unknown): string | undefined => {
+  const record = asRecord(lastTx);
+  if (!record) return undefined;
+  const hash = record.hash;
+  if (typeof hash === 'string' && hash.trim().length > 0) return hash.trim();
+  if (Buffer.isBuffer(hash)) return hash.toString('base64');
+  return undefined;
+};
+
+const parseRunMethodResponse = (response: unknown): { exitCode: number; stack: TupleItem[] } | null => {
+  const record = asRecord(response);
+  if (!record) return null;
+  const rawExitCode = record.exitCode ?? record.exit_code;
+  const exitCode = typeof rawExitCode === 'number' ? rawExitCode : Number.NaN;
+  if (!Number.isFinite(exitCode)) return null;
+
+  let stack: TupleItem[] = [];
+  const result = record.result;
+  if (Array.isArray(result)) {
+    stack = result as TupleItem[];
+  } else if (Array.isArray(record.stack)) {
+    stack = record.stack as TupleItem[];
+  } else {
+    const readerRecord = asRecord(record.reader);
+    if (readerRecord && Array.isArray(readerRecord.items)) {
+      stack = readerRecord.items as TupleItem[];
+    }
+  }
+  return { exitCode, stack };
 };
 
 const mapMessage = (message: any): RawMessage | undefined => {
@@ -130,41 +229,29 @@ export class TonClient4DataSource implements TonDataSource {
     const last = await this.getLastBlockCached();
     const parsed = Address.parse(address);
     const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
-    const lastTx = account.account.last;
-    const stateRaw = account?.account?.state;
-
-    const readStateKind = (value: unknown): 'active' | 'uninitialized' | 'frozen' | null => {
-      const type =
-        typeof value === 'string'
-          ? value
-          : value && typeof value === 'object' && 'type' in value
-            ? String((value as Record<string, unknown>).type ?? '')
-            : '';
-      const normalized = type.trim().toLowerCase();
-      if (normalized === 'active') return 'active';
-      if (normalized === 'frozen') return 'frozen';
-      if (normalized === 'uninit' || normalized === 'uninitialized' || normalized === 'inactive') return 'uninitialized';
-      return null;
-    };
-
-    const readBocString = (value: unknown): string | null => {
-      if (typeof value === 'string' && value.trim().length > 0) return value.trim();
-      if (value && typeof value === 'object' && 'bytes' in value) {
-        const bytes = (value as Record<string, unknown>).bytes;
-        if (typeof bytes === 'string' && bytes.trim().length > 0) return bytes.trim();
-      }
-      return null;
-    };
-
+    const accountRecord = asRecord(account);
+    const accountStateRecord = readNestedRecord(accountRecord, 'account');
+    const stateRaw = accountStateRecord?.state;
     const stateType = readStateKind(stateRaw);
-    const stateRecord = stateRaw && typeof stateRaw === 'object' ? (stateRaw as Record<string, unknown>) : null;
-    const codeBoc = stateRecord ? readBocString(stateRecord.code) : null;
-    const dataBoc = stateRecord ? readBocString(stateRecord.data) : null;
+    const stateRecord = asRecord(stateRaw);
+    const nestedStateRecord = readNestedRecord(stateRecord, 'state');
+
+    const codeBoc =
+      readCellLikeBoc(stateRecord?.code) ??
+      readCellLikeBoc(nestedStateRecord?.code) ??
+      readCellLikeBoc(accountStateRecord?.code) ??
+      null;
+    const dataBoc =
+      readCellLikeBoc(stateRecord?.data) ??
+      readCellLikeBoc(nestedStateRecord?.data) ??
+      readCellLikeBoc(accountStateRecord?.data) ??
+      null;
+    const lastTx = accountStateRecord?.last ?? accountRecord?.last;
 
     return {
-      balance: account.account.balance.coins,
-      lastTxLt: lastTx?.lt ?? undefined,
-      lastTxHash: lastTx?.hash ?? undefined,
+      balance: readBalanceString(accountStateRecord?.balance ?? accountRecord?.balance),
+      lastTxLt: readLastTxLt(lastTx),
+      lastTxHash: readLastTxHash(lastTx),
       accountState: stateType,
       codeBoc,
       dataBoc
@@ -219,32 +306,44 @@ export class TonClient4DataSource implements TonDataSource {
     method: string,
     args: TupleItem[] = []
   ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
-    try {
-      const parsed = Address.parse(address);
-      const last = await this.getLastBlockCached();
-      const response = await this.call((client) => client.runMethod(last.last.seqno, parsed, method, args));
-      const exitCode =
-        typeof response?.exitCode === 'number'
-          ? response.exitCode
-          : typeof response?.exit_code === 'number'
-            ? response.exit_code
-            : Number.NaN;
-      if (!Number.isFinite(exitCode)) return null;
-      let stack: TupleItem[] = [];
-      if (Array.isArray(response?.result)) {
-        stack = response.result as TupleItem[];
-      } else if (Array.isArray(response?.stack)) {
-        stack = response.stack as TupleItem[];
-      } else if (response?.reader && Array.isArray(response.reader?.items)) {
-        stack = response.reader.items as TupleItem[];
+    const parsed = Address.parse(address);
+    const maxAttempts = 3;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const forceFreshBlock = attempt > 0;
+        const last = await this.getLastBlockCached(forceFreshBlock);
+        const response = await this.call((client) => client.runMethod(last.last.seqno, parsed, method, args));
+        const parsedResponse = parseRunMethodResponse(response);
+        if (!parsedResponse) {
+          if (attempt < maxAttempts - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
+            continue;
+          }
+          return null;
+        }
+
+        if (parsedResponse.exitCode === 0) {
+          return parsedResponse;
+        }
+
+        // Non-zero exit codes from TonClient4 can be transient around recent blocks; retry on
+        // negative codes and generic VM failures before surfacing them.
+        if (parsedResponse.exitCode < 0 && attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 120 * (attempt + 1)));
+          continue;
+        }
+
+        return parsedResponse;
+      } catch {
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 120 * (attempt + 1)));
+          continue;
+        }
+        return null;
       }
-      return {
-        exitCode,
-        stack
-      };
-    } catch {
-      return null;
     }
+    return null;
   }
 
   private async getLastBlockCached(force = false): Promise<any> {
