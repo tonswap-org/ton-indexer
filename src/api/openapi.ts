@@ -154,7 +154,30 @@ export const buildOpenApi = (config: Config) => {
             t3Root: { type: 'string' },
             registry: { type: ['string', 'null'] },
             factory: { type: ['string', 'null'] },
-            pools: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            pools: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  token: { type: 'string' },
+                  pool: { type: ['string', 'null'] },
+                  kind: { type: ['integer', 'null'] },
+                  status: { type: ['integer', 'null'] },
+                  activeBinId: { type: ['integer', 'null'] },
+                  walletCodeHash: { type: ['string', 'null'] },
+                  binReserves: {
+                    type: ['object', 'null'],
+                    properties: {
+                      reserveT: { type: ['string', 'null'] },
+                      reserveX: { type: ['string', 'null'] }
+                    },
+                    additionalProperties: false
+                  }
+                },
+                required: ['token', 'pool', 'kind', 'status', 'activeBinId', 'walletCodeHash', 'binReserves'],
+                additionalProperties: false
+              }
+            },
             network: { type: 'string' },
             updated_at: { type: 'integer' },
           },
@@ -615,6 +638,56 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['factory', 'farm_count', 'scanned', 'farms', 'source', 'network', 'updated_at'],
         },
+        OptionFactoryStatusResponse: {
+          type: 'object',
+          properties: {
+            governance: { type: ['string', 'null'] },
+            enabled: { type: 'boolean' },
+          },
+          required: ['enabled'],
+        },
+        OptionSeriesSnapshotRecordResponse: {
+          type: 'object',
+          properties: {
+            seriesId: { type: 'string' },
+            templateId: { type: ['string', 'null'] },
+            optionKind: { type: ['string', 'null'] },
+            optionAddress: { type: ['string', 'null'] },
+            expiry: { type: ['string', 'null'] },
+            maxNotional: { type: ['string', 'null'] },
+            premiumBps: { type: ['string', 'null'] },
+            collateralMultiplierBps: { type: ['string', 'null'] },
+            openNotional: { type: ['string', 'null'] },
+            status: { type: ['string', 'null'] },
+            settlementTimestamp: { type: ['string', 'null'] },
+            underlyingPool: { type: ['string', 'null'] },
+            quotePool: { type: ['string', 'null'] },
+            collateralLocked: { type: ['string', 'null'] },
+            correlationScaleBps: { type: ['string', 'null'] },
+            correlationBps: { type: ['string', 'null'] },
+            correlationDispersionBps: { type: ['string', 'null'] },
+            correlationTimestamp: { type: ['string', 'null'] },
+            isActive: { type: 'boolean' },
+            remainingNotional: { type: ['string', 'null'] },
+          },
+          required: ['seriesId', 'isActive'],
+        },
+        OptionsSnapshotResponse: {
+          type: 'object',
+          properties: {
+            factory: { type: 'string' },
+            status: {
+              oneOf: [{ $ref: '#/components/schemas/OptionFactoryStatusResponse' }, { type: 'null' }],
+            },
+            series_count: { type: 'integer' },
+            scanned: { type: 'integer' },
+            series: { type: 'array', items: { $ref: '#/components/schemas/OptionSeriesSnapshotRecordResponse' } },
+            source: { type: 'string' },
+            network: { type: 'string' },
+            updated_at: { type: 'integer' },
+          },
+          required: ['factory', 'series_count', 'scanned', 'series', 'source', 'network', 'updated_at'],
+        },
         CoverStateResponse: {
           type: 'object',
           properties: {
@@ -1025,6 +1098,31 @@ export const buildOpenApi = (config: Config) => {
               description: 'Farm snapshot response',
               content: {
                 'application/json': { schema: { $ref: '#/components/schemas/FarmSnapshotResponse' } },
+              },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/options/{factory}/snapshot': {
+        get: {
+          summary: 'Options factory snapshot',
+          parameters: [
+            { name: 'factory', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'start_id', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 1000000 } },
+            { name: 'max_series_id', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 1000000 } },
+            { name: 'window_size', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 256 } },
+            { name: 'max_empty_windows', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
+            { name: 'min_probe_windows', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 4096 } },
+          ],
+          responses: {
+            200: {
+              description: 'Options snapshot response',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/OptionsSnapshotResponse' } },
               },
             },
             400: {

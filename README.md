@@ -35,6 +35,9 @@ Environment variables (all optional):
 - `TON_NETWORK` (`mainnet` | `testnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
 - `TON_HTTP_ENDPOINT` (explicit TonClient4 endpoint; if unset uses `@orbs-network/ton-access`)
+- `INDEXER_WRITE_RPC_ENDPOINT` (optional upstream JSON-RPC endpoint for proxying write methods like `sendBoc`)
+- `INDEXER_WRITE_RPC_API_KEY` (optional API key passed as `X-API-Key` to `INDEXER_WRITE_RPC_ENDPOINT`)
+- `INDEXER_RPC_PROXY_TIMEOUT_MS` (default: `30000`)
 - `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` (lite client pool; see below)
 - `CORS_ENABLED` (`true` to enable CORS headers; default `true`)
 - `CORS_ALLOW_ORIGIN` (default: `*`, or set to `reflect` to echo request origin)
@@ -80,6 +83,7 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 - `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64`
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/farms/{factory}/snapshot?max_scan=20&max_misses=2`
+- `GET /api/indexer/v1/options/{factory}/snapshot?start_id=0&max_series_id=2048&window_size=24&max_empty_windows=2&min_probe_windows=8`
 - `GET /api/indexer/v1/cover/{manager}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/contracts`
 - `GET /api/indexer/v1/stream/balances?address={addr}` (Server-Sent Events stream)
@@ -92,6 +96,12 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 - `POST /api/indexer/v1/snapshot/save`
 - `POST /api/indexer/v1/snapshot/load`
 - `GET /api/indexer/v1/debug?limit=100`
+
+JSON-RPC compatibility endpoints:
+- `POST /jsonRPC`
+- `POST /api/v2/jsonRPC`
+
+When `INDEXER_WRITE_RPC_ENDPOINT` is set, write-oriented JSON-RPC methods (`sendBoc`, `sendBocReturnHash`, `estimateFee`, `getMasterchainInfo`) are proxied upstream.
 
 Admin endpoints (`/metrics/prometheus`, `/snapshot/*`) require `Authorization: Bearer $ADMIN_TOKEN` when `ADMIN_ENABLED=true`.
 Debug endpoint also requires admin auth when enabled.

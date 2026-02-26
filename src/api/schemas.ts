@@ -61,6 +61,17 @@ export const farmsSnapshotQuerySchema = {
   },
 };
 
+export const optionsSnapshotQuerySchema = {
+  type: 'object',
+  properties: {
+    start_id: { type: 'integer', minimum: 0, maximum: 1000000 },
+    max_series_id: { type: 'integer', minimum: 1, maximum: 1000000 },
+    window_size: { type: 'integer', minimum: 1, maximum: 256 },
+    max_empty_windows: { type: 'integer', minimum: 1, maximum: 64 },
+    min_probe_windows: { type: 'integer', minimum: 0, maximum: 4096 },
+  },
+};
+
 export const coverSnapshotQuerySchema = {
   type: 'object',
   properties: {

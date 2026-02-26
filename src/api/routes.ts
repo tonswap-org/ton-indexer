@@ -1,4 +1,5 @@
 import { Address, Cell } from '@ton/core';
+import { getHttpEndpoints } from '@orbs-network/ton-access';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { IndexerService } from '../indexerService';
 import { MetricsService } from '../metrics';
@@ -13,6 +14,7 @@ import {
   debugQuerySchema,
   farmsSnapshotQuerySchema,
   governanceSnapshotQuerySchema,
+  optionsSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
   swapQuerySchema,
   txQuerySchema
@@ -28,6 +30,11 @@ const GET_METHOD_MAX_STACK_ITEMS = 16;
 const GET_METHOD_MAX_BATCH_CALLS = 64;
 const GET_METHOD_BATCH_CONCURRENCY = 10;
 const GET_METHOD_CALL_TIMEOUT_MS = 6_000;
+const RPC_PROXY_DEFAULT_TIMEOUT_MS = 30_000;
+const RPC_PROXY_DEFAULT_RETRY_ATTEMPTS = 4;
+const RPC_PROXY_DEFAULT_RETRY_DELAY_MS = 600;
+const RPC_PROXY_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const TON_RPC_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'estimateFee', 'getMasterchainInfo']);
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; error: string; code?: number };
@@ -36,6 +43,17 @@ type ToncenterRpcCompatRequest = {
   jsonrpc?: string;
   method?: string;
   params?: Record<string, unknown> | null;
+};
+
+type RoutesConfig = {
+  adminEnabled: boolean;
+  network?: string;
+  rpcProxyEndpoint?: string;
+  rpcProxyEndpoints?: string[];
+  rpcProxyApiKey?: string;
+  rpcProxyTimeoutMs?: number;
+  rpcProxyRetryAttempts?: number;
+  rpcProxyRetryDelayMs?: number;
 };
 
 type IndexedTxMessageCompat = {
@@ -185,6 +203,19 @@ const parsePositiveIntQuery = (value?: string | number) => {
   return parsePositiveInt(value);
 };
 
+const parseNonNegativeIntQuery = (value?: string | number) => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    const next = Math.trunc(value);
+    return next >= 0 ? next : null;
+  }
+  if (value === undefined) return null;
+  const text = String(value).trim();
+  if (!text || !/^\d+$/.test(text)) return null;
+  const parsed = Number.parseInt(text, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -194,6 +225,31 @@ const readString = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const normalizeRpcEndpoint = (value: string) => value.trim().replace(/\/+$/, '');
+
+const rankRpcEndpoint = (endpoint: string) => {
+  const normalized = endpoint.toLowerCase();
+  if (normalized.includes('toncenter')) return 2;
+  if (normalized.includes('tonapi')) return 1;
+  return 0;
+};
+
+const uniqueRpcEndpoints = (endpoints: string[]) => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const endpoint of endpoints) {
+    const normalized = normalizeRpcEndpoint(endpoint);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  out.sort((left, right) => rankRpcEndpoint(left) - rankRpcEndpoint(right));
+  return out;
 };
 
 const mapIndexerMessageToToncenter = (message?: IndexedTxMessageCompat | null) => {
@@ -286,7 +342,7 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T
 
 export const registerRoutes = (
   app: FastifyInstance,
-  config: { adminEnabled: boolean; network?: string },
+  config: RoutesConfig,
   service: IndexerService,
   metrics?: MetricsService,
   snapshots?: SnapshotService,
@@ -352,6 +408,225 @@ export const registerRoutes = (
     });
   };
 
+  let discoveredRpcProxyEndpoints: string[] | null = null;
+  let rpcEndpointDiscoveryPromise: Promise<string[]> | null = null;
+
+  const resolveRpcProxyEndpoints = async (): Promise<string[]> => {
+    const configured = uniqueRpcEndpoints([
+      ...(Array.isArray(config.rpcProxyEndpoints) ? config.rpcProxyEndpoints : []),
+      ...(config.rpcProxyEndpoint ? [config.rpcProxyEndpoint] : [])
+    ]);
+    if (configured.length > 0) return configured;
+
+    if (discoveredRpcProxyEndpoints) return discoveredRpcProxyEndpoints;
+    if (rpcEndpointDiscoveryPromise) return rpcEndpointDiscoveryPromise;
+
+    const network = String(config.network || 'testnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+    rpcEndpointDiscoveryPromise = getHttpEndpoints({ network })
+      .then((endpoints) => uniqueRpcEndpoints(endpoints ?? []))
+      .catch(() => [])
+      .then((endpoints) => {
+        discoveredRpcProxyEndpoints = endpoints;
+        return endpoints;
+      })
+      .finally(() => {
+        rpcEndpointDiscoveryPromise = null;
+      });
+    return rpcEndpointDiscoveryPromise;
+  };
+
+  const normalizeRpcProxyPayload = (payload: unknown): ToncenterRpcCompatResponse<unknown> => {
+    const record = asRecord(payload);
+    if (!record) {
+      return { ok: false, code: 502, error: 'Invalid upstream RPC payload.' };
+    }
+
+    if (typeof record.ok === 'boolean') {
+      if (record.ok) {
+        return { ok: true, result: record.result };
+      }
+      const errorMessage = readString(record.error) ?? 'Upstream RPC returned an error.';
+      const errorCode =
+        typeof record.code === 'number' && Number.isFinite(record.code) ? Math.trunc(record.code) : 500;
+      return { ok: false, code: errorCode, error: errorMessage };
+    }
+
+    if ('result' in record) {
+      return { ok: true, result: record.result };
+    }
+
+    const rpcError = asRecord(record.error);
+    if (rpcError) {
+      const errorCode =
+        typeof rpcError.code === 'number' && Number.isFinite(rpcError.code) ? Math.trunc(rpcError.code) : 500;
+      const errorMessage = readString(rpcError.message) ?? readString(rpcError.error) ?? 'Upstream RPC error.';
+      return { ok: false, code: errorCode, error: errorMessage };
+    }
+
+    return { ok: false, code: 502, error: 'Unsupported upstream RPC payload.' };
+  };
+
+  const isRetryableRpcFailure = (result: ToncenterRpcCompatResponse<unknown>) => {
+    if (result.ok) return false;
+    const status = typeof result.code === 'number' ? result.code : null;
+    if (status !== null && RPC_PROXY_RETRYABLE_STATUS_CODES.has(status)) return true;
+    const message = String(result.error || '').toLowerCase();
+    return (
+      message.includes('timeout') ||
+      message.includes('timed out') ||
+      message.includes('service unavailable') ||
+      message.includes('bad gateway') ||
+      message.includes('connection reset') ||
+      message.includes('econnreset') ||
+      message.includes('eai_again')
+    );
+  };
+
+  const normalizeSendBocCompat = (
+    method: string,
+    result: ToncenterRpcCompatResponse<unknown>
+  ): ToncenterRpcCompatResponse<unknown> => {
+    if (
+      result.ok &&
+      method === 'sendBoc' &&
+      (!asRecord(result.result) || readString(asRecord(result.result)?.['@type']) !== 'ok')
+    ) {
+      // Some JSON-RPC providers return hash/string for sendBoc.
+      // TonClient expects toncenter's {"@type":"ok"} shape.
+      return { ok: true, result: { '@type': 'ok' } };
+    }
+    return result;
+  };
+
+  const callRpcEndpoint = async (
+    endpoint: string,
+    method: string,
+    params: Record<string, unknown>,
+    id?: number | string | null
+  ): Promise<ToncenterRpcCompatResponse<unknown>> => {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json'
+    };
+    const apiKey = config.rpcProxyApiKey?.trim();
+    if (apiKey) headers['x-api-key'] = apiKey;
+
+    const timeoutMs =
+      typeof config.rpcProxyTimeoutMs === 'number' &&
+      Number.isFinite(config.rpcProxyTimeoutMs) &&
+      config.rpcProxyTimeoutMs > 0
+        ? Math.trunc(config.rpcProxyTimeoutMs)
+        : RPC_PROXY_DEFAULT_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          id: id ?? 1,
+          jsonrpc: '2.0',
+          method,
+          params
+        }),
+        signal: controller.signal
+      });
+
+      const text = await response.text();
+      let payload: unknown = null;
+      if (text.trim()) {
+        try {
+          payload = JSON.parse(text);
+        } catch (_error) {
+          if (!response.ok) {
+            return {
+              ok: false,
+              code: response.status,
+              error: `Upstream RPC HTTP ${response.status}: ${text.slice(0, 160)}`
+            };
+          }
+          return { ok: false, code: 502, error: 'Invalid upstream RPC JSON payload.' };
+        }
+      }
+
+      if (!response.ok) {
+        const normalized = normalizeRpcProxyPayload(payload);
+        if (!normalized.ok) {
+          return {
+            ok: false,
+            code: normalized.code ?? response.status,
+            error: normalized.error
+          };
+        }
+        return {
+          ok: false,
+          code: response.status,
+          error: `Upstream RPC HTTP ${response.status}.`
+        };
+      }
+
+      return normalizeSendBocCompat(method, normalizeRpcProxyPayload(payload));
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { ok: false, code: 504, error: `Upstream RPC timed out for method ${method}.` };
+      }
+      return {
+        ok: false,
+        code: 502,
+        error: `Upstream RPC request failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const proxyTonRpcMethod = async (
+    method: string,
+    params: Record<string, unknown>,
+    id?: number | string | null
+  ): Promise<ToncenterRpcCompatResponse<unknown> | null> => {
+    if (!TON_RPC_PROXY_METHODS.has(method)) return null;
+
+    const endpoints = await resolveRpcProxyEndpoints();
+    if (endpoints.length === 0) return null;
+
+    const retryAttempts =
+      typeof config.rpcProxyRetryAttempts === 'number' &&
+      Number.isFinite(config.rpcProxyRetryAttempts) &&
+      config.rpcProxyRetryAttempts > 0
+        ? Math.trunc(config.rpcProxyRetryAttempts)
+        : RPC_PROXY_DEFAULT_RETRY_ATTEMPTS;
+    const retryDelayMs =
+      typeof config.rpcProxyRetryDelayMs === 'number' &&
+      Number.isFinite(config.rpcProxyRetryDelayMs) &&
+      config.rpcProxyRetryDelayMs >= 0
+        ? Math.trunc(config.rpcProxyRetryDelayMs)
+        : RPC_PROXY_DEFAULT_RETRY_DELAY_MS;
+
+    let lastError: ToncenterRpcCompatResponse<unknown> = {
+      ok: false,
+      code: 502,
+      error: `Upstream RPC unavailable for method ${method}.`
+    };
+
+    for (let attempt = 0; attempt < retryAttempts; attempt += 1) {
+      for (const endpoint of endpoints) {
+        const result = await callRpcEndpoint(endpoint, method, params, id);
+        if (result.ok) return result;
+        lastError = result;
+        if (!isRetryableRpcFailure(result)) {
+          return result;
+        }
+      }
+      if (attempt < retryAttempts - 1 && retryDelayMs > 0) {
+        // Linear backoff to keep submit latency bounded but robust to short provider outages.
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(retryDelayMs * (attempt + 1));
+      }
+    }
+    return lastError;
+  };
+
   const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
     const body = (request.body ?? null) as ToncenterRpcCompatRequest | null;
     const method = body?.method?.trim();
@@ -395,15 +670,51 @@ export const registerRoutes = (
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
         }
         const [state, balances] = await Promise.all([service.getState(address), service.getBalances(address)]);
+        const normalizedState =
+          state.account_state === 'active' ||
+          state.account_state === 'uninitialized' ||
+          state.account_state === 'frozen'
+            ? state.account_state
+            : 'uninitialized';
+        const zeroHashB64 = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+        const lastTxLt =
+          typeof state.last_tx_lt === 'string' && state.last_tx_lt.trim() ? state.last_tx_lt.trim() : '0';
+        const lastTxHash =
+          typeof state.last_tx_hash === 'string' && state.last_tx_hash.trim()
+            ? state.last_tx_hash.trim()
+            : zeroHashB64;
+        const lastSeqno =
+          typeof state.last_confirmed_seqno === 'number' && Number.isFinite(state.last_confirmed_seqno)
+            ? Math.max(0, Math.trunc(state.last_confirmed_seqno))
+            : 0;
+        const syncUtime =
+          typeof state.last_seen_utime === 'number' && Number.isFinite(state.last_seen_utime)
+            ? Math.max(0, Math.trunc(state.last_seen_utime))
+            : Math.floor(Date.now() / 1000);
         return sendToncenterCompat(
           reply,
           {
             ok: true,
             result: {
-              state: state.account_state ?? 'uninitialized',
+              state: normalizedState,
               balance: balances.ton_raw ?? '0',
-              code: state.code_boc ?? null,
-              data: state.data_boc ?? null
+              code: typeof state.code_boc === 'string' ? state.code_boc : '',
+              data: typeof state.data_boc === 'string' ? state.data_boc : '',
+              extra_currencies: [],
+              last_transaction_id: {
+                '@type': 'internal.transactionId',
+                lt: lastTxLt,
+                hash: lastTxHash
+              },
+              block_id: {
+                '@type': 'ton.blockIdExt',
+                workchain: -1,
+                shard: '-9223372036854775808',
+                seqno: lastSeqno,
+                root_hash: zeroHashB64,
+                file_hash: zeroHashB64
+              },
+              sync_utime: syncUtime
             }
           },
           id
@@ -436,6 +747,11 @@ export const registerRoutes = (
           .slice(0, limit)
           .map((entry: IndexedTxCompat) => mapIndexerTxToToncenterTransaction(entry));
         return sendToncenterCompat(reply, { ok: true, result: txs }, id);
+      }
+
+      const proxied = await proxyTonRpcMethod(method, params, id);
+      if (proxied) {
+        return sendToncenterCompat(reply, proxied, id);
       }
 
       return sendToncenterCompat(reply, { ok: false, code: 404, error: `unsupported method: ${method}` }, id);
@@ -713,6 +1029,52 @@ export const registerRoutes = (
         return await service.getFarmSnapshot(factory, {
           maxScan,
           maxConsecutiveMisses
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/options/:factory/snapshot',
+    {
+      schema: {
+        params: { type: 'object', properties: { factory: { type: 'string' } }, required: ['factory'] },
+        querystring: optionsSnapshotQuerySchema
+      }
+    },
+    async (request, reply) => {
+      const factory = (request.params as { factory: string }).factory;
+      if (!isValidAddress(factory)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid options factory address');
+      }
+
+      const query = request.query as {
+        start_id?: string | number;
+        max_series_id?: string | number;
+        window_size?: string | number;
+        max_empty_windows?: string | number;
+        min_probe_windows?: string | number;
+      };
+      const startIdParsed = parseNonNegativeIntQuery(query.start_id);
+      const startId = startIdParsed !== null ? Math.min(1_000_000, startIdParsed) : undefined;
+      const maxSeriesIdParsed = parsePositiveIntQuery(query.max_series_id);
+      const maxSeriesId = maxSeriesIdParsed !== null ? Math.min(1_000_000, maxSeriesIdParsed) : undefined;
+      const windowSizeParsed = parsePositiveIntQuery(query.window_size);
+      const windowSize = windowSizeParsed !== null ? Math.min(256, windowSizeParsed) : undefined;
+      const maxEmptyWindowsParsed = parsePositiveIntQuery(query.max_empty_windows);
+      const maxEmptyWindows = maxEmptyWindowsParsed !== null ? Math.min(64, maxEmptyWindowsParsed) : undefined;
+      const minProbeWindowsParsed = parseNonNegativeIntQuery(query.min_probe_windows);
+      const minProbeWindows = minProbeWindowsParsed !== null ? Math.min(4096, minProbeWindowsParsed) : undefined;
+
+      try {
+        return await service.getOptionsSnapshot(factory, {
+          startId,
+          maxSeriesId,
+          windowSize,
+          maxEmptyWindows,
+          minProbeWindows
         });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', (error as Error).message);

@@ -191,24 +191,80 @@ const toBocBase64 = (cell: any): string | null => {
   }
 };
 
+const tupleItemToTvmStackEntry = (item: TupleItem): Record<string, unknown> => {
+  if (item.type === 'int') {
+    return {
+      '@type': 'tvm.stackEntryNumber',
+      number: {
+        '@type': 'tvm.numberDecimal',
+        number: item.value.toString(10),
+      },
+    };
+  }
+  if (item.type === 'cell') {
+    return {
+      '@type': 'tvm.stackEntryCell',
+      cell: {
+        '@type': 'tvm.cell',
+        bytes: toBocBase64(item.cell) ?? '',
+      },
+    };
+  }
+  if (item.type === 'slice') {
+    return {
+      '@type': 'tvm.stackEntrySlice',
+      slice: {
+        '@type': 'tvm.slice',
+        bytes: toBocBase64(item.cell) ?? '',
+      },
+    };
+  }
+  if (item.type === 'builder') {
+    return {
+      '@type': 'tvm.stackEntryCell',
+      cell: {
+        '@type': 'tvm.cell',
+        bytes: toBocBase64(item.cell) ?? '',
+      },
+    };
+  }
+  if (item.type === 'tuple') {
+    return {
+      '@type': 'tvm.stackEntryTuple',
+      tuple: {
+        '@type': 'tvm.tuple',
+        elements: item.items.map(tupleItemToTvmStackEntry),
+      },
+    };
+  }
+  // TonClient does not handle stackEntryNull; use an empty tuple as a null-equivalent.
+  return {
+    '@type': 'tvm.stackEntryTuple',
+    tuple: {
+      '@type': 'tvm.tuple',
+      elements: [],
+    },
+  };
+};
+
 const tupleItemToToncenterStackEntry = (item: TupleItem): ToncenterStackEntry => {
   if (item.type === 'null') return ['null', null];
   if (item.type === 'int') return ['num', item.value.toString(10)];
   if (item.type === 'nan') return ['nan', null];
   if (item.type === 'cell') {
     const b64 = toBocBase64(item.cell);
-    return ['tvm.Cell', b64];
+    return ['cell', { bytes: b64 ?? '' }];
   }
   if (item.type === 'slice') {
     const b64 = toBocBase64(item.cell);
-    return ['tvm.Slice', b64];
+    return ['slice', { bytes: b64 ?? '' }];
   }
   if (item.type === 'builder') {
     const b64 = toBocBase64(item.cell);
-    return ['tvm.Builder', b64];
+    return ['builder', { bytes: b64 ?? '' }];
   }
   if (item.type === 'tuple') {
-    return ['tuple', item.items.map(tupleItemToToncenterStackEntry)];
+    return ['tuple', { elements: item.items.map(tupleItemToTvmStackEntry) }];
   }
   return ['unknown', null];
 };
@@ -276,6 +332,15 @@ const FARM_MAX_SCAN_LIMIT = 64;
 const FARM_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const FARM_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const FARM_SCAN_BATCH_SIZE = 5;
+const OPTIONS_SNAPSHOT_CACHE_TTL_MS = 30_000;
+const OPTIONS_MAX_SCAN_DEFAULT = 2_048;
+const OPTIONS_MAX_SCAN_LIMIT = 1_000_000;
+const OPTIONS_WINDOW_SIZE_DEFAULT = 24;
+const OPTIONS_WINDOW_SIZE_LIMIT = 256;
+const OPTIONS_MAX_EMPTY_WINDOWS_DEFAULT = 2;
+const OPTIONS_MAX_EMPTY_WINDOWS_LIMIT = 64;
+const OPTIONS_MIN_PROBE_WINDOWS_DEFAULT = 8;
+const OPTIONS_MIN_PROBE_WINDOWS_LIMIT = 4_096;
 const COVER_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const COVER_MAX_SCAN_DEFAULT = 20;
 const COVER_MAX_SCAN_LIMIT = 64;
@@ -364,6 +429,45 @@ type FarmSnapshotResponse = {
   farm_count: number;
   scanned: number;
   farms: FarmSnapshotRecord[];
+  source: 'lite' | 'http4';
+  network: Network;
+  updated_at: number;
+};
+
+type OptionFactoryStatusSnapshot = {
+  governance: string | null;
+  enabled: boolean;
+};
+
+type OptionSeriesSnapshotRecord = {
+  seriesId: string;
+  templateId: string | null;
+  optionKind: string | null;
+  optionAddress: string | null;
+  expiry: string | null;
+  maxNotional: string | null;
+  premiumBps: string | null;
+  collateralMultiplierBps: string | null;
+  openNotional: string | null;
+  status: string | null;
+  settlementTimestamp: string | null;
+  underlyingPool: string | null;
+  quotePool: string | null;
+  collateralLocked: string | null;
+  correlationScaleBps: string | null;
+  correlationBps: string | null;
+  correlationDispersionBps: string | null;
+  correlationTimestamp: string | null;
+  isActive: boolean;
+  remainingNotional: string | null;
+};
+
+type OptionsSnapshotResponse = {
+  factory: string;
+  status: OptionFactoryStatusSnapshot | null;
+  series_count: number;
+  scanned: number;
+  series: OptionSeriesSnapshotRecord[];
   source: 'lite' | 'http4';
   network: Network;
   updated_at: number;
@@ -722,6 +826,7 @@ type DlmmPoolSnapshotEntry = {
   kind: number | null;
   status: number | null;
   activeBinId: number | null;
+  walletCodeHash: string | null;
   binReserves: DlmmPoolBinReserves | null;
 };
 
@@ -754,6 +859,8 @@ export class IndexerService {
   private governanceSnapshotInFlight = new Map<string, Promise<GovernanceSnapshotResponse>>();
   private farmSnapshotCache: LRUCache<string, FarmSnapshotResponse>;
   private farmSnapshotInFlight = new Map<string, Promise<FarmSnapshotResponse>>();
+  private optionsSnapshotCache: LRUCache<string, OptionsSnapshotResponse>;
+  private optionsSnapshotInFlight = new Map<string, Promise<OptionsSnapshotResponse>>();
   private coverSnapshotCache: LRUCache<string, CoverSnapshotResponse>;
   private coverSnapshotInFlight = new Map<string, Promise<CoverSnapshotResponse>>();
   private defiSnapshotCache: LRUCache<string, DefiSnapshotResponse>;
@@ -816,6 +923,11 @@ export class IndexerService {
     this.farmSnapshotCache = new LRUCache({
       max: 512,
       ttl: FARM_SNAPSHOT_CACHE_TTL_MS,
+      allowStale: false
+    });
+    this.optionsSnapshotCache = new LRUCache({
+      max: 512,
+      ttl: OPTIONS_SNAPSHOT_CACHE_TTL_MS,
       allowStale: false
     });
     this.coverSnapshotCache = new LRUCache({
@@ -1674,6 +1786,206 @@ export class IndexerService {
       return result;
     } finally {
       this.farmSnapshotInFlight.delete(cacheKey);
+    }
+  }
+
+  async getOptionsSnapshot(
+    factoryAddress: string,
+    options: {
+      startId?: number;
+      maxSeriesId?: number;
+      windowSize?: number;
+      maxEmptyWindows?: number;
+      minProbeWindows?: number;
+    } = {}
+  ): Promise<OptionsSnapshotResponse> {
+    const normalizedFactory = normalizeAddress(factoryAddress);
+    const startId = Math.max(
+      0,
+      Math.min(OPTIONS_MAX_SCAN_LIMIT, Math.trunc(options.startId ?? 0))
+    );
+    const maxSeriesId = Math.max(
+      startId,
+      Math.min(OPTIONS_MAX_SCAN_LIMIT, Math.trunc(options.maxSeriesId ?? OPTIONS_MAX_SCAN_DEFAULT))
+    );
+    const windowSize = Math.max(
+      1,
+      Math.min(OPTIONS_WINDOW_SIZE_LIMIT, Math.trunc(options.windowSize ?? OPTIONS_WINDOW_SIZE_DEFAULT))
+    );
+    const maxEmptyWindows = Math.max(
+      1,
+      Math.min(
+        OPTIONS_MAX_EMPTY_WINDOWS_LIMIT,
+        Math.trunc(options.maxEmptyWindows ?? OPTIONS_MAX_EMPTY_WINDOWS_DEFAULT)
+      )
+    );
+    const minProbeWindows = Math.max(
+      0,
+      Math.min(
+        OPTIONS_MIN_PROBE_WINDOWS_LIMIT,
+        Math.trunc(options.minProbeWindows ?? OPTIONS_MIN_PROBE_WINDOWS_DEFAULT)
+      )
+    );
+    const cacheKey = [
+      normalizedFactory,
+      startId,
+      maxSeriesId,
+      windowSize,
+      maxEmptyWindows,
+      minProbeWindows,
+    ].join('|');
+
+    if (this.config.responseCacheEnabled) {
+      const cached = this.optionsSnapshotCache.get(cacheKey);
+      if (cached) return cached;
+      const pending = this.optionsSnapshotInFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+
+    const request = (async () => {
+      const [governanceRes, enabledRes] = await Promise.all([
+        this.runGetMethodSourceCached(normalizedFactory, 'governance', []).catch(() => null),
+        this.runGetMethodSourceCached(normalizedFactory, 'registry_enabled', []).catch(() => null),
+      ]);
+
+      const status =
+        governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
+          ? {
+              governance: tupleItemAddress(governanceRes.stack[0]),
+              enabled: tupleItemBool(enabledRes.stack[0]),
+            }
+          : null;
+
+      const series: OptionSeriesSnapshotRecord[] = [];
+      let scanned = 0;
+      let getterFailures = 0;
+      let emptyWindows = 0;
+      let windowsScanned = 0;
+      let seriesResponded = false;
+
+      for (let cursor = startId; cursor <= maxSeriesId; cursor += windowSize) {
+        const end = Math.min(maxSeriesId, cursor + windowSize - 1);
+        const ids = Array.from({ length: end - cursor + 1 }, (_, index) => cursor + index);
+        const batch = await Promise.all(
+          ids.map((seriesId) =>
+            this.runGetMethodSourceCached(normalizedFactory, 'series_info', [
+              { type: 'int', value: BigInt(seriesId) },
+            ]).catch(() => null)
+          )
+        );
+
+        let windowGetterFailures = 0;
+        const windowEntries: OptionSeriesSnapshotRecord[] = [];
+        for (let index = 0; index < batch.length; index += 1) {
+          scanned += 1;
+          const res = batch[index];
+          if (res) {
+            seriesResponded = true;
+          }
+          if (!res || res.exitCode !== 0) {
+            getterFailures += 1;
+            windowGetterFailures += 1;
+            continue;
+          }
+          const stack = res.stack;
+          const exists = tupleItemBool(stack[0]);
+          if (!exists) continue;
+
+          const seriesId = ids[index];
+          const expiryBigInt = tupleItemBigInt(stack[4]);
+          const statusBigInt = tupleItemBigInt(stack[9]);
+          const maxNotionalBigInt = tupleItemBigInt(stack[5]);
+          const openNotionalBigInt = tupleItemBigInt(stack[8]) ?? 0n;
+          const remainingNotional =
+            maxNotionalBigInt !== null
+              ? (() => {
+                  const remaining = maxNotionalBigInt - openNotionalBigInt;
+                  return (remaining > 0n ? remaining : 0n).toString(10);
+                })()
+              : null;
+          let isActive = statusBigInt === null || statusBigInt === 0n;
+          if (isActive && expiryBigInt !== null && expiryBigInt > 0n) {
+            const expiryMs = Number(expiryBigInt) * 1000;
+            if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
+              isActive = false;
+            }
+          }
+
+          windowEntries.push({
+            seriesId: String(seriesId),
+            templateId: tupleItemBigIntString(stack[1]),
+            optionKind: tupleItemBigIntString(stack[2]),
+            optionAddress: tupleItemAddress(stack[3]),
+            expiry: tupleItemBigIntString(stack[4]),
+            maxNotional: tupleItemBigIntString(stack[5]),
+            premiumBps: tupleItemBigIntString(stack[6]),
+            collateralMultiplierBps: tupleItemBigIntString(stack[7]),
+            openNotional: tupleItemBigIntString(stack[8]),
+            status: tupleItemBigIntString(stack[9]),
+            settlementTimestamp: tupleItemBigIntString(stack[10]),
+            underlyingPool: tupleItemAddress(stack[11]),
+            quotePool: tupleItemAddress(stack[12]),
+            collateralLocked: tupleItemBigIntString(stack[13]),
+            correlationScaleBps: tupleItemBigIntString(stack[14]),
+            correlationBps: tupleItemBigIntString(stack[15]),
+            correlationDispersionBps: tupleItemBigIntString(stack[16]),
+            correlationTimestamp: tupleItemBigIntString(stack[17]),
+            isActive,
+            remainingNotional,
+          });
+        }
+
+        windowsScanned += 1;
+        if (windowEntries.length === 0) {
+          if (series.length === 0 && windowGetterFailures > 0 && status === null) {
+            throw new Error('Options snapshot is unavailable from the configured data source.');
+          }
+          emptyWindows += 1;
+          if (windowsScanned >= minProbeWindows && emptyWindows >= maxEmptyWindows) {
+            break;
+          }
+          continue;
+        }
+        emptyWindows = 0;
+        series.push(...windowEntries);
+      }
+
+      if (!seriesResponded && !governanceRes && !enabledRes) {
+        throw new Error('Options snapshot is unavailable from the configured data source.');
+      }
+
+      series.sort((left, right) => {
+        const leftId = BigInt(left.seriesId);
+        const rightId = BigInt(right.seriesId);
+        if (leftId === rightId) return 0;
+        return leftId > rightId ? 1 : -1;
+      });
+
+      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
+      return {
+        factory: normalizedFactory,
+        status,
+        series_count: series.length,
+        scanned,
+        series,
+        source,
+        network: this.network,
+        updated_at: Math.floor(Date.now() / 1000),
+      };
+    })();
+
+    if (this.config.responseCacheEnabled) {
+      this.optionsSnapshotInFlight.set(cacheKey, request);
+    }
+
+    try {
+      const result = await request;
+      if (this.config.responseCacheEnabled) {
+        this.optionsSnapshotCache.set(cacheKey, result);
+      }
+      return result;
+    } finally {
+      this.optionsSnapshotInFlight.delete(cacheKey);
     }
   }
 
@@ -2621,6 +2933,7 @@ export class IndexerService {
 
           let resolvedPool: string | null = pool;
           let activeBinId: number | null = null;
+          let walletCodeHash: string | null = null;
           let binReserves: DlmmPoolBinReserves | null = null;
 
           if (resolvedPool) {
@@ -2647,6 +2960,15 @@ export class IndexerService {
                   };
                 }
               }
+              const walletCodeHashRes = await this.runGetMethodSourceCached(
+                resolvedPool,
+                'wallet_code_hash',
+                []
+              ).catch(() => null);
+              if (walletCodeHashRes && walletCodeHashRes.exitCode === 0) {
+                const walletCodeHashStack = unwrapTupleStack(walletCodeHashRes.stack);
+                walletCodeHash = tupleItemBigIntString(walletCodeHashStack[0]);
+              }
             }
           }
 
@@ -2656,6 +2978,7 @@ export class IndexerService {
             kind,
             status,
             activeBinId,
+            walletCodeHash,
             binReserves
           });
         })

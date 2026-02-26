@@ -39,6 +39,12 @@ export type Config = {
   watchlistRefreshMs: number;
   blockPollMs: number;
   httpEndpoint?: string;
+  rpcProxyEndpoint?: string;
+  rpcProxyEndpoints: string[];
+  rpcProxyApiKey?: string;
+  rpcProxyTimeoutMs: number;
+  rpcProxyRetryAttempts: number;
+  rpcProxyRetryDelayMs: number;
   liteserverPool?: string;
   logLevel: string;
   registryPath: string;
@@ -56,6 +62,25 @@ const stringFromEnv = (key: string, fallback?: string) => {
   const raw = process.env[key];
   if (raw === undefined || raw === '') return fallback;
   return raw;
+};
+
+const listFromEnv = (keys: string[]): string[] => {
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const key of keys) {
+    const raw = process.env[key];
+    if (!raw) continue;
+    const chunks = raw
+      .split(/[,\s]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    for (const chunk of chunks) {
+      if (seen.has(chunk)) continue;
+      seen.add(chunk);
+      values.push(chunk);
+    }
+  }
+  return values;
 };
 
 const booleanFromEnv = (key: string, fallback: boolean) => {
@@ -87,6 +112,27 @@ export const loadConfig = (): Config => {
     'OPCODES_PATH',
     resolve(process.cwd(), '..', 'tonswap_tolk', 'config', 'opcodes.json')
   );
+
+  const configuredProxyEndpoints = listFromEnv([
+    'INDEXER_WRITE_RPC_ENDPOINTS',
+    'TON_WRITE_RPC_ENDPOINTS',
+    'TONSWAP_WRITE_RPC_ENDPOINTS',
+    'BLUEPRINT_WRITE_ENDPOINTS',
+    'TON_RPC_ENDPOINTS',
+    'BLUEPRINT_ENDPOINTS'
+  ]);
+  const singleProxyEndpoint =
+    stringFromEnv('INDEXER_WRITE_RPC_ENDPOINT') ||
+    stringFromEnv('TON_WRITE_RPC_ENDPOINT') ||
+    stringFromEnv('TONSWAP_WRITE_RPC_ENDPOINT') ||
+    stringFromEnv('BLUEPRINT_WRITE_ENDPOINT') ||
+    stringFromEnv('TON_RPC_ENDPOINT') ||
+    stringFromEnv('BLUEPRINT_ENDPOINT');
+  const rpcProxyEndpoints = singleProxyEndpoint
+    ? [...configuredProxyEndpoints, singleProxyEndpoint].filter(
+        (endpoint, index, list) => list.indexOf(endpoint) === index
+      )
+    : configuredProxyEndpoints;
 
   return {
     port: numberFromEnv('PORT', 8787),
@@ -127,6 +173,18 @@ export const loadConfig = (): Config => {
     watchlistRefreshMs: numberFromEnv('WATCHLIST_REFRESH_MS', 5_000),
     blockPollMs: numberFromEnv('BLOCK_POLL_MS', 5_000),
     httpEndpoint: stringFromEnv('TON_HTTP_ENDPOINT'),
+    rpcProxyEndpoint: singleProxyEndpoint,
+    rpcProxyEndpoints,
+    rpcProxyApiKey:
+      stringFromEnv('INDEXER_WRITE_RPC_API_KEY') ||
+      stringFromEnv('TON_WRITE_RPC_API_KEY') ||
+      stringFromEnv('TONSWAP_WRITE_RPC_API_KEY') ||
+      stringFromEnv('BLUEPRINT_WRITE_API_KEY') ||
+      stringFromEnv('TON_RPC_API_KEY') ||
+      stringFromEnv('BLUEPRINT_API_KEY'),
+    rpcProxyTimeoutMs: numberFromEnv('INDEXER_RPC_PROXY_TIMEOUT_MS', 30_000),
+    rpcProxyRetryAttempts: numberFromEnv('INDEXER_RPC_PROXY_RETRY_ATTEMPTS', 4),
+    rpcProxyRetryDelayMs: numberFromEnv('INDEXER_RPC_PROXY_RETRY_DELAY_MS', 600),
     liteserverPool: stringFromEnv(
       network === 'mainnet' ? 'LITESERVER_POOL_MAINNET' : 'LITESERVER_POOL_TESTNET'
     ),

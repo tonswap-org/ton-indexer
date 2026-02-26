@@ -11,6 +11,7 @@ assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/swaps']);
 assert.ok(spec.paths['/api/indexer/v1/perps/{engine}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/governance/{voting}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/farms/{factory}/snapshot']);
+assert.ok(spec.paths['/api/indexer/v1/options/{factory}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/cover/{manager}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/openapi.json']);
 const txEntry =

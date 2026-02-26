@@ -9,6 +9,7 @@ assert.ok(html.includes('/api/indexer/v1/accounts/{addr}/swaps'));
 assert.ok(html.includes('/api/indexer/v1/perps/{addr}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/governance/{voting}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/farms/{factory}/snapshot'));
+assert.ok(html.includes('/api/indexer/v1/options/{factory}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/cover/{manager}/snapshot'));
 assert.ok(html.includes('fetch('));
 
