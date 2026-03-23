@@ -32,13 +32,19 @@ npm run start
 Environment variables (all optional):
 - `PORT` (default: `8787`)
 - `HOST` (default: `0.0.0.0`)
+- `INDEXER_MODE` (`dev` | `production`, default: `dev`)
 - `TON_NETWORK` (`mainnet` | `testnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
 - `TON_HTTP_ENDPOINT` (explicit TonClient4 endpoint; if unset uses `@orbs-network/ton-access`)
-- `INDEXER_WRITE_RPC_ENDPOINT` (optional upstream JSON-RPC endpoint for proxying write methods like `sendBoc`)
+- `INDEXER_WRITE_RPC_ENDPOINT` (optional upstream JSON-RPC endpoint for proxying write methods)
+- `INDEXER_ENABLE_WRITE_RPC` (`true` to allow proxied write methods; default `false`)
 - `INDEXER_WRITE_RPC_API_KEY` (optional API key passed as `X-API-Key` to `INDEXER_WRITE_RPC_ENDPOINT`)
 - `INDEXER_RPC_PROXY_TIMEOUT_MS` (default: `30000`)
 - `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` (lite client pool; see below)
+- `SORA_RPC_HTTP_ENDPOINT` (optional SORA JSON-RPC endpoint used to resolve the on-chain TON trusted checkpoint automatically)
+- `SORA_RPC_TIMEOUT_MS` (default: `10000`)
+- `SORA_TON_TRUSTED_CHECKPOINT_CACHE_TTL_MS` (default: `10000`)
+- `SORA_TON_TRUSTED_CHECKPOINT_SEQNO` + `SORA_TON_TRUSTED_CHECKPOINT_HASH` (optional static override for the TON trusted checkpoint; used if you do not want RPC lookup)
 - `CORS_ENABLED` (`true` to enable CORS headers; default `true`)
 - `CORS_ALLOW_ORIGIN` (default: `*`, or set to `reflect` to echo request origin)
 - `CORS_ALLOW_METHODS` (default: `GET,POST,OPTIONS`)
@@ -47,11 +53,14 @@ Environment variables (all optional):
 - `CORS_MAX_AGE` (default: `600`)
 - `SNAPSHOT_PATH` (path to load/save in-memory snapshot)
 - `SNAPSHOT_ON_EXIT` (`true` to write snapshot on shutdown; default `false`)
-- `ADMIN_ENABLED` (`true` to require admin auth on metrics/snapshot endpoints; default `false`)
+- `SNAPSHOT_AUTOSAVE_ENABLED` (`true` to periodically persist snapshots; default `true` in production when `SNAPSHOT_PATH` is set)
+- `SNAPSHOT_AUTOSAVE_INTERVAL_MS` (default: `30000`)
+- `ADMIN_ENABLED` (`true` to require admin auth on metrics/snapshot endpoints; default `true` in production)
 - `ADMIN_TOKEN` (Bearer token for admin endpoints)
 - `RATE_LIMIT_ENABLED` (`true` to enable simple per-IP rate limiting; default `true`)
 - `RATE_LIMIT_WINDOW_MS` (default: `60000`)
 - `RATE_LIMIT_MAX` (default: `10000`)
+- `RATE_LIMIT_BUCKETS_JSON` (optional endpoint-class limits override JSON)
 - `RESPONSE_CACHE_ENABLED` (`true` to enable response caching; default `true`)
 - `BALANCE_CACHE_TTL_MS` (default: `2000`)
 - `TX_CACHE_TTL_MS` (default: `1000`)
@@ -73,13 +82,19 @@ Environment variables (all optional):
 
 If the requested `PORT` is already in use, the server will bind to the next available port and log the selected one.
 
+Production safeguards:
+- In `INDEXER_MODE=production`, missing `ADMIN_TOKEN` (when admin auth is enabled) fails startup.
+- In `TON_NETWORK=mainnet`, placeholder or malformed required registry addresses fail startup.
+
 ## API
 - `GET /api/indexer/v1/accounts/{addr}/balance`
 - `GET /api/indexer/v1/accounts/{addr}/balances`
 - `GET /api/indexer/v1/accounts/{addr}/assets` (alias of `/balances`)
+- `GET /api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload`
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
 - `GET /api/indexer/v1/accounts/{addr}/swaps?limit=100&from_utime=1700000000&to_utime=1700003600&pay_token=TON&receive_token=T3&include_reverse=true`
 - `GET /api/indexer/v1/accounts/{addr}/state`
+- `GET /api/indexer/v1/sccp/ton/burn-proof-material?jetton_master={addr}&message_id=0x...`
 - `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64`
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/farms/{factory}/snapshot?max_scan=20&max_misses=2`
@@ -101,7 +116,7 @@ JSON-RPC compatibility endpoints:
 - `POST /jsonRPC`
 - `POST /api/v2/jsonRPC`
 
-When `INDEXER_WRITE_RPC_ENDPOINT` is set, write-oriented JSON-RPC methods (`sendBoc`, `sendBocReturnHash`, `estimateFee`, `getMasterchainInfo`) are proxied upstream.
+When `INDEXER_WRITE_RPC_ENDPOINT` is set, proxied JSON-RPC methods are available through `/jsonRPC` and `/api/v2/jsonRPC`; write methods stay disabled unless `INDEXER_ENABLE_WRITE_RPC=true`.
 
 Admin endpoints (`/metrics/prometheus`, `/snapshot/*`) require `Authorization: Bearer $ADMIN_TOKEN` when `ADMIN_ENABLED=true`.
 Debug endpoint also requires admin auth when enabled.
@@ -129,6 +144,7 @@ npm run sync-registry
 
 ## Notes
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
+- `/api/indexer/v1/sccp/ton/burn-proof-material` can omit `trusted_checkpoint_seqno/hash`; when omitted, the indexer resolves the current SORA-governed TON checkpoint automatically via `SORA_RPC_HTTP_ENDPOINT` or the static checkpoint override env vars.
 - Jetton balances are fetched for registry keys ending with `Root` (e.g., `T3Root`, `TSRoot`, `UsdtRoot`), with metadata pulled from on-chain content and cached in memory.
 - Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.
 - Swap classifier now also decodes optional execution hints from swap `queryId` (market/limit/twap, optional twap slice/total, and optional token symbol codes) and returns them in both `detail` and `actions` for `kind: "swap"` tx entries.

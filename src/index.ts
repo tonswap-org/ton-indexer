@@ -20,6 +20,46 @@ import { DebugService } from './debugService';
 import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
 
+const MAINNET_PLACEHOLDER_PREFIX = 'REPLACE_WITH_MAINNET_';
+const REQUIRED_MAINNET_REGISTRY_KEYS = [
+  'ClmmRouter',
+  'ClmmPoolFactory',
+  'FeeRouter',
+  'Treasury',
+  'ReferralRegistry',
+  'T3Root',
+  'TSRoot',
+  'UsdtRoot',
+  'UsdcRoot',
+  'KusdRoot',
+  'DlmmRegistry',
+  'DlmmPoolFactory'
+] as const;
+
+const isLikelyTonAddress = (value: string) =>
+  /^([A-Za-z0-9_-]{48}|-?\d+:[0-9a-fA-F]{64})$/.test(value.trim());
+
+const validateMainnetRegistry = (registry: Record<string, string>) => {
+  const missing: string[] = [];
+  const invalid: string[] = [];
+  for (const key of REQUIRED_MAINNET_REGISTRY_KEYS) {
+    const value = registry[key];
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed || trimmed.startsWith(MAINNET_PLACEHOLDER_PREFIX)) {
+      missing.push(key);
+      continue;
+    }
+    if (!isLikelyTonAddress(trimmed)) {
+      invalid.push(key);
+    }
+  }
+  if (!missing.length && !invalid.length) return;
+  const parts: string[] = [];
+  if (missing.length) parts.push(`missing/placeholder keys: ${missing.join(', ')}`);
+  if (invalid.length) parts.push(`invalid address format keys: ${invalid.join(', ')}`);
+  throw new Error(`Mainnet registry validation failed: ${parts.join(' | ')}`);
+};
+
 const isPortAvailable = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
     const server = createServer();
@@ -45,7 +85,20 @@ const start = async () => {
   try {
     registry = readRegistryFile(config.registryPath);
   } catch (error) {
+    if (config.mode === 'production') {
+      throw error;
+    }
     logger.warn('registry load failed', { error: (error as Error).message });
+  }
+
+  if (config.mode === 'production' && config.adminEnabled && !config.adminToken) {
+    throw new Error('ADMIN_TOKEN is required when INDEXER_MODE=production and ADMIN_ENABLED=true.');
+  }
+  if (config.snapshotAutosaveEnabled && !config.snapshotPath) {
+    throw new Error('SNAPSHOT_PATH is required when SNAPSHOT_AUTOSAVE_ENABLED=true.');
+  }
+  if (config.mode === 'production' && config.network === 'mainnet') {
+    validateMainnetRegistry(registry);
   }
 
   const opcodes = loadOpcodes(config.opcodesPath);
@@ -126,6 +179,19 @@ const start = async () => {
   const adminGuard = new AdminGuard(config);
   const rateLimiter = new RateLimiter(config);
   registerRoutes(app, config, service, metrics, snapshotService, adminGuard, debugService, rateLimiter, registry);
+  const snapshotAutosaveTimer =
+    config.snapshotAutosaveEnabled && config.snapshotPath
+      ? setInterval(() => {
+          try {
+            const snapshot = store.exportSnapshot();
+            saveSnapshotFile(config.snapshotPath as string, snapshot);
+            logger.info('snapshot autosaved', { path: config.snapshotPath, entries: snapshot.entries.length });
+          } catch (error) {
+            logger.warn('snapshot autosave failed', { error: (error as Error).message });
+          }
+        }, Math.max(5_000, config.snapshotAutosaveIntervalMs))
+      : null;
+  snapshotAutosaveTimer?.unref?.();
 
   app.addHook('onRequest', async (req) => {
     (req as any).startTime = process.hrtime.bigint();
@@ -151,6 +217,7 @@ const start = async () => {
 
   const shutdown = async () => {
     try {
+      if (snapshotAutosaveTimer) clearInterval(snapshotAutosaveTimer);
       backfillWorker.stop();
       blockFollower.stop();
       if (config.snapshotOnExit && config.snapshotPath) {

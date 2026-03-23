@@ -24,6 +24,18 @@ export const buildOpenApi = (config: Config) => {
           required: true,
           schema: { type: 'string' },
         },
+        jetton: {
+          name: 'jetton',
+          in: 'path',
+          required: true,
+          schema: { type: 'string' },
+        },
+        owner: {
+          name: 'owner',
+          in: 'path',
+          required: true,
+          schema: { type: 'string' },
+        },
       },
       schemas: {
         ErrorResponse: {
@@ -241,6 +253,14 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['address', 'ton_raw', 'ton', 'assets', 'confirmed', 'updated_at', 'network'],
         },
+        JettonTransferPayloadResponse: {
+          type: 'object',
+          properties: {
+            custom_payload: { type: ['string', 'null'] },
+            state_init: { type: ['string', 'null'] },
+          },
+          required: ['custom_payload', 'state_init'],
+        },
         TxEntry: {
           type: 'object',
           properties: {
@@ -439,6 +459,63 @@ export const buildOpenApi = (config: Config) => {
             network: { type: 'string' },
           },
           required: ['address', 'network'],
+        },
+        TonSccpProofBlockId: {
+          type: 'object',
+          properties: {
+            seqno: { type: 'integer' },
+            workchain: { type: 'integer' },
+            shard: { type: 'string' },
+            rootHashHex: { type: 'string' },
+            fileHashHex: { type: 'string' },
+          },
+          required: ['seqno', 'workchain', 'shard', 'rootHashHex', 'fileHashHex'],
+        },
+        TonSccpProofSignature: {
+          type: 'object',
+          properties: {
+            nodeIdShortHex: { type: 'string' },
+            signatureHex: { type: 'string' },
+          },
+          required: ['nodeIdShortHex', 'signatureHex'],
+        },
+        TonSccpProofSignatureSet: {
+          type: 'object',
+          properties: {
+            validatorListHashShort: { type: 'integer' },
+            catchainSeqno: { type: 'integer' },
+            signatures: { type: 'array', items: { $ref: '#/components/schemas/TonSccpProofSignature' } },
+          },
+          required: ['validatorListHashShort', 'catchainSeqno', 'signatures'],
+        },
+        TonSccpBurnProofMaterialResponse: {
+          type: 'object',
+          properties: {
+            trustedCheckpoint: { $ref: '#/components/schemas/TonSccpProofBlockId' },
+            targetMasterchain: { $ref: '#/components/schemas/TonSccpProofBlockId' },
+            targetSignatures: { $ref: '#/components/schemas/TonSccpProofSignatureSet' },
+            targetShard: { $ref: '#/components/schemas/TonSccpProofBlockId' },
+            checkpointBlockBoc: { type: 'string' },
+            checkpointStateBoc: { type: 'string' },
+            targetBlockBoc: { type: 'string' },
+            targetStateBoc: { type: 'string' },
+            shardBlockBoc: { type: 'string' },
+            shardStateBoc: { type: 'string' },
+            burnRecordPresent: { type: 'boolean' },
+          },
+          required: [
+            'trustedCheckpoint',
+            'targetMasterchain',
+            'targetSignatures',
+            'targetShard',
+            'checkpointBlockBoc',
+            'checkpointStateBoc',
+            'targetBlockBoc',
+            'targetStateBoc',
+            'shardBlockBoc',
+            'shardStateBoc',
+            'burnRecordPresent',
+          ],
         },
         PerpsStatusResponse: {
           type: 'object',
@@ -971,6 +1048,27 @@ export const buildOpenApi = (config: Config) => {
           },
         },
       },
+      '/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload': {
+        get: {
+          summary: 'Jetton transfer payload',
+          parameters: [
+            { $ref: '#/components/parameters/jetton' },
+            { $ref: '#/components/parameters/owner' },
+          ],
+          responses: {
+            200: {
+              description: 'Jetton transfer payload response',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/JettonTransferPayloadResponse' } },
+              },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
       '/api/indexer/v1/accounts/{addr}/txs': {
         get: {
           summary: 'Account transactions',
@@ -1034,6 +1132,44 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'State response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/StateResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/sccp/ton/burn-proof-material': {
+        get: {
+          summary: 'TON SCCP burn proof material',
+          description:
+            'Returns the raw TON block, state, and signature material required to assemble a client-side TON -> SORA proof bundle. If trusted_checkpoint_seqno/hash are omitted, the indexer resolves the current SORA-governed TON checkpoint automatically.',
+          parameters: [
+            { name: 'jetton_master', in: 'query', required: true, schema: { type: 'string' } },
+            { name: 'message_id', in: 'query', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' } },
+            {
+              name: 'trusted_checkpoint_seqno',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 1 },
+            },
+            {
+              name: 'trusted_checkpoint_hash',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+            },
+            { name: 'target_seqno', in: 'query', schema: { type: 'integer', minimum: 1 } },
+          ],
+          responses: {
+            200: {
+              description: 'TON SCCP proof material response',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/TonSccpBurnProofMaterialResponse' },
+                },
+              },
             },
             400: {
               description: 'Bad request',

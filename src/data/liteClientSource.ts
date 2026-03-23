@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Address, Cell, TupleItem, TupleReader, beginCell, loadTransaction, parseTuple, serializeTuple } from '@ton/core';
 import { LiteClient, LiteRoundRobinEngine, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
+import { Functions } from 'ton-lite-client/dist/schema';
 import { Network } from '../models';
 import {
   AccountStateResponse,
@@ -9,6 +10,9 @@ import {
   RawMessage,
   RawTransaction,
   RawTransactionStatus,
+  TonBlockIdExt,
+  TonSccpBurnProofMaterial,
+  TonSccpBurnProofMaterialRequest,
   TonDataSource,
 } from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
@@ -112,6 +116,33 @@ const cellToBase64 = (cell: Cell | null | undefined): string | undefined => {
   if (!cell) return undefined;
   return cell.toBoc({ idx: false }).toString('base64');
 };
+
+const bytesToBase64 = (value: Buffer | Uint8Array) => Buffer.from(value).toString('base64');
+const bytesToHex = (value: Buffer | Uint8Array) => `0x${Buffer.from(value).toString('hex')}`;
+
+const isHex256 = (value: string) => /^0x[0-9a-fA-F]{64}$/.test(value.trim());
+
+const parseHex256 = (value: string, label: string) => {
+  const trimmed = value.trim();
+  if (!isHex256(trimmed)) {
+    throw new Error(`${label} must be 0x-prefixed 32-byte hex`);
+  }
+  return Buffer.from(trimmed.slice(2), 'hex');
+};
+
+const blockIdToResponse = (id: {
+  seqno: number;
+  workchain: number;
+  shard: string;
+  rootHash: Buffer;
+  fileHash: Buffer;
+}): TonBlockIdExt => ({
+  seqno: id.seqno,
+  workchain: id.workchain,
+  shard: id.shard,
+  rootHashHex: bytesToHex(id.rootHash),
+  fileHashHex: bytesToHex(id.fileHash),
+});
 
 const decodeOp = (cell: Cell | null | undefined): number | undefined => {
   if (!cell) return undefined;
@@ -314,6 +345,144 @@ export class LiteClientDataSource implements TonDataSource {
     return pending;
   }
 
+  private async queryLite<T>(fn: () => Promise<T>): Promise<T> {
+    return this.call((_client) => fn());
+  }
+
+  private async lookupMasterchainBlock(seqno: number) {
+    return this.queryLite(() =>
+      this.client.lookupBlockByID({
+        workchain: -1,
+        shard: '-9223372036854775808',
+        seqno,
+      })
+    );
+  }
+
+  private async getBlockData(block: {
+    seqno: number;
+    workchain: number;
+    shard: string;
+    rootHash: Buffer;
+    fileHash: Buffer;
+  }) {
+    return this.queryLite(() =>
+      this.client.engine.query(Functions.liteServer_getBlock, {
+        kind: 'liteServer.getBlock',
+        id: {
+          kind: 'tonNode.blockIdExt',
+          seqno: block.seqno,
+          shard: block.shard,
+          workchain: block.workchain,
+          rootHash: block.rootHash,
+          fileHash: block.fileHash,
+        },
+      })
+    );
+  }
+
+  private async getStateData(block: {
+    seqno: number;
+    workchain: number;
+    shard: string;
+    rootHash: Buffer;
+    fileHash: Buffer;
+  }) {
+    return this.queryLite(() =>
+      this.client.engine.query(Functions.liteServer_getState, {
+        kind: 'liteServer.getState',
+        id: {
+          kind: 'tonNode.blockIdExt',
+          seqno: block.seqno,
+          shard: block.shard,
+          workchain: block.workchain,
+          rootHash: block.rootHash,
+          fileHash: block.fileHash,
+        },
+      })
+    );
+  }
+
+  private async getBlockProof(
+    knownBlock: {
+      seqno: number;
+      workchain: number;
+      shard: string;
+      rootHash: Buffer;
+      fileHash: Buffer;
+    },
+    targetBlock: {
+      seqno: number;
+      workchain: number;
+      shard: string;
+      rootHash: Buffer;
+      fileHash: Buffer;
+    }
+  ) {
+    return this.queryLite(() =>
+      this.client.engine.query(Functions.liteServer_getBlockProof, {
+        kind: 'liteServer.getBlockProof',
+        mode: 0,
+        knownBlock: {
+          kind: 'tonNode.blockIdExt',
+          seqno: knownBlock.seqno,
+          shard: knownBlock.shard,
+          workchain: knownBlock.workchain,
+          rootHash: knownBlock.rootHash,
+          fileHash: knownBlock.fileHash,
+        },
+        targetBlock: {
+          kind: 'tonNode.blockIdExt',
+          seqno: targetBlock.seqno,
+          shard: targetBlock.shard,
+          workchain: targetBlock.workchain,
+          rootHash: targetBlock.rootHash,
+          fileHash: targetBlock.fileHash,
+        },
+      })
+    );
+  }
+
+  private extractForwardSignatureSet(
+    proof: any,
+    target: {
+      seqno: number;
+      workchain: number;
+      shard: string;
+      rootHash: Buffer;
+      fileHash: Buffer;
+    }
+  ) {
+    const steps = Array.isArray(proof?.steps) ? proof.steps : [];
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      const step = steps[index];
+      if (!step || step.kind !== 'liteServer.blockLinkForward') continue;
+      const to = step.to;
+      if (
+        to?.seqno !== target.seqno ||
+        to?.workchain !== target.workchain ||
+        to?.shard !== target.shard ||
+        !Buffer.isBuffer(to?.rootHash) ||
+        !Buffer.isBuffer(to?.fileHash)
+      ) {
+        continue;
+      }
+      if (!to.rootHash.equals(target.rootHash) || !to.fileHash.equals(target.fileHash)) {
+        continue;
+      }
+      const signatures = Array.isArray(step.signatures?.signatures) ? step.signatures.signatures : [];
+      return {
+        validatorListHashShort: Number(step.signatures?.validatorSetHash ?? 0),
+        catchainSeqno: Number(step.signatures?.catchainSeqno ?? 0),
+        signatures: signatures.map((signature: any) => ({
+          nodeIdShortHex: bytesToHex(signature.nodeIdShort),
+          signatureHex: bytesToHex(signature.signature),
+        })),
+      };
+    }
+    throw new Error('Failed to locate a forward block-proof step for the target masterchain block.');
+  }
+
   private async runGetMethodReader(address: Address, method: string, args: TupleItem[] = []): Promise<TupleReader> {
     const master = await this.getMasterchainRef();
     const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
@@ -330,6 +499,71 @@ export class LiteClientDataSource implements TonDataSource {
     return {
       seqno: master.last.seqno,
       timestamp: master.now ?? undefined,
+    };
+  }
+
+  async getTonSccpBurnProofMaterial(
+    request: TonSccpBurnProofMaterialRequest
+  ): Promise<TonSccpBurnProofMaterial> {
+    if (request.trustedCheckpointSeqno === undefined || request.trustedCheckpointHashHex === undefined) {
+      throw new Error('trusted checkpoint must be resolved before querying TON proof material.');
+    }
+    const jettonMaster = Address.parse(request.jettonMaster);
+    const trustedCheckpointHash = parseHex256(request.trustedCheckpointHashHex, 'trustedCheckpointHashHex');
+    const trustedCheckpoint = await this.lookupMasterchainBlock(request.trustedCheckpointSeqno);
+    if (!trustedCheckpoint.id.rootHash.equals(trustedCheckpointHash)) {
+      throw new Error('Trusted checkpoint hash does not match the resolved masterchain block.');
+    }
+
+    const targetBlockId =
+      request.targetSeqno !== undefined
+        ? (await this.lookupMasterchainBlock(request.targetSeqno)).id
+        : (await this.getMasterchainRef()).last;
+    if (targetBlockId.seqno < trustedCheckpoint.id.seqno) {
+      throw new Error('Target masterchain block precedes the trusted checkpoint.');
+    }
+
+    const burnRecord = await this.runGetMethod(jettonMaster.toRawString(), 'get_sccp_burn_record', [
+      { type: 'int', value: BigInt(request.messageIdHex) },
+    ]);
+    const burnRecordPresent = Boolean(
+      burnRecord &&
+        burnRecord.exitCode === 0 &&
+        Array.isArray(burnRecord.stack) &&
+        burnRecord.stack[0]?.type !== 'null'
+    );
+    if (!burnRecordPresent) {
+      throw new Error('Burn record is not available on the jetton master yet.');
+    }
+
+    const [checkpointBlockData, checkpointStateData, targetBlockData, targetStateData, targetProof, accountState] =
+      await Promise.all([
+        this.getBlockData(trustedCheckpoint.id),
+        this.getStateData(trustedCheckpoint.id),
+        this.getBlockData(targetBlockId),
+        this.getStateData(targetBlockId),
+        this.getBlockProof(trustedCheckpoint.id, targetBlockId),
+        this.call((client) => client.getAccountStateRaw(jettonMaster, targetBlockId)),
+      ]);
+
+    const shardBlockId = accountState.shardBlock;
+    const [shardBlockData, shardStateData] = await Promise.all([
+      this.getBlockData(shardBlockId),
+      this.getStateData(shardBlockId),
+    ]);
+
+    return {
+      trustedCheckpoint: blockIdToResponse(trustedCheckpoint.id),
+      targetMasterchain: blockIdToResponse(targetBlockId),
+      targetSignatures: this.extractForwardSignatureSet(targetProof, targetBlockId),
+      targetShard: blockIdToResponse(shardBlockId),
+      checkpointBlockBoc: bytesToBase64(checkpointBlockData.data),
+      checkpointStateBoc: bytesToBase64(checkpointStateData.data),
+      targetBlockBoc: bytesToBase64(targetBlockData.data),
+      targetStateBoc: bytesToBase64(targetStateData.data),
+      shardBlockBoc: bytesToBase64(shardBlockData.data),
+      shardStateBoc: bytesToBase64(shardStateData.data),
+      burnRecordPresent,
     };
   }
 

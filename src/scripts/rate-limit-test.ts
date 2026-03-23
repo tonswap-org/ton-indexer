@@ -2,7 +2,20 @@ import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { RateLimiter } from '../api/rateLimit';
 
-const config = { ...loadConfig(), rateLimitEnabled: true, rateLimitWindowMs: 1000, rateLimitMax: 2 };
+const config = {
+  ...loadConfig(),
+  rateLimitEnabled: true,
+  rateLimitWindowMs: 1000,
+  rateLimitMax: 2,
+  rateLimitBuckets: {
+    accounts: { windowMs: 1000, max: 2 },
+    stream: { windowMs: 1000, max: 2 },
+    snapshot: { windowMs: 1000, max: 2 },
+    rpc: { windowMs: 1000, max: 2 },
+    docs: { windowMs: 1000, max: 2 },
+    default: { windowMs: 1000, max: 2 }
+  }
+};
 const limiter = new RateLimiter(config);
 
 const key = '127.0.0.1';

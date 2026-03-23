@@ -2,7 +2,15 @@ import { Address, Cell, TupleItem } from '@ton/core';
 import { Buffer } from 'node:buffer';
 import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
 import { Network } from '../models';
-import { AccountStateResponse, MasterchainInfo, RawMessage, RawTransaction, TonDataSource } from './dataSource';
+import {
+  AccountStateResponse,
+  MasterchainInfo,
+  RawMessage,
+  RawTransaction,
+  TonDataSource,
+  TonSccpBurnProofMaterial,
+  TonSccpBurnProofMaterialRequest
+} from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 
 type TonClient4Like = {
@@ -399,6 +407,12 @@ export class TonClient4DataSource implements TonDataSource {
     } catch {
       return null;
     }
+  }
+
+  async getTonSccpBurnProofMaterial(
+    _request: TonSccpBurnProofMaterialRequest
+  ): Promise<TonSccpBurnProofMaterial> {
+    throw new Error('TON SCCP proof material requires a lite-server-backed data source.');
   }
 
   private async call<T>(fn: (client: TonClient4Like) => Promise<T>): Promise<T> {

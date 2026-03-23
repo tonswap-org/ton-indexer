@@ -13,9 +13,11 @@ import {
   coverSnapshotQuerySchema,
   debugQuerySchema,
   farmsSnapshotQuerySchema,
+  jettonTransferPayloadParamsSchema,
   governanceSnapshotQuerySchema,
   optionsSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
+  tonSccpBurnProofQuerySchema,
   swapQuerySchema,
   txQuerySchema
 } from './schemas';
@@ -35,6 +37,7 @@ const RPC_PROXY_DEFAULT_RETRY_ATTEMPTS = 4;
 const RPC_PROXY_DEFAULT_RETRY_DELAY_MS = 600;
 const RPC_PROXY_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const TON_RPC_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'estimateFee', 'getMasterchainInfo']);
+const TON_RPC_WRITE_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'estimateFee']);
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; error: string; code?: number };
@@ -50,6 +53,7 @@ type RoutesConfig = {
   network?: string;
   rpcProxyEndpoint?: string;
   rpcProxyEndpoints?: string[];
+  enableWriteRpc?: boolean;
   rpcProxyApiKey?: string;
   rpcProxyTimeoutMs?: number;
   rpcProxyRetryAttempts?: number;
@@ -216,6 +220,8 @@ const parseNonNegativeIntQuery = (value?: string | number) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
+const HEX_256_RE = /^0x[0-9a-fA-F]{64}$/;
+
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -340,6 +346,26 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T
   }
 };
 
+const classifyRateLimitBucket = (url: string) => {
+  const path = url.split('?')[0] || '';
+  if (path === '/jsonRPC' || path === '/api/v2/jsonRPC' || path.startsWith('/api/indexer/v1/runGetMethod')) {
+    return 'rpc' as const;
+  }
+  if (path.startsWith('/api/indexer/v1/stream')) return 'stream' as const;
+  if (path.includes('/snapshot')) return 'snapshot' as const;
+  if (path.startsWith('/api/indexer/v1/accounts')) return 'accounts' as const;
+  if (
+    path.startsWith('/api/indexer/v1/docs') ||
+    path.startsWith('/api/indexer/v1/openapi.json') ||
+    path.startsWith('/api/indexer/v1/contracts') ||
+    path.startsWith('/api/indexer/v1/health') ||
+    path.startsWith('/api/indexer/v1/metrics')
+  ) {
+    return 'docs' as const;
+  }
+  return 'default' as const;
+};
+
 export const registerRoutes = (
   app: FastifyInstance,
   config: RoutesConfig,
@@ -367,13 +393,14 @@ export const registerRoutes = (
     app.addHook('onRequest', async (request, reply) => {
       if (request.method === 'OPTIONS') return;
       const url = request.url ?? '';
-      if (!url.startsWith('/api/indexer/v1/accounts')) return;
       const ip =
         request.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
         request.ip ||
         'unknown';
-      const result = rateLimiter.check(ip);
-      reply.header('x-ratelimit-limit', rateLimiter.getConfig().max);
+      const bucket = classifyRateLimitBucket(url);
+      const result = rateLimiter.check(ip, bucket);
+      reply.header('x-ratelimit-bucket', bucket);
+      reply.header('x-ratelimit-limit', result.limit);
       reply.header('x-ratelimit-remaining', result.remaining);
       reply.header('x-ratelimit-reset', result.resetAt);
       if (!result.allowed) {
@@ -586,6 +613,9 @@ export const registerRoutes = (
     id?: number | string | null
   ): Promise<ToncenterRpcCompatResponse<unknown> | null> => {
     if (!TON_RPC_PROXY_METHODS.has(method)) return null;
+    if (TON_RPC_WRITE_PROXY_METHODS.has(method) && !config.enableWriteRpc) {
+      return { ok: false, code: 403, error: `method disabled: ${method}` };
+    }
 
     const endpoints = await resolveRpcProxyEndpoints();
     if (endpoints.length === 0) return null;
@@ -909,6 +939,25 @@ export const registerRoutes = (
       }
       try {
         return await service.getBalances(addr);
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/jettons/:jetton/transfer/:owner/payload',
+    { schema: { params: jettonTransferPayloadParamsSchema } },
+    async (request, reply) => {
+      const { jetton, owner } = request.params as { jetton: string; owner: string };
+      if (!isValidAddress(jetton)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid jetton address');
+      }
+      if (!isValidAddress(owner)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
+      }
+      try {
+        return await service.getJettonTransferPayload(jetton, owner);
       } catch (error) {
         return sendError(reply, 400, 'bad_request', (error as Error).message);
       }
@@ -1476,6 +1525,63 @@ export const registerRoutes = (
           executionType: query.execution_type,
           status: query.status,
           includeReverse: parseBooleanQuery(query.include_reverse),
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/sccp/ton/burn-proof-material',
+    { schema: { querystring: tonSccpBurnProofQuerySchema } },
+    async (request, reply) => {
+      const query = request.query as {
+        jetton_master: string;
+        message_id: string;
+        trusted_checkpoint_seqno?: string | number;
+        trusted_checkpoint_hash?: string;
+        target_seqno?: string | number;
+      };
+      if (!isValidAddress(query.jetton_master)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid jetton_master');
+      }
+      if (!HEX_256_RE.test(query.message_id)) {
+        return sendError(reply, 400, 'bad_request', 'message_id must be 0x-prefixed 32-byte hex');
+      }
+      if ((query.trusted_checkpoint_seqno === undefined) !== (query.trusted_checkpoint_hash === undefined)) {
+        return sendError(
+          reply,
+          400,
+          'bad_request',
+          'trusted_checkpoint_seqno and trusted_checkpoint_hash must be provided together'
+        );
+      }
+      if (
+        query.trusted_checkpoint_hash !== undefined &&
+        !HEX_256_RE.test(query.trusted_checkpoint_hash)
+      ) {
+        return sendError(reply, 400, 'bad_request', 'trusted_checkpoint_hash must be 0x-prefixed 32-byte hex');
+      }
+      const trustedCheckpointSeqno =
+        query.trusted_checkpoint_seqno === undefined
+          ? undefined
+          : parsePositiveIntQuery(query.trusted_checkpoint_seqno);
+      if (query.trusted_checkpoint_seqno !== undefined && trustedCheckpointSeqno === null) {
+        return sendError(reply, 400, 'bad_request', 'trusted_checkpoint_seqno must be a positive integer');
+      }
+      const targetSeqno =
+        query.target_seqno === undefined ? undefined : parsePositiveIntQuery(query.target_seqno);
+      if (query.target_seqno !== undefined && targetSeqno === null) {
+        return sendError(reply, 400, 'bad_request', 'target_seqno must be a positive integer');
+      }
+      try {
+        return await service.getTonSccpBurnProofMaterial({
+          jettonMaster: query.jetton_master,
+          messageIdHex: query.message_id,
+          trustedCheckpointSeqno: trustedCheckpointSeqno ?? undefined,
+          trustedCheckpointHashHex: query.trusted_checkpoint_hash,
+          targetSeqno: targetSeqno ?? undefined,
         });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', (error as Error).message);

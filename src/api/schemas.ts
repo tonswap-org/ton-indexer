@@ -6,6 +6,15 @@ export const addressParamsSchema = {
   required: ['addr'],
 };
 
+export const jettonTransferPayloadParamsSchema = {
+  type: 'object',
+  properties: {
+    jetton: { type: 'string' },
+    owner: { type: 'string' },
+  },
+  required: ['jetton', 'owner'],
+};
+
 export const txQuerySchema = {
   type: 'object',
   properties: {
@@ -13,6 +22,18 @@ export const txQuerySchema = {
     cursor_lt: { type: 'string', pattern: '^\\d+$' },
     cursor_hash: { type: 'string' },
   },
+};
+
+export const tonSccpBurnProofQuerySchema = {
+  type: 'object',
+  properties: {
+    jetton_master: { type: 'string' },
+    message_id: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+    trusted_checkpoint_seqno: { type: 'integer', minimum: 1 },
+    trusted_checkpoint_hash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+    target_seqno: { type: 'integer', minimum: 1 },
+  },
+  required: ['jetton_master', 'message_id'],
 };
 
 export const swapQuerySchema = {

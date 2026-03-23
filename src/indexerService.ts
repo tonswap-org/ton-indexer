@@ -1,8 +1,12 @@
-import { Address, Cell, TupleItem, beginCell } from '@ton/core';
+import { Address, Cell, TupleItem, beginCell, contractAddress, storeStateInit } from '@ton/core';
 import { EventEmitter } from 'node:events';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
-import { TonDataSource } from './data/dataSource';
+import {
+  TonDataSource,
+  TonSccpBurnProofMaterial,
+  TonSccpBurnProofMaterialRequest
+} from './data/dataSource';
 import { OpcodeSets } from './utils/opcodes';
 import {
   AccountBalance,
@@ -19,6 +23,7 @@ import { classifyTransaction } from './utils/txClassifier';
 import { JettonMetadata } from './models';
 import { MetricsCollector } from './metricsCollector';
 import { PoolTracker } from './poolTracker';
+import { SoraTonCheckpointResolver } from './soraCheckpoint';
 import { LRUCache } from 'lru-cache';
 
 type ToncenterStackEntry = [string, unknown];
@@ -139,6 +144,11 @@ export type AccountSwapsResponse = {
   summary: AccountSwapsSummary;
   twap_runs: AccountTwapRunSummary[];
   pending_limits: AccountPendingLimitOrder[];
+};
+
+export type JettonTransferPayloadResponse = {
+  custom_payload: string | null;
+  state_init: string | null;
 };
 
 const tupleItemBigInt = (item?: TupleItem): bigint | null => {
@@ -874,6 +884,7 @@ export class IndexerService {
   private healthCache?: { value: HealthStatus; expiresAt: number };
   private balanceEventEmitter = new EventEmitter();
   private balanceEventSeq = 0;
+  private soraTonCheckpointResolver: SoraTonCheckpointResolver;
 
   constructor(
     config: Config,
@@ -892,6 +903,7 @@ export class IndexerService {
     this.jettonRoots = jettonRoots;
     this.metrics = metrics;
     this.poolTracker = poolTracker;
+    this.soraTonCheckpointResolver = new SoraTonCheckpointResolver(config);
 
     const balanceCacheMax = Math.max(1, config.maxAddresses);
     const stateCacheMax = Math.max(1, config.maxAddresses);
@@ -1260,6 +1272,126 @@ export class IndexerService {
     };
     this.setCached(this.stateCache, address, response, signature, this.config.stateCacheTtlMs);
     return response;
+  }
+
+  async getTonSccpBurnProofMaterial(
+    request: TonSccpBurnProofMaterialRequest
+  ): Promise<TonSccpBurnProofMaterial> {
+    if (!this.source.getTonSccpBurnProofMaterial) {
+      throw new Error('TON SCCP proof material is unavailable on the configured data source.');
+    }
+    let trustedCheckpointSeqno = request.trustedCheckpointSeqno;
+    let trustedCheckpointHashHex = request.trustedCheckpointHashHex;
+    if (trustedCheckpointSeqno === undefined || trustedCheckpointHashHex === undefined) {
+      const resolved = await this.soraTonCheckpointResolver.resolveTonTrustedCheckpoint();
+      trustedCheckpointSeqno = resolved.mcSeqno;
+      trustedCheckpointHashHex = resolved.mcBlockHashHex;
+    }
+    return this.source.getTonSccpBurnProofMaterial({
+      ...request,
+      jettonMaster: normalizeAddress(request.jettonMaster),
+      trustedCheckpointSeqno,
+      trustedCheckpointHashHex,
+    });
+  }
+
+  async getJettonTransferPayload(jettonAddress: string, ownerAddress: string): Promise<JettonTransferPayloadResponse> {
+    const normalizedJetton = normalizeAddress(jettonAddress);
+    const normalizedOwner = normalizeAddress(ownerAddress);
+
+    const walletFromBalance = await this.source.getJettonBalance(normalizedOwner, normalizedJetton).catch(() => null);
+    const walletAddress = walletFromBalance?.wallet
+      ? normalizeAddress(walletFromBalance.wallet)
+      : await this.resolveJettonWalletAddress(normalizedJetton, normalizedOwner);
+
+    if (!walletAddress) {
+      return {
+        custom_payload: null,
+        state_init: null
+      };
+    }
+
+    const walletState = await this.source.getAccountState(walletAddress).catch(() => null);
+    if (walletState?.accountState === 'active') {
+      return {
+        custom_payload: null,
+        state_init: null
+      };
+    }
+
+    return {
+      custom_payload: null,
+      state_init: await this.buildJettonWalletStateInit(normalizedJetton, normalizedOwner)
+    };
+  }
+
+  private async resolveJettonWalletAddress(jettonMaster: string, ownerAddress: string): Promise<string | null> {
+    let ownerSlice: Cell;
+    try {
+      ownerSlice = buildSliceCell(ownerAddress);
+    } catch {
+      return null;
+    }
+
+    for (const method of ['wallet_address', 'get_wallet_address'] as const) {
+      const result = await this.runGetMethodSourceCached(jettonMaster, method, [{ type: 'slice', cell: ownerSlice }]);
+      if (result?.exitCode !== 0) continue;
+      const stack = unwrapTupleStack(result.stack);
+      const resolved = tupleItemAddress(stack[0]);
+      if (resolved) return normalizeAddress(resolved);
+    }
+
+    const fallbackState = await this.buildJettonWalletState(jettonMaster, ownerAddress);
+    return fallbackState?.address ?? null;
+  }
+
+  private async loadJettonWalletCode(jettonMaster: string): Promise<Cell | null> {
+    for (const method of ['get_jetton_data', 'jetton_data'] as const) {
+      const result = await this.runGetMethodSourceCached(jettonMaster, method, []);
+      if (result?.exitCode !== 0) continue;
+      const stack = unwrapTupleStack(result.stack);
+      const walletCode = tupleItemCell(stack[4]);
+      if (walletCode) return walletCode;
+    }
+    return null;
+  }
+
+  private async buildJettonWalletStateInit(jettonMaster: string, ownerAddress: string): Promise<string | null> {
+    const state = await this.buildJettonWalletState(jettonMaster, ownerAddress);
+    return state?.stateInit ?? null;
+  }
+
+  private async buildJettonWalletState(
+    jettonMaster: string,
+    ownerAddress: string
+  ): Promise<{ address: string; stateInit: string } | null> {
+    const walletCode = await this.loadJettonWalletCode(jettonMaster);
+    if (!walletCode) return null;
+
+    try {
+      const owner = Address.parse(ownerAddress);
+      const master = Address.parse(jettonMaster);
+      const walletData = beginCell()
+        .storeCoins(0n)
+        .storeAddress(owner)
+        .storeAddress(master)
+        .storeCoins(0n)
+        .storeCoins(0n)
+        .storeAddress(null)
+        .storeUint(0, 32)
+        .storeUint(0, 64)
+        .storeCoins(0n)
+        .endCell();
+
+      const stateInit = { code: walletCode, data: walletData };
+      const stateCell = beginCell().store(storeStateInit(stateInit)).endCell();
+      return {
+        address: contractAddress(0, stateInit).toRawString(),
+        stateInit: Buffer.from(stateCell.toBoc()).toString('base64')
+      };
+    } catch {
+      return null;
+    }
   }
 
   async runGetMethod(

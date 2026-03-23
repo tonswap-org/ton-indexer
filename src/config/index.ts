@@ -2,10 +2,15 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export type Network = 'mainnet' | 'testnet';
+export type IndexerMode = 'dev' | 'production';
+export type RateLimitBucketName = 'accounts' | 'stream' | 'snapshot' | 'rpc' | 'docs' | 'default';
+export type RateLimitBucketConfig = { windowMs: number; max: number };
+export type RateLimitBuckets = Record<RateLimitBucketName, RateLimitBucketConfig>;
 
 export type Config = {
   port: number;
   host: string;
+  mode: IndexerMode;
   network: Network;
   dataSource: 'http' | 'lite';
   corsEnabled: boolean;
@@ -16,11 +21,14 @@ export type Config = {
   corsMaxAge: number;
   snapshotPath?: string;
   snapshotOnExit: boolean;
+  snapshotAutosaveEnabled: boolean;
+  snapshotAutosaveIntervalMs: number;
   adminToken?: string;
   adminEnabled: boolean;
   rateLimitEnabled: boolean;
   rateLimitWindowMs: number;
   rateLimitMax: number;
+  rateLimitBuckets: RateLimitBuckets;
   responseCacheEnabled: boolean;
   balanceCacheTtlMs: number;
   txCacheTtlMs: number;
@@ -41,11 +49,17 @@ export type Config = {
   httpEndpoint?: string;
   rpcProxyEndpoint?: string;
   rpcProxyEndpoints: string[];
+  enableWriteRpc: boolean;
   rpcProxyApiKey?: string;
   rpcProxyTimeoutMs: number;
   rpcProxyRetryAttempts: number;
   rpcProxyRetryDelayMs: number;
   liteserverPool?: string;
+  soraRpcEndpoint?: string;
+  soraRpcTimeoutMs: number;
+  soraCheckpointCacheTtlMs: number;
+  soraTonTrustedCheckpointSeqno?: number;
+  soraTonTrustedCheckpointHash?: string;
   logLevel: string;
   registryPath: string;
   opcodesPath?: string;
@@ -92,6 +106,12 @@ const booleanFromEnv = (key: string, fallback: boolean) => {
   return fallback;
 };
 
+const modeFromEnv = (): IndexerMode => {
+  const raw = (process.env.INDEXER_MODE || 'dev').toLowerCase();
+  if (raw === 'production' || raw === 'dev') return raw;
+  return 'dev';
+};
+
 const networkFromEnv = (): Network => {
   // Default to testnet for current TONSWAP deployments; mainnet requires real registry addresses.
   const raw = (process.env.TON_NETWORK || 'testnet').toLowerCase();
@@ -106,6 +126,7 @@ const dataSourceFromEnv = (): 'http' | 'lite' => {
 };
 
 export const loadConfig = (): Config => {
+  const mode = modeFromEnv();
   const network = networkFromEnv();
   const registryPath = resolve(process.cwd(), 'registry', `${network}.json`);
   const opcodesPath = stringFromEnv(
@@ -133,10 +154,47 @@ export const loadConfig = (): Config => {
         (endpoint, index, list) => list.indexOf(endpoint) === index
       )
     : configuredProxyEndpoints;
+  const defaultRateLimitWindowMs = 60_000;
+  const defaultRateLimitMax = mode === 'production' ? 2_000 : 10_000;
+  const rateLimitWindowMs = numberFromEnv('RATE_LIMIT_WINDOW_MS', defaultRateLimitWindowMs);
+  const rateLimitMax = numberFromEnv('RATE_LIMIT_MAX', defaultRateLimitMax);
+  const defaultBuckets: RateLimitBuckets = {
+    accounts: { windowMs: rateLimitWindowMs, max: rateLimitMax },
+    stream: { windowMs: 10_000, max: mode === 'production' ? 200 : 1_000 },
+    snapshot: { windowMs: 60_000, max: mode === 'production' ? 120 : 1_000 },
+    rpc: { windowMs: 10_000, max: mode === 'production' ? 240 : 1_500 },
+    docs: { windowMs: 60_000, max: mode === 'production' ? 600 : 2_000 },
+    default: { windowMs: rateLimitWindowMs, max: rateLimitMax }
+  };
+  const rateLimitBucketsRaw = stringFromEnv('RATE_LIMIT_BUCKETS_JSON');
+  const rateLimitBuckets = (() => {
+    if (!rateLimitBucketsRaw) return defaultBuckets;
+    try {
+      const parsed = JSON.parse(rateLimitBucketsRaw) as Record<string, { windowMs?: number; max?: number }>;
+      const merged = { ...defaultBuckets };
+      for (const key of Object.keys(defaultBuckets) as RateLimitBucketName[]) {
+        const candidate = parsed[key];
+        if (!candidate || typeof candidate !== 'object') continue;
+        const windowMs =
+          typeof candidate.windowMs === 'number' && Number.isFinite(candidate.windowMs) && candidate.windowMs > 0
+            ? Math.trunc(candidate.windowMs)
+            : merged[key].windowMs;
+        const max =
+          typeof candidate.max === 'number' && Number.isFinite(candidate.max) && candidate.max > 0
+            ? Math.trunc(candidate.max)
+            : merged[key].max;
+        merged[key] = { windowMs, max };
+      }
+      return merged;
+    } catch {
+      return defaultBuckets;
+    }
+  })();
 
   return {
     port: numberFromEnv('PORT', 8787),
     host: stringFromEnv('HOST', '0.0.0.0')!,
+    mode,
     network,
     dataSource: dataSourceFromEnv(),
     corsEnabled: booleanFromEnv('CORS_ENABLED', true),
@@ -150,11 +208,17 @@ export const loadConfig = (): Config => {
     corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
     snapshotOnExit: booleanFromEnv('SNAPSHOT_ON_EXIT', false),
+    snapshotAutosaveEnabled: booleanFromEnv(
+      'SNAPSHOT_AUTOSAVE_ENABLED',
+      mode === 'production' && Boolean(stringFromEnv('SNAPSHOT_PATH'))
+    ),
+    snapshotAutosaveIntervalMs: numberFromEnv('SNAPSHOT_AUTOSAVE_INTERVAL_MS', 30_000),
     adminToken: stringFromEnv('ADMIN_TOKEN'),
-    adminEnabled: booleanFromEnv('ADMIN_ENABLED', false),
+    adminEnabled: booleanFromEnv('ADMIN_ENABLED', mode === 'production'),
     rateLimitEnabled: booleanFromEnv('RATE_LIMIT_ENABLED', true),
-    rateLimitWindowMs: numberFromEnv('RATE_LIMIT_WINDOW_MS', 60_000),
-    rateLimitMax: numberFromEnv('RATE_LIMIT_MAX', 10_000),
+    rateLimitWindowMs,
+    rateLimitMax,
+    rateLimitBuckets,
     responseCacheEnabled: booleanFromEnv('RESPONSE_CACHE_ENABLED', true),
     balanceCacheTtlMs: numberFromEnv('BALANCE_CACHE_TTL_MS', 2_000),
     txCacheTtlMs: numberFromEnv('TX_CACHE_TTL_MS', 1_000),
@@ -175,6 +239,7 @@ export const loadConfig = (): Config => {
     httpEndpoint: stringFromEnv('TON_HTTP_ENDPOINT'),
     rpcProxyEndpoint: singleProxyEndpoint,
     rpcProxyEndpoints,
+    enableWriteRpc: booleanFromEnv('INDEXER_ENABLE_WRITE_RPC', false),
     rpcProxyApiKey:
       stringFromEnv('INDEXER_WRITE_RPC_API_KEY') ||
       stringFromEnv('TON_WRITE_RPC_API_KEY') ||
@@ -188,6 +253,19 @@ export const loadConfig = (): Config => {
     liteserverPool: stringFromEnv(
       network === 'mainnet' ? 'LITESERVER_POOL_MAINNET' : 'LITESERVER_POOL_TESTNET'
     ),
+    soraRpcEndpoint:
+      stringFromEnv('SORA_RPC_HTTP_ENDPOINT') ||
+      stringFromEnv('SORA_HTTP_ENDPOINT') ||
+      stringFromEnv('SORA_RPC_ENDPOINT'),
+    soraRpcTimeoutMs: numberFromEnv('SORA_RPC_TIMEOUT_MS', 10_000),
+    soraCheckpointCacheTtlMs: numberFromEnv('SORA_TON_TRUSTED_CHECKPOINT_CACHE_TTL_MS', 10_000),
+    soraTonTrustedCheckpointSeqno: (() => {
+      const raw = stringFromEnv('SORA_TON_TRUSTED_CHECKPOINT_SEQNO');
+      if (!raw) return undefined;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+    })(),
+    soraTonTrustedCheckpointHash: stringFromEnv('SORA_TON_TRUSTED_CHECKPOINT_HASH'),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
     registryPath,
     opcodesPath,

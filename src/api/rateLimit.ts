@@ -1,54 +1,70 @@
-import { Config } from '../config';
+import { Config, RateLimitBucketName } from '../config';
 
 export class RateLimiter {
   private enabled: boolean;
-  private windowMs: number;
-  private max: number;
-  private buckets = new Map<string, { count: number; resetAt: number }>();
+  private defaults: { windowMs: number; max: number };
+  private routeBuckets: Record<RateLimitBucketName, { windowMs: number; max: number }>;
+  private counters = new Map<string, { count: number; resetAt: number }>();
   private lastCleanup = 0;
+  private cleanupIntervalMs: number;
 
   constructor(config: Config) {
     this.enabled = config.rateLimitEnabled;
-    this.windowMs = config.rateLimitWindowMs;
-    this.max = config.rateLimitMax;
+    this.defaults = { windowMs: config.rateLimitWindowMs, max: config.rateLimitMax };
+    this.routeBuckets = config.rateLimitBuckets;
+    this.cleanupIntervalMs = Math.max(
+      5_000,
+      Math.min(...Object.values(this.routeBuckets).map((entry) => entry.windowMs), this.defaults.windowMs)
+    );
   }
 
   isEnabled() {
     return this.enabled;
   }
 
-  check(key: string) {
+  check(key: string, bucketName: RateLimitBucketName = 'default') {
+    const bucketConfig = this.routeBuckets[bucketName] ?? this.defaults;
+    const windowMs = bucketConfig.windowMs;
+    const max = bucketConfig.max;
     if (!this.enabled) {
-      return { allowed: true, remaining: this.max, resetAt: Date.now() + this.windowMs };
+      return { allowed: true, remaining: max, resetAt: Date.now() + windowMs, bucket: bucketName, limit: max };
     }
 
+    const cacheKey = `${bucketName}:${key}`;
     const now = Date.now();
-    let bucket = this.buckets.get(key);
+    let bucket = this.counters.get(cacheKey);
     if (!bucket || bucket.resetAt <= now) {
-      bucket = { count: 0, resetAt: now + this.windowMs };
-      this.buckets.set(key, bucket);
+      bucket = { count: 0, resetAt: now + windowMs };
+      this.counters.set(cacheKey, bucket);
     }
 
     bucket.count += 1;
-    const remaining = Math.max(0, this.max - bucket.count);
+    const remaining = Math.max(0, max - bucket.count);
     this.cleanup(now);
     return {
-      allowed: bucket.count <= this.max,
+      allowed: bucket.count <= max,
       remaining,
       resetAt: bucket.resetAt,
+      bucket: bucketName,
+      limit: max
     };
   }
 
   getConfig() {
-    return { enabled: this.enabled, windowMs: this.windowMs, max: this.max };
+    return {
+      enabled: this.enabled,
+      windowMs: this.defaults.windowMs,
+      max: this.defaults.max,
+      buckets: this.routeBuckets
+    };
   }
 
   private cleanup(now: number) {
-    if (now - this.lastCleanup < this.windowMs) return;
+    if (now - this.lastCleanup < this.cleanupIntervalMs) return;
     this.lastCleanup = now;
-    for (const [key, bucket] of this.buckets) {
+    for (const [key, bucket] of this.counters) {
       if (bucket.resetAt <= now) {
-        this.buckets.delete(key);
+        this.counters.delete(key);
       }
     }
   }
