@@ -7,7 +7,6 @@ export type ErrorCode =
   | 'invalid_method'
   | 'invalid_stack'
   | 'rate_limited'
-  | 'unauthorized'
   | 'metrics_disabled'
   | 'snapshot_disabled'
   | 'debug_disabled'
@@ -15,4 +14,11 @@ export type ErrorCode =
 
 export const sendError = (reply: FastifyReply, status: number, code: ErrorCode, message: string) => {
   return reply.status(status).send({ error: message, code });
+};
+
+export const publicErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message === 'timeout') {
+    return 'request timed out';
+  }
+  return fallback;
 };

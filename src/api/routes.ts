@@ -1,10 +1,10 @@
 import { Address, Cell } from '@ton/core';
 import { getHttpEndpoints } from '@orbs-network/ton-access';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { randomBytes } from 'node:crypto';
 import { IndexerService } from '../indexerService';
 import { MetricsService } from '../metrics';
 import { SnapshotService } from '../snapshotService';
-import { AdminGuard } from './admin';
 import { DebugService } from '../debugService';
 import { RateLimiter } from './rateLimit';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from './validation';
@@ -17,13 +17,14 @@ import {
   governanceSnapshotQuerySchema,
   optionsSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
+  volIndexSnapshotQuerySchema,
   tonSccpBurnProofQuerySchema,
   swapQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
-import { sendError } from './errors';
+import { publicErrorMessage, sendError } from './errors';
 
 const BALANCE_STREAM_POLL_MS = 1_500;
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
@@ -49,8 +50,8 @@ type ToncenterRpcCompatRequest = {
 };
 
 type RoutesConfig = {
-  adminEnabled: boolean;
   network?: string;
+  pageSize?: number;
   rpcProxyEndpoint?: string;
   rpcProxyEndpoints?: string[];
   enableWriteRpc?: boolean;
@@ -372,7 +373,6 @@ export const registerRoutes = (
   service: IndexerService,
   metrics?: MetricsService,
   snapshots?: SnapshotService,
-  adminGuard?: AdminGuard,
   debug?: DebugService,
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>
@@ -380,23 +380,11 @@ export const registerRoutes = (
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
   const contractMap = Object.fromEntries(contractEntries);
 
-  const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!adminGuard || !adminGuard.isEnabled()) return true;
-    if (!adminGuard.authorize(request as any)) {
-      sendError(reply, 401, 'unauthorized', 'unauthorized');
-      return false;
-    }
-    return true;
-  };
-
   if (rateLimiter?.isEnabled()) {
     app.addHook('onRequest', async (request, reply) => {
       if (request.method === 'OPTIONS') return;
       const url = request.url ?? '';
-      const ip =
-        request.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
-        request.ip ||
-        'unknown';
+      const ip = request.ip || 'unknown';
       const bucket = classifyRateLimitBucket(url);
       const result = rateLimiter.check(ip, bucket);
       reply.header('x-ratelimit-bucket', bucket);
@@ -408,6 +396,7 @@ export const registerRoutes = (
       }
     });
   }
+
   app.get('/', async () => ({ status: 'ok' }));
 
   app.get('/api/indexer/v1/health', async () => {
@@ -472,10 +461,9 @@ export const registerRoutes = (
       if (record.ok) {
         return { ok: true, result: record.result };
       }
-      const errorMessage = readString(record.error) ?? 'Upstream RPC returned an error.';
       const errorCode =
         typeof record.code === 'number' && Number.isFinite(record.code) ? Math.trunc(record.code) : 500;
-      return { ok: false, code: errorCode, error: errorMessage };
+      return { ok: false, code: errorCode, error: 'Upstream RPC returned an error.' };
     }
 
     if ('result' in record) {
@@ -486,8 +474,7 @@ export const registerRoutes = (
     if (rpcError) {
       const errorCode =
         typeof rpcError.code === 'number' && Number.isFinite(rpcError.code) ? Math.trunc(rpcError.code) : 500;
-      const errorMessage = readString(rpcError.message) ?? readString(rpcError.error) ?? 'Upstream RPC error.';
-      return { ok: false, code: errorCode, error: errorMessage };
+      return { ok: false, code: errorCode, error: 'Upstream RPC error.' };
     }
 
     return { ok: false, code: 502, error: 'Unsupported upstream RPC payload.' };
@@ -566,11 +553,7 @@ export const registerRoutes = (
           payload = JSON.parse(text);
         } catch (_error) {
           if (!response.ok) {
-            return {
-              ok: false,
-              code: response.status,
-              error: `Upstream RPC HTTP ${response.status}: ${text.slice(0, 160)}`
-            };
+            return { ok: false, code: response.status, error: `Upstream RPC HTTP ${response.status}.` };
           }
           return { ok: false, code: 502, error: 'Invalid upstream RPC JSON payload.' };
         }
@@ -595,12 +578,12 @@ export const registerRoutes = (
       return normalizeSendBocCompat(method, normalizeRpcProxyPayload(payload));
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        return { ok: false, code: 504, error: `Upstream RPC timed out for method ${method}.` };
+        return { ok: false, code: 504, error: 'Upstream RPC timed out.' };
       }
       return {
         ok: false,
         code: 502,
-        error: `Upstream RPC request failed: ${error instanceof Error ? error.message : String(error)}`
+        error: 'Upstream RPC request failed.'
       };
     } finally {
       clearTimeout(timer);
@@ -636,7 +619,7 @@ export const registerRoutes = (
     let lastError: ToncenterRpcCompatResponse<unknown> = {
       ok: false,
       code: 502,
-      error: `Upstream RPC unavailable for method ${method}.`
+      error: 'Upstream RPC unavailable.'
     };
 
     for (let attempt = 0; attempt < retryAttempts; attempt += 1) {
@@ -655,6 +638,71 @@ export const registerRoutes = (
       }
     }
     return lastError;
+  };
+
+  const collectIndexedTransactions = async (
+    address: string,
+    limit: number,
+    lt?: string | null,
+    hash?: string | null
+  ): Promise<IndexedTxCompat[]> => {
+    const defaultPageSize = Math.max(1, Math.trunc(config.pageSize ?? 10));
+    const txs: IndexedTxCompat[] = [];
+    const seen = new Set<string>();
+    const appendUnique = (entries: IndexedTxCompat[]) => {
+      let added = 0;
+      for (const entry of entries) {
+        const entryLt = readString(entry.lt);
+        const entryHash = readString(entry.hash);
+        const key = entryLt && entryHash ? `${entryLt}:${entryHash}` : readString(entry.txId);
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        txs.push(entry);
+        added += 1;
+        if (txs.length >= limit) break;
+      }
+      return added;
+    };
+
+    if (lt && hash) {
+      let cursorLt = lt;
+      let cursorHash = hash;
+      let pageSize = defaultPageSize;
+      const maxRequests = Math.max(1, Math.ceil(limit / Math.max(1, pageSize - 1)) + 2);
+      for (let requestIndex = 0; requestIndex < maxRequests && txs.length < limit; requestIndex += 1) {
+        const response = await service.getTransactionsByCursor(address, cursorLt, cursorHash);
+        const entries = (response?.txs ?? []) as IndexedTxCompat[];
+        if (entries.length === 0) break;
+        pageSize =
+          typeof response?.page_size === 'number' && Number.isFinite(response.page_size) && response.page_size > 0
+            ? Math.trunc(response.page_size)
+            : pageSize;
+        const added = appendUnique(entries);
+        const last = entries[entries.length - 1];
+        const lastLt = readString(last?.lt);
+        const lastHash = readString(last?.hash);
+        if (!lastLt || !lastHash || entries.length < pageSize) break;
+        if (lastLt === cursorLt && lastHash === cursorHash) break;
+        if (added === 0) break;
+        cursorLt = lastLt;
+        cursorHash = lastHash;
+      }
+      return txs;
+    }
+
+    const maxPages = Math.max(1, Math.ceil(limit / defaultPageSize) + 1);
+    for (let page = 1; page <= maxPages && txs.length < limit; page += 1) {
+      const response = await service.getTransactions(address, page);
+      const entries = (response?.txs ?? []) as IndexedTxCompat[];
+      if (entries.length === 0) break;
+      const pageSize =
+        typeof response?.page_size === 'number' && Number.isFinite(response.page_size) && response.page_size > 0
+          ? Math.trunc(response.page_size)
+          : defaultPageSize;
+      appendUnique(entries);
+      if (entries.length < pageSize) break;
+    }
+    return txs;
   };
 
   const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -681,7 +729,10 @@ export const registerRoutes = (
         if (!argsResult.ok) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: argsResult.error ?? 'invalid stack' }, id);
         }
-        const result = await service.runGetMethod(address, getter, argsResult.args ?? []);
+        const result = await withTimeout(
+          service.runGetMethod(address, getter, argsResult.args ?? []),
+          GET_METHOD_CALL_TIMEOUT_MS
+        );
         return sendToncenterCompat(reply, { ok: true, result }, id);
       }
 
@@ -771,11 +822,8 @@ export const registerRoutes = (
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid cursor' }, id);
         }
 
-        const response =
-          lt && hash ? await service.getTransactionsByCursor(address, lt, hash) : await service.getTransactions(address, 1);
-        const txs = (response?.txs ?? [])
-          .slice(0, limit)
-          .map((entry: IndexedTxCompat) => mapIndexerTxToToncenterTransaction(entry));
+        const indexedTxs = await collectIndexedTransactions(address, limit, lt, hash);
+        const txs = indexedTxs.map((entry: IndexedTxCompat) => mapIndexerTxToToncenterTransaction(entry));
         return sendToncenterCompat(reply, { ok: true, result: txs }, id);
       }
 
@@ -786,7 +834,11 @@ export const registerRoutes = (
 
       return sendToncenterCompat(reply, { ok: false, code: 404, error: `unsupported method: ${method}` }, id);
     } catch (error) {
-      return sendToncenterCompat(reply, { ok: false, code: 500, error: (error as Error).message }, id);
+      return sendToncenterCompat(
+        reply,
+        { ok: false, code: 500, error: publicErrorMessage(error, 'JSON-RPC request failed') },
+        id
+      );
     }
   };
 
@@ -808,9 +860,12 @@ export const registerRoutes = (
       return sendError(reply, 400, 'invalid_stack', argsResult.error ?? 'invalid stack');
     }
     try {
-      return await service.runGetMethod(address, method, argsResult.args ?? []);
+      return await withTimeout(
+        service.runGetMethod(address, method, argsResult.args ?? []),
+        GET_METHOD_CALL_TIMEOUT_MS
+      );
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', (error as Error).message);
+      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'get method call failed'));
     }
   });
 
@@ -854,11 +909,10 @@ export const registerRoutes = (
         );
         return { ok: true, ...response } satisfies BatchResult;
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'bad request';
-        if (message === 'timeout') {
+        if (error instanceof Error && error.message === 'timeout') {
           return { ok: false, code: 'timeout', error: 'get method timed out' } satisfies BatchResult;
         }
-        return { ok: false, code: 'bad_request', error: message } satisfies BatchResult;
+        return { ok: false, code: 'bad_request', error: 'get method call failed' } satisfies BatchResult;
       }
     });
 
@@ -870,7 +924,24 @@ export const registerRoutes = (
   });
 
   app.get('/api/indexer/v1/docs', async (_request, reply) => {
-    const html = buildDocsHtml();
+    const nonce = randomBytes(16).toString('base64');
+    const html = buildDocsHtml(nonce);
+    reply.header(
+      'content-security-policy',
+      [
+        "default-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+        `script-src 'nonce-${nonce}'`,
+        `style-src 'nonce-${nonce}'`,
+        "connect-src 'self'",
+        "form-action 'none'",
+        "img-src 'self' data:"
+      ].join('; ')
+    );
+    reply.header('referrer-policy', 'no-referrer');
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
     reply.type('text/html');
     return html;
   });
@@ -885,17 +956,6 @@ export const registerRoutes = (
     reply.type('text/plain');
     return metrics.getPrometheus();
   });
-  app.addHook('preHandler', async (request, reply) => {
-    const url = request.url ?? '';
-    if (
-      url.startsWith('/api/indexer/v1/metrics/prometheus') ||
-      url.startsWith('/api/indexer/v1/snapshot') ||
-      url.startsWith('/api/indexer/v1/debug')
-    ) {
-      const ok = await requireAdmin(request, reply);
-      if (!ok) return reply;
-    }
-  });
 
   app.get(
     '/api/indexer/v1/accounts/:addr/balance',
@@ -908,7 +968,7 @@ export const registerRoutes = (
       try {
         return await service.getBalance(addr);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balance request failed'));
       }
     }
   );
@@ -924,7 +984,7 @@ export const registerRoutes = (
       try {
         return await service.getBalances(addr);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balances request failed'));
       }
     }
   );
@@ -940,7 +1000,7 @@ export const registerRoutes = (
       try {
         return await service.getBalances(addr);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balances request failed'));
       }
     }
   );
@@ -959,7 +1019,7 @@ export const registerRoutes = (
       try {
         return await service.getJettonTransferPayload(jetton, owner);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'payload request failed'));
       }
     }
   );
@@ -992,7 +1052,45 @@ export const registerRoutes = (
           maxMarkets
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'perps snapshot request failed'));
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/vol-index/:volIndex/snapshot',
+    {
+      schema: {
+        params: { type: 'object', properties: { volIndex: { type: 'string' } }, required: ['volIndex'] },
+        querystring: volIndexSnapshotQuerySchema
+      }
+    },
+    async (request, reply) => {
+      const volIndex = (request.params as { volIndex: string }).volIndex;
+      if (!isValidAddress(volIndex)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid VolIndex address');
+      }
+
+      const query = request.query as { pool?: string; route_ids?: string };
+      const pool = query.pool?.trim() ? query.pool.trim() : undefined;
+      if (pool && !isValidAddress(pool)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid pool address');
+      }
+      const routeIds = (query.route_ids ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => /^\d+$/.test(value))
+        .map((value) => Number.parseInt(value, 10))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .slice(0, 64);
+
+      try {
+        return await service.getVolIndexSnapshot(volIndex, {
+          sourcePool: pool,
+          routeIds: routeIds.length ? routeIds : undefined
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'vol-index snapshot request failed'));
       }
     }
   );
@@ -1039,7 +1137,7 @@ export const registerRoutes = (
           maxConsecutiveMisses
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'governance snapshot request failed'));
       }
     }
   );
@@ -1080,7 +1178,7 @@ export const registerRoutes = (
           maxConsecutiveMisses
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'farm snapshot request failed'));
       }
     }
   );
@@ -1126,7 +1224,7 @@ export const registerRoutes = (
           minProbeWindows
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'options snapshot request failed'));
       }
     }
   );
@@ -1174,7 +1272,7 @@ export const registerRoutes = (
           maxConsecutiveMisses
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'cover snapshot request failed'));
       }
     }
   );
@@ -1258,7 +1356,7 @@ export const registerRoutes = (
           modules
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'DeFi snapshot request failed'));
       }
     }
   );
@@ -1314,7 +1412,7 @@ export const registerRoutes = (
           tokens
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'DLMM pools snapshot request failed'));
       }
     }
   );
@@ -1393,7 +1491,7 @@ export const registerRoutes = (
             address: null,
             seq: ++seq,
             ts: Date.now(),
-            message: (error as Error).message,
+            message: publicErrorMessage(error, 'stream update failed'),
           },
           'error'
         );
@@ -1471,7 +1569,7 @@ export const registerRoutes = (
         }
         return await service.getTransactions(addr, page);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'transaction request failed'));
       }
     }
   );
@@ -1527,7 +1625,7 @@ export const registerRoutes = (
           includeReverse: parseBooleanQuery(query.include_reverse),
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'swaps request failed'));
       }
     }
   );
@@ -1584,7 +1682,7 @@ export const registerRoutes = (
           targetSeqno: targetSeqno ?? undefined,
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'proof material request failed'));
       }
     }
   );
@@ -1600,7 +1698,7 @@ export const registerRoutes = (
       try {
         return await service.getState(addr);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', (error as Error).message);
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'state request failed'));
       }
     }
   );
@@ -1610,7 +1708,7 @@ export const registerRoutes = (
     try {
       return { ok: true, ...(snapshots.save() as object) };
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', (error as Error).message);
+      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'snapshot save failed'));
     }
   });
 
@@ -1619,7 +1717,7 @@ export const registerRoutes = (
     try {
       return { ok: true, ...(snapshots.load() as object) };
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', (error as Error).message);
+      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'snapshot load failed'));
     }
   });
 

@@ -497,7 +497,6 @@ type CoverStateSnapshot = {
   lastProcessed: string | null;
   lastRemaining: string | null;
   vault: string | null;
-  admin: string | null;
   riskVault: string | null;
   riskBucketId: string | null;
 };
@@ -529,6 +528,50 @@ type CoverSnapshotResponse = {
   policy_count: number;
   scanned: number;
   policies: CoverPolicySnapshot[];
+  source: 'lite' | 'http4';
+  network: Network;
+  updated_at: number;
+};
+
+type VolIndexConfigSnapshot = {
+  seriesManager: string | null;
+  oracle: string | null;
+  automation: string | null;
+  perpsEngine: string | null;
+  coverManager: string | null;
+  minLiquidityBps: string | null;
+  staleSeconds: string | null;
+  emaAlphaBps: string | null;
+};
+
+type VolIndexStateSnapshot = {
+  impliedVolBps: string | null;
+  realizedVolBps: string | null;
+  varianceSpeedBps: string | null;
+  sampleCount: string | null;
+  eligibleSeries: string | null;
+  lastPremiumTs: string | null;
+  lastRealizedTs: string | null;
+  lastPublishTs: string | null;
+  lastSamplePrice: string | null;
+  lastSampleTs: string | null;
+};
+
+type VolIndexRouteSnapshot = {
+  exists: boolean;
+  marketId: string | null;
+  sourcePool: string | null;
+  coverPolicyId: string | null;
+};
+
+type VolIndexSnapshotResponse = {
+  vol_index: string;
+  config: VolIndexConfigSnapshot | null;
+  state: VolIndexStateSnapshot | null;
+  pool: string | null;
+  pool_state: VolIndexStateSnapshot | null;
+  route_ids: number[];
+  routes: Record<string, VolIndexRouteSnapshot>;
   source: 'lite' | 'http4';
   network: Network;
   updated_at: number;
@@ -1554,7 +1597,7 @@ export class IndexerService {
             if (Number.isFinite(maxMarketId) && maxMarketId > 0) {
               return Array.from({ length: Math.min(maxMarkets, Math.trunc(maxMarketId)) }, (_, index) => index + 1);
             }
-            return [1, 2, 3];
+            return [];
           })();
 
     const markets: Record<string, any> = {};
@@ -1625,6 +1668,97 @@ export class IndexerService {
       automation,
       market_ids: marketIds,
       markets,
+      source: this.config.dataSource === 'lite' ? 'lite' : 'http4',
+      network: this.network,
+      updated_at: Math.floor(Date.now() / 1000)
+    };
+  }
+
+  private parseVolIndexState(stack: TupleItem[]): VolIndexStateSnapshot {
+    return {
+      impliedVolBps: tupleItemBigIntString(stack[0]),
+      realizedVolBps: tupleItemBigIntString(stack[1]),
+      varianceSpeedBps: tupleItemBigIntString(stack[2]),
+      sampleCount: tupleItemBigIntString(stack[3]),
+      eligibleSeries: tupleItemBigIntString(stack[4]),
+      lastPremiumTs: tupleItemBigIntString(stack[5]),
+      lastRealizedTs: tupleItemBigIntString(stack[6]),
+      lastPublishTs: tupleItemBigIntString(stack[7]),
+      lastSamplePrice: tupleItemBigIntString(stack[8]),
+      lastSampleTs: tupleItemBigIntString(stack[9])
+    };
+  }
+
+  async getVolIndexSnapshot(
+    volIndexAddress: string,
+    options: { sourcePool?: string | null; routeIds?: number[] } = {}
+  ): Promise<VolIndexSnapshotResponse> {
+    const normalizedVolIndex = normalizeAddress(volIndexAddress);
+    const normalizedPool = options.sourcePool?.trim() ? normalizeAddress(options.sourcePool) : null;
+    const routeIds = Array.from(
+      new Set(
+        (options.routeIds ?? [])
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.trunc(value))
+      )
+    ).slice(0, 64);
+
+    const [configRes, stateRes, poolStateRes] = await Promise.all([
+      this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_config', []),
+      this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_state', []),
+      normalizedPool
+        ? this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_pool_state', [
+            { type: 'slice', cell: beginCell().storeAddress(Address.parse(normalizedPool)).endCell() }
+          ])
+        : Promise.resolve(null)
+    ]);
+
+    if (!configRes && !stateRes && !poolStateRes) {
+      throw new Error('VolIndex snapshot is unavailable from the configured data source.');
+    }
+
+    const config =
+      configRes?.exitCode === 0
+        ? {
+            seriesManager: tupleItemAddress(configRes.stack[0]),
+            oracle: tupleItemAddress(configRes.stack[1]),
+            automation: tupleItemAddress(configRes.stack[2]),
+            perpsEngine: tupleItemAddress(configRes.stack[3]),
+            coverManager: tupleItemAddress(configRes.stack[4]),
+            minLiquidityBps: tupleItemBigIntString(configRes.stack[5]),
+            staleSeconds: tupleItemBigIntString(configRes.stack[6]),
+            emaAlphaBps: tupleItemBigIntString(configRes.stack[7])
+          }
+        : null;
+
+    const state = stateRes?.exitCode === 0 ? this.parseVolIndexState(stateRes.stack) : null;
+    const poolState = poolStateRes?.exitCode === 0 ? this.parseVolIndexState(poolStateRes.stack) : null;
+    const routes: Record<string, VolIndexRouteSnapshot> = {};
+    const loadedRouteIds: number[] = [];
+
+    for (const routeId of routeIds) {
+      const routeRes = await this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_route', [
+        { type: 'int', value: BigInt(routeId) }
+      ]);
+      if (!routeRes || routeRes.exitCode !== 0) continue;
+      const stack = routeRes.stack;
+      routes[String(routeId)] = {
+        exists: tupleItemBool(stack[0]),
+        marketId: tupleItemBigIntString(stack[1]),
+        sourcePool: tupleItemAddress(stack[2]),
+        coverPolicyId: tupleItemBigIntString(stack[3])
+      };
+      loadedRouteIds.push(routeId);
+    }
+
+    return {
+      vol_index: normalizedVolIndex,
+      config,
+      state,
+      pool: normalizedPool,
+      pool_state: poolState,
+      route_ids: loadedRouteIds,
+      routes,
       source: this.config.dataSource === 'lite' ? 'lite' : 'http4',
       network: this.network,
       updated_at: Math.floor(Date.now() / 1000)
@@ -2166,7 +2300,6 @@ export class IndexerService {
               lastProcessed: tupleItemBigIntString(stateRes.stack[10]),
               lastRemaining: tupleItemBigIntString(stateRes.stack[11]),
               vault: tupleItemAddress(stateRes.stack[12]),
-              admin: tupleItemAddress(stateRes.stack[13]),
               riskVault: tupleItemAddress(stateRes.stack[14]),
               riskBucketId: tupleItemBigIntString(stateRes.stack[15])
             }

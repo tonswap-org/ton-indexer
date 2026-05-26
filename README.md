@@ -31,7 +31,8 @@ npm run start
 ## Configuration
 Environment variables (all optional):
 - `PORT` (default: `8787`)
-- `HOST` (default: `0.0.0.0`)
+- `HOST` (default: `127.0.0.1`)
+- `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (`true` only when the service is behind a trusted proxy)
 - `INDEXER_MODE` (`dev` | `production`, default: `dev`)
 - `TON_NETWORK` (`mainnet` | `testnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
@@ -46,17 +47,16 @@ Environment variables (all optional):
 - `SORA_TON_TRUSTED_CHECKPOINT_CACHE_TTL_MS` (default: `10000`)
 - `SORA_TON_TRUSTED_CHECKPOINT_SEQNO` + `SORA_TON_TRUSTED_CHECKPOINT_HASH` (optional static override for the TON trusted checkpoint; used if you do not want RPC lookup)
 - `CORS_ENABLED` (`true` to enable CORS headers; default `true`)
-- `CORS_ALLOW_ORIGIN` (default: `*`, or set to `reflect` to echo request origin)
-- `CORS_ALLOW_METHODS` (default: `GET,POST,OPTIONS`)
-- `CORS_ALLOW_HEADERS` (default: `authorization,content-type`)
+- `CORS_ALLOW_ORIGIN` (default: `*`; `reflect` is treated as wildcard without credentials)
+- `CORS_ALLOW_ORIGINS` (comma-separated exact-origin allowlist; when set, only matching origins receive credentialed CORS headers)
+- `CORS_ALLOW_METHODS` (default: `GET,HEAD,POST,OPTIONS`)
+- `CORS_ALLOW_HEADERS` (default: `content-type,accept`)
 - `CORS_EXPOSE_HEADERS` (default: `x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset`)
 - `CORS_MAX_AGE` (default: `600`)
 - `SNAPSHOT_PATH` (path to load/save in-memory snapshot)
 - `SNAPSHOT_ON_EXIT` (`true` to write snapshot on shutdown; default `false`)
 - `SNAPSHOT_AUTOSAVE_ENABLED` (`true` to periodically persist snapshots; default `true` in production when `SNAPSHOT_PATH` is set)
 - `SNAPSHOT_AUTOSAVE_INTERVAL_MS` (default: `30000`)
-- `ADMIN_ENABLED` (`true` to require admin auth on metrics/snapshot endpoints; default `true` in production)
-- `ADMIN_TOKEN` (Bearer token for admin endpoints)
 - `RATE_LIMIT_ENABLED` (`true` to enable simple per-IP rate limiting; default `true`)
 - `RATE_LIMIT_WINDOW_MS` (default: `60000`)
 - `RATE_LIMIT_MAX` (default: `10000`)
@@ -83,7 +83,6 @@ Environment variables (all optional):
 If the requested `PORT` is already in use, the server will bind to the next available port and log the selected one.
 
 Production safeguards:
-- In `INDEXER_MODE=production`, missing `ADMIN_TOKEN` (when admin auth is enabled) fails startup.
 - In `TON_NETWORK=mainnet`, placeholder or malformed required registry addresses fail startup.
 
 ## API
@@ -96,6 +95,7 @@ Production safeguards:
 - `GET /api/indexer/v1/accounts/{addr}/state`
 - `GET /api/indexer/v1/sccp/ton/burn-proof-material?jetton_master={addr}&message_id=0x...`
 - `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64`
+- `GET /api/indexer/v1/vol-index/{vol_index}/snapshot?pool={pool}&route_ids={job_ids}`
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/farms/{factory}/snapshot?max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/options/{factory}/snapshot?start_id=0&max_series_id=2048&window_size=24&max_empty_windows=2&min_probe_windows=8`
@@ -108,6 +108,8 @@ Production safeguards:
 - `GET /api/indexer/v1/metrics/prometheus`
 - `GET /api/indexer/v1/openapi.json`
 - `GET /api/indexer/v1/docs`
+- `POST /api/indexer/v1/runGetMethod`
+- `POST /api/indexer/v1/runGetMethods`
 - `POST /api/indexer/v1/snapshot/save`
 - `POST /api/indexer/v1/snapshot/load`
 - `GET /api/indexer/v1/debug?limit=100`
@@ -117,9 +119,7 @@ JSON-RPC compatibility endpoints:
 - `POST /api/v2/jsonRPC`
 
 When `INDEXER_WRITE_RPC_ENDPOINT` is set, proxied JSON-RPC methods are available through `/jsonRPC` and `/api/v2/jsonRPC`; write methods stay disabled unless `INDEXER_ENABLE_WRITE_RPC=true`.
-
-Admin endpoints (`/metrics/prometheus`, `/snapshot/*`) require `Authorization: Bearer $ADMIN_TOKEN` when `ADMIN_ENABLED=true`.
-Debug endpoint also requires admin auth when enabled.
+There is no privileged-user auth layer. Public read endpoints intentionally include `/jsonRPC`, `/api/v2/jsonRPC`, `/api/indexer/v1/runGetMethod`, and `/api/indexer/v1/runGetMethods` so browser-only decentralized clients such as `../tonswap_web` can use the indexer directly.
 
 Optional tx cursor query params:
 - `cursor_lt`

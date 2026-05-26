@@ -1,8 +1,6 @@
 import { Config } from '../config';
 
 export const buildOpenApi = (config: Config) => {
-  const bearer = config.adminEnabled ? [{ bearerAuth: [] }] : [];
-
   return {
     openapi: '3.0.3',
     info: {
@@ -11,12 +9,6 @@ export const buildOpenApi = (config: Config) => {
     },
     servers: [{ url: '/' }],
     components: {
-      securitySchemes: {
-        bearerAuth: {
-          type: 'http',
-          scheme: 'bearer',
-        },
-      },
       parameters: {
         addr: {
           name: 'addr',
@@ -617,6 +609,63 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['engine', 'market_ids', 'markets', 'source', 'network', 'updated_at'],
         },
+        VolIndexConfigResponse: {
+          type: 'object',
+          properties: {
+            seriesManager: { type: ['string', 'null'] },
+            oracle: { type: ['string', 'null'] },
+            automation: { type: ['string', 'null'] },
+            perpsEngine: { type: ['string', 'null'] },
+            coverManager: { type: ['string', 'null'] },
+            minLiquidityBps: { type: ['string', 'null'] },
+            staleSeconds: { type: ['string', 'null'] },
+            emaAlphaBps: { type: ['string', 'null'] },
+          },
+        },
+        VolIndexStateResponse: {
+          type: 'object',
+          properties: {
+            impliedVolBps: { type: ['string', 'null'] },
+            realizedVolBps: { type: ['string', 'null'] },
+            varianceSpeedBps: { type: ['string', 'null'] },
+            sampleCount: { type: ['string', 'null'] },
+            eligibleSeries: { type: ['string', 'null'] },
+            lastPremiumTs: { type: ['string', 'null'] },
+            lastRealizedTs: { type: ['string', 'null'] },
+            lastPublishTs: { type: ['string', 'null'] },
+            lastSamplePrice: { type: ['string', 'null'] },
+            lastSampleTs: { type: ['string', 'null'] },
+          },
+        },
+        VolIndexRouteResponse: {
+          type: 'object',
+          properties: {
+            exists: { type: 'boolean' },
+            marketId: { type: ['string', 'null'] },
+            sourcePool: { type: ['string', 'null'] },
+            coverPolicyId: { type: ['string', 'null'] },
+          },
+          required: ['exists'],
+        },
+        VolIndexSnapshotResponse: {
+          type: 'object',
+          properties: {
+            vol_index: { type: 'string' },
+            config: { oneOf: [{ $ref: '#/components/schemas/VolIndexConfigResponse' }, { type: 'null' }] },
+            state: { oneOf: [{ $ref: '#/components/schemas/VolIndexStateResponse' }, { type: 'null' }] },
+            pool: { type: ['string', 'null'] },
+            pool_state: { oneOf: [{ $ref: '#/components/schemas/VolIndexStateResponse' }, { type: 'null' }] },
+            route_ids: { type: 'array', items: { type: 'integer' } },
+            routes: {
+              type: 'object',
+              additionalProperties: { $ref: '#/components/schemas/VolIndexRouteResponse' },
+            },
+            source: { type: 'string' },
+            network: { type: 'string' },
+            updated_at: { type: 'integer' },
+          },
+          required: ['vol_index', 'route_ids', 'routes', 'source', 'network', 'updated_at'],
+        },
         GovernanceLockResponse: {
           type: 'object',
           properties: {
@@ -781,7 +830,6 @@ export const buildOpenApi = (config: Config) => {
             lastProcessed: { type: ['string', 'null'] },
             lastRemaining: { type: ['string', 'null'] },
             vault: { type: ['string', 'null'] },
-            admin: { type: ['string', 'null'] },
             riskVault: { type: ['string', 'null'] },
             riskBucketId: { type: ['string', 'null'] },
           },
@@ -993,10 +1041,8 @@ export const buildOpenApi = (config: Config) => {
       '/api/indexer/v1/metrics/prometheus': {
         get: {
           summary: 'Prometheus metrics',
-          security: bearer,
           responses: {
             200: { description: 'Prometheus metrics', content: { 'text/plain': { schema: { type: 'string' } } } },
-            401: { description: 'Unauthorized', content: { 'text/plain': { schema: { type: 'string' } } } },
           },
         },
       },
@@ -1198,6 +1244,26 @@ export const buildOpenApi = (config: Config) => {
           },
         },
       },
+      '/api/indexer/v1/vol-index/{volIndex}/snapshot': {
+        get: {
+          summary: 'VolIndex snapshot',
+          parameters: [
+            { name: 'volIndex', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'pool', in: 'query', schema: { type: 'string' } },
+            { name: 'route_ids', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            200: {
+              description: 'VolIndex snapshot response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/VolIndexSnapshotResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
       '/api/indexer/v1/governance/{voting}/snapshot': {
         get: {
           summary: 'Governance snapshot',
@@ -1342,7 +1408,6 @@ export const buildOpenApi = (config: Config) => {
       '/api/indexer/v1/snapshot/save': {
         post: {
           summary: 'Save in-memory snapshot',
-          security: bearer,
           responses: {
             200: {
               description: 'Snapshot saved',
@@ -1352,17 +1417,12 @@ export const buildOpenApi = (config: Config) => {
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
-            401: {
-              description: 'Unauthorized',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
           },
         },
       },
       '/api/indexer/v1/snapshot/load': {
         post: {
           summary: 'Load in-memory snapshot',
-          security: bearer,
           responses: {
             200: {
               description: 'Snapshot loaded',
@@ -1372,17 +1432,12 @@ export const buildOpenApi = (config: Config) => {
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
-            401: {
-              description: 'Unauthorized',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
           },
         },
       },
       '/api/indexer/v1/debug': {
         get: {
           summary: 'Debug snapshot',
-          security: bearer,
           parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } }],
           responses: {
             200: {
@@ -1391,10 +1446,6 @@ export const buildOpenApi = (config: Config) => {
             },
             400: {
               description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-            401: {
-              description: 'Unauthorized',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
           },

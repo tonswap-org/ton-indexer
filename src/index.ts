@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import helmet from '@fastify/helmet';
 import { createServer } from 'node:net';
 import { loadConfig, readRegistryFile } from './config';
 import { createLogger } from './utils/logger';
@@ -9,13 +10,13 @@ import { ResilientTonDataSource } from './data/resilientSource';
 import { loadOpcodes } from './utils/opcodes';
 import { IndexerService } from './indexerService';
 import { registerRoutes } from './api/routes';
+import { setCorsHeaders } from './api/cors';
 import { BackfillWorker } from './workers/backfillWorker';
 import { BlockFollower } from './workers/blockFollower';
 import { MetricsService } from './metrics';
 import { MetricsCollector } from './metricsCollector';
 import { loadSnapshotFile, saveSnapshotFile } from './snapshot';
 import { SnapshotService } from './snapshotService';
-import { AdminGuard } from './api/admin';
 import { DebugService } from './debugService';
 import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
@@ -91,9 +92,6 @@ const start = async () => {
     logger.warn('registry load failed', { error: (error as Error).message });
   }
 
-  if (config.mode === 'production' && config.adminEnabled && !config.adminToken) {
-    throw new Error('ADMIN_TOKEN is required when INDEXER_MODE=production and ADMIN_ENABLED=true.');
-  }
   if (config.snapshotAutosaveEnabled && !config.snapshotPath) {
     throw new Error('SNAPSHOT_PATH is required when SNAPSHOT_AUTOSAVE_ENABLED=true.');
   }
@@ -152,22 +150,14 @@ const start = async () => {
   const blockFollower = new BlockFollower(config, store, source, opcodes, logger, service, poolTracker);
   service.setBackfillEnqueue((address) => backfillWorker.enqueue(address));
 
-  const app = fastify({ logger: false });
+  const app = fastify({ logger: false, trustProxy: config.trustProxy });
+  await app.register(helmet, {
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false
+  });
   if (config.corsEnabled) {
     app.addHook('onRequest', async (request, reply) => {
-      const origin = request.headers.origin;
-      const allowOrigin = config.corsAllowOrigin === 'reflect' ? origin ?? '*' : config.corsAllowOrigin;
-      reply.header('access-control-allow-origin', allowOrigin);
-      if (config.corsAllowOrigin === 'reflect') {
-        reply.header('vary', 'origin');
-      }
-      if (allowOrigin !== '*') {
-        reply.header('access-control-allow-credentials', 'true');
-      }
-      reply.header('access-control-allow-methods', config.corsAllowMethods);
-      reply.header('access-control-allow-headers', config.corsAllowHeaders);
-      reply.header('access-control-expose-headers', config.corsExposeHeaders);
-      reply.header('access-control-max-age', config.corsMaxAge);
+      setCorsHeaders(request as any, reply, config);
       if (request.method === 'OPTIONS') {
         reply.status(204).send();
       }
@@ -176,9 +166,8 @@ const start = async () => {
   const metrics = new MetricsService(config, store, backfillWorker, service, metricsCollector);
   const snapshotService = new SnapshotService(config, store);
   const debugService = new DebugService(config, store, backfillWorker, poolTracker);
-  const adminGuard = new AdminGuard(config);
   const rateLimiter = new RateLimiter(config);
-  registerRoutes(app, config, service, metrics, snapshotService, adminGuard, debugService, rateLimiter, registry);
+  registerRoutes(app, config, service, metrics, snapshotService, debugService, rateLimiter, registry);
   const snapshotAutosaveTimer =
     config.snapshotAutosaveEnabled && config.snapshotPath
       ? setInterval(() => {

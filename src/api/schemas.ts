@@ -65,6 +65,14 @@ export const perpsSnapshotQuerySchema = {
   },
 };
 
+export const volIndexSnapshotQuerySchema = {
+  type: 'object',
+  properties: {
+    pool: { type: 'string' },
+    route_ids: { type: 'string' },
+  },
+};
+
 export const governanceSnapshotQuerySchema = {
   type: 'object',
   properties: {

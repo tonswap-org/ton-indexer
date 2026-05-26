@@ -133,6 +133,11 @@ export class MemoryStore {
     entry.stats.historyComplete = true;
   }
 
+  markHistoryIncomplete(address: string) {
+    const entry = this.getOrCreate(address);
+    entry.stats.historyComplete = false;
+  }
+
   setLastBackfillLt(address: string, lt?: string) {
     const entry = this.getOrCreate(address);
     entry.stats.lastBackfillLt = lt;
@@ -160,6 +165,7 @@ export class MemoryStore {
       for (const tx of overflow) {
         entry.txIndex.delete(txKey(tx));
       }
+      entry.stats.historyComplete = false;
     }
 
     entry.pageIndex = rebuildPageIndex(entry.txs, this.config.pageSize);
