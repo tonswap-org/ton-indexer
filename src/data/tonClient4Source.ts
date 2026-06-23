@@ -16,6 +16,7 @@ import { parseJettonMetadata } from '../utils/jettonMetadata';
 type TonClient4Like = {
   getLastBlock(): Promise<any>;
   getAccount(seqno: number, address: Address): Promise<any>;
+  getAccountLite(seqno: number, address: Address): Promise<any>;
   getAccountTransactionsParsed(address: Address, lt: bigint, hash: Buffer, limit: number): Promise<any>;
   runMethod(seqno: number, address: Address, name: string, args?: TupleItem[]): Promise<any>;
   open<T>(contract: T): T;
@@ -237,6 +238,17 @@ export class TonClient4DataSource implements TonDataSource {
     const last = await this.getLastBlockCached();
     const parsed = Address.parse(address);
     const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
+    return this.mapAccountStateResponse(account);
+  }
+
+  async getAccountStateLite(address: string): Promise<AccountStateResponse> {
+    const last = await this.getLastBlockCached();
+    const parsed = Address.parse(address);
+    const account = await this.call((client) => client.getAccountLite(last.last.seqno, parsed));
+    return this.mapAccountStateResponse(account);
+  }
+
+  private mapAccountStateResponse(account: unknown): AccountStateResponse {
     const accountRecord = asRecord(account);
     const accountStateRecord = readNestedRecord(accountRecord, 'account');
     const stateRaw = accountStateRecord?.state;

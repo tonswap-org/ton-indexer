@@ -82,6 +82,7 @@ export interface TonDataSource {
   network: Network;
   getMasterchainInfo(): Promise<MasterchainInfo>;
   getAccountState(address: string): Promise<AccountStateResponse>;
+  getAccountStateLite?(address: string): Promise<AccountStateResponse>;
   getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]>;
   runGetMethod(
     address: string,

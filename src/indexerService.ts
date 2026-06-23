@@ -1064,10 +1064,13 @@ export class IndexerService {
       }
     }
 
-    const refreshStatePromise = cached ? Promise.resolve() : this.refreshAccountState(address);
+    const refreshStatePromise = cached ? Promise.resolve() : this.refreshAccountState(address, { lite: true });
     const jettonPromise = Promise.all(
       this.jettonRoots.map(async (root) => {
-        const balance = await this.source.getJettonBalance(address, root.master);
+        const balance = await this.withTimeoutOrNull(
+          this.source.getJettonBalance(address, root.master),
+          this.config.jettonBalanceTimeoutMs
+        );
         if (!balance) return null;
         try {
           if (BigInt(balance.balance) === 0n) return null;
@@ -1266,6 +1269,23 @@ export class IndexerService {
     return [entry.stats.txCount, entry.stats.historyComplete ? '1' : '0', lt, hash].join(':');
   }
 
+  private async withTimeoutOrNull<T>(operation: Promise<T | null>, timeoutMs: number): Promise<T | null> {
+    const guarded = operation.catch(() => null);
+    const ms = Math.max(0, Math.trunc(timeoutMs));
+    if (ms <= 0) return guarded;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), ms);
+    });
+
+    try {
+      return await Promise.race([guarded, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   private getCached<T>(
     cache: LRUCache<string, { value: T; signature: string }>,
     key: string,
@@ -1311,10 +1331,33 @@ export class IndexerService {
       account_state: entry?.balance?.accountState ?? null,
       code_boc: entry?.balance?.codeBoc ?? null,
       data_boc: entry?.balance?.dataBoc ?? null,
+      balance_raw: entry?.balance?.balance ?? '0',
       network: this.network,
     };
     this.setCached(this.stateCache, address, response, signature, this.config.stateCacheTtlMs);
     return response;
+  }
+
+  async getNativeState(address: string) {
+    this.store.touch(address);
+    let entry = this.store.get(address);
+    if (!entry?.balance) {
+      await this.refreshAccountState(address, { lite: true });
+      entry = this.store.get(address);
+    }
+    const latest = entry?.txs?.[0];
+    return {
+      address,
+      last_tx_lt: entry?.balance?.lastTxLt,
+      last_tx_hash: entry?.balance?.lastTxHash,
+      last_seen_utime: latest?.utime ?? null,
+      last_confirmed_seqno: this.lastMasterSeqno ?? null,
+      account_state: entry?.balance?.accountState ?? null,
+      code_boc: entry?.balance?.codeBoc ?? null,
+      data_boc: entry?.balance?.dataBoc ?? null,
+      balance_raw: entry?.balance?.balance ?? '0',
+      network: this.network,
+    };
   }
 
   async getTonSccpBurnProofMaterial(
@@ -3605,18 +3648,21 @@ export class IndexerService {
     };
   }
 
-  async refreshAccountState(address: string) {
+  async refreshAccountState(address: string, options: { lite?: boolean } = {}) {
     const previous = this.store.get(address)?.balance;
     const previousSignature = balanceStateSignature(previous);
-    const state = await this.source.getAccountState(address);
+    const state =
+      options.lite && this.source.getAccountStateLite
+        ? await this.source.getAccountStateLite(address)
+        : await this.source.getAccountState(address);
     const accountState: AccountState = {
       address,
       balance: state.balance,
       lastTxLt: state.lastTxLt,
       lastTxHash: state.lastTxHash,
       accountState: state.accountState ?? null,
-      codeBoc: state.codeBoc ?? null,
-      dataBoc: state.dataBoc ?? null,
+      codeBoc: state.codeBoc ?? previous?.codeBoc ?? null,
+      dataBoc: state.dataBoc ?? previous?.dataBoc ?? null,
       updatedAt: Date.now(),
     };
     this.store.setBalance(address, accountState);

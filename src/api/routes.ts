@@ -424,6 +424,31 @@ export const registerRoutes = (
     });
   };
 
+  const resolveNativeBalanceRaw = async (address: string, state: unknown) => {
+    const stateBalanceRaw = readString((state as { balance_raw?: unknown } | null)?.balance_raw);
+    if (stateBalanceRaw) return stateBalanceRaw;
+    const balances = await service.getBalances(address);
+    return balances.ton_raw ?? '0';
+  };
+
+  type ToncenterCompatState = {
+    account_state?: unknown;
+    last_tx_lt?: unknown;
+    last_tx_hash?: unknown;
+    last_confirmed_seqno?: unknown;
+    last_seen_utime?: unknown;
+    code_boc?: unknown;
+    data_boc?: unknown;
+    balance_raw?: unknown;
+  };
+
+  const getToncenterCompatState = async (address: string): Promise<ToncenterCompatState> => {
+    const nativeStateReader = (service as IndexerService & { getNativeState?: (addr: string) => Promise<unknown> })
+      .getNativeState;
+    const state = nativeStateReader ? await nativeStateReader.call(service, address) : await service.getState(address);
+    return (state ?? {}) as ToncenterCompatState;
+  };
+
   let discoveredRpcProxyEndpoints: string[] | null = null;
   let rpcEndpointDiscoveryPromise: Promise<string[]> | null = null;
 
@@ -741,8 +766,9 @@ export const registerRoutes = (
         if (!address || !isValidAddress(address)) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
         }
-        const balances = await service.getBalances(address);
-        return sendToncenterCompat(reply, { ok: true, result: balances.ton_raw ?? '0' }, id);
+        const state = await getToncenterCompatState(address);
+        const balanceRaw = await resolveNativeBalanceRaw(address, state);
+        return sendToncenterCompat(reply, { ok: true, result: balanceRaw }, id);
       }
 
       if (method === 'getAddressInformation') {
@@ -750,7 +776,8 @@ export const registerRoutes = (
         if (!address || !isValidAddress(address)) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
         }
-        const [state, balances] = await Promise.all([service.getState(address), service.getBalances(address)]);
+        const state = await getToncenterCompatState(address);
+        const balanceRaw = await resolveNativeBalanceRaw(address, state);
         const normalizedState =
           state.account_state === 'active' ||
           state.account_state === 'uninitialized' ||
@@ -778,7 +805,7 @@ export const registerRoutes = (
             ok: true,
             result: {
               state: normalizedState,
-              balance: balances.ton_raw ?? '0',
+              balance: balanceRaw,
               code: typeof state.code_boc === 'string' ? state.code_boc : '',
               data: typeof state.data_boc === 'string' ? state.data_boc : '',
               extra_currencies: [],

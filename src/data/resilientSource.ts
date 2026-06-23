@@ -54,6 +54,8 @@ export class ResilientTonDataSource implements TonDataSource {
 
   async getAccountState(address: string): Promise<AccountStateResponse> {
     const primary = await callSafely(() => this.primary.getAccountState(address));
+    if (primary && hasStateCellData(primary)) return primary;
+
     const secondary = await callSafely(() => this.fallback.getAccountState(address));
 
     if (primary && secondary) {
@@ -61,6 +63,19 @@ export class ResilientTonDataSource implements TonDataSource {
       return mergeAccountState(secondary, primary);
     }
     if (primary) return primary;
+    if (secondary) return secondary;
+    throw new Error(`Account state unavailable for ${address}`);
+  }
+
+  async getAccountStateLite(address: string): Promise<AccountStateResponse> {
+    const primary = this.primary.getAccountStateLite
+      ? await callSafely(() => this.primary.getAccountStateLite!(address))
+      : await callSafely(() => this.primary.getAccountState(address));
+    if (primary) return primary;
+
+    const secondary = this.fallback.getAccountStateLite
+      ? await callSafely(() => this.fallback.getAccountStateLite!(address))
+      : await callSafely(() => this.fallback.getAccountState(address));
     if (secondary) return secondary;
     throw new Error(`Account state unavailable for ${address}`);
   }

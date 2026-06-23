@@ -63,6 +63,7 @@ Environment variables (all optional):
 - `RATE_LIMIT_BUCKETS_JSON` (optional endpoint-class limits override JSON)
 - `RESPONSE_CACHE_ENABLED` (`true` to enable response caching; default `true`)
 - `BALANCE_CACHE_TTL_MS` (default: `2000`)
+- `JETTON_BALANCE_TIMEOUT_MS` (default: `2000`; caps per-root jetton balance probes so native TON balance reads stay responsive)
 - `TX_CACHE_TTL_MS` (default: `1000`)
 - `STATE_CACHE_TTL_MS` (default: `1000`)
 - `HEALTH_CACHE_TTL_MS` (default: `1000`)

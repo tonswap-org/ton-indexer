@@ -31,6 +31,7 @@ export type Config = {
   rateLimitBuckets: RateLimitBuckets;
   responseCacheEnabled: boolean;
   balanceCacheTtlMs: number;
+  jettonBalanceTimeoutMs: number;
   txCacheTtlMs: number;
   stateCacheTtlMs: number;
   healthCacheTtlMs: number;
@@ -232,6 +233,7 @@ export const loadConfig = (): Config => {
     rateLimitBuckets,
     responseCacheEnabled: booleanFromEnv('RESPONSE_CACHE_ENABLED', true),
     balanceCacheTtlMs: numberFromEnv('BALANCE_CACHE_TTL_MS', 2_000, { min: 0, integer: true }),
+    jettonBalanceTimeoutMs: numberFromEnv('JETTON_BALANCE_TIMEOUT_MS', 2_000, { min: 0, integer: true }),
     txCacheTtlMs: numberFromEnv('TX_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
     stateCacheTtlMs: numberFromEnv('STATE_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
     healthCacheTtlMs: numberFromEnv('HEALTH_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
