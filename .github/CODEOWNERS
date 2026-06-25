@@ -1,0 +1,17 @@
+# Owners must have write access to this repository.
+
+* @takemiyamakoto
+
+/.github/ @takemiyamakoto
+/CONTRIBUTING.md @takemiyamakoto
+/README.md @takemiyamakoto
+/docs/release-checklist.md @takemiyamakoto
+/docs/rollback-checklist.md @takemiyamakoto
+/docs/ti-production.md @takemiyamakoto
+/scripts/audit-public-artifacts.sh @takemiyamakoto
+
+/src/api/ @takemiyamakoto
+/src/config/ @takemiyamakoto
+/src/data/ @takemiyamakoto
+/src/store/ @takemiyamakoto
+/src/workers/ @takemiyamakoto
