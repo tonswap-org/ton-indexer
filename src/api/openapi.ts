@@ -52,6 +52,33 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['count', 'contracts'],
         },
+        ServiceInfoResponse: {
+          type: 'object',
+          properties: {
+            schemaVersion: { type: 'integer', enum: [1] },
+            serviceId: { type: 'string', enum: ['ti.soramitsu.io'] },
+            serviceName: { type: 'string' },
+            ecosystem: { type: 'string', enum: ['ton'] },
+            chainId: { type: 'string' },
+            network: { type: 'string' },
+            publicBaseUrl: { type: 'string', format: 'uri' },
+            readOnly: { type: 'boolean' },
+            capabilities: { type: 'array', items: { type: 'string' } },
+            endpoints: { type: 'object', additionalProperties: { type: 'string' } },
+          },
+          required: [
+            'schemaVersion',
+            'serviceId',
+            'serviceName',
+            'ecosystem',
+            'chainId',
+            'network',
+            'publicBaseUrl',
+            'readOnly',
+            'capabilities',
+            'endpoints'
+          ],
+        },
         RunGetMethodRequest: {
           type: 'object',
           properties: {
@@ -937,6 +964,17 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Contract registry response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ContractsResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/service-info': {
+        get: {
+          summary: 'Wallet-facing service metadata',
+          responses: {
+            200: {
+              description: 'Service metadata response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ServiceInfoResponse' } } },
             },
           },
         },
