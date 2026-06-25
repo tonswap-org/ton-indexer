@@ -3,19 +3,35 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - develop
       - master
   pull_request:
+    branches:
+      - develop
+      - master
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Branch flow audit
+        run: |
+          bash ./scripts/test-branch-flow-audit.sh
+          bash ./scripts/audit-branch-flow.sh
+      - name: Audit public artifacts
+        run: ./scripts/audit-public-artifacts.sh
+      - name: TODO debt audit
+        run: |
+          bash ./scripts/test-todo-debt-audit.sh
+          bash ./scripts/audit-todo-debt.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm audit --omit=dev
       - run: npm test
       - run: npm run build
+      - name: Build production Docker image
+        run: docker build -t ton-indexer:ci .

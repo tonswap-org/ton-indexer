@@ -20,46 +20,7 @@ import { SnapshotService } from './snapshotService';
 import { DebugService } from './debugService';
 import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
-
-const MAINNET_PLACEHOLDER_PREFIX = 'REPLACE_WITH_MAINNET_';
-const REQUIRED_MAINNET_REGISTRY_KEYS = [
-  'ClmmRouter',
-  'ClmmPoolFactory',
-  'FeeRouter',
-  'Treasury',
-  'ReferralRegistry',
-  'T3Root',
-  'TSRoot',
-  'UsdtRoot',
-  'UsdcRoot',
-  'KusdRoot',
-  'DlmmRegistry',
-  'DlmmPoolFactory'
-] as const;
-
-const isLikelyTonAddress = (value: string) =>
-  /^([A-Za-z0-9_-]{48}|-?\d+:[0-9a-fA-F]{64})$/.test(value.trim());
-
-const validateMainnetRegistry = (registry: Record<string, string>) => {
-  const missing: string[] = [];
-  const invalid: string[] = [];
-  for (const key of REQUIRED_MAINNET_REGISTRY_KEYS) {
-    const value = registry[key];
-    const trimmed = typeof value === 'string' ? value.trim() : '';
-    if (!trimmed || trimmed.startsWith(MAINNET_PLACEHOLDER_PREFIX)) {
-      missing.push(key);
-      continue;
-    }
-    if (!isLikelyTonAddress(trimmed)) {
-      invalid.push(key);
-    }
-  }
-  if (!missing.length && !invalid.length) return;
-  const parts: string[] = [];
-  if (missing.length) parts.push(`missing/placeholder keys: ${missing.join(', ')}`);
-  if (invalid.length) parts.push(`invalid address format keys: ${invalid.join(', ')}`);
-  throw new Error(`Mainnet registry validation failed: ${parts.join(' | ')}`);
-};
+import { validateMainnetRegistry } from './config/mainnetRegistry';
 
 const isPortAvailable = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
