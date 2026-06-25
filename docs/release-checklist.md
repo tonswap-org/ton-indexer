@@ -18,6 +18,14 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - Confirm public builds work without private overlays.
 - Run `docker build -t ton-indexer:release .` and confirm the production image
   builds from the checked-in container contract.
+- Run `npm run test:deployment-evidence-audit` and
+  `npm run audit:deployment-evidence`. Before declaring the deployment
+  production-ready, record the deployed image digest, deployment ID, tagged
+  commit, operator, UTC smoke timestamp, and exact
+  `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
+  result in `scripts/production-deployment-evidence.json`, set
+  `status: ready` and `releaseEnabled: true`, and rerun
+  `npm run audit:deployment-evidence -- --require-ready`.
 - Run or confirm green CI for branch-flow audit, public artifact audit,
   TODO-debt audit, install, production dependency audit, tests, build, Docker
   image build, and OpenAPI smoke.
