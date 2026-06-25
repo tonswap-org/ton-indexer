@@ -10,7 +10,6 @@ fail() {
   exit 1
 }
 
-command -v rg >/dev/null 2>&1 || fail "ripgrep (rg) is required."
 [[ -d "$ROOT_DIR" ]] || fail "Root directory does not exist: $ROOT_DIR"
 [[ -f "$BASELINE_FILE" ]] || fail "Baseline file does not exist: $BASELINE_FILE"
 
@@ -23,20 +22,53 @@ new_markers="$tmp_dir/new.tsv"
 stale_markers="$tmp_dir/stale.tsv"
 crashing_placeholders="$tmp_dir/crashing_placeholders.txt"
 
-scan_marker_debt() {
+scan_source_pattern() {
+  local rg_pattern="$1"
+  local grep_pattern="$2"
+
   (
     cd "$ROOT_DIR"
-    rg -n --no-heading -i '\b(todo|fixme|stopship)\b' \
-      --glob '*.{js,jsx,ts,tsx,vue,mjs,cjs}' \
-      --glob '!node_modules/**' \
-      --glob '!dist/**' \
-      --glob '!build/**' \
-      --glob '!coverage/**' \
-      --glob '!.nuxt/**' \
-      --glob '!.output/**' \
-      --glob '!**/.git/**' \
-      . || true
-  ) | awk -F: '
+
+    if [[ "${TODO_AUDIT_FORCE_GREP:-0}" != "1" ]] && command -v rg >/dev/null 2>&1; then
+      rg -n --no-heading -i "$rg_pattern" \
+        --glob '*.{js,jsx,ts,tsx,vue,mjs,cjs}' \
+        --glob '!node_modules/**' \
+        --glob '!dist/**' \
+        --glob '!build/**' \
+        --glob '!coverage/**' \
+        --glob '!.nuxt/**' \
+        --glob '!.output/**' \
+        --glob '!**/.git/**' \
+        . || true
+      return
+    fi
+
+    find . -type f \( \
+      -name '*.js' -o \
+      -name '*.jsx' -o \
+      -name '*.ts' -o \
+      -name '*.tsx' -o \
+      -name '*.vue' -o \
+      -name '*.mjs' -o \
+      -name '*.cjs' \
+    \) \
+      ! -path './node_modules/*' \
+      ! -path './dist/*' \
+      ! -path './build/*' \
+      ! -path './coverage/*' \
+      ! -path './.nuxt/*' \
+      ! -path './.output/*' \
+      ! -path './.git/*' \
+      -print | while IFS= read -r file; do
+        grep -HInEi "$grep_pattern" "$file" || true
+      done
+  )
+}
+
+scan_marker_debt() {
+  scan_source_pattern \
+    '\b(todo|fixme|stopship)\b' \
+    '(^|[^[:alnum:]_])(todo|fixme|stopship)([^[:alnum:]_]|$)' | awk -F: '
     {
       line = $0
       sub(/^[^:]+:[0-9]+:/, "", line)
@@ -49,19 +81,9 @@ scan_marker_debt() {
 }
 
 scan_crashing_placeholders() {
-  (
-    cd "$ROOT_DIR"
-    rg -n --no-heading -i 'throw[[:space:]]+(new[[:space:]]+)?Error[[:space:]]*\([^)]*(TODO|FIXME|STOPSHIP)' \
-      --glob '*.{js,jsx,ts,tsx,vue,mjs,cjs}' \
-      --glob '!node_modules/**' \
-      --glob '!dist/**' \
-      --glob '!build/**' \
-      --glob '!coverage/**' \
-      --glob '!.nuxt/**' \
-      --glob '!.output/**' \
-      --glob '!**/.git/**' \
-      . || true
-  )
+  scan_source_pattern \
+    'throw[[:space:]]+(new[[:space:]]+)?Error[[:space:]]*\([^)]*(TODO|FIXME|STOPSHIP)' \
+    'throw[[:space:]]+(new[[:space:]]+)?Error[[:space:]]*\([^)]*(TODO|FIXME|STOPSHIP)'
 }
 
 awk 'NF && $0 !~ /^#/' "$BASELINE_FILE" | LC_ALL=C sort > "$baseline"
