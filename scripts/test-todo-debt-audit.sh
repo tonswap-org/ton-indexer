@@ -49,6 +49,7 @@ make_fixture_root "$pass_root"
 printf '%s\n' 'export const existing = true; // TODO existing baseline marker' > "$pass_root/src/existing.ts"
 printf '%s\t%s\n' 'src/existing.ts' 'export const existing = true; // TODO existing baseline marker' > "$pass_root/config/todo-debt-baseline.tsv"
 run_audit "$pass_root" >/dev/null
+TODO_AUDIT_FORCE_GREP=1 run_audit "$pass_root" >/dev/null
 
 new_root="$tmp_dir/new-marker"
 make_fixture_root "$new_root"
