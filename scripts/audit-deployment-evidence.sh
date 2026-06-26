@@ -157,6 +157,11 @@ function isIsoUtcSecond(value) {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(value || ''));
 }
 
+function isRepeatedHexPlaceholder(value) {
+  const hex = String(value || '').replace(/^sha256:/i, '').toLowerCase();
+  return /^[0-9a-f]+$/.test(hex) && new Set(hex).size === 1;
+}
+
 function isLikelyTonAddress(value) {
   return /^([A-Za-z0-9_-]{48}|-?\d+:[0-9a-fA-F]{64})$/.test(String(value || '').trim());
 }
@@ -417,9 +422,15 @@ if (manifest) {
     if (!/^[0-9a-f]{40}$/i.test(String(entry.commit || ''))) {
       fail(`deploymentEvidence[${index}].commit must be a 40-character git commit`);
     }
+    if (isRepeatedHexPlaceholder(entry.commit)) {
+      fail(`deploymentEvidence[${index}].commit must not be a placeholder git commit`);
+    }
 
     if (!/^sha256:[0-9a-f]{64}$/i.test(String(entry.imageDigest || ''))) {
       fail(`deploymentEvidence[${index}].imageDigest must be a sha256 image digest`);
+    }
+    if (isRepeatedHexPlaceholder(entry.imageDigest)) {
+      fail(`deploymentEvidence[${index}].imageDigest must not be a placeholder image digest`);
     }
 
     if (contract && entry.baseUrl !== contract.baseUrl) {
