@@ -3,11 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="${DEPLOYMENT_EVIDENCE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 EVIDENCE_FILE="$ROOT_DIR/scripts/production-deployment-evidence.json"
+MAINNET_REGISTRY_FILE="$ROOT_DIR/registry/mainnet.json"
 REQUIRE_READY=false
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/audit-deployment-evidence.sh [--evidence <path>] [--require-ready]
+Usage: scripts/audit-deployment-evidence.sh [--evidence <path>] [--mainnet-registry <path>] [--require-ready]
 
 Validates production deployment evidence. The default audit allows the current
 blocked state, but rejects any ready/release-enabled claim unless the deployment
@@ -20,6 +21,11 @@ while (($#)); do
     --evidence)
       [[ $# -ge 2 ]] || { echo "[deployment-evidence][error] --evidence requires a path" >&2; exit 2; }
       EVIDENCE_FILE="$2"
+      shift 2
+      ;;
+    --mainnet-registry)
+      [[ $# -ge 2 ]] || { echo "[deployment-evidence][error] --mainnet-registry requires a path" >&2; exit 2; }
+      MAINNET_REGISTRY_FILE="$2"
       shift 2
       ;;
     --require-ready)
@@ -43,10 +49,10 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-node - "$EVIDENCE_FILE" "$REQUIRE_READY" <<'NODE'
+node - "$EVIDENCE_FILE" "$REQUIRE_READY" "$MAINNET_REGISTRY_FILE" <<'NODE'
 const fs = require('fs');
 
-const [evidenceFile, requireReadyRaw] = process.argv.slice(2);
+const [evidenceFile, requireReadyRaw, mainnetRegistryFile] = process.argv.slice(2);
 const requireReady = requireReadyRaw === 'true';
 const errors = [];
 
@@ -56,10 +62,11 @@ const serviceContracts = {
     baseUrl: 'https://ti.soramitsu.io',
     smokeCommand: 'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
     dockerBuildCommand: 'docker build -t ton-indexer:release .',
+    mainnetRegistryFile,
+    registryPlaceholderBlocker: 'mainnet-registry-placeholders-remain',
     requiredBlockers: [
       'production-deployment-evidence-missing',
-      'live-production-smoke-failing',
-      'mainnet-registry-placeholders-remain'
+      'live-production-smoke-failing'
     ]
   },
   'si.soramitsu.io': {
@@ -83,6 +90,21 @@ const requiredEvidenceFields = [
   'smokeCommand',
   'smokePassedAt',
   'operator'
+];
+
+const requiredTonMainnetRegistryKeys = [
+  'ClmmRouter',
+  'ClmmPoolFactory',
+  'FeeRouter',
+  'Treasury',
+  'ReferralRegistry',
+  'T3Root',
+  'TSRoot',
+  'UsdtRoot',
+  'UsdcRoot',
+  'KusdRoot',
+  'DlmmRegistry',
+  'DlmmPoolFactory'
 ];
 
 function fail(message) {
@@ -119,8 +141,56 @@ function isIsoUtcSecond(value) {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(value || ''));
 }
 
+function isLikelyTonAddress(value) {
+  return /^([A-Za-z0-9_-]{48}|-?\d+:[0-9a-fA-F]{64})$/.test(String(value || '').trim());
+}
+
+function inspectTonMainnetRegistry(file) {
+  const result = {
+    file,
+    exists: false,
+    placeholderKeys: [],
+    missingKeys: [],
+    invalidKeys: []
+  };
+  if (!file || !fs.existsSync(file)) {
+    result.missingFile = true;
+    return result;
+  }
+  result.exists = true;
+  let registry;
+  try {
+    registry = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    result.parseError = error.message;
+    return result;
+  }
+  if (!registry || typeof registry !== 'object' || Array.isArray(registry)) {
+    result.notObject = true;
+    return result;
+  }
+  for (const [key, value] of Object.entries(registry)) {
+    if (typeof value === 'string' && value.trim().startsWith('REPLACE_WITH_MAINNET_')) {
+      result.placeholderKeys.push(key);
+    }
+  }
+  for (const key of requiredTonMainnetRegistryKeys) {
+    const value = registry[key];
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed || trimmed.startsWith('REPLACE_WITH_MAINNET_')) {
+      result.missingKeys.push(key);
+      continue;
+    }
+    if (!isLikelyTonAddress(trimmed)) {
+      result.invalidKeys.push(key);
+    }
+  }
+  return result;
+}
+
 const manifest = readJson(evidenceFile);
 let contract = null;
+let registryInspection = null;
 
 if (manifest) {
   if (manifest.schemaVersion !== 1) {
@@ -131,6 +201,17 @@ if (manifest) {
   if (!contract) {
     fail('serviceId must be ti.soramitsu.io or si.soramitsu.io');
   } else {
+    if (contract.mainnetRegistryFile) {
+      registryInspection = inspectTonMainnetRegistry(contract.mainnetRegistryFile);
+      if (registryInspection.missingFile) {
+        fail(`mainnet registry file missing: ${contract.mainnetRegistryFile}`);
+      } else if (registryInspection.parseError) {
+        fail(`mainnet registry must be valid JSON: ${registryInspection.parseError}`);
+      } else if (registryInspection.notObject) {
+        fail('mainnet registry must be a JSON object');
+      }
+    }
+
     if (manifest.scope !== contract.scope) {
       fail(`scope must be ${contract.scope}`);
     }
@@ -163,6 +244,21 @@ if (manifest) {
           fail(`blocked deployment evidence missing blocker ${blocker}`);
         }
       }
+      if (contract.registryPlaceholderBlocker && registryInspection) {
+        const hasRegistryPlaceholders =
+          registryInspection.missingFile ||
+          registryInspection.parseError ||
+          registryInspection.notObject ||
+          registryInspection.placeholderKeys.length > 0 ||
+          registryInspection.missingKeys.length > 0 ||
+          registryInspection.invalidKeys.length > 0;
+        if (hasRegistryPlaceholders && !blockers.has(contract.registryPlaceholderBlocker)) {
+          fail(`blocked deployment evidence missing blocker ${contract.registryPlaceholderBlocker}`);
+        }
+        if (!hasRegistryPlaceholders && blockers.has(contract.registryPlaceholderBlocker)) {
+          fail(`blocked deployment evidence has stale blocker ${contract.registryPlaceholderBlocker}`);
+        }
+      }
     }
   }
 
@@ -191,9 +287,32 @@ if (manifest) {
 
   const evidence = requireArray(manifest.deploymentEvidence, 'deploymentEvidence');
   const readyClaimed = manifest.status === 'ready' || manifest.releaseEnabled || requireReady;
+  if (readyClaimed && contract?.registryPlaceholderBlocker && registryInspection) {
+    if (registryInspection.missingFile) {
+      fail(`mainnet registry file missing: ${contract.mainnetRegistryFile}`);
+    }
+    if (registryInspection.parseError) {
+      fail(`mainnet registry must be valid JSON: ${registryInspection.parseError}`);
+    }
+    if (registryInspection.notObject) {
+      fail('mainnet registry must be a JSON object');
+    }
+    if (registryInspection.placeholderKeys.length > 0) {
+      fail(`mainnet registry contains placeholder values: ${registryInspection.placeholderKeys.join(', ')}`);
+    }
+    if (registryInspection.missingKeys.length > 0) {
+      fail(`mainnet registry missing required keys: ${registryInspection.missingKeys.join(', ')}`);
+    }
+    if (registryInspection.invalidKeys.length > 0) {
+      fail(`mainnet registry contains invalid TON address values: ${registryInspection.invalidKeys.join(', ')}`);
+    }
+  }
   if (readyClaimed) {
     if (!manifest.releaseEnabled) {
       fail('releaseEnabled must be true when deployment evidence is ready');
+    }
+    if (Array.isArray(manifest.blockers) && manifest.blockers.length > 0) {
+      fail('blockers must be empty when deployment evidence is ready');
     }
     if (evidence.length === 0) {
       fail('ready deployment evidence requires at least one successful live production smoke record');
