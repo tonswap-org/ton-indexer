@@ -348,6 +348,11 @@ cp "$ready" "$bad_timestamp"
 perl -0pi -e 's/2026-06-26T00:00:00Z/2026-06-26/' "$bad_timestamp"
 expect_failure "bad smoke timestamp evidence" "smokePassedAt must be an ISO-8601 UTC second timestamp" run_audit "$bad_timestamp" --mainnet-registry "$valid_registry" --require-ready
 
+future_timestamp="$tmp_dir/future-timestamp.json"
+cp "$ready" "$future_timestamp"
+perl -0pi -e 's/2026-06-26T00:00:00Z/2999-01-01T00:00:00Z/' "$future_timestamp"
+expect_failure "future smoke timestamp evidence" "smokePassedAt must not be in the future" run_audit "$future_timestamp" --mainnet-registry "$valid_registry" --require-ready
+
 secret_top_level="$tmp_dir/secret-top-level.json"
 cp "$ready" "$secret_top_level"
 perl -0pi -e 's/"deploymentEvidence": \[/"privateKey": "do-not-commit",\n  "deploymentEvidence": [/' "$secret_top_level"
