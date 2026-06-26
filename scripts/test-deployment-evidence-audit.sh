@@ -230,6 +230,17 @@ cp "$blocked" "$missing_field"
 perl -0pi -e 's/"imageDigest",\n//' "$missing_field"
 expect_failure "missing image digest field" "requiredEvidenceFields missing imageDigest" run_audit "$missing_field" --mainnet-registry "$placeholder_registry"
 
+unsupported_required_field="$tmp_dir/unsupported-required-field.json"
+cp "$blocked" "$unsupported_required_field"
+node - "$unsupported_required_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.requiredEvidenceFields.push('region');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported required evidence field" "unsupported deployment evidence field in manifest: region" run_audit "$unsupported_required_field" --mainnet-registry "$placeholder_registry"
+
 ready_no_evidence="$tmp_dir/ready-no-evidence.json"
 cp "$ready" "$ready_no_evidence"
 perl -0pi -e 's/"deploymentEvidence": \[[\s\S]*?\n  \]/"deploymentEvidence": []/' "$ready_no_evidence"
@@ -284,6 +295,28 @@ wrong_base="$tmp_dir/wrong-base.json"
 cp "$ready" "$wrong_base"
 perl -0pi -e 's#https://ti.soramitsu.io#https://wrong.example#g' "$wrong_base"
 expect_failure "wrong production base URL evidence" "baseUrl must be https://ti.soramitsu.io" run_audit "$wrong_base" --mainnet-registry "$valid_registry" --require-ready
+
+unsupported_top_level="$tmp_dir/unsupported-top-level.json"
+cp "$ready" "$unsupported_top_level"
+node - "$unsupported_top_level" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.region = 'eu-central-1';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported top-level deployment evidence field" "deployment evidence.region is not supported in public deployment evidence" run_audit "$unsupported_top_level" --mainnet-registry "$valid_registry" --require-ready
+
+unsupported_record_field="$tmp_dir/unsupported-record-field.json"
+cp "$ready" "$unsupported_record_field"
+node - "$unsupported_record_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].region = 'eu-central-1';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported deployment evidence record field" "deploymentEvidence[0].region is not supported in public deployment evidence" run_audit "$unsupported_record_field" --mainnet-registry "$valid_registry" --require-ready
 
 wrong_smoke="$tmp_dir/wrong-smoke.json"
 cp "$ready" "$wrong_smoke"
