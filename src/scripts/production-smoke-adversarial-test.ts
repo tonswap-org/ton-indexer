@@ -89,7 +89,15 @@ const main = async () => {
 
   const solswapHealth = validRoutes();
   solswapHealth['/api/indexer/v1/health'].body = { ok: true };
-  await assertSmokeRejects(solswapHealth, /TON health response must include lastMasterSeqno/);
+  await assertSmokeRejects(solswapHealth, /TI production routing points at a Solswap indexer contract/);
+
+  const genericHealth = validRoutes();
+  genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
+  await assertSmokeRejects(genericHealth, /TI production routing does not expose the TON health contract/);
+
+  const missingServiceInfo = validRoutes();
+  delete missingServiceInfo['/api/indexer/v1/service-info'];
+  await assertSmokeRejects(missingServiceInfo, /deploy the current ton-indexer image to ti\.soramitsu\.io/);
 
   const wrongIdentity = validRoutes();
   wrongIdentity['/api/indexer/v1/service-info'].body = {

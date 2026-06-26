@@ -16,6 +16,7 @@ type ServiceInfo = {
 };
 
 const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
+const BODY_PREVIEW_LIMIT = 300;
 
 export function normalizeBaseUrl(value: string): URL {
   const url = new URL(value);
@@ -29,29 +30,61 @@ function endpoint(baseUrl: URL, path: string): URL {
   return url;
 }
 
+function bodyPreview(value: string): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) return '<empty body>';
+  return compact.length > BODY_PREVIEW_LIMIT ? `${compact.slice(0, BODY_PREVIEW_LIMIT)}...` : compact;
+}
+
+function deploymentHint(path: string): string {
+  if (path === '/api/indexer/v1/service-info') {
+    return 'Production routing must serve the TON v1 wallet API; deploy the current ton-indexer image to ti.soramitsu.io and expose /api/indexer/v1/service-info.';
+  }
+  if (path === '/api/indexer/v1/openapi.json') {
+    return 'Production routing must serve the TON OpenAPI contract at /api/indexer/v1/openapi.json.';
+  }
+  return 'Production routing must serve the TON indexer contract at ti.soramitsu.io.';
+}
+
 async function fetchJson(baseUrl: URL, path: string): Promise<unknown> {
   const response = await fetch(endpoint(baseUrl, path), {
     headers: { accept: 'application/json' }
   });
-  assert.equal(response.ok, true, `${path} returned HTTP ${response.status}`);
+  const rawBody = await response.text();
+  if (!response.ok) {
+    throw new Error(`${path} returned HTTP ${response.status}. Body preview: ${bodyPreview(rawBody)}. ${deploymentHint(path)}`);
+  }
+
   const contentType = response.headers.get('content-type') ?? '';
-  assert.match(contentType, /application\/json/i, `${path} did not return JSON`);
-  return response.json();
+  if (!/application\/json/i.test(contentType)) {
+    throw new Error(`${path} did not return JSON. Content-Type: ${contentType || '<missing>'}. Body preview: ${bodyPreview(rawBody)}. ${deploymentHint(path)}`);
+  }
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new Error(`${path} returned invalid JSON. Body preview: ${bodyPreview(rawBody)}. ${deploymentHint(path)}`);
+  }
 }
 
 function assertPath(spec: OpenApiSpec, path: string) {
   assert.ok(spec.paths?.[path], `OpenAPI is missing ${path}`);
 }
 
+function objectKeys(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '<non-object>';
+  return Object.keys(value as Record<string, unknown>).sort().join(',') || '<empty object>';
+}
+
 export async function runProductionSmoke(baseUrlInput = process.env.TON_INDEXER_BASE_URL || DEFAULT_BASE_URL) {
   const baseUrl = normalizeBaseUrl(baseUrlInput);
   const health = await fetchJson(baseUrl, '/api/indexer/v1/health') as { lastMasterSeqno?: unknown; ok?: unknown };
-  assert.notEqual(
-    health.lastMasterSeqno,
-    undefined,
-    'TON health response must include lastMasterSeqno',
-  );
-  assert.equal('ok' in health, false, 'TON health response looks like the Solswap indexer contract');
+  if ('ok' in health) {
+    throw new Error('TI production routing points at a Solswap indexer contract: health contains ok. Route ti.soramitsu.io to the TON indexer deployment.');
+  }
+  if (health.lastMasterSeqno === undefined) {
+    throw new Error(`TI production routing does not expose the TON health contract: expected lastMasterSeqno, received keys ${objectKeys(health)}.`);
+  }
 
   const serviceInfo = await fetchJson(baseUrl, '/api/indexer/v1/service-info') as ServiceInfo;
   assert.equal(serviceInfo.serviceId, 'ti.soramitsu.io', 'service-info serviceId must be ti.soramitsu.io');
