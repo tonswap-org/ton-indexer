@@ -104,6 +104,9 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 
 Production safeguards:
 - In `TON_NETWORK=mainnet`, placeholder or malformed required registry addresses fail startup.
+- `npm run audit:deployment-evidence -- --require-ready` also rejects ready
+  deployment evidence while `registry/mainnet.json` still has placeholder,
+  missing, or malformed required mainnet addresses.
 - For `https://ti.soramitsu.io` production deployment guidance, see `docs/ti-production.md`.
 
 ## API

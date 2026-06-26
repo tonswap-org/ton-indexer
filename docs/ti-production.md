@@ -115,3 +115,9 @@ Deployment evidence is tracked in
 image digest, deployment ID, tagged commit, exact smoke command, operator, and
 UTC smoke timestamp are recorded and
 `npm run audit:deployment-evidence -- --require-ready` passes.
+
+The ready deployment-evidence audit also inspects `registry/mainnet.json`.
+Readiness is rejected while required mainnet keys are missing, values still use
+`REPLACE_WITH_MAINNET_` placeholders, values are malformed TON addresses, or
+the manifest still carries the stale `mainnet-registry-placeholders-remain`
+blocker after the registry is fixed.
