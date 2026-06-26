@@ -285,6 +285,16 @@ cp "$ready" "$placeholder_digest"
 perl -0pi -e 's/sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/sha256:2222222222222222222222222222222222222222222222222222222222222222/' "$placeholder_digest"
 expect_failure "placeholder image digest evidence" "imageDigest must not be a placeholder image digest" run_audit "$placeholder_digest" --mainnet-registry "$valid_registry" --require-ready
 
+placeholder_deployment_id="$tmp_dir/placeholder-deployment-id.json"
+cp "$ready" "$placeholder_deployment_id"
+perl -0pi -e 's/ti-release-20260626/TODO_PRODUCTION_DEPLOYMENT_ID/' "$placeholder_deployment_id"
+expect_failure "placeholder deployment id evidence" "deploymentId must not be a placeholder deployment id" run_audit "$placeholder_deployment_id" --mainnet-registry "$valid_registry" --require-ready
+
+placeholder_operator="$tmp_dir/placeholder-operator.json"
+cp "$ready" "$placeholder_operator"
+perl -0pi -e 's/"operator": "release"/"operator": "TODO_RELEASE_OPERATOR"/' "$placeholder_operator"
+expect_failure "placeholder operator evidence" "operator must not be a placeholder operator" run_audit "$placeholder_operator" --mainnet-registry "$valid_registry" --require-ready
+
 duplicate_deployment="$tmp_dir/duplicate-deployment.json"
 cp "$ready" "$duplicate_deployment"
 node - "$duplicate_deployment" <<'NODE'

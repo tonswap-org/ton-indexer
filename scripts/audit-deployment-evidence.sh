@@ -162,6 +162,16 @@ function isRepeatedHexPlaceholder(value) {
   return /^[0-9a-f]+$/.test(hex) && new Set(hex).size === 1;
 }
 
+function isTemplatePlaceholder(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return (
+    normalized.length === 0 ||
+    normalized.startsWith('TODO_') ||
+    normalized.startsWith('REPLACE_WITH_') ||
+    normalized.includes('PLACEHOLDER')
+  );
+}
+
 function isLikelyTonAddress(value) {
   return /^([A-Za-z0-9_-]{48}|-?\d+:[0-9a-fA-F]{64})$/.test(String(value || '').trim());
 }
@@ -446,6 +456,12 @@ if (manifest) {
     }
 
     const deploymentId = String(entry.deploymentId || '').trim();
+    if (isTemplatePlaceholder(deploymentId)) {
+      fail(`deploymentEvidence[${index}].deploymentId must not be a placeholder deployment id`);
+    }
+    if (isTemplatePlaceholder(entry.operator)) {
+      fail(`deploymentEvidence[${index}].operator must not be a placeholder operator`);
+    }
     if (seenDeployments.has(deploymentId)) {
       fail(`duplicate deployment evidence id: ${deploymentId}`);
     }
