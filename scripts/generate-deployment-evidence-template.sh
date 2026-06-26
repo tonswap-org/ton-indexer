@@ -87,6 +87,21 @@ const placeholders = {
   smokePassedAt: 'TODO_UTC_SMOKE_TIMESTAMP_SECONDS',
   operator: 'TODO_RELEASE_OPERATOR'
 };
+const allowedManifestFields = [
+  'schemaVersion',
+  'scope',
+  'serviceId',
+  'baseUrl',
+  'status',
+  'releaseEnabled',
+  'lastReviewed',
+  'blockers',
+  'smokeCommand',
+  'dockerBuildCommand',
+  'readyVerificationCommands',
+  'requiredEvidenceFields',
+  'deploymentEvidence'
+];
 
 function fail(message) {
   errors.push(message);
@@ -146,6 +161,32 @@ function secretLikeKeyReason(value, currentPath = '$') {
   return null;
 }
 
+function rejectUnsupportedKeys(value, allowedFields, path) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const allowed = new Set(allowedFields);
+  for (const field of Object.keys(value)) {
+    if (!allowed.has(field)) {
+      fail(`${path}.${field} is not supported in public deployment evidence manifest`);
+    }
+  }
+}
+
+function validateCommittedDeploymentEvidence(value) {
+  const evidence = requireArray(value, 'deploymentEvidence');
+  evidence.forEach((record, index) => {
+    const path = `deploymentEvidence[${index}]`;
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+      fail(`${path} must be an object`);
+      return;
+    }
+    rejectUnsupportedKeys(record, requiredEvidenceFields, path);
+  });
+
+  if (evidence.length > 0) {
+    fail('committed deployment evidence manifest must not prefill deploymentEvidence');
+  }
+}
+
 const manifest = readJson(evidenceFile);
 let contract = null;
 
@@ -154,6 +195,7 @@ if (manifest) {
   if (secretPath) {
     fail(`${secretPath} must not be read from public deployment evidence manifest`);
   }
+  rejectUnsupportedKeys(manifest, allowedManifestFields, 'deployment evidence');
 
   if (manifest.schemaVersion !== 1) {
     fail('schemaVersion must be 1');
@@ -195,6 +237,7 @@ if (manifest) {
       fail(`unsupported deployment evidence field in manifest: ${field}`);
     }
   }
+  validateCommittedDeploymentEvidence(manifest.deploymentEvidence);
 }
 
 if (errors.length > 0) {

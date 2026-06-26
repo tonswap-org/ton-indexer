@@ -163,6 +163,47 @@ fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "unsupported evidence field" "unsupported deployment evidence field in manifest: region" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_field"
 
+unsupported_top_level="$tmp_dir/unsupported-top-level.json"
+cp "$DEFAULT_MANIFEST" "$unsupported_top_level"
+node - "$unsupported_top_level" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.region = 'eu-central-1';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported top-level deployment evidence field" "deployment evidence.region is not supported in public deployment evidence manifest" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_top_level"
+
+unsupported_record_field="$tmp_dir/unsupported-record-field.json"
+cp "$DEFAULT_MANIFEST" "$unsupported_record_field"
+node - "$unsupported_record_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence = [{ region: 'eu-central-1' }];
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported deployment evidence record field" "deploymentEvidence[0].region is not supported in public deployment evidence manifest" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_record_field"
+
+prefilled_deployment="$tmp_dir/prefilled-deployment.json"
+cp "$DEFAULT_MANIFEST" "$prefilled_deployment"
+node - "$prefilled_deployment" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence = [{
+  commit: 'a'.repeat(40),
+  imageDigest: `sha256:${'b'.repeat(64)}`,
+  deploymentId: 'deploy-1',
+  baseUrl: manifest.baseUrl,
+  smokeCommand: manifest.smokeCommand,
+  smokePassedAt: '2026-06-26T00:00:00Z',
+  operator: 'release'
+}];
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "prefilled deployment evidence" "committed deployment evidence manifest must not prefill deploymentEvidence" bash "$GENERATOR_SCRIPT" --evidence "$prefilled_deployment"
+
 secret_manifest="$tmp_dir/secret-manifest.json"
 cp "$DEFAULT_MANIFEST" "$secret_manifest"
 node - "$secret_manifest" <<'NODE'
