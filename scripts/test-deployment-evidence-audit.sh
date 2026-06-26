@@ -80,8 +80,8 @@ write_ready_manifest() {
   ],
   "deploymentEvidence": [
     {
-      "commit": "1111111111111111111111111111111111111111",
-      "imageDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "imageDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "deploymentId": "ti-release-20260626",
       "baseUrl": "https://ti.soramitsu.io",
       "smokeCommand": "TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production",
@@ -267,13 +267,23 @@ expect_failure "ready evidence with invalid mainnet registry value" "mainnet reg
 
 bad_commit="$tmp_dir/bad-commit.json"
 cp "$ready" "$bad_commit"
-perl -0pi -e 's/1111111111111111111111111111111111111111/1111/' "$bad_commit"
+perl -0pi -e 's/0123456789abcdef0123456789abcdef01234567/1111/' "$bad_commit"
 expect_failure "bad commit evidence" "commit must be a 40-character git commit" run_audit "$bad_commit" --mainnet-registry "$valid_registry" --require-ready
 
 bad_digest="$tmp_dir/bad-digest.json"
 cp "$ready" "$bad_digest"
-perl -0pi -e 's/sha256:2222222222222222222222222222222222222222222222222222222222222222/2222/' "$bad_digest"
+perl -0pi -e 's/sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/2222/' "$bad_digest"
 expect_failure "bad image digest evidence" "imageDigest must be a sha256 image digest" run_audit "$bad_digest" --mainnet-registry "$valid_registry" --require-ready
+
+placeholder_commit="$tmp_dir/placeholder-commit.json"
+cp "$ready" "$placeholder_commit"
+perl -0pi -e 's/0123456789abcdef0123456789abcdef01234567/1111111111111111111111111111111111111111/' "$placeholder_commit"
+expect_failure "placeholder commit evidence" "commit must not be a placeholder git commit" run_audit "$placeholder_commit" --mainnet-registry "$valid_registry" --require-ready
+
+placeholder_digest="$tmp_dir/placeholder-digest.json"
+cp "$ready" "$placeholder_digest"
+perl -0pi -e 's/sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/sha256:2222222222222222222222222222222222222222222222222222222222222222/' "$placeholder_digest"
+expect_failure "placeholder image digest evidence" "imageDigest must not be a placeholder image digest" run_audit "$placeholder_digest" --mainnet-registry "$valid_registry" --require-ready
 
 duplicate_deployment="$tmp_dir/duplicate-deployment.json"
 cp "$ready" "$duplicate_deployment"
@@ -283,8 +293,8 @@ const file = process.argv[2];
 const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
 manifest.deploymentEvidence.push({
   ...manifest.deploymentEvidence[0],
-  commit: '3333333333333333333333333333333333333333',
-  imageDigest: 'sha256:4444444444444444444444444444444444444444444444444444444444444444',
+  commit: 'fedcba9876543210fedcba9876543210fedcba98',
+  imageDigest: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
   smokePassedAt: '2026-06-26T00:05:00Z',
 });
 fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
