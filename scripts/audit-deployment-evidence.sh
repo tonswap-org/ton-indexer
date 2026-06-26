@@ -145,6 +145,45 @@ function isLikelyTonAddress(value) {
   return /^([A-Za-z0-9_-]{48}|-?\d+:[0-9a-fA-F]{64})$/.test(String(value || '').trim());
 }
 
+function secretLikeKeyReason(value, path = '$') {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const reason = secretLikeKeyReason(value[index], `${path}[${index}]`);
+      if (reason) {
+        return reason;
+      }
+    }
+    return null;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    const normalized = key.toLowerCase();
+    if (
+      normalized.includes('privatekey') ||
+      normalized.includes('mnemonic') ||
+      normalized.includes('seed') ||
+      normalized.includes('secret') ||
+      normalized.includes('password') ||
+      normalized.includes('authorization') ||
+      normalized.includes('credential') ||
+      normalized.includes('clientdatajson')
+    ) {
+      return `${path}.${key}`;
+    }
+
+    const reason = secretLikeKeyReason(child, `${path}.${key}`);
+    if (reason) {
+      return reason;
+    }
+  }
+
+  return null;
+}
+
 function inspectTonMainnetRegistry(file) {
   const result = {
     file,
@@ -193,6 +232,11 @@ let contract = null;
 let registryInspection = null;
 
 if (manifest) {
+  const secretLikePath = secretLikeKeyReason(manifest);
+  if (secretLikePath) {
+    fail(`${secretLikePath} must not be included in public deployment evidence`);
+  }
+
   if (manifest.schemaVersion !== 1) {
     fail('schemaVersion must be 1');
   }
@@ -227,6 +271,8 @@ if (manifest) {
 
     const commands = requireArray(manifest.readyVerificationCommands, 'readyVerificationCommands').join('\n');
     for (const marker of [
+      'npm run test:deployment-evidence-template',
+      'npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json',
       'npm run test:deployment-evidence-audit',
       'npm run audit:deployment-evidence -- --require-ready',
       contract.dockerBuildCommand,

@@ -115,6 +115,12 @@ Deployment evidence is tracked in
 image digest, deployment ID, tagged commit, exact smoke command, operator, and
 UTC smoke timestamp are recorded and
 `npm run audit:deployment-evidence -- --require-ready` passes.
+Generate a fill-in-ready evidence template before recording the live result:
+
+```sh
+npm run test:deployment-evidence-template
+npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json
+```
 
 The ready deployment-evidence audit also inspects `registry/mainnet.json`.
 Readiness is rejected while required mainnet keys are missing, values still use
