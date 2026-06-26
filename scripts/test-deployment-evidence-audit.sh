@@ -264,6 +264,22 @@ cp "$ready" "$bad_digest"
 perl -0pi -e 's/sha256:2222222222222222222222222222222222222222222222222222222222222222/2222/' "$bad_digest"
 expect_failure "bad image digest evidence" "imageDigest must be a sha256 image digest" run_audit "$bad_digest" --mainnet-registry "$valid_registry" --require-ready
 
+duplicate_deployment="$tmp_dir/duplicate-deployment.json"
+cp "$ready" "$duplicate_deployment"
+node - "$duplicate_deployment" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence.push({
+  ...manifest.deploymentEvidence[0],
+  commit: '3333333333333333333333333333333333333333',
+  imageDigest: 'sha256:4444444444444444444444444444444444444444444444444444444444444444',
+  smokePassedAt: '2026-06-26T00:05:00Z',
+});
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "duplicate deployment id evidence" "duplicate deployment evidence id: ti-release-20260626" run_audit "$duplicate_deployment" --mainnet-registry "$valid_registry" --require-ready
+
 wrong_base="$tmp_dir/wrong-base.json"
 cp "$ready" "$wrong_base"
 perl -0pi -e 's#https://ti.soramitsu.io#https://wrong.example#g' "$wrong_base"
