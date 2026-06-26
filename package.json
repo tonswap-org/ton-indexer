@@ -10,8 +10,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "smoke:production": "tsx src/scripts/production-smoke.ts",
+    "generate:deployment-evidence-template": "bash scripts/generate-deployment-evidence-template.sh",
     "audit:deployment-evidence": "bash scripts/audit-deployment-evidence.sh",
     "test:deployment-evidence-audit": "bash scripts/test-deployment-evidence-audit.sh",
+    "test:deployment-evidence-template": "bash scripts/test-deployment-evidence-template.sh",
     "sync-registry": "tsx src/scripts/refresh-registry.ts"
   },
   "repository": {

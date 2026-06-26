@@ -14,6 +14,8 @@
   "smokeCommand": "TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production",
   "dockerBuildCommand": "docker build -t ton-indexer:release .",
   "readyVerificationCommands": [
+    "npm run test:deployment-evidence-template",
+    "npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json",
     "npm run test:deployment-evidence-audit",
     "npm run audit:deployment-evidence -- --require-ready",
     "docker build -t ton-indexer:release .",
