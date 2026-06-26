@@ -55,6 +55,7 @@ const fs = require('fs');
 const [evidenceFile, requireReadyRaw, mainnetRegistryFile] = process.argv.slice(2);
 const requireReady = requireReadyRaw === 'true';
 const errors = [];
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 const serviceContracts = {
   'ti.soramitsu.io': {
@@ -155,6 +156,11 @@ function nonEmptyString(value) {
 
 function isIsoUtcSecond(value) {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(value || ''));
+}
+
+function isFutureTimestamp(value) {
+  const millis = Date.parse(value);
+  return Number.isFinite(millis) && millis > Date.now() + MAX_CLOCK_SKEW_MS;
 }
 
 function isRepeatedHexPlaceholder(value) {
@@ -453,6 +459,8 @@ if (manifest) {
 
     if (!isIsoUtcSecond(entry.smokePassedAt)) {
       fail(`deploymentEvidence[${index}].smokePassedAt must be an ISO-8601 UTC second timestamp`);
+    } else if (isFutureTimestamp(entry.smokePassedAt)) {
+      fail(`deploymentEvidence[${index}].smokePassedAt must not be in the future`);
     }
 
     const deploymentId = String(entry.deploymentId || '').trim();
