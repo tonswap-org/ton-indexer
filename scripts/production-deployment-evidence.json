@@ -27,6 +27,7 @@
     "deploymentId",
     "baseUrl",
     "smokeCommand",
+    "deployedAt",
     "smokePassedAt",
     "serviceInfo",
     "operator"
