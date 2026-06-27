@@ -28,7 +28,8 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
   `npm run audit:deployment-evidence`. Before declaring the deployment
   production-ready, use the generated template to prepare the evidence manifest,
   then record the deployed image digest, deployment ID, tagged commit, operator,
-  UTC smoke timestamp, and exact
+  UTC smoke timestamp, the production `/api/indexer/v1/service-info` identity
+  payload, and exact
   `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
   result in `scripts/production-deployment-evidence.json`, set
   `status: ready` and `releaseEnabled: true`, and rerun

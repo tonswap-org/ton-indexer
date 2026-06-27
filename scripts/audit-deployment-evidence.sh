@@ -65,6 +65,17 @@ const serviceContracts = {
     dockerBuildCommand: 'docker build -t ton-indexer:release .',
     mainnetRegistryFile,
     registryPlaceholderBlocker: 'mainnet-registry-placeholders-remain',
+    serviceInfo: {
+      serviceId: 'ti.soramitsu.io',
+      ecosystem: 'ton',
+      chainId: 'ton:mainnet',
+      network: 'mainnet',
+      publicBaseUrl: 'https://ti.soramitsu.io',
+      readOnly: true,
+      endpoints: {
+        openapi: '/api/indexer/v1/openapi.json'
+      }
+    },
     requiredBlockers: [
       'production-deployment-evidence-missing',
       'live-production-smoke-failing'
@@ -75,6 +86,17 @@ const serviceContracts = {
     baseUrl: 'https://si.soramitsu.io',
     smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
     dockerBuildCommand: 'docker build -t solswap-indexer:release .',
+    serviceInfo: {
+      serviceId: 'si.soramitsu.io',
+      ecosystem: 'solana',
+      chainId: 'solana:mainnet',
+      network: 'mainnet',
+      publicBaseUrl: 'https://si.soramitsu.io',
+      readOnly: true,
+      endpoints: {
+        openapi: '/api/indexer/v1/openapi.json'
+      }
+    },
     requiredBlockers: [
       'production-deployment-evidence-missing',
       'live-production-smoke-failing',
@@ -90,7 +112,18 @@ const requiredEvidenceFields = [
   'baseUrl',
   'smokeCommand',
   'smokePassedAt',
+  'serviceInfo',
   'operator'
+];
+
+const requiredServiceInfoFields = [
+  'serviceId',
+  'ecosystem',
+  'chainId',
+  'network',
+  'publicBaseUrl',
+  'readOnly',
+  'endpoints'
 ];
 
 const allowedManifestFields = [
@@ -229,6 +262,36 @@ function rejectUnsupportedKeys(value, allowedFields, path) {
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       fail(`${path}.${key} is not supported in public deployment evidence`);
+    }
+  }
+}
+
+function validateServiceInfo(value, contract, path) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail(`${path} must be an object`);
+    return;
+  }
+
+  rejectUnsupportedKeys(value, requiredServiceInfoFields, path);
+  for (const field of ['serviceId', 'ecosystem', 'chainId', 'network', 'publicBaseUrl']) {
+    if (value[field] !== contract.serviceInfo[field]) {
+      fail(`${path}.${field} must be ${contract.serviceInfo[field]}`);
+    }
+  }
+
+  if (value.readOnly !== contract.serviceInfo.readOnly) {
+    fail(`${path}.readOnly must be ${contract.serviceInfo.readOnly}`);
+  }
+
+  if (!value.endpoints || typeof value.endpoints !== 'object' || Array.isArray(value.endpoints)) {
+    fail(`${path}.endpoints must be an object`);
+    return;
+  }
+
+  rejectUnsupportedKeys(value.endpoints, Object.keys(contract.serviceInfo.endpoints), `${path}.endpoints`);
+  for (const [name, expected] of Object.entries(contract.serviceInfo.endpoints)) {
+    if (value.endpoints[name] !== expected) {
+      fail(`${path}.endpoints.${name} must be ${expected}`);
     }
   }
 }
@@ -430,6 +493,9 @@ if (manifest) {
     rejectUnsupportedKeys(entry, requiredEvidenceFields, `deploymentEvidence[${index}]`);
 
     for (const field of requiredEvidenceFields) {
+      if (field === 'serviceInfo') {
+        continue;
+      }
       if (!nonEmptyString(entry[field])) {
         fail(`deploymentEvidence[${index}].${field} must not be blank`);
       }
@@ -455,6 +521,10 @@ if (manifest) {
 
     if (contract && entry.smokeCommand !== contract.smokeCommand) {
       fail(`deploymentEvidence[${index}].smokeCommand must be ${contract.smokeCommand}`);
+    }
+
+    if (contract) {
+      validateServiceInfo(entry.serviceInfo, contract, `deploymentEvidence[${index}].serviceInfo`);
     }
 
     if (!isIsoUtcSecond(entry.smokePassedAt)) {

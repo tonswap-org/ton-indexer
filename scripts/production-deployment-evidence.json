@@ -28,6 +28,7 @@
     "baseUrl",
     "smokeCommand",
     "smokePassedAt",
+    "serviceInfo",
     "operator"
   ],
   "deploymentEvidence": []

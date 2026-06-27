@@ -36,8 +36,12 @@ const validRoutes = (): Routes => ({
       serviceId: 'ti.soramitsu.io',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
+      network: 'mainnet',
       publicBaseUrl: 'https://ti.soramitsu.io',
       readOnly: true,
+      endpoints: {
+        openapi: '/api/indexer/v1/openapi.json',
+      },
     },
   },
   '/api/indexer/v1/openapi.json': {
@@ -108,6 +112,13 @@ const main = async () => {
     readOnly: true,
   };
   await assertSmokeRejects(wrongIdentity, /service-info serviceId must be ti\.soramitsu\.io/);
+
+  const wrongNetwork = validRoutes();
+  wrongNetwork['/api/indexer/v1/service-info'].body = {
+    ...(wrongNetwork['/api/indexer/v1/service-info'].body as Record<string, unknown>),
+    network: 'testnet',
+  };
+  await assertSmokeRejects(wrongNetwork, /service-info network must be mainnet/);
 
   const nonJson = validRoutes();
   nonJson['/api/indexer/v1/health'] = {

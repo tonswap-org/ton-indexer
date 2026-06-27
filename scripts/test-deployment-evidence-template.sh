@@ -99,12 +99,24 @@ check(Array.isArray(manifest.deploymentEvidence) && manifest.deploymentEvidence.
 check(secretLikeKeyReason(manifest) === null, 'template must not contain secret-like keys');
 
 const evidence = manifest.deploymentEvidence[0] || {};
+const expectedServiceInfo = {
+  serviceId: 'ti.soramitsu.io',
+  ecosystem: 'ton',
+  chainId: 'ton:mainnet',
+  network: 'mainnet',
+  publicBaseUrl: 'https://ti.soramitsu.io',
+  readOnly: true,
+  endpoints: {
+    openapi: '/api/indexer/v1/openapi.json',
+  },
+};
 check(evidence.commit === 'TODO_40_HEX_GIT_COMMIT', 'commit placeholder mismatch');
 check(evidence.imageDigest === 'sha256:TODO_64_HEX_IMAGE_DIGEST', 'image digest placeholder mismatch');
 check(evidence.deploymentId === 'TODO_PRODUCTION_DEPLOYMENT_ID', 'deployment id placeholder mismatch');
 check(evidence.baseUrl === manifest.baseUrl, 'baseUrl must be copied from manifest');
 check(evidence.smokeCommand === manifest.smokeCommand, 'smokeCommand must be copied from manifest');
 check(evidence.smokePassedAt === 'TODO_UTC_SMOKE_TIMESTAMP_SECONDS', 'smoke timestamp placeholder mismatch');
+check(JSON.stringify(evidence.serviceInfo) === JSON.stringify(expectedServiceInfo), 'serviceInfo contract mismatch');
 check(evidence.operator === 'TODO_RELEASE_OPERATOR', 'operator placeholder mismatch');
 
 for (const field of manifest.requiredEvidenceFields || []) {
@@ -152,6 +164,17 @@ fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "missing image digest field" "requiredEvidenceFields missing imageDigest" bash "$GENERATOR_SCRIPT" --evidence "$missing_required_field"
 
+missing_service_info_field="$tmp_dir/missing-service-info-field.json"
+cp "$DEFAULT_MANIFEST" "$missing_service_info_field"
+node - "$missing_service_info_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.requiredEvidenceFields = manifest.requiredEvidenceFields.filter((field) => field !== 'serviceInfo');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "missing service info field" "requiredEvidenceFields missing serviceInfo" bash "$GENERATOR_SCRIPT" --evidence "$missing_service_info_field"
+
 unsupported_field="$tmp_dir/unsupported-field.json"
 cp "$DEFAULT_MANIFEST" "$unsupported_field"
 node - "$unsupported_field" <<'NODE'
@@ -184,6 +207,30 @@ manifest.deploymentEvidence = [{ region: 'eu-central-1' }];
 fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "unsupported deployment evidence record field" "deploymentEvidence[0].region is not supported in public deployment evidence manifest" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_record_field"
+
+unsupported_service_info_field="$tmp_dir/unsupported-service-info-field.json"
+cp "$DEFAULT_MANIFEST" "$unsupported_service_info_field"
+node - "$unsupported_service_info_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence = [{
+  serviceInfo: {
+    serviceId: 'ti.soramitsu.io',
+    ecosystem: 'ton',
+    chainId: 'ton:mainnet',
+    network: 'mainnet',
+    publicBaseUrl: 'https://ti.soramitsu.io',
+    readOnly: true,
+    endpoints: {
+      openapi: '/api/indexer/v1/openapi.json'
+    },
+    adminUrl: 'https://internal.example'
+  }
+}];
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported service info template evidence field" "deploymentEvidence[0].serviceInfo.adminUrl is not supported in public deployment evidence manifest" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_service_info_field"
 
 prefilled_deployment="$tmp_dir/prefilled-deployment.json"
 cp "$DEFAULT_MANIFEST" "$prefilled_deployment"

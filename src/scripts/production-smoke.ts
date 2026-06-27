@@ -11,8 +11,12 @@ type ServiceInfo = {
   serviceId?: unknown;
   ecosystem?: unknown;
   chainId?: unknown;
+  network?: unknown;
   publicBaseUrl?: unknown;
   readOnly?: unknown;
+  endpoints?: {
+    openapi?: unknown;
+  };
 };
 
 const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
@@ -90,12 +94,18 @@ export async function runProductionSmoke(baseUrlInput = process.env.TON_INDEXER_
   assert.equal(serviceInfo.serviceId, 'ti.soramitsu.io', 'service-info serviceId must be ti.soramitsu.io');
   assert.equal(serviceInfo.ecosystem, 'ton', 'service-info ecosystem must be ton');
   assert.equal(serviceInfo.chainId, 'ton:mainnet', 'service-info chainId must be ton:mainnet');
+  assert.equal(serviceInfo.network, 'mainnet', 'service-info network must be mainnet');
   assert.equal(
     serviceInfo.publicBaseUrl,
     'https://ti.soramitsu.io',
     'service-info publicBaseUrl must be https://ti.soramitsu.io',
   );
   assert.equal(serviceInfo.readOnly, true, 'service-info readOnly must be true');
+  assert.equal(
+    serviceInfo.endpoints?.openapi,
+    '/api/indexer/v1/openapi.json',
+    'service-info openapi endpoint must be /api/indexer/v1/openapi.json',
+  );
 
   const spec = await fetchJson(baseUrl, '/api/indexer/v1/openapi.json') as OpenApiSpec;
   assert.equal(spec.info?.title, 'TONSWAP Indexer API', 'OpenAPI title must be TONSWAP Indexer API');
