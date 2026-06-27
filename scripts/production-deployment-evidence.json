@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "scope": "ton-indexer-production-deployment-readiness",
+  "serviceId": "ti.soramitsu.io",
+  "baseUrl": "https://ti.soramitsu.io",
+  "status": "blocked",
+  "releaseEnabled": false,
+  "lastReviewed": "2026-06-26",
+  "blockers": [
+    "production-deployment-evidence-missing",
+    "live-production-smoke-failing",
+    "mainnet-registry-placeholders-remain"
+  ],
+  "smokeCommand": "TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production",
+  "dockerBuildCommand": "docker build -t ton-indexer:release .",
+  "readyVerificationCommands": [
+    "npm run test:deployment-evidence-template",
+    "npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json",
+    "npm run test:deployment-evidence-audit",
+    "npm run audit:deployment-evidence -- --require-ready",
+    "docker build -t ton-indexer:release .",
+    "TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production"
+  ],
+  "requiredEvidenceFields": [
+    "commit",
+    "imageDigest",
+    "deploymentId",
+    "baseUrl",
+    "smokeCommand",
+    "deployedAt",
+    "smokePassedAt",
+    "serviceInfo",
+    "operator"
+  ],
+  "deploymentEvidence": []
+}

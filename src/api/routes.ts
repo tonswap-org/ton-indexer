@@ -359,6 +359,7 @@ const classifyRateLimitBucket = (url: string) => {
     path.startsWith('/api/indexer/v1/docs') ||
     path.startsWith('/api/indexer/v1/openapi.json') ||
     path.startsWith('/api/indexer/v1/contracts') ||
+    path.startsWith('/api/indexer/v1/service-info') ||
     path.startsWith('/api/indexer/v1/health') ||
     path.startsWith('/api/indexer/v1/metrics')
   ) {
@@ -379,6 +380,37 @@ export const registerRoutes = (
 ) => {
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
   const contractMap = Object.fromEntries(contractEntries);
+  const network = String(config.network || 'mainnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+  const serviceInfo = {
+    schemaVersion: 1,
+    serviceId: 'ti.soramitsu.io',
+    serviceName: 'TON Indexer',
+    ecosystem: 'ton',
+    chainId: network === 'mainnet' ? 'ton:mainnet' : 'ton:testnet',
+    network,
+    publicBaseUrl: 'https://ti.soramitsu.io',
+    readOnly: !config.enableWriteRpc,
+    capabilities: [
+      'account-balance',
+      'account-balances',
+      'account-assets',
+      'account-transactions',
+      'account-state',
+      'run-get-method',
+      'run-get-methods'
+    ],
+    endpoints: {
+      health: '/api/indexer/v1/health',
+      openapi: '/api/indexer/v1/openapi.json',
+      balance: '/api/indexer/v1/accounts/{addr}/balance',
+      balances: '/api/indexer/v1/accounts/{addr}/balances',
+      assets: '/api/indexer/v1/accounts/{addr}/assets',
+      transactions: '/api/indexer/v1/accounts/{addr}/txs',
+      state: '/api/indexer/v1/accounts/{addr}/state',
+      runGetMethod: '/api/indexer/v1/runGetMethod',
+      runGetMethods: '/api/indexer/v1/runGetMethods'
+    }
+  };
 
   if (rateLimiter?.isEnabled()) {
     app.addHook('onRequest', async (request, reply) => {
@@ -410,6 +442,8 @@ export const registerRoutes = (
       contracts: contractMap
     };
   });
+
+  app.get('/api/indexer/v1/service-info', async () => serviceInfo);
 
   const sendToncenterCompat = <T>(
     reply: FastifyReply,
