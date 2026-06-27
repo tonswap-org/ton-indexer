@@ -36,8 +36,12 @@ const validRoutes = (): Routes => ({
       serviceId: 'ti.soramitsu.io',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
+      network: 'mainnet',
       publicBaseUrl: 'https://ti.soramitsu.io',
       readOnly: true,
+      endpoints: {
+        openapi: '/api/indexer/v1/openapi.json',
+      },
     },
   },
   '/api/indexer/v1/openapi.json': {
@@ -89,7 +93,15 @@ const main = async () => {
 
   const solswapHealth = validRoutes();
   solswapHealth['/api/indexer/v1/health'].body = { ok: true };
-  await assertSmokeRejects(solswapHealth, /TON health response must include lastMasterSeqno/);
+  await assertSmokeRejects(solswapHealth, /TI production routing points at a Solswap indexer contract/);
+
+  const genericHealth = validRoutes();
+  genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
+  await assertSmokeRejects(genericHealth, /TI production routing does not expose the TON health contract/);
+
+  const missingServiceInfo = validRoutes();
+  delete missingServiceInfo['/api/indexer/v1/service-info'];
+  await assertSmokeRejects(missingServiceInfo, /deploy the current ton-indexer image to ti\.soramitsu\.io/);
 
   const wrongIdentity = validRoutes();
   wrongIdentity['/api/indexer/v1/service-info'].body = {
@@ -100,6 +112,13 @@ const main = async () => {
     readOnly: true,
   };
   await assertSmokeRejects(wrongIdentity, /service-info serviceId must be ti\.soramitsu\.io/);
+
+  const wrongNetwork = validRoutes();
+  wrongNetwork['/api/indexer/v1/service-info'].body = {
+    ...(wrongNetwork['/api/indexer/v1/service-info'].body as Record<string, unknown>),
+    network: 'testnet',
+  };
+  await assertSmokeRejects(wrongNetwork, /service-info network must be mainnet/);
 
   const nonJson = validRoutes();
   nonJson['/api/indexer/v1/health'] = {

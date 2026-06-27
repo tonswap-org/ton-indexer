@@ -17,7 +17,9 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 current="$tmp_dir/current.tsv"
+baseline_raw="$tmp_dir/baseline-raw.tsv"
 baseline="$tmp_dir/baseline.tsv"
+duplicate_baseline="$tmp_dir/duplicate-baseline.tsv"
 new_markers="$tmp_dir/new.tsv"
 stale_markers="$tmp_dir/stale.tsv"
 crashing_placeholders="$tmp_dir/crashing_placeholders.txt"
@@ -77,7 +79,7 @@ scan_marker_debt() {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
       print path "\t" line
     }
-  ' | LC_ALL=C sort
+  ' | LC_ALL=C sort -u
 }
 
 scan_crashing_placeholders() {
@@ -86,9 +88,17 @@ scan_crashing_placeholders() {
     'throw[[:space:]]+(new[[:space:]]+)?Error[[:space:]]*\([^)]*(TODO|FIXME|STOPSHIP)'
 }
 
-awk 'NF && $0 !~ /^#/' "$BASELINE_FILE" | LC_ALL=C sort > "$baseline"
+awk 'NF && $0 !~ /^#/' "$BASELINE_FILE" > "$baseline_raw"
+LC_ALL=C sort "$baseline_raw" > "$baseline"
+LC_ALL=C sort "$baseline_raw" | uniq -d > "$duplicate_baseline"
 scan_marker_debt > "$current"
 scan_crashing_placeholders > "$crashing_placeholders"
+
+if [[ -s "$duplicate_baseline" ]]; then
+  echo "Duplicate TODO debt baseline entries are forbidden:" >&2
+  sed -n '1,40p' "$duplicate_baseline" >&2
+  fail "Remove duplicate entries from config/todo-debt-baseline.tsv."
+fi
 
 if [[ -s "$crashing_placeholders" ]]; then
   echo "Crashing TODO/FIXME placeholders are forbidden:" >&2
