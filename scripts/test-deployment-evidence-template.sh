@@ -164,6 +164,17 @@ fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "unsupported deployment evidence blocker" "unsupported deployment evidence blocker in manifest: manual-approval-pending" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_blocker"
 
+duplicate_blocker="$tmp_dir/duplicate-blocker.json"
+cp "$DEFAULT_MANIFEST" "$duplicate_blocker"
+node - "$duplicate_blocker" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.blockers.push('live-production-smoke-failing');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "duplicate deployment evidence blocker" "duplicate deployment evidence blocker in manifest" bash "$GENERATOR_SCRIPT" --evidence "$duplicate_blocker"
+
 missing_required_field="$tmp_dir/missing-required-field.json"
 cp "$DEFAULT_MANIFEST" "$missing_required_field"
 node - "$missing_required_field" <<'NODE'

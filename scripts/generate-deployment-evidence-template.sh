@@ -298,10 +298,14 @@ if (manifest) {
     }
 
     const blockers = requireArray(manifest.blockers, 'blockers');
+    const blockerSet = new Set(blockers);
     for (const blocker of contract.requiredBlockers) {
       if (!blockers.includes(blocker)) {
         fail(`blocked deployment evidence missing ${blocker}`);
       }
+    }
+    if (blockerSet.size !== blockers.length) {
+      fail('duplicate deployment evidence blocker in manifest');
     }
     for (const blocker of blockers) {
       if (!contract.requiredBlockers.includes(blocker)) {
