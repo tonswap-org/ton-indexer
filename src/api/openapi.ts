@@ -38,10 +38,15 @@ export const buildOpenApi = (config: Config) => {
         HealthStatus: {
           type: 'object',
           properties: {
+            serviceId: { type: 'string', enum: ['ti.soramitsu.io'] },
+            ecosystem: { type: 'string', enum: ['ton'] },
+            chainId: { type: 'string' },
+            network: { type: 'string' },
             lastMasterSeqno: { type: ['integer', 'null'] },
             indexerLagSec: { type: ['number', 'null'] },
             liteserverPoolStatus: { type: ['string', 'null'] },
           },
+          required: ['serviceId', 'ecosystem', 'chainId', 'network'],
         },
         ContractsResponse: {
           type: 'object',

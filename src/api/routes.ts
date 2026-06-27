@@ -381,13 +381,16 @@ export const registerRoutes = (
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
   const contractMap = Object.fromEntries(contractEntries);
   const network = String(config.network || 'mainnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
-  const serviceInfo = {
-    schemaVersion: 1,
+  const serviceIdentity = {
     serviceId: 'ti.soramitsu.io',
-    serviceName: 'TON Indexer',
     ecosystem: 'ton',
     chainId: network === 'mainnet' ? 'ton:mainnet' : 'ton:testnet',
-    network,
+    network
+  } as const;
+  const serviceInfo = {
+    schemaVersion: 1,
+    ...serviceIdentity,
+    serviceName: 'TON Indexer',
     publicBaseUrl: 'https://ti.soramitsu.io',
     readOnly: !config.enableWriteRpc,
     capabilities: [
@@ -432,7 +435,10 @@ export const registerRoutes = (
   app.get('/', async () => ({ status: 'ok' }));
 
   app.get('/api/indexer/v1/health', async () => {
-    return service.getHealth();
+    return {
+      ...service.getHealth(),
+      ...serviceIdentity
+    };
   });
 
   app.get('/api/indexer/v1/contracts', async () => {

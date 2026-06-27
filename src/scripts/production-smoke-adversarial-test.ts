@@ -25,6 +25,10 @@ const openApiPaths = () => ({
 const validRoutes = (): Routes => ({
   '/api/indexer/v1/health': {
     body: {
+      serviceId: 'ti.soramitsu.io',
+      ecosystem: 'ton',
+      chainId: 'ton:mainnet',
+      network: 'mainnet',
       lastMasterSeqno: 123,
       indexerLagSec: 0,
       liteserverPoolStatus: 'ok',
@@ -98,6 +102,16 @@ const main = async () => {
   const genericHealth = validRoutes();
   genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
   await assertSmokeRejects(genericHealth, /TI production routing does not expose the TON health contract/);
+
+  const wrongHealthIdentity = validRoutes();
+  wrongHealthIdentity['/api/indexer/v1/health'].body = {
+    serviceId: 'si.soramitsu.io',
+    ecosystem: 'solana',
+    chainId: 'solana:mainnet',
+    network: 'mainnet',
+    lastMasterSeqno: 123,
+  };
+  await assertSmokeRejects(wrongHealthIdentity, /health serviceId must be ti\.soramitsu\.io/);
 
   const missingServiceInfo = validRoutes();
   delete missingServiceInfo['/api/indexer/v1/service-info'];
