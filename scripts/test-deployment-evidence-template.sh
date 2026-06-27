@@ -115,6 +115,7 @@ check(evidence.imageDigest === 'sha256:TODO_64_HEX_IMAGE_DIGEST', 'image digest 
 check(evidence.deploymentId === 'TODO_PRODUCTION_DEPLOYMENT_ID', 'deployment id placeholder mismatch');
 check(evidence.baseUrl === manifest.baseUrl, 'baseUrl must be copied from manifest');
 check(evidence.smokeCommand === manifest.smokeCommand, 'smokeCommand must be copied from manifest');
+check(evidence.deployedAt === 'TODO_UTC_DEPLOYED_AT_SECONDS', 'deployedAt placeholder mismatch');
 check(evidence.smokePassedAt === 'TODO_UTC_SMOKE_TIMESTAMP_SECONDS', 'smoke timestamp placeholder mismatch');
 check(JSON.stringify(evidence.serviceInfo) === JSON.stringify(expectedServiceInfo), 'serviceInfo contract mismatch');
 check(evidence.operator === 'TODO_RELEASE_OPERATOR', 'operator placeholder mismatch');
@@ -288,6 +289,7 @@ manifest.deploymentEvidence = [{
   deploymentId: 'deploy-1',
   baseUrl: manifest.baseUrl,
   smokeCommand: manifest.smokeCommand,
+  deployedAt: '2026-06-26T00:00:00Z',
   smokePassedAt: '2026-06-26T00:00:00Z',
   operator: 'release'
 }];

@@ -107,6 +107,7 @@ const requiredEvidenceFields = [
   'deploymentId',
   'baseUrl',
   'smokeCommand',
+  'deployedAt',
   'smokePassedAt',
   'serviceInfo',
   'operator'
@@ -117,6 +118,7 @@ const placeholders = {
   deploymentId: 'TODO_PRODUCTION_DEPLOYMENT_ID',
   baseUrl: null,
   smokeCommand: null,
+  deployedAt: 'TODO_UTC_DEPLOYED_AT_SECONDS',
   smokePassedAt: 'TODO_UTC_SMOKE_TIMESTAMP_SECONDS',
   serviceInfo: null,
   operator: 'TODO_RELEASE_OPERATOR'

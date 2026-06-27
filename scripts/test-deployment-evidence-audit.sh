@@ -40,6 +40,7 @@ write_blocked_manifest() {
     "deploymentId",
     "baseUrl",
     "smokeCommand",
+    "deployedAt",
     "smokePassedAt",
     "serviceInfo",
     "operator"
@@ -76,6 +77,7 @@ write_ready_manifest() {
     "deploymentId",
     "baseUrl",
     "smokeCommand",
+    "deployedAt",
     "smokePassedAt",
     "serviceInfo",
     "operator"
@@ -87,6 +89,7 @@ write_ready_manifest() {
       "deploymentId": "ti-release-20260626",
       "baseUrl": "https://ti.soramitsu.io",
       "smokeCommand": "TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production",
+      "deployedAt": "2026-06-26T00:00:00Z",
       "smokePassedAt": "2026-06-26T00:00:00Z",
       "serviceInfo": {
         "serviceId": "ti.soramitsu.io",
@@ -457,13 +460,28 @@ expect_failure "unsupported service info evidence field" "deploymentEvidence[0].
 
 bad_timestamp="$tmp_dir/bad-timestamp.json"
 cp "$ready" "$bad_timestamp"
-perl -0pi -e 's/2026-06-26T00:00:00Z/2026-06-26/' "$bad_timestamp"
+perl -0pi -e 's/"smokePassedAt": "2026-06-26T00:00:00Z"/"smokePassedAt": "2026-06-26"/' "$bad_timestamp"
 expect_failure "bad smoke timestamp evidence" "smokePassedAt must be an ISO-8601 UTC second timestamp" run_audit "$bad_timestamp" --mainnet-registry "$valid_registry" --require-ready
+
+bad_deployed_timestamp="$tmp_dir/bad-deployed-timestamp.json"
+cp "$ready" "$bad_deployed_timestamp"
+perl -0pi -e 's/"deployedAt": "2026-06-26T00:00:00Z"/"deployedAt": "2026-06-26"/' "$bad_deployed_timestamp"
+expect_failure "bad deployed timestamp evidence" "deployedAt must be an ISO-8601 UTC second timestamp" run_audit "$bad_deployed_timestamp" --mainnet-registry "$valid_registry" --require-ready
 
 future_timestamp="$tmp_dir/future-timestamp.json"
 cp "$ready" "$future_timestamp"
-perl -0pi -e 's/2026-06-26T00:00:00Z/2999-01-01T00:00:00Z/' "$future_timestamp"
+perl -0pi -e 's/"smokePassedAt": "2026-06-26T00:00:00Z"/"smokePassedAt": "2999-01-01T00:00:00Z"/' "$future_timestamp"
 expect_failure "future smoke timestamp evidence" "smokePassedAt must not be in the future" run_audit "$future_timestamp" --mainnet-registry "$valid_registry" --require-ready
+
+future_deployed_timestamp="$tmp_dir/future-deployed-timestamp.json"
+cp "$ready" "$future_deployed_timestamp"
+perl -0pi -e 's/"deployedAt": "2026-06-26T00:00:00Z"/"deployedAt": "2999-01-01T00:00:00Z"/' "$future_deployed_timestamp"
+expect_failure "future deployed timestamp evidence" "deployedAt must not be in the future" run_audit "$future_deployed_timestamp" --mainnet-registry "$valid_registry" --require-ready
+
+smoke_before_deployment="$tmp_dir/smoke-before-deployment.json"
+cp "$ready" "$smoke_before_deployment"
+perl -0pi -e 's/"deployedAt": "2026-06-26T00:00:00Z"/"deployedAt": "2026-06-26T00:05:00Z"/' "$smoke_before_deployment"
+expect_failure "smoke before deployment evidence" "smokePassedAt must be at or after deployedAt" run_audit "$smoke_before_deployment" --mainnet-registry "$valid_registry" --require-ready
 
 secret_top_level="$tmp_dir/secret-top-level.json"
 cp "$ready" "$secret_top_level"
