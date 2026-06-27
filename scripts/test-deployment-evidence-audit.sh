@@ -219,6 +219,17 @@ cp "$blocked" "$missing_registry_blocker"
 perl -0pi -e 's/,\n    "mainnet-registry-placeholders-remain"//' "$missing_registry_blocker"
 expect_failure "blocked evidence missing registry placeholder blocker" "blocked deployment evidence missing blocker mainnet-registry-placeholders-remain" run_audit "$missing_registry_blocker" --mainnet-registry "$placeholder_registry"
 
+unsupported_blocker="$tmp_dir/unsupported-blocker.json"
+cp "$blocked" "$unsupported_blocker"
+node - "$unsupported_blocker" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.blockers.push('manual-approval-pending');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported deployment evidence blocker" "unsupported deployment evidence blocker: manual-approval-pending" run_audit "$unsupported_blocker" --mainnet-registry "$placeholder_registry"
+
 stale_registry_blocker="$tmp_dir/stale-registry-blocker.json"
 cp "$blocked" "$stale_registry_blocker"
 expect_failure "blocked evidence keeps stale registry placeholder blocker" "blocked deployment evidence has stale blocker mainnet-registry-placeholders-remain" run_audit "$stale_registry_blocker" --mainnet-registry "$valid_registry"
