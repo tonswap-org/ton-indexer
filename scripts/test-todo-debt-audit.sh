@@ -64,6 +64,15 @@ printf '%s\n' 'export const clean = true;' > "$stale_root/src/clean.ts"
 printf '%s\t%s\n' 'src/old.ts' 'export const old = true; // TODO deleted marker' > "$stale_root/config/todo-debt-baseline.tsv"
 expect_failure "stale baseline fixture" "$stale_root" "Baseline entries no longer exist"
 
+duplicate_root="$tmp_dir/duplicate-baseline"
+make_fixture_root "$duplicate_root"
+printf '%s\n' 'export const duplicate = true; // TODO duplicate baseline marker' 'export const duplicate = true; // TODO duplicate baseline marker' > "$duplicate_root/src/duplicate.ts"
+printf '%s\t%s\n%s\t%s\n' \
+  'src/duplicate.ts' 'export const duplicate = true; // TODO duplicate baseline marker' \
+  'src/duplicate.ts' 'export const duplicate = true; // TODO duplicate baseline marker' \
+  > "$duplicate_root/config/todo-debt-baseline.tsv"
+expect_failure "duplicate baseline fixture" "$duplicate_root" "Duplicate TODO debt baseline entries are forbidden"
+
 crash_root="$tmp_dir/crashing-placeholder"
 make_fixture_root "$crash_root"
 printf '%s\n' 'export function crash() { throw new Error("TODO wire implementation"); }' > "$crash_root/src/crash.ts"
