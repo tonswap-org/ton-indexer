@@ -175,6 +175,17 @@ fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "duplicate deployment evidence blocker" "duplicate deployment evidence blocker in manifest" bash "$GENERATOR_SCRIPT" --evidence "$duplicate_blocker"
 
+duplicate_verification_command="$tmp_dir/duplicate-verification-command.json"
+cp "$DEFAULT_MANIFEST" "$duplicate_verification_command"
+node - "$duplicate_verification_command" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.readyVerificationCommands.push('npm run test:deployment-evidence-audit');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "duplicate deployment evidence verification command" "duplicate deployment evidence verification command in manifest" bash "$GENERATOR_SCRIPT" --evidence "$duplicate_verification_command"
+
 missing_required_field="$tmp_dir/missing-required-field.json"
 cp "$DEFAULT_MANIFEST" "$missing_required_field"
 node - "$missing_required_field" <<'NODE'
@@ -196,6 +207,17 @@ manifest.requiredEvidenceFields = manifest.requiredEvidenceFields.filter((field)
 fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "missing service info field" "requiredEvidenceFields missing serviceInfo" bash "$GENERATOR_SCRIPT" --evidence "$missing_service_info_field"
+
+duplicate_required_field="$tmp_dir/duplicate-required-field.json"
+cp "$DEFAULT_MANIFEST" "$duplicate_required_field"
+node - "$duplicate_required_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.requiredEvidenceFields.push('imageDigest');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "duplicate deployment evidence required field" "duplicate deployment evidence required field in manifest" bash "$GENERATOR_SCRIPT" --evidence "$duplicate_required_field"
 
 unsupported_field="$tmp_dir/unsupported-field.json"
 cp "$DEFAULT_MANIFEST" "$unsupported_field"
