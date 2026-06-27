@@ -382,7 +382,11 @@ if (manifest) {
       fail(`dockerBuildCommand must be ${contract.dockerBuildCommand}`);
     }
 
-    const commands = requireArray(manifest.readyVerificationCommands, 'readyVerificationCommands').join('\n');
+    const commandList = requireArray(manifest.readyVerificationCommands, 'readyVerificationCommands');
+    const commands = commandList.join('\n');
+    if (new Set(commandList).size !== commandList.length) {
+      fail('duplicate deployment evidence verification command');
+    }
     for (const marker of [
       'npm run test:deployment-evidence-template',
       'npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json',
@@ -452,6 +456,9 @@ if (manifest) {
 
   const declaredFieldList = requireArray(manifest.requiredEvidenceFields, 'requiredEvidenceFields');
   const declaredFields = new Set(declaredFieldList);
+  if (declaredFields.size !== declaredFieldList.length) {
+    fail('duplicate deployment evidence required field');
+  }
   for (const field of requiredEvidenceFields) {
     if (!declaredFields.has(field)) {
       fail(`requiredEvidenceFields missing ${field}`);

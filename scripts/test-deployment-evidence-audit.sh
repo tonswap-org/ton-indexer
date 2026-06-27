@@ -260,10 +260,32 @@ cp "$blocked" "$missing_template_generator_command"
 perl -0pi -e 's/"npm run generate:deployment-evidence-template -- --output build\/reports\/production-deployment-evidence-template.json",\n//' "$missing_template_generator_command"
 expect_failure "missing template generator command" "readyVerificationCommands missing npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json" run_audit "$missing_template_generator_command" --mainnet-registry "$placeholder_registry"
 
+duplicate_verification_command="$tmp_dir/duplicate-verification-command.json"
+cp "$blocked" "$duplicate_verification_command"
+node - "$duplicate_verification_command" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.readyVerificationCommands.push('npm run test:deployment-evidence-audit');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "duplicate deployment evidence verification command" "duplicate deployment evidence verification command" run_audit "$duplicate_verification_command" --mainnet-registry "$placeholder_registry"
+
 missing_field="$tmp_dir/missing-field.json"
 cp "$blocked" "$missing_field"
 perl -0pi -e 's/"imageDigest",\n//' "$missing_field"
 expect_failure "missing image digest field" "requiredEvidenceFields missing imageDigest" run_audit "$missing_field" --mainnet-registry "$placeholder_registry"
+
+duplicate_required_field="$tmp_dir/duplicate-required-field.json"
+cp "$blocked" "$duplicate_required_field"
+node - "$duplicate_required_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.requiredEvidenceFields.push('imageDigest');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "duplicate deployment evidence required field" "duplicate deployment evidence required field" run_audit "$duplicate_required_field" --mainnet-registry "$placeholder_registry"
 
 unsupported_required_field="$tmp_dir/unsupported-required-field.json"
 cp "$blocked" "$unsupported_required_field"
