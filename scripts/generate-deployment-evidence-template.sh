@@ -60,13 +60,35 @@ const serviceContracts = {
     scope: 'ton-indexer-production-deployment-readiness',
     baseUrl: 'https://ti.soramitsu.io',
     smokeCommand: 'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
-    dockerBuildCommand: 'docker build -t ton-indexer:release .'
+    dockerBuildCommand: 'docker build -t ton-indexer:release .',
+    serviceInfo: {
+      serviceId: 'ti.soramitsu.io',
+      ecosystem: 'ton',
+      chainId: 'ton:mainnet',
+      network: 'mainnet',
+      publicBaseUrl: 'https://ti.soramitsu.io',
+      readOnly: true,
+      endpoints: {
+        openapi: '/api/indexer/v1/openapi.json'
+      }
+    }
   },
   'si.soramitsu.io': {
     scope: 'solswap-indexer-production-deployment-readiness',
     baseUrl: 'https://si.soramitsu.io',
     smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
-    dockerBuildCommand: 'docker build -t solswap-indexer:release .'
+    dockerBuildCommand: 'docker build -t solswap-indexer:release .',
+    serviceInfo: {
+      serviceId: 'si.soramitsu.io',
+      ecosystem: 'solana',
+      chainId: 'solana:mainnet',
+      network: 'mainnet',
+      publicBaseUrl: 'https://si.soramitsu.io',
+      readOnly: true,
+      endpoints: {
+        openapi: '/api/indexer/v1/openapi.json'
+      }
+    }
   }
 };
 const requiredEvidenceFields = [
@@ -76,6 +98,7 @@ const requiredEvidenceFields = [
   'baseUrl',
   'smokeCommand',
   'smokePassedAt',
+  'serviceInfo',
   'operator'
 ];
 const placeholders = {
@@ -85,8 +108,18 @@ const placeholders = {
   baseUrl: null,
   smokeCommand: null,
   smokePassedAt: 'TODO_UTC_SMOKE_TIMESTAMP_SECONDS',
+  serviceInfo: null,
   operator: 'TODO_RELEASE_OPERATOR'
 };
+const requiredServiceInfoFields = [
+  'serviceId',
+  'ecosystem',
+  'chainId',
+  'network',
+  'publicBaseUrl',
+  'readOnly',
+  'endpoints'
+];
 const allowedManifestFields = [
   'schemaVersion',
   'scope',
@@ -171,7 +204,34 @@ function rejectUnsupportedKeys(value, allowedFields, path) {
   }
 }
 
-function validateCommittedDeploymentEvidence(value) {
+function validateServiceInfo(value, contract, currentPath) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail(`${currentPath} must be an object`);
+    return;
+  }
+
+  rejectUnsupportedKeys(value, requiredServiceInfoFields, currentPath);
+  for (const field of ['serviceId', 'ecosystem', 'chainId', 'network', 'publicBaseUrl']) {
+    if (value[field] !== contract.serviceInfo[field]) {
+      fail(`${currentPath}.${field} must be ${contract.serviceInfo[field]}`);
+    }
+  }
+  if (value.readOnly !== contract.serviceInfo.readOnly) {
+    fail(`${currentPath}.readOnly must be ${contract.serviceInfo.readOnly}`);
+  }
+  if (!value.endpoints || typeof value.endpoints !== 'object' || Array.isArray(value.endpoints)) {
+    fail(`${currentPath}.endpoints must be an object`);
+    return;
+  }
+  rejectUnsupportedKeys(value.endpoints, Object.keys(contract.serviceInfo.endpoints), `${currentPath}.endpoints`);
+  for (const [name, expected] of Object.entries(contract.serviceInfo.endpoints)) {
+    if (value.endpoints[name] !== expected) {
+      fail(`${currentPath}.endpoints.${name} must be ${expected}`);
+    }
+  }
+}
+
+function validateCommittedDeploymentEvidence(value, contract) {
   const evidence = requireArray(value, 'deploymentEvidence');
   evidence.forEach((record, index) => {
     const path = `deploymentEvidence[${index}]`;
@@ -180,6 +240,9 @@ function validateCommittedDeploymentEvidence(value) {
       return;
     }
     rejectUnsupportedKeys(record, requiredEvidenceFields, path);
+    if (Object.prototype.hasOwnProperty.call(record, 'serviceInfo') && contract) {
+      validateServiceInfo(record.serviceInfo, contract, `${path}.serviceInfo`);
+    }
   });
 
   if (evidence.length > 0) {
@@ -237,7 +300,7 @@ if (manifest) {
       fail(`unsupported deployment evidence field in manifest: ${field}`);
     }
   }
-  validateCommittedDeploymentEvidence(manifest.deploymentEvidence);
+  validateCommittedDeploymentEvidence(manifest.deploymentEvidence, contract);
 }
 
 if (errors.length > 0) {
@@ -251,6 +314,7 @@ const evidence = {};
 for (const field of manifest.requiredEvidenceFields) {
   if (field === 'baseUrl') evidence[field] = contract.baseUrl;
   else if (field === 'smokeCommand') evidence[field] = contract.smokeCommand;
+  else if (field === 'serviceInfo') evidence[field] = contract.serviceInfo;
   else evidence[field] = placeholders[field];
 }
 

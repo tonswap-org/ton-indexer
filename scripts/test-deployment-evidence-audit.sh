@@ -41,6 +41,7 @@ write_blocked_manifest() {
     "baseUrl",
     "smokeCommand",
     "smokePassedAt",
+    "serviceInfo",
     "operator"
   ],
   "deploymentEvidence": []
@@ -76,6 +77,7 @@ write_ready_manifest() {
     "baseUrl",
     "smokeCommand",
     "smokePassedAt",
+    "serviceInfo",
     "operator"
   ],
   "deploymentEvidence": [
@@ -86,6 +88,17 @@ write_ready_manifest() {
       "baseUrl": "https://ti.soramitsu.io",
       "smokeCommand": "TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production",
       "smokePassedAt": "2026-06-26T00:00:00Z",
+      "serviceInfo": {
+        "serviceId": "ti.soramitsu.io",
+        "ecosystem": "ton",
+        "chainId": "ton:mainnet",
+        "network": "mainnet",
+        "publicBaseUrl": "https://ti.soramitsu.io",
+        "readOnly": true,
+        "endpoints": {
+          "openapi": "/api/indexer/v1/openapi.json"
+        }
+      },
       "operator": "release"
     }
   ]
@@ -342,6 +355,61 @@ wrong_smoke="$tmp_dir/wrong-smoke.json"
 cp "$ready" "$wrong_smoke"
 perl -0pi -e 's/TON_INDEXER_BASE_URL=https:\/\/ti\.soramitsu\.io npm run smoke:production/npm run smoke:production/g' "$wrong_smoke"
 expect_failure "wrong production smoke command evidence" "smokeCommand must be TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production" run_audit "$wrong_smoke" --mainnet-registry "$valid_registry" --require-ready
+
+missing_service_info="$tmp_dir/missing-service-info.json"
+cp "$ready" "$missing_service_info"
+node - "$missing_service_info" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+delete manifest.deploymentEvidence[0].serviceInfo;
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "missing service info evidence" "serviceInfo must be an object" run_audit "$missing_service_info" --mainnet-registry "$valid_registry" --require-ready
+
+wrong_service_info_id="$tmp_dir/wrong-service-info-id.json"
+cp "$ready" "$wrong_service_info_id"
+node - "$wrong_service_info_id" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].serviceInfo.serviceId = 'si.soramitsu.io';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "wrong service info service id evidence" "serviceInfo.serviceId must be ti.soramitsu.io" run_audit "$wrong_service_info_id" --mainnet-registry "$valid_registry" --require-ready
+
+wrong_service_info_network="$tmp_dir/wrong-service-info-network.json"
+cp "$ready" "$wrong_service_info_network"
+node - "$wrong_service_info_network" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].serviceInfo.network = 'testnet';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "wrong service info network evidence" "serviceInfo.network must be mainnet" run_audit "$wrong_service_info_network" --mainnet-registry "$valid_registry" --require-ready
+
+wrong_service_info_endpoint="$tmp_dir/wrong-service-info-endpoint.json"
+cp "$ready" "$wrong_service_info_endpoint"
+node - "$wrong_service_info_endpoint" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].serviceInfo.endpoints.openapi = '/openapi.json';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "wrong service info endpoint evidence" "serviceInfo.endpoints.openapi must be /api/indexer/v1/openapi.json" run_audit "$wrong_service_info_endpoint" --mainnet-registry "$valid_registry" --require-ready
+
+unsupported_service_info_field="$tmp_dir/unsupported-service-info-field.json"
+cp "$ready" "$unsupported_service_info_field"
+node - "$unsupported_service_info_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].serviceInfo.adminUrl = 'https://internal.example';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported service info evidence field" "deploymentEvidence[0].serviceInfo.adminUrl is not supported in public deployment evidence" run_audit "$unsupported_service_info_field" --mainnet-registry "$valid_registry" --require-ready
 
 bad_timestamp="$tmp_dir/bad-timestamp.json"
 cp "$ready" "$bad_timestamp"
