@@ -230,6 +230,17 @@ fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "unsupported deployment evidence blocker" "unsupported deployment evidence blocker: manual-approval-pending" run_audit "$unsupported_blocker" --mainnet-registry "$placeholder_registry"
 
+duplicate_blocker="$tmp_dir/duplicate-blocker.json"
+cp "$blocked" "$duplicate_blocker"
+node - "$duplicate_blocker" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.blockers.push('mainnet-registry-placeholders-remain');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "duplicate deployment evidence blocker" "duplicate deployment evidence blocker" run_audit "$duplicate_blocker" --mainnet-registry "$placeholder_registry"
+
 stale_registry_blocker="$tmp_dir/stale-registry-blocker.json"
 cp "$blocked" "$stale_registry_blocker"
 expect_failure "blocked evidence keeps stale registry placeholder blocker" "blocked deployment evidence has stale blocker mainnet-registry-placeholders-remain" run_audit "$stale_registry_blocker" --mainnet-registry "$valid_registry"

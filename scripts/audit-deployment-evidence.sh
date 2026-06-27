@@ -403,6 +403,9 @@ if (manifest) {
       if (contract.registryPlaceholderBlocker) {
         allowedBlockers.add(contract.registryPlaceholderBlocker);
       }
+      if (blockers.size !== manifestBlockers.length) {
+        fail('duplicate deployment evidence blocker');
+      }
       for (const blocker of contract.requiredBlockers) {
         if (!blockers.has(blocker)) {
           fail(`blocked deployment evidence missing blocker ${blocker}`);
