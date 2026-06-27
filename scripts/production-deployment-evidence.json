@@ -30,6 +30,7 @@
     "deployedAt",
     "smokePassedAt",
     "serviceInfo",
+    "healthInfo",
     "operator"
   ],
   "deploymentEvidence": []

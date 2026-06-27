@@ -11,8 +11,21 @@ async function main() {
       network: 'mainnet',
       enableWriteRpc: false
     },
-    {} as IndexerService
+    {
+      getHealth() {
+        return { lastMasterSeqno: 123 };
+      }
+    } as IndexerService
   );
+
+  const healthResponse = await app.inject({ method: 'GET', url: '/api/indexer/v1/health' });
+  assert.equal(healthResponse.statusCode, 200);
+  const health = healthResponse.json();
+  assert.equal(health.serviceId, 'ti.soramitsu.io');
+  assert.equal(health.ecosystem, 'ton');
+  assert.equal(health.chainId, 'ton:mainnet');
+  assert.equal(health.network, 'mainnet');
+  assert.equal(health.lastMasterSeqno, 123);
 
   const response = await app.inject({ method: 'GET', url: '/api/indexer/v1/service-info' });
   assert.equal(response.statusCode, 200);

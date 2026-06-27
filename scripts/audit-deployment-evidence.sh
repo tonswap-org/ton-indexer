@@ -76,6 +76,13 @@ const serviceContracts = {
         openapi: '/api/indexer/v1/openapi.json'
       }
     },
+    healthInfo: {
+      serviceId: 'ti.soramitsu.io',
+      ecosystem: 'ton',
+      chainId: 'ton:mainnet',
+      network: 'mainnet',
+      lastMasterSeqno: 'TODO_LAST_MASTER_SEQNO'
+    },
     requiredBlockers: [
       'production-deployment-evidence-missing',
       'live-production-smoke-failing'
@@ -97,6 +104,13 @@ const serviceContracts = {
         openapi: '/api/indexer/v1/openapi.json'
       }
     },
+    healthInfo: {
+      ok: true,
+      serviceId: 'si.soramitsu.io',
+      ecosystem: 'solana',
+      chainId: 'solana:mainnet',
+      network: 'mainnet'
+    },
     requiredBlockers: [
       'production-deployment-evidence-missing',
       'live-production-smoke-failing',
@@ -114,6 +128,7 @@ const requiredEvidenceFields = [
   'deployedAt',
   'smokePassedAt',
   'serviceInfo',
+  'healthInfo',
   'operator'
 ];
 
@@ -125,6 +140,19 @@ const requiredServiceInfoFields = [
   'publicBaseUrl',
   'readOnly',
   'endpoints'
+];
+
+const requiredHealthInfoFields = [
+  'serviceId',
+  'ecosystem',
+  'chainId',
+  'network'
+];
+
+const allowedHealthInfoFields = [
+  ...requiredHealthInfoFields,
+  'ok',
+  'lastMasterSeqno'
 ];
 
 const allowedManifestFields = [
@@ -299,6 +327,37 @@ function validateServiceInfo(value, contract, path) {
     if (value.endpoints[name] !== expected) {
       fail(`${path}.endpoints.${name} must be ${expected}`);
     }
+  }
+}
+
+function validateHealthInfo(value, contract, path) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail(`${path} must be an object`);
+    return;
+  }
+
+  rejectUnsupportedKeys(value, allowedHealthInfoFields, path);
+  for (const field of requiredHealthInfoFields) {
+    if (value[field] !== contract.healthInfo[field]) {
+      fail(`${path}.${field} must be ${contract.healthInfo[field]}`);
+    }
+  }
+
+  if (contract.healthInfo.ok === true) {
+    if (value.ok !== true) {
+      fail(`${path}.ok must be true`);
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'lastMasterSeqno')) {
+      fail(`${path}.lastMasterSeqno is not supported in public deployment evidence`);
+    }
+    return;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(value, 'ok')) {
+    fail(`${path}.ok is not supported in public deployment evidence`);
+  }
+  if (!Number.isInteger(value.lastMasterSeqno) || value.lastMasterSeqno < 0) {
+    fail(`${path}.lastMasterSeqno must be a non-negative integer`);
   }
 }
 
@@ -519,7 +578,7 @@ if (manifest) {
     rejectUnsupportedKeys(entry, requiredEvidenceFields, `deploymentEvidence[${index}]`);
 
     for (const field of requiredEvidenceFields) {
-      if (field === 'serviceInfo') {
+      if (field === 'serviceInfo' || field === 'healthInfo') {
         continue;
       }
       if (!nonEmptyString(entry[field])) {
@@ -551,6 +610,7 @@ if (manifest) {
 
     if (contract) {
       validateServiceInfo(entry.serviceInfo, contract, `deploymentEvidence[${index}].serviceInfo`);
+      validateHealthInfo(entry.healthInfo, contract, `deploymentEvidence[${index}].healthInfo`);
     }
 
     if (!isIsoUtcSecond(entry.deployedAt)) {
