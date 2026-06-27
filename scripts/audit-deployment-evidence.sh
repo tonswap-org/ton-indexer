@@ -397,10 +397,20 @@ if (manifest) {
     }
 
     if (manifest.status === 'blocked') {
-      const blockers = new Set(requireArray(manifest.blockers, 'blockers'));
+      const manifestBlockers = requireArray(manifest.blockers, 'blockers');
+      const blockers = new Set(manifestBlockers);
+      const allowedBlockers = new Set(contract.requiredBlockers);
+      if (contract.registryPlaceholderBlocker) {
+        allowedBlockers.add(contract.registryPlaceholderBlocker);
+      }
       for (const blocker of contract.requiredBlockers) {
         if (!blockers.has(blocker)) {
           fail(`blocked deployment evidence missing blocker ${blocker}`);
+        }
+      }
+      for (const blocker of manifestBlockers) {
+        if (!allowedBlockers.has(blocker)) {
+          fail(`unsupported deployment evidence blocker: ${blocker}`);
         }
       }
       if (contract.registryPlaceholderBlocker && registryInspection) {

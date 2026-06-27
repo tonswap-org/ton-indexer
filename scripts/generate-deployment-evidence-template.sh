@@ -61,6 +61,11 @@ const serviceContracts = {
     baseUrl: 'https://ti.soramitsu.io',
     smokeCommand: 'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
     dockerBuildCommand: 'docker build -t ton-indexer:release .',
+    requiredBlockers: [
+      'production-deployment-evidence-missing',
+      'live-production-smoke-failing',
+      'mainnet-registry-placeholders-remain'
+    ],
     serviceInfo: {
       serviceId: 'ti.soramitsu.io',
       ecosystem: 'ton',
@@ -78,6 +83,11 @@ const serviceContracts = {
     baseUrl: 'https://si.soramitsu.io',
     smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
     dockerBuildCommand: 'docker build -t solswap-indexer:release .',
+    requiredBlockers: [
+      'production-deployment-evidence-missing',
+      'live-production-smoke-failing',
+      'production-routing-mismatch'
+    ],
     serviceInfo: {
       serviceId: 'si.soramitsu.io',
       ecosystem: 'solana',
@@ -284,6 +294,18 @@ if (manifest) {
     ]) {
       if (!commands.includes(marker)) {
         fail(`readyVerificationCommands missing ${marker}`);
+      }
+    }
+
+    const blockers = requireArray(manifest.blockers, 'blockers');
+    for (const blocker of contract.requiredBlockers) {
+      if (!blockers.includes(blocker)) {
+        fail(`blocked deployment evidence missing ${blocker}`);
+      }
+    }
+    for (const blocker of blockers) {
+      if (!contract.requiredBlockers.includes(blocker)) {
+        fail(`unsupported deployment evidence blocker in manifest: ${blocker}`);
       }
     }
   }
