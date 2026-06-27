@@ -43,6 +43,7 @@ write_blocked_manifest() {
     "deployedAt",
     "smokePassedAt",
     "serviceInfo",
+    "healthInfo",
     "operator"
   ],
   "deploymentEvidence": []
@@ -80,6 +81,7 @@ write_ready_manifest() {
     "deployedAt",
     "smokePassedAt",
     "serviceInfo",
+    "healthInfo",
     "operator"
   ],
   "deploymentEvidence": [
@@ -101,6 +103,13 @@ write_ready_manifest() {
         "endpoints": {
           "openapi": "/api/indexer/v1/openapi.json"
         }
+      },
+      "healthInfo": {
+        "serviceId": "ti.soramitsu.io",
+        "ecosystem": "ton",
+        "chainId": "ton:mainnet",
+        "network": "mainnet",
+        "lastMasterSeqno": 123456
       },
       "operator": "release"
     }
@@ -278,6 +287,17 @@ missing_field="$tmp_dir/missing-field.json"
 cp "$blocked" "$missing_field"
 perl -0pi -e 's/"imageDigest",\n//' "$missing_field"
 expect_failure "missing image digest field" "requiredEvidenceFields missing imageDigest" run_audit "$missing_field" --mainnet-registry "$placeholder_registry"
+
+missing_health_info_field="$tmp_dir/missing-health-info-field.json"
+cp "$blocked" "$missing_health_info_field"
+node - "$missing_health_info_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.requiredEvidenceFields = manifest.requiredEvidenceFields.filter((field) => field !== 'healthInfo');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "missing health info field" "requiredEvidenceFields missing healthInfo" run_audit "$missing_health_info_field" --mainnet-registry "$placeholder_registry"
 
 duplicate_required_field="$tmp_dir/duplicate-required-field.json"
 cp "$blocked" "$duplicate_required_field"
@@ -457,6 +477,83 @@ manifest.deploymentEvidence[0].serviceInfo.adminUrl = 'https://internal.example'
 fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "unsupported service info evidence field" "deploymentEvidence[0].serviceInfo.adminUrl is not supported in public deployment evidence" run_audit "$unsupported_service_info_field" --mainnet-registry "$valid_registry" --require-ready
+
+missing_health_info="$tmp_dir/missing-health-info.json"
+cp "$ready" "$missing_health_info"
+node - "$missing_health_info" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+delete manifest.deploymentEvidence[0].healthInfo;
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "missing health info evidence" "healthInfo must be an object" run_audit "$missing_health_info" --mainnet-registry "$valid_registry" --require-ready
+
+wrong_health_info_id="$tmp_dir/wrong-health-info-id.json"
+cp "$ready" "$wrong_health_info_id"
+node - "$wrong_health_info_id" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].healthInfo.serviceId = 'si.soramitsu.io';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "wrong health info service id evidence" "healthInfo.serviceId must be ti.soramitsu.io" run_audit "$wrong_health_info_id" --mainnet-registry "$valid_registry" --require-ready
+
+wrong_health_info_network="$tmp_dir/wrong-health-info-network.json"
+cp "$ready" "$wrong_health_info_network"
+node - "$wrong_health_info_network" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].healthInfo.network = 'testnet';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "wrong health info network evidence" "healthInfo.network must be mainnet" run_audit "$wrong_health_info_network" --mainnet-registry "$valid_registry" --require-ready
+
+missing_last_master_seqno="$tmp_dir/missing-last-master-seqno.json"
+cp "$ready" "$missing_last_master_seqno"
+node - "$missing_last_master_seqno" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+delete manifest.deploymentEvidence[0].healthInfo.lastMasterSeqno;
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "missing health last master seqno evidence" "healthInfo.lastMasterSeqno must be a non-negative integer" run_audit "$missing_last_master_seqno" --mainnet-registry "$valid_registry" --require-ready
+
+bad_last_master_seqno="$tmp_dir/bad-last-master-seqno.json"
+cp "$ready" "$bad_last_master_seqno"
+node - "$bad_last_master_seqno" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].healthInfo.lastMasterSeqno = -1;
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "bad health last master seqno evidence" "healthInfo.lastMasterSeqno must be a non-negative integer" run_audit "$bad_last_master_seqno" --mainnet-registry "$valid_registry" --require-ready
+
+solana_health_field="$tmp_dir/solana-health-field.json"
+cp "$ready" "$solana_health_field"
+node - "$solana_health_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].healthInfo.ok = true;
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "solana health field in ton evidence" "healthInfo.ok is not supported in public deployment evidence" run_audit "$solana_health_field" --mainnet-registry "$valid_registry" --require-ready
+
+unsupported_health_info_field="$tmp_dir/unsupported-health-info-field.json"
+cp "$ready" "$unsupported_health_info_field"
+node - "$unsupported_health_info_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].healthInfo.adminUrl = 'https://internal.example';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported health info evidence field" "deploymentEvidence[0].healthInfo.adminUrl is not supported in public deployment evidence" run_audit "$unsupported_health_info_field" --mainnet-registry "$valid_registry" --require-ready
 
 bad_timestamp="$tmp_dir/bad-timestamp.json"
 cp "$ready" "$bad_timestamp"
