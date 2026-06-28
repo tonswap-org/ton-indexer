@@ -110,6 +110,13 @@ const expectedServiceInfo = {
     openapi: '/api/indexer/v1/openapi.json',
   },
 };
+const expectedHealthInfo = {
+  serviceId: 'ti.soramitsu.io',
+  ecosystem: 'ton',
+  chainId: 'ton:mainnet',
+  network: 'mainnet',
+  lastMasterSeqno: 'TODO_LAST_MASTER_SEQNO',
+};
 check(evidence.commit === 'TODO_40_HEX_GIT_COMMIT', 'commit placeholder mismatch');
 check(evidence.imageDigest === 'sha256:TODO_64_HEX_IMAGE_DIGEST', 'image digest placeholder mismatch');
 check(evidence.deploymentId === 'TODO_PRODUCTION_DEPLOYMENT_ID', 'deployment id placeholder mismatch');
@@ -118,6 +125,7 @@ check(evidence.smokeCommand === manifest.smokeCommand, 'smokeCommand must be cop
 check(evidence.deployedAt === 'TODO_UTC_DEPLOYED_AT_SECONDS', 'deployedAt placeholder mismatch');
 check(evidence.smokePassedAt === 'TODO_UTC_SMOKE_TIMESTAMP_SECONDS', 'smoke timestamp placeholder mismatch');
 check(JSON.stringify(evidence.serviceInfo) === JSON.stringify(expectedServiceInfo), 'serviceInfo contract mismatch');
+check(JSON.stringify(evidence.healthInfo) === JSON.stringify(expectedHealthInfo), 'healthInfo contract mismatch');
 check(evidence.operator === 'TODO_RELEASE_OPERATOR', 'operator placeholder mismatch');
 
 for (const field of manifest.requiredEvidenceFields || []) {
@@ -209,6 +217,17 @@ fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "missing service info field" "requiredEvidenceFields missing serviceInfo" bash "$GENERATOR_SCRIPT" --evidence "$missing_service_info_field"
 
+missing_health_info_field="$tmp_dir/missing-health-info-field.json"
+cp "$DEFAULT_MANIFEST" "$missing_health_info_field"
+node - "$missing_health_info_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.requiredEvidenceFields = manifest.requiredEvidenceFields.filter((field) => field !== 'healthInfo');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "missing health info field" "requiredEvidenceFields missing healthInfo" bash "$GENERATOR_SCRIPT" --evidence "$missing_health_info_field"
+
 duplicate_required_field="$tmp_dir/duplicate-required-field.json"
 cp "$DEFAULT_MANIFEST" "$duplicate_required_field"
 node - "$duplicate_required_field" <<'NODE'
@@ -276,6 +295,26 @@ manifest.deploymentEvidence = [{
 fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "unsupported service info template evidence field" "deploymentEvidence[0].serviceInfo.adminUrl is not supported in public deployment evidence manifest" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_service_info_field"
+
+unsupported_health_info_field="$tmp_dir/unsupported-health-info-field.json"
+cp "$DEFAULT_MANIFEST" "$unsupported_health_info_field"
+node - "$unsupported_health_info_field" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence = [{
+  healthInfo: {
+    serviceId: 'ti.soramitsu.io',
+    ecosystem: 'ton',
+    chainId: 'ton:mainnet',
+    network: 'mainnet',
+    lastMasterSeqno: 123456,
+    adminUrl: 'https://internal.example'
+  }
+}];
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "unsupported health info template evidence field" "deploymentEvidence[0].healthInfo.adminUrl is not supported in public deployment evidence manifest" bash "$GENERATOR_SCRIPT" --evidence "$unsupported_health_info_field"
 
 prefilled_deployment="$tmp_dir/prefilled-deployment.json"
 cp "$DEFAULT_MANIFEST" "$prefilled_deployment"

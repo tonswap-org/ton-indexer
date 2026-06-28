@@ -76,6 +76,13 @@ const serviceContracts = {
       endpoints: {
         openapi: '/api/indexer/v1/openapi.json'
       }
+    },
+    healthInfo: {
+      serviceId: 'ti.soramitsu.io',
+      ecosystem: 'ton',
+      chainId: 'ton:mainnet',
+      network: 'mainnet',
+      lastMasterSeqno: 'TODO_LAST_MASTER_SEQNO'
     }
   },
   'si.soramitsu.io': {
@@ -98,6 +105,13 @@ const serviceContracts = {
       endpoints: {
         openapi: '/api/indexer/v1/openapi.json'
       }
+    },
+    healthInfo: {
+      ok: true,
+      serviceId: 'si.soramitsu.io',
+      ecosystem: 'solana',
+      chainId: 'solana:mainnet',
+      network: 'mainnet'
     }
   }
 };
@@ -110,6 +124,7 @@ const requiredEvidenceFields = [
   'deployedAt',
   'smokePassedAt',
   'serviceInfo',
+  'healthInfo',
   'operator'
 ];
 const placeholders = {
@@ -121,6 +136,7 @@ const placeholders = {
   deployedAt: 'TODO_UTC_DEPLOYED_AT_SECONDS',
   smokePassedAt: 'TODO_UTC_SMOKE_TIMESTAMP_SECONDS',
   serviceInfo: null,
+  healthInfo: null,
   operator: 'TODO_RELEASE_OPERATOR'
 };
 const requiredServiceInfoFields = [
@@ -131,6 +147,17 @@ const requiredServiceInfoFields = [
   'publicBaseUrl',
   'readOnly',
   'endpoints'
+];
+const requiredHealthInfoFields = [
+  'serviceId',
+  'ecosystem',
+  'chainId',
+  'network'
+];
+const allowedHealthInfoFields = [
+  ...requiredHealthInfoFields,
+  'ok',
+  'lastMasterSeqno'
 ];
 const allowedManifestFields = [
   'schemaVersion',
@@ -243,6 +270,35 @@ function validateServiceInfo(value, contract, currentPath) {
   }
 }
 
+function validateHealthInfo(value, contract, currentPath) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail(`${currentPath} must be an object`);
+    return;
+  }
+
+  rejectUnsupportedKeys(value, allowedHealthInfoFields, currentPath);
+  for (const field of requiredHealthInfoFields) {
+    if (value[field] !== contract.healthInfo[field]) {
+      fail(`${currentPath}.${field} must be ${contract.healthInfo[field]}`);
+    }
+  }
+  if (contract.healthInfo.ok === true) {
+    if (value.ok !== true) {
+      fail(`${currentPath}.ok must be true`);
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'lastMasterSeqno')) {
+      fail(`${currentPath}.lastMasterSeqno is not supported in public deployment evidence manifest`);
+    }
+    return;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'ok')) {
+    fail(`${currentPath}.ok is not supported in public deployment evidence manifest`);
+  }
+  if (!Number.isInteger(value.lastMasterSeqno) || value.lastMasterSeqno < 0) {
+    fail(`${currentPath}.lastMasterSeqno must be a non-negative integer`);
+  }
+}
+
 function validateCommittedDeploymentEvidence(value, contract) {
   const evidence = requireArray(value, 'deploymentEvidence');
   evidence.forEach((record, index) => {
@@ -254,6 +310,9 @@ function validateCommittedDeploymentEvidence(value, contract) {
     rejectUnsupportedKeys(record, requiredEvidenceFields, path);
     if (Object.prototype.hasOwnProperty.call(record, 'serviceInfo') && contract) {
       validateServiceInfo(record.serviceInfo, contract, `${path}.serviceInfo`);
+    }
+    if (Object.prototype.hasOwnProperty.call(record, 'healthInfo') && contract) {
+      validateHealthInfo(record.healthInfo, contract, `${path}.healthInfo`);
     }
   });
 
@@ -350,6 +409,7 @@ for (const field of manifest.requiredEvidenceFields) {
   if (field === 'baseUrl') evidence[field] = contract.baseUrl;
   else if (field === 'smokeCommand') evidence[field] = contract.smokeCommand;
   else if (field === 'serviceInfo') evidence[field] = contract.serviceInfo;
+  else if (field === 'healthInfo') evidence[field] = contract.healthInfo;
   else evidence[field] = placeholders[field];
 }
 

@@ -45,5 +45,10 @@ const serviceInfoProps =
   ({} as Record<string, { enum?: string[] }>);
 assert.equal(serviceInfoProps.serviceId?.enum?.[0], 'ti.soramitsu.io');
 assert.equal(serviceInfoProps.ecosystem?.enum?.[0], 'ton');
+const healthProps =
+  spec.components?.schemas?.HealthStatus?.properties ??
+  ({} as Record<string, { enum?: string[] }>);
+assert.equal(healthProps.serviceId?.enum?.[0], 'ti.soramitsu.io');
+assert.equal(healthProps.ecosystem?.enum?.[0], 'ton');
 
 console.log('openapi ok');
