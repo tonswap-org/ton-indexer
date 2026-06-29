@@ -117,6 +117,10 @@ const main = async () => {
   delete missingServiceInfo['/api/indexer/v1/service-info'];
   await assertSmokeRejects(missingServiceInfo, /deploy the current ton-indexer image to ti\.soramitsu\.io/);
 
+  const missingSchemaVersion = validRoutes();
+  delete (missingSchemaVersion['/api/indexer/v1/service-info'].body as Record<string, unknown>).schemaVersion;
+  await assertSmokeRejects(missingSchemaVersion, /service-info schemaVersion must be 1/);
+
   const wrongIdentity = validRoutes();
   wrongIdentity['/api/indexer/v1/service-info'].body = {
     serviceId: 'si.soramitsu.io',
