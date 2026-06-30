@@ -239,12 +239,14 @@ function isRepeatedHexPlaceholder(value) {
 }
 
 function isTemplatePlaceholder(value) {
-  const normalized = String(value || '').trim().toUpperCase();
+  const raw = String(value || '').trim();
+  const normalized = raw.toUpperCase();
   return (
     normalized.length === 0 ||
     normalized.startsWith('TODO_') ||
     normalized.startsWith('REPLACE_WITH_') ||
-    normalized.includes('PLACEHOLDER')
+    normalized.includes('PLACEHOLDER') ||
+    /^(todo|tbd|placeholder|example|sample|dummy|unknown|n\/a)(?:$|[._\-\s:])/u.test(raw.toLowerCase())
   );
 }
 
