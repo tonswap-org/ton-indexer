@@ -112,10 +112,13 @@ RPC remains disabled unless the release explicitly requires otherwise.
 
 Deployment evidence is tracked in
 `scripts/production-deployment-evidence.json`. Keep it blocked until the Docker
-image digest, deployment ID, tagged commit, exact smoke command, operator, and
-UTC smoke timestamp are recorded together with the production
+image digest, deployment ID, current release commit, exact smoke command,
+operator, and UTC smoke timestamp are recorded together with the production
 `/api/indexer/v1/service-info` identity payload observed by the smoke check, and
-`npm run audit:deployment-evidence -- --require-ready` passes.
+`npm run audit:deployment-evidence -- --require-ready` passes. The ready audit
+compares the evidence commit with the local checkout `HEAD`; set
+`DEPLOYMENT_EVIDENCE_EXPECTED_COMMIT` only when release tooling is validating a
+specific tagged commit.
 Generate a fill-in-ready evidence template before recording the live result:
 
 ```sh
