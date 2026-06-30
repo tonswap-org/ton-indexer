@@ -8,6 +8,7 @@ type OpenApiSpec = {
 };
 
 type ServiceInfo = {
+  schemaVersion?: unknown;
   serviceId?: unknown;
   ecosystem?: unknown;
   chainId?: unknown;
@@ -105,6 +106,7 @@ export async function runProductionSmoke(baseUrlInput = process.env.TON_INDEXER_
 
   const serviceInfo = await fetchJson(baseUrl, '/api/indexer/v1/service-info') as ServiceInfo;
   assert.equal(serviceInfo.serviceId, 'ti.soramitsu.io', 'service-info serviceId must be ti.soramitsu.io');
+  assert.equal(serviceInfo.schemaVersion, 1, 'service-info schemaVersion must be 1');
   assert.equal(serviceInfo.ecosystem, 'ton', 'service-info ecosystem must be ton');
   assert.equal(serviceInfo.chainId, 'ton:mainnet', 'service-info chainId must be ton:mainnet');
   assert.equal(serviceInfo.network, 'mainnet', 'service-info network must be mainnet');

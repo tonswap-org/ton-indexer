@@ -100,6 +100,7 @@ check(secretLikeKeyReason(manifest) === null, 'template must not contain secret-
 
 const evidence = manifest.deploymentEvidence[0] || {};
 const expectedServiceInfo = {
+  schemaVersion: 1,
   serviceId: 'ti.soramitsu.io',
   ecosystem: 'ton',
   chainId: 'ton:mainnet',
