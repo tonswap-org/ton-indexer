@@ -67,6 +67,7 @@ const serviceContracts = {
       'mainnet-registry-placeholders-remain'
     ],
     serviceInfo: {
+      schemaVersion: 1,
       serviceId: 'ti.soramitsu.io',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
@@ -96,6 +97,7 @@ const serviceContracts = {
       'production-routing-mismatch'
     ],
     serviceInfo: {
+      schemaVersion: 1,
       serviceId: 'si.soramitsu.io',
       ecosystem: 'solana',
       chainId: 'solana:mainnet',
@@ -140,6 +142,7 @@ const placeholders = {
   operator: 'TODO_RELEASE_OPERATOR'
 };
 const requiredServiceInfoFields = [
+  'schemaVersion',
   'serviceId',
   'ecosystem',
   'chainId',
@@ -250,7 +253,7 @@ function validateServiceInfo(value, contract, currentPath) {
   }
 
   rejectUnsupportedKeys(value, requiredServiceInfoFields, currentPath);
-  for (const field of ['serviceId', 'ecosystem', 'chainId', 'network', 'publicBaseUrl']) {
+  for (const field of ['schemaVersion', 'serviceId', 'ecosystem', 'chainId', 'network', 'publicBaseUrl']) {
     if (value[field] !== contract.serviceInfo[field]) {
       fail(`${currentPath}.${field} must be ${contract.serviceInfo[field]}`);
     }

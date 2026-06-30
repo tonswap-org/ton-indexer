@@ -66,6 +66,7 @@ const serviceContracts = {
     mainnetRegistryFile,
     registryPlaceholderBlocker: 'mainnet-registry-placeholders-remain',
     serviceInfo: {
+      schemaVersion: 1,
       serviceId: 'ti.soramitsu.io',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
@@ -94,6 +95,7 @@ const serviceContracts = {
     smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
     dockerBuildCommand: 'docker build -t solswap-indexer:release .',
     serviceInfo: {
+      schemaVersion: 1,
       serviceId: 'si.soramitsu.io',
       ecosystem: 'solana',
       chainId: 'solana:mainnet',
@@ -133,6 +135,7 @@ const requiredEvidenceFields = [
 ];
 
 const requiredServiceInfoFields = [
+  'schemaVersion',
   'serviceId',
   'ecosystem',
   'chainId',
@@ -236,12 +239,14 @@ function isRepeatedHexPlaceholder(value) {
 }
 
 function isTemplatePlaceholder(value) {
-  const normalized = String(value || '').trim().toUpperCase();
+  const raw = String(value || '').trim();
+  const normalized = raw.toUpperCase();
   return (
     normalized.length === 0 ||
     normalized.startsWith('TODO_') ||
     normalized.startsWith('REPLACE_WITH_') ||
-    normalized.includes('PLACEHOLDER')
+    normalized.includes('PLACEHOLDER') ||
+    /^(todo|tbd|placeholder|example|sample|dummy|unknown|n\/a)(?:$|[._\-\s:])/u.test(raw.toLowerCase())
   );
 }
 
@@ -307,7 +312,7 @@ function validateServiceInfo(value, contract, path) {
   }
 
   rejectUnsupportedKeys(value, requiredServiceInfoFields, path);
-  for (const field of ['serviceId', 'ecosystem', 'chainId', 'network', 'publicBaseUrl']) {
+  for (const field of ['schemaVersion', 'serviceId', 'ecosystem', 'chainId', 'network', 'publicBaseUrl']) {
     if (value[field] !== contract.serviceInfo[field]) {
       fail(`${path}.${field} must be ${contract.serviceInfo[field]}`);
     }
