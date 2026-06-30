@@ -94,6 +94,7 @@ write_ready_manifest() {
       "deployedAt": "2026-06-26T00:00:00Z",
       "smokePassedAt": "2026-06-26T00:00:00Z",
       "serviceInfo": {
+        "schemaVersion": 1,
         "serviceId": "ti.soramitsu.io",
         "ecosystem": "ton",
         "chainId": "ton:mainnet",
@@ -433,6 +434,17 @@ delete manifest.deploymentEvidence[0].serviceInfo;
 fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "missing service info evidence" "serviceInfo must be an object" run_audit "$missing_service_info" --mainnet-registry "$valid_registry" --require-ready
+
+wrong_service_info_schema_version="$tmp_dir/wrong-service-info-schema-version.json"
+cp "$ready" "$wrong_service_info_schema_version"
+node - "$wrong_service_info_schema_version" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].serviceInfo.schemaVersion = 2;
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "wrong service info schema version evidence" "serviceInfo.schemaVersion must be 1" run_audit "$wrong_service_info_schema_version" --mainnet-registry "$valid_registry" --require-ready
 
 wrong_service_info_id="$tmp_dir/wrong-service-info-id.json"
 cp "$ready" "$wrong_service_info_id"
