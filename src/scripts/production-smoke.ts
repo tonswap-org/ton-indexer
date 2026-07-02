@@ -31,6 +31,8 @@ type HealthInfo = {
 
 const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
 const BODY_PREVIEW_LIMIT = 300;
+const TON_HEALTH_DEPLOYMENT_HINT =
+  'Production health must expose serviceId=ti.soramitsu.io, ecosystem=ton, chainId=ton:mainnet, network=mainnet, and lastMasterSeqno. Deploy the current ton-indexer image to ti.soramitsu.io.';
 
 export function normalizeBaseUrl(value: string): URL {
   const url = new URL(value);
@@ -90,6 +92,18 @@ function objectKeys(value: unknown): string {
   return Object.keys(value as Record<string, unknown>).sort().join(',') || '<empty object>';
 }
 
+function formatValue(value: unknown): string {
+  if (value === undefined) return '<missing>';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value);
+}
+
+function assertHealthField(value: unknown, expected: string, message: string) {
+  if (value !== expected) {
+    throw new Error(`${message}; received ${formatValue(value)}. ${TON_HEALTH_DEPLOYMENT_HINT}`);
+  }
+}
+
 export async function runProductionSmoke(baseUrlInput = process.env.TON_INDEXER_BASE_URL || DEFAULT_BASE_URL) {
   const baseUrl = normalizeBaseUrl(baseUrlInput);
   const health = await fetchJson(baseUrl, '/api/indexer/v1/health') as HealthInfo;
@@ -97,12 +111,12 @@ export async function runProductionSmoke(baseUrlInput = process.env.TON_INDEXER_
     throw new Error('TI production routing points at a Solswap indexer contract: health contains ok. Route ti.soramitsu.io to the TON indexer deployment.');
   }
   if (health.lastMasterSeqno === undefined) {
-    throw new Error(`TI production routing does not expose the TON health contract: expected lastMasterSeqno, received keys ${objectKeys(health)}.`);
+    throw new Error(`TI production routing does not expose the TON health contract: expected lastMasterSeqno, received keys ${objectKeys(health)}. ${TON_HEALTH_DEPLOYMENT_HINT}`);
   }
-  assert.equal(health.serviceId, 'ti.soramitsu.io', 'health serviceId must be ti.soramitsu.io');
-  assert.equal(health.ecosystem, 'ton', 'health ecosystem must be ton');
-  assert.equal(health.chainId, 'ton:mainnet', 'health chainId must be ton:mainnet');
-  assert.equal(health.network, 'mainnet', 'health network must be mainnet');
+  assertHealthField(health.serviceId, 'ti.soramitsu.io', 'health serviceId must be ti.soramitsu.io');
+  assertHealthField(health.ecosystem, 'ton', 'health ecosystem must be ton');
+  assertHealthField(health.chainId, 'ton:mainnet', 'health chainId must be ton:mainnet');
+  assertHealthField(health.network, 'mainnet', 'health network must be mainnet');
 
   const serviceInfo = await fetchJson(baseUrl, '/api/indexer/v1/service-info') as ServiceInfo;
   assert.equal(serviceInfo.serviceId, 'ti.soramitsu.io', 'service-info serviceId must be ti.soramitsu.io');

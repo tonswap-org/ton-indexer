@@ -103,6 +103,17 @@ const main = async () => {
   genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
   await assertSmokeRejects(genericHealth, /TI production routing does not expose the TON health contract/);
 
+  const oldDeployedHealth = validRoutes();
+  oldDeployedHealth['/api/indexer/v1/health'].body = {
+    lastMasterSeqno: 123,
+    indexerLagSec: 0,
+    liteserverPoolStatus: 'ok',
+  };
+  await assertSmokeRejects(
+    oldDeployedHealth,
+    /health serviceId must be ti\.soramitsu\.io; received <missing>.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
+
   const wrongHealthIdentity = validRoutes();
   wrongHealthIdentity['/api/indexer/v1/health'].body = {
     serviceId: 'si.soramitsu.io',
