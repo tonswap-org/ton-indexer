@@ -141,7 +141,10 @@ const main = async () => {
 
   const missingSchemaVersion = validRoutes();
   delete (missingSchemaVersion['/api/indexer/v1/service-info'].body as Record<string, unknown>).schemaVersion;
-  await assertSmokeRejects(missingSchemaVersion, /service-info schemaVersion must be 1/);
+  await assertSmokeRejects(
+    missingSchemaVersion,
+    /service-info schemaVersion must be 1; received <missing>.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   const wrongIdentity = validRoutes();
   wrongIdentity['/api/indexer/v1/service-info'].body = {
@@ -151,14 +154,20 @@ const main = async () => {
     publicBaseUrl: 'https://si.soramitsu.io',
     readOnly: true,
   };
-  await assertSmokeRejects(wrongIdentity, /service-info serviceId must be ti\.soramitsu\.io/);
+  await assertSmokeRejects(
+    wrongIdentity,
+    /service-info serviceId must be ti\.soramitsu\.io; received si\.soramitsu\.io.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   const wrongNetwork = validRoutes();
   wrongNetwork['/api/indexer/v1/service-info'].body = {
     ...(wrongNetwork['/api/indexer/v1/service-info'].body as Record<string, unknown>),
     network: 'testnet',
   };
-  await assertSmokeRejects(wrongNetwork, /service-info network must be mainnet/);
+  await assertSmokeRejects(
+    wrongNetwork,
+    /service-info network must be mainnet; received testnet.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io/
+  );
 
   const nonJson = validRoutes();
   nonJson['/api/indexer/v1/health'] = {

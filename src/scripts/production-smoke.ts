@@ -33,6 +33,8 @@ const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
 const BODY_PREVIEW_LIMIT = 300;
 const TON_HEALTH_DEPLOYMENT_HINT =
   'Production health must expose serviceId=ti.soramitsu.io, ecosystem=ton, chainId=ton:mainnet, network=mainnet, and lastMasterSeqno. Deploy the current ton-indexer image to ti.soramitsu.io.';
+const TON_SERVICE_INFO_DEPLOYMENT_HINT =
+  'Production service-info must expose schemaVersion=1, serviceId=ti.soramitsu.io, ecosystem=ton, chainId=ton:mainnet, network=mainnet, publicBaseUrl=https://ti.soramitsu.io, readOnly=true, and endpoints.openapi=/api/indexer/v1/openapi.json. Deploy the current ton-indexer image to ti.soramitsu.io.';
 
 export function normalizeBaseUrl(value: string): URL {
   const url = new URL(value);
@@ -104,6 +106,12 @@ function assertHealthField(value: unknown, expected: string, message: string) {
   }
 }
 
+function assertServiceInfoField(value: unknown, expected: unknown, message: string) {
+  if (value !== expected) {
+    throw new Error(`${message}; received ${formatValue(value)}. ${TON_SERVICE_INFO_DEPLOYMENT_HINT}`);
+  }
+}
+
 export async function runProductionSmoke(baseUrlInput = process.env.TON_INDEXER_BASE_URL || DEFAULT_BASE_URL) {
   const baseUrl = normalizeBaseUrl(baseUrlInput);
   const health = await fetchJson(baseUrl, '/api/indexer/v1/health') as HealthInfo;
@@ -119,18 +127,18 @@ export async function runProductionSmoke(baseUrlInput = process.env.TON_INDEXER_
   assertHealthField(health.network, 'mainnet', 'health network must be mainnet');
 
   const serviceInfo = await fetchJson(baseUrl, '/api/indexer/v1/service-info') as ServiceInfo;
-  assert.equal(serviceInfo.serviceId, 'ti.soramitsu.io', 'service-info serviceId must be ti.soramitsu.io');
-  assert.equal(serviceInfo.schemaVersion, 1, 'service-info schemaVersion must be 1');
-  assert.equal(serviceInfo.ecosystem, 'ton', 'service-info ecosystem must be ton');
-  assert.equal(serviceInfo.chainId, 'ton:mainnet', 'service-info chainId must be ton:mainnet');
-  assert.equal(serviceInfo.network, 'mainnet', 'service-info network must be mainnet');
-  assert.equal(
+  assertServiceInfoField(serviceInfo.serviceId, 'ti.soramitsu.io', 'service-info serviceId must be ti.soramitsu.io');
+  assertServiceInfoField(serviceInfo.schemaVersion, 1, 'service-info schemaVersion must be 1');
+  assertServiceInfoField(serviceInfo.ecosystem, 'ton', 'service-info ecosystem must be ton');
+  assertServiceInfoField(serviceInfo.chainId, 'ton:mainnet', 'service-info chainId must be ton:mainnet');
+  assertServiceInfoField(serviceInfo.network, 'mainnet', 'service-info network must be mainnet');
+  assertServiceInfoField(
     serviceInfo.publicBaseUrl,
     'https://ti.soramitsu.io',
     'service-info publicBaseUrl must be https://ti.soramitsu.io',
   );
-  assert.equal(serviceInfo.readOnly, true, 'service-info readOnly must be true');
-  assert.equal(
+  assertServiceInfoField(serviceInfo.readOnly, true, 'service-info readOnly must be true');
+  assertServiceInfoField(
     serviceInfo.endpoints?.openapi,
     '/api/indexer/v1/openapi.json',
     'service-info openapi endpoint must be /api/indexer/v1/openapi.json',
