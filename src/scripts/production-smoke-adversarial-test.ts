@@ -189,7 +189,20 @@ const main = async () => {
   const missingOpenApiPath = validRoutes();
   const spec = missingOpenApiPath['/api/indexer/v1/openapi.json'].body as { paths: Record<string, unknown> };
   delete spec.paths['/api/indexer/v1/runGetMethods'];
-  await assertSmokeRejects(missingOpenApiPath, /OpenAPI is missing \/api\/indexer\/v1\/runGetMethods/);
+  await assertSmokeRejects(
+    missingOpenApiPath,
+    /OpenAPI is missing \/api\/indexer\/v1\/runGetMethods.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
+
+  const missingTitle = validRoutes();
+  missingTitle['/api/indexer/v1/openapi.json'].body = {
+    openapi: '3.0.3',
+    paths: openApiPaths(),
+  };
+  await assertSmokeRejects(
+    missingTitle,
+    /OpenAPI title must be TONSWAP Indexer API; received <missing>.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   const wrongTitle = validRoutes();
   wrongTitle['/api/indexer/v1/openapi.json'].body = {
@@ -197,7 +210,10 @@ const main = async () => {
     info: { title: 'Solswap Indexer API' },
     paths: openApiPaths(),
   };
-  await assertSmokeRejects(wrongTitle, /OpenAPI title must be TONSWAP Indexer API/);
+  await assertSmokeRejects(
+    wrongTitle,
+    /OpenAPI title must be TONSWAP Indexer API; received Solswap Indexer API.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   process.stdout.write('ton production smoke adversarial tests passed\n');
 };
