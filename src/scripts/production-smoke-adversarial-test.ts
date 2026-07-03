@@ -103,6 +103,17 @@ const main = async () => {
   genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
   await assertSmokeRejects(genericHealth, /TI production routing does not expose the TON health contract/);
 
+  const oldDeployedHealth = validRoutes();
+  oldDeployedHealth['/api/indexer/v1/health'].body = {
+    lastMasterSeqno: 123,
+    indexerLagSec: 0,
+    liteserverPoolStatus: 'ok',
+  };
+  await assertSmokeRejects(
+    oldDeployedHealth,
+    /health serviceId must be ti\.soramitsu\.io; received <missing>.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
+
   const wrongHealthIdentity = validRoutes();
   wrongHealthIdentity['/api/indexer/v1/health'].body = {
     serviceId: 'si.soramitsu.io',
@@ -117,9 +128,23 @@ const main = async () => {
   delete missingServiceInfo['/api/indexer/v1/service-info'];
   await assertSmokeRejects(missingServiceInfo, /deploy the current ton-indexer image to ti\.soramitsu\.io/);
 
+  const serviceInfoDeploying = validRoutes();
+  serviceInfoDeploying['/api/indexer/v1/service-info'] = {
+    status: 503,
+    contentType: 'text/plain; charset=utf-8',
+    body: 'deploy in progress',
+  };
+  await assertSmokeRejects(
+    serviceInfoDeploying,
+    /\/api\/indexer\/v1\/service-info returned HTTP 503\. Body preview: deploy in progress\..*deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
+
   const missingSchemaVersion = validRoutes();
   delete (missingSchemaVersion['/api/indexer/v1/service-info'].body as Record<string, unknown>).schemaVersion;
-  await assertSmokeRejects(missingSchemaVersion, /service-info schemaVersion must be 1/);
+  await assertSmokeRejects(
+    missingSchemaVersion,
+    /service-info schemaVersion must be 1; received <missing>.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   const wrongIdentity = validRoutes();
   wrongIdentity['/api/indexer/v1/service-info'].body = {
@@ -129,26 +154,55 @@ const main = async () => {
     publicBaseUrl: 'https://si.soramitsu.io',
     readOnly: true,
   };
-  await assertSmokeRejects(wrongIdentity, /service-info serviceId must be ti\.soramitsu\.io/);
+  await assertSmokeRejects(
+    wrongIdentity,
+    /service-info serviceId must be ti\.soramitsu\.io; received si\.soramitsu\.io.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   const wrongNetwork = validRoutes();
   wrongNetwork['/api/indexer/v1/service-info'].body = {
     ...(wrongNetwork['/api/indexer/v1/service-info'].body as Record<string, unknown>),
     network: 'testnet',
   };
-  await assertSmokeRejects(wrongNetwork, /service-info network must be mainnet/);
+  await assertSmokeRejects(
+    wrongNetwork,
+    /service-info network must be mainnet; received testnet.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io/
+  );
 
   const nonJson = validRoutes();
   nonJson['/api/indexer/v1/health'] = {
     contentType: 'text/plain; charset=utf-8',
     body: 'ok',
   };
-  await assertSmokeRejects(nonJson, /\/api\/indexer\/v1\/health did not return JSON/);
+  await assertSmokeRejects(nonJson, /\/api\/indexer\/v1\/health did not return JSON\..*Body preview: ok/);
+
+  const invalidOpenApiJson = validRoutes();
+  invalidOpenApiJson['/api/indexer/v1/openapi.json'] = {
+    contentType: 'application/json',
+    body: '{"openapi":',
+  };
+  await assertSmokeRejects(
+    invalidOpenApiJson,
+    /\/api\/indexer\/v1\/openapi\.json returned invalid JSON\. Body preview: \{"openapi":\..*TON OpenAPI contract/
+  );
 
   const missingOpenApiPath = validRoutes();
   const spec = missingOpenApiPath['/api/indexer/v1/openapi.json'].body as { paths: Record<string, unknown> };
   delete spec.paths['/api/indexer/v1/runGetMethods'];
-  await assertSmokeRejects(missingOpenApiPath, /OpenAPI is missing \/api\/indexer\/v1\/runGetMethods/);
+  await assertSmokeRejects(
+    missingOpenApiPath,
+    /OpenAPI is missing \/api\/indexer\/v1\/runGetMethods.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
+
+  const missingTitle = validRoutes();
+  missingTitle['/api/indexer/v1/openapi.json'].body = {
+    openapi: '3.0.3',
+    paths: openApiPaths(),
+  };
+  await assertSmokeRejects(
+    missingTitle,
+    /OpenAPI title must be TONSWAP Indexer API; received <missing>.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   const wrongTitle = validRoutes();
   wrongTitle['/api/indexer/v1/openapi.json'].body = {
@@ -156,7 +210,10 @@ const main = async () => {
     info: { title: 'Solswap Indexer API' },
     paths: openApiPaths(),
   };
-  await assertSmokeRejects(wrongTitle, /OpenAPI title must be TONSWAP Indexer API/);
+  await assertSmokeRejects(
+    wrongTitle,
+    /OpenAPI title must be TONSWAP Indexer API; received Solswap Indexer API.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
+  );
 
   process.stdout.write('ton production smoke adversarial tests passed\n');
 };
