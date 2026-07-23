@@ -28,6 +28,25 @@ npm run build
 npm run start
 ```
 
+## Production Container
+```bash
+docker build -t ti-indexer:release .
+docker run --rm -p 8787:8787 ti-indexer:release
+```
+
+The image defaults to `INDEXER_MODE=production`, `TON_NETWORK=mainnet`, and the
+lite-client mainnet pool. Startup is intentionally blocked until
+`registry/mainnet.json` contains reviewed mainnet contract addresses.
+
+## Production Smoke
+```bash
+npm run smoke:production
+TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production
+```
+
+The smoke check verifies that the target host serves the TONSWAP API contract,
+not another indexer service.
+
 ## Configuration
 Environment variables (all optional):
 - `PORT` (default: `8787`)
@@ -87,6 +106,10 @@ If the requested `PORT` is already in use, the server will bind to the next avai
 
 Production safeguards:
 - In `INDEXER_MODE=production TON_NETWORK=mainnet`, placeholder, malformed, or testnet-only required registry addresses fail startup.
+- `npm run audit:deployment-evidence -- --require-ready` also rejects ready
+  deployment evidence while `registry/mainnet.json` still has placeholder,
+  missing, or malformed required mainnet addresses.
+- For `https://ti.soramitsu.io` production deployment guidance, see `docs/ti-production.md`.
 
 ## API
 - `GET /api/indexer/v1/accounts/{addr}/balance`
@@ -104,6 +127,7 @@ Production safeguards:
 - `GET /api/indexer/v1/options/{factory}/snapshot?start_id=0&max_series_id=2048&window_size=24&max_empty_windows=2&min_probe_windows=8`
 - `GET /api/indexer/v1/cover/{manager}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/contracts`
+- `GET /api/indexer/v1/service-info`
 - `GET /api/indexer/v1/stream/balances?address={addr}` (Server-Sent Events stream)
 - `GET /api/indexer/v1/stream?address={addr}` (alias of `/stream/balances`)
 - `GET /api/indexer/v1/health`

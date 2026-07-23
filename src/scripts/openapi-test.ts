@@ -6,6 +6,7 @@ const spec = buildOpenApi(loadConfig());
 assert.equal(spec.openapi, '3.0.3');
 assert.ok(spec.paths['/api/indexer/v1/health']);
 assert.ok(spec.paths['/api/indexer/v1/contracts']);
+assert.ok(spec.paths['/api/indexer/v1/service-info']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/swaps']);
 assert.ok(spec.paths['/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload']);
@@ -48,5 +49,15 @@ assert.ok(spec.components?.schemas?.TwapRunSummaryEntry);
 assert.ok(spec.components?.schemas?.PendingLimitOrderEntry);
 assert.ok(spec.components?.schemas?.JettonTransferPayloadResponse);
 assert.ok(spec.components?.schemas?.VolIndexSnapshotResponse);
+const serviceInfoProps =
+  spec.components?.schemas?.ServiceInfoResponse?.properties ??
+  ({} as Record<string, { enum?: string[] }>);
+assert.equal(serviceInfoProps.serviceId?.enum?.[0], 'ti.soramitsu.io');
+assert.equal(serviceInfoProps.ecosystem?.enum?.[0], 'ton');
+const healthProps =
+  spec.components?.schemas?.HealthStatus?.properties ??
+  ({} as Record<string, { enum?: string[] }>);
+assert.equal(healthProps.serviceId?.enum?.[0], 'ti.soramitsu.io');
+assert.equal(healthProps.ecosystem?.enum?.[0], 'ton');
 
 console.log('openapi ok');
