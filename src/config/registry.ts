@@ -24,9 +24,11 @@ export type MainnetRegistryIssue = {
   reason: MainnetRegistryIssueReason;
 };
 
+const RAW_TON_ADDRESS_PATTERN = /^-?\d+:[0-9a-fA-F]{64}$/;
+
 const parseMainnetAddress = (value: string): MainnetRegistryIssueReason | null => {
   try {
-    if (Address.isRaw(value)) {
+    if (RAW_TON_ADDRESS_PATTERN.test(value)) {
       Address.parseRaw(value);
       return null;
     }

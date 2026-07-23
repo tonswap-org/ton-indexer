@@ -58,11 +58,28 @@ assert.equal(loadConfig().dataSource, 'lite');
 
 const mainnetAddress = Address.parseRaw(`0:${'1'.repeat(64)}`).toString({ testOnly: false });
 const testnetOnlyAddress = Address.parseRaw(`0:${'2'.repeat(64)}`).toString({ testOnly: true });
+const rawAddressHash = '3'.repeat(64);
+const rawMainnetAddress = `0:${rawAddressHash}`;
 const completeMainnetRegistry = Object.fromEntries(
   REQUIRED_MAINNET_REGISTRY_KEYS.map((key) => [key, mainnetAddress])
 ) as Record<string, string>;
 assert.doesNotThrow(() => validateMainnetRegistry(completeMainnetRegistry));
 assert.deepEqual(collectMainnetRegistryIssues(completeMainnetRegistry), []);
+assert.doesNotThrow(() =>
+  validateMainnetRegistry({
+    ...completeMainnetRegistry,
+    FeeRouter: rawMainnetAddress,
+  })
+);
+for (const malformedRawAddress of [`${rawMainnetAddress}:junk`, `0junk:${rawAddressHash}`]) {
+  assert.deepEqual(
+    collectMainnetRegistryIssues({
+      ...completeMainnetRegistry,
+      FeeRouter: malformedRawAddress,
+    }),
+    [{ key: 'FeeRouter', reason: 'invalid_address' }]
+  );
+}
 assert.throws(
   () =>
     validateMainnetRegistry({

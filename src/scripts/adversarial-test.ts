@@ -1155,7 +1155,14 @@ const testMutableOperationalRoutesRequireAdminToken = async () => {
   };
 
   const disabledApp = fastify({ logger: false });
-  registerTestRoutes(disabledApp, testConfig(), {} as any, undefined, snapshots as any, debug as any);
+  registerTestRoutes(
+    disabledApp,
+    testConfig({ adminToken: undefined }),
+    {} as any,
+    undefined,
+    snapshots as any,
+    debug as any
+  );
   await disabledApp.ready();
   const disabledSnapshot = await disabledApp.inject({ method: 'POST', url: '/api/indexer/v1/snapshot/save' });
   assert.equal(disabledSnapshot.statusCode, 400);
