@@ -10,6 +10,7 @@ export type ErrorCode =
   | 'metrics_disabled'
   | 'snapshot_disabled'
   | 'debug_disabled'
+  | 'unauthorized'
   | 'bad_request';
 
 export const sendError = (reply: FastifyReply, status: number, code: ErrorCode, message: string) => {

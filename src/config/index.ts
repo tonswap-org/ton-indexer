@@ -62,6 +62,7 @@ export type Config = {
   soraTonTrustedCheckpointSeqno?: number;
   soraTonTrustedCheckpointHash?: string;
   logLevel: string;
+  adminToken?: string;
   registryPath: string;
   opcodesPath?: string;
 };
@@ -115,29 +116,35 @@ const booleanFromEnv = (key: string, fallback: boolean) => {
   return fallback;
 };
 
+const enumFromEnv = <T extends string>(key: string, fallback: T, allowed: readonly T[]): T => {
+  const raw = process.env[key];
+  if (raw === undefined || raw === '') return fallback;
+  const normalized = raw.toLowerCase();
+  if ((allowed as readonly string[]).includes(normalized)) return normalized as T;
+  throw new Error(`${key} must be one of ${allowed.join(', ')}, got ${raw}`);
+};
+
 const modeFromEnv = (): IndexerMode => {
-  const raw = (process.env.INDEXER_MODE || 'dev').toLowerCase();
-  if (raw === 'production' || raw === 'dev') return raw;
-  return 'dev';
+  return enumFromEnv<IndexerMode>('INDEXER_MODE', 'dev', ['dev', 'production']);
 };
 
 const networkFromEnv = (): Network => {
   // Default to testnet for current TONSWAP deployments; mainnet requires real registry addresses.
-  const raw = (process.env.TON_NETWORK || 'testnet').toLowerCase();
-  if (raw === 'mainnet' || raw === 'testnet') return raw;
-  return 'testnet';
+  return enumFromEnv<Network>('TON_NETWORK', 'testnet', ['mainnet', 'testnet']);
 };
 
 const dataSourceFromEnv = (): 'http' | 'lite' => {
-  const raw = (process.env.TON_DATASOURCE || '').toLowerCase();
-  if (raw === 'lite') return 'lite';
-  return 'http';
+  return enumFromEnv<'http' | 'lite'>('TON_DATASOURCE', 'http', ['http', 'lite']);
 };
 
 export const loadConfig = (): Config => {
   const mode = modeFromEnv();
   const network = networkFromEnv();
-  const registryPath = resolve(process.cwd(), 'registry', `${network}.json`);
+  const registryPath = resolve(
+    stringFromEnv('INDEXER_REGISTRY_PATH') ||
+      stringFromEnv('REGISTRY_PATH') ||
+      resolve(process.cwd(), 'registry', `${network}.json`)
+  );
   const opcodesPath = stringFromEnv(
     'OPCODES_PATH',
     resolve(process.cwd(), '..', 'tonswap_tolk', 'config', 'opcodes.json')
@@ -283,6 +290,7 @@ export const loadConfig = (): Config => {
     })(),
     soraTonTrustedCheckpointHash: stringFromEnv('SORA_TON_TRUSTED_CHECKPOINT_HASH'),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
+    adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN') || stringFromEnv('INDEXER_ADMIN_API_KEY'),
     registryPath,
     opcodesPath,
   };

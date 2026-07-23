@@ -40,7 +40,6 @@ export const buildDocsHtml = (nonce?: string) => {
     '        <option value=\"/api/indexer/v1/cover/{manager}/snapshot\">/cover/{manager}/snapshot</option>',
     '        <option value=\"/api/indexer/v1/stream/balances\">/stream/balances</option>',
     '        <option value=\"/api/indexer/v1/stream\">/stream</option>',
-    '        <option value=\"/api/indexer/v1/debug\">/debug</option>',
     '      </select>',
     '    </div>',
     '    <div class=\"row\">',

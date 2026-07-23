@@ -1111,7 +1111,7 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
 };
 
 const testSnapshotEndpointsSurfaceLoadErrors = async () => {
-  const config = testConfig();
+  const config = testConfig({ adminToken: 'snapshot-secret' });
   const app = fastify({ logger: false });
   const snapshots = {
     load() {
@@ -1127,10 +1127,73 @@ const testSnapshotEndpointsSurfaceLoadErrors = async () => {
   const response = await app.inject({
     method: 'POST',
     url: '/api/indexer/v1/snapshot/load',
+    headers: { 'x-indexer-admin-token': 'snapshot-secret' },
   });
   assert.equal(response.statusCode, 400);
   assert.equal(response.json().code, 'bad_request');
   assert.equal(response.json().error, 'snapshot load failed');
+  await app.close();
+};
+
+const testMutableOperationalRoutesRequireAdminToken = async () => {
+  let saves = 0;
+  let debugReads = 0;
+  const snapshots = {
+    save() {
+      saves += 1;
+      return { path: '/tmp/snapshot.json', entries: 0 };
+    },
+    load() {
+      throw new Error('should not be called');
+    },
+  };
+  const debug = {
+    getStatus() {
+      debugReads += 1;
+      return { ok: true };
+    },
+  };
+
+  const disabledApp = fastify({ logger: false });
+  registerTestRoutes(disabledApp, testConfig(), {} as any, undefined, snapshots as any, debug as any);
+  await disabledApp.ready();
+  const disabledSnapshot = await disabledApp.inject({ method: 'POST', url: '/api/indexer/v1/snapshot/save' });
+  assert.equal(disabledSnapshot.statusCode, 400);
+  assert.equal(disabledSnapshot.json().code, 'snapshot_disabled');
+  const disabledDebug = await disabledApp.inject({ method: 'GET', url: '/api/indexer/v1/debug' });
+  assert.equal(disabledDebug.statusCode, 400);
+  assert.equal(disabledDebug.json().code, 'debug_disabled');
+  await disabledApp.close();
+
+  const app = fastify({ logger: false });
+  registerTestRoutes(app, testConfig({ adminToken: 'admin-secret' }), {} as any, undefined, snapshots as any, debug as any);
+  await app.ready();
+  const missing = await app.inject({ method: 'POST', url: '/api/indexer/v1/snapshot/save' });
+  assert.equal(missing.statusCode, 401);
+  assert.equal(missing.json().code, 'unauthorized');
+  const wrong = await app.inject({
+    method: 'GET',
+    url: '/api/indexer/v1/debug',
+    headers: { authorization: 'Bearer wrong-secret' },
+  });
+  assert.equal(wrong.statusCode, 401);
+  assert.equal(wrong.json().code, 'unauthorized');
+  const saved = await app.inject({
+    method: 'POST',
+    url: '/api/indexer/v1/snapshot/save',
+    headers: { 'x-indexer-admin-token': 'admin-secret' },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.equal(saved.json().ok, true);
+  const debugResponse = await app.inject({
+    method: 'GET',
+    url: '/api/indexer/v1/debug',
+    headers: { authorization: 'Bearer admin-secret' },
+  });
+  assert.equal(debugResponse.statusCode, 200);
+  assert.equal(debugResponse.json().ok, true);
+  assert.equal(saves, 1);
+  assert.equal(debugReads, 1);
   await app.close();
 };
 
@@ -1804,6 +1867,7 @@ const run = async () => {
   await testJsonRpcBatchGetMethodRejectsOversizedAndMalformedCalls();
   await testJsonRpcBatchGetMethodRejectsMissingCallsAndIsolatesFailures();
   await testDebugEndpointReturnsDisabledWithoutService();
+  await testMutableOperationalRoutesRequireAdminToken();
   await testOperationalRoutesDoNotRequireAdminAndPublicReadsStayOpen();
   await testWriteRpcRelayIsPublicWhenExplicitlyEnabled();
   testCorsExactOriginAllowlistAndWildcardFallback();

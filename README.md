@@ -80,11 +80,13 @@ Environment variables (all optional):
 - `BLOCK_POLL_MS` (default: `5000`)
 - `OPCODES_PATH` (default: `../tonswap_tolk/config/opcodes.json`)
 - `LOG_LEVEL` (default: `info`)
+- `INDEXER_ADMIN_TOKEN` / `INDEXER_ADMIN_API_KEY` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
 
+Explicit enum values for `INDEXER_MODE`, `TON_NETWORK`, and `TON_DATASOURCE` fail startup when unsupported instead of silently falling back.
 If the requested `PORT` is already in use, the server will bind to the next available port and log the selected one.
 
 Production safeguards:
-- In `TON_NETWORK=mainnet`, placeholder or malformed required registry addresses fail startup.
+- In `INDEXER_MODE=production TON_NETWORK=mainnet`, placeholder, malformed, or testnet-only required registry addresses fail startup.
 
 ## API
 - `GET /api/indexer/v1/accounts/{addr}/balance`
@@ -111,16 +113,18 @@ Production safeguards:
 - `GET /api/indexer/v1/docs`
 - `POST /api/indexer/v1/runGetMethod`
 - `POST /api/indexer/v1/runGetMethods`
-- `POST /api/indexer/v1/snapshot/save`
-- `POST /api/indexer/v1/snapshot/load`
-- `GET /api/indexer/v1/debug?limit=100`
 
 JSON-RPC compatibility endpoints:
 - `POST /jsonRPC`
 - `POST /api/v2/jsonRPC`
 
 When `INDEXER_WRITE_RPC_ENDPOINT` is set, proxied JSON-RPC methods are available through `/jsonRPC` and `/api/v2/jsonRPC`; write methods stay disabled unless `INDEXER_ENABLE_WRITE_RPC=true`.
-There is no privileged-user auth layer. Public read endpoints intentionally include `/jsonRPC`, `/api/v2/jsonRPC`, `/api/indexer/v1/runGetMethod`, and `/api/indexer/v1/runGetMethods` so browser-only decentralized clients such as `../tonswap_web` can use the indexer directly.
+Public read endpoints intentionally include `/jsonRPC`, `/api/v2/jsonRPC`, `/api/indexer/v1/runGetMethod`, and `/api/indexer/v1/runGetMethods` so browser-only decentralized clients such as `../tonswap_web` can use the indexer directly.
+
+Admin endpoints require `INDEXER_ADMIN_TOKEN` / `INDEXER_ADMIN_API_KEY`:
+- `POST /api/indexer/v1/snapshot/save`
+- `POST /api/indexer/v1/snapshot/load`
+- `GET /api/indexer/v1/debug?limit=100`
 
 Optional tx cursor query params:
 - `cursor_lt`

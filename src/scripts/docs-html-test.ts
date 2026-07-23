@@ -14,6 +14,7 @@ assert.ok(html.includes('/api/indexer/v1/governance/{voting}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/farms/{factory}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/options/{factory}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/cover/{manager}/snapshot'));
+assert.equal(html.includes('<option value="/api/indexer/v1/debug">'), false);
 assert.ok(html.includes('fetch('));
 assert.ok(nonceHtml.includes('<style nonce="test-nonce">'));
 assert.ok(nonceHtml.includes('<script nonce="test-nonce">'));

@@ -59,6 +59,7 @@ type RoutesConfig = {
   rpcProxyTimeoutMs?: number;
   rpcProxyRetryAttempts?: number;
   rpcProxyRetryDelayMs?: number;
+  adminToken?: string;
 };
 
 type IndexedTxMessageCompat = {
@@ -221,6 +222,19 @@ const parseNonNegativeIntQuery = (value?: string | number) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
+const readHeaderValue = (value: string | string[] | undefined) => {
+  if (Array.isArray(value)) return value[0];
+  return value;
+};
+
+const getAdminToken = (request: FastifyRequest) => {
+  const explicit = readHeaderValue(request.headers['x-indexer-admin-token']);
+  if (explicit) return explicit;
+  const authorization = readHeaderValue(request.headers.authorization);
+  const match = authorization?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1];
+};
+
 const HEX_256_RE = /^0x[0-9a-fA-F]{64}$/;
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
@@ -379,6 +393,21 @@ export const registerRoutes = (
 ) => {
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
   const contractMap = Object.fromEntries(contractEntries);
+  const adminToken = typeof config.adminToken === 'string' && config.adminToken.length > 0 ? config.adminToken : null;
+  const requireAdmin = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    disabledCode: 'snapshot_disabled' | 'debug_disabled',
+    disabledMessage: string
+  ) => {
+    if (!adminToken) {
+      return sendError(reply, 400, disabledCode, disabledMessage);
+    }
+    if (getAdminToken(request) !== adminToken) {
+      return sendError(reply, 401, 'unauthorized', 'admin token required');
+    }
+    return null;
+  };
 
   if (rateLimiter?.isEnabled()) {
     app.addHook('onRequest', async (request, reply) => {
@@ -1730,8 +1759,10 @@ export const registerRoutes = (
     }
   );
 
-  app.post('/api/indexer/v1/snapshot/save', async (_request, reply) => {
+  app.post('/api/indexer/v1/snapshot/save', async (request, reply) => {
     if (!snapshots) return sendError(reply, 400, 'snapshot_disabled', 'snapshot disabled');
+    const denied = requireAdmin(request, reply, 'snapshot_disabled', 'snapshot disabled');
+    if (denied) return denied;
     try {
       return { ok: true, ...(snapshots.save() as object) };
     } catch (error) {
@@ -1739,8 +1770,10 @@ export const registerRoutes = (
     }
   });
 
-  app.post('/api/indexer/v1/snapshot/load', async (_request, reply) => {
+  app.post('/api/indexer/v1/snapshot/load', async (request, reply) => {
     if (!snapshots) return sendError(reply, 400, 'snapshot_disabled', 'snapshot disabled');
+    const denied = requireAdmin(request, reply, 'snapshot_disabled', 'snapshot disabled');
+    if (denied) return denied;
     try {
       return { ok: true, ...(snapshots.load() as object) };
     } catch (error) {
@@ -1753,6 +1786,8 @@ export const registerRoutes = (
     { schema: { querystring: debugQuerySchema } },
     async (request, reply) => {
       if (!debug) return sendError(reply, 400, 'debug_disabled', 'debug disabled');
+      const denied = requireAdmin(request, reply, 'debug_disabled', 'debug disabled');
+      if (denied) return denied;
       const query = request.query as { limit?: string };
       const limit = Math.max(1, Math.min(500, Number(query.limit ?? 100)));
       return debug.getStatus(limit);

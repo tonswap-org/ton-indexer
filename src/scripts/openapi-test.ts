@@ -19,6 +19,15 @@ assert.ok(spec.paths['/api/indexer/v1/openapi.json']);
 assert.equal('security' in spec.paths['/api/indexer/v1/runGetMethod'].post, false);
 assert.equal('security' in spec.paths['/api/indexer/v1/runGetMethods'].post, false);
 assert.equal('security' in spec.paths['/api/indexer/v1/metrics'].get, false);
+assert.ok(spec.components?.securitySchemes?.AdminToken);
+assert.ok(spec.components?.securitySchemes?.AdminBearer);
+assert.deepEqual(spec.paths['/api/indexer/v1/snapshot/save'].post.security, [
+  { AdminToken: [] },
+  { AdminBearer: [] },
+]);
+assert.ok(spec.paths['/api/indexer/v1/snapshot/save'].post.responses[401]);
+assert.deepEqual(spec.paths['/api/indexer/v1/debug'].get.security, [{ AdminToken: [] }, { AdminBearer: [] }]);
+assert.ok(spec.paths['/api/indexer/v1/debug'].get.responses[401]);
 const txEntry =
   spec.components?.schemas?.TxEntry?.properties?.detail?.properties ??
   ({} as Record<string, unknown>);
