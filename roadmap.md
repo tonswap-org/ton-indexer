@@ -176,9 +176,11 @@ Response:
 - [x] Decide persistence: **memory-only** (history lost on restart).
 - [x] Decide cache: Redis vs in-process LRU (start in-process if disk is tight).
 - [x] Finalize API response shapes to match `tonswap_web` types.
-- [x] Define network config flags (mainnet default, testnet optional).
+- [x] Define network config flags (mainnet/testnet explicit; invalid enum values fail closed).
 - [x] Create `registry/mainnet.json` and `registry/testnet.json` (testnet mirrors `../tonswap_tolk/tmp_debug/module_addresses.json` + token roots).
 - [x] Add a sync note/script to refresh `registry/testnet.json` after redeploys.
+- [x] Harden production startup validation so mainnet required registry keys reject placeholders, malformed values, and testnet-only friendly addresses.
+- [x] Gate mutable snapshot save/load plus diagnostic debug endpoints behind an explicit admin token while keeping public read/get-method routes open.
 
 ### Phase 1 — Core Ingestion (MVP)
 - [x] Implement lite client adapter with liteserver pool + retry/backoff.

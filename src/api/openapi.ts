@@ -9,6 +9,17 @@ export const buildOpenApi = (config: Config) => {
     },
     servers: [{ url: '/' }],
     components: {
+      securitySchemes: {
+        AdminToken: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-Indexer-Admin-Token',
+        },
+        AdminBearer: {
+          type: 'http',
+          scheme: 'bearer',
+        },
+      },
       parameters: {
         addr: {
           name: 'addr',
@@ -1451,6 +1462,7 @@ export const buildOpenApi = (config: Config) => {
       '/api/indexer/v1/snapshot/save': {
         post: {
           summary: 'Save in-memory snapshot',
+          security: [{ AdminToken: [] }, { AdminBearer: [] }],
           responses: {
             200: {
               description: 'Snapshot saved',
@@ -1460,12 +1472,17 @@ export const buildOpenApi = (config: Config) => {
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
+            401: {
+              description: 'Admin token required',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
           },
         },
       },
       '/api/indexer/v1/snapshot/load': {
         post: {
           summary: 'Load in-memory snapshot',
+          security: [{ AdminToken: [] }, { AdminBearer: [] }],
           responses: {
             200: {
               description: 'Snapshot loaded',
@@ -1475,12 +1492,17 @@ export const buildOpenApi = (config: Config) => {
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
+            401: {
+              description: 'Admin token required',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
           },
         },
       },
       '/api/indexer/v1/debug': {
         get: {
           summary: 'Debug snapshot',
+          security: [{ AdminToken: [] }, { AdminBearer: [] }],
           parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } }],
           responses: {
             200: {
@@ -1489,6 +1511,10 @@ export const buildOpenApi = (config: Config) => {
             },
             400: {
               description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+            401: {
+              description: 'Admin token required',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
           },

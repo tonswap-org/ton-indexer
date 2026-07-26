@@ -20,7 +20,7 @@ import { SnapshotService } from './snapshotService';
 import { DebugService } from './debugService';
 import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
-import { validateMainnetRegistry } from './config/mainnetRegistry';
+import { validateMainnetRegistry } from './config/registry';
 
 const isPortAvailable = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
