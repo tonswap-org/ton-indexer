@@ -31,8 +31,10 @@
 ### Network Selection
 - Default: **testnet** (current TONSWAP deployments).
 - Mainnet mode is supported, but requires real registry/mainnet addresses.
+- Localnet mode is supported and fails closed unless an explicit local
+  liteserver pool or HTTP endpoint is configured.
   - Configuration example:
-    - `TON_NETWORK=mainnet|testnet` (default `testnet`)
+    - `TON_NETWORK=mainnet|testnet|localnet` (default `testnet`)
     - `LITESERVER_POOL_MAINNET=...` (set after mainnet deploy)
     - `LITESERVER_POOL_TESTNET=127.0.0.1:PORT` (localhost liteserver)
 
@@ -58,7 +60,14 @@ Response:
 - `ton.balance`, `ton.last_tx_lt`, `ton.last_tx_hash`
 - `jettons[]` (master, wallet, balance, decimals, symbol)
 - `confirmed=true`, `updated_at`
-- `network` (`mainnet` | `testnet`)
+- `network` (`mainnet` | `testnet` | `localnet`)
+
+#### GET /api/indexer/v1/markets/{market}/candles
+- Requires `market_address`, `asset_symbol`, and `quote_symbol`.
+- Aggregates confirmed DLMM swaps with decoded actual outbound amounts into
+  normalized quote-per-base OHLCV buckets.
+- Excludes failed/pending swaps and `minOut` fallbacks.
+- Returns source transaction IDs for every candle.
 
 #### GET /api/indexer/v1/accounts/{addr}/txs?page=1
 Response:
@@ -68,7 +77,7 @@ Response:
 - `total_pages_min` (lower bound)
 - `history_complete` (boolean)
 - `txs[]` (typed; includes both `kind/actions` and UI-ready fields)
-- `network` (`mainnet` | `testnet`)
+- `network` (`mainnet` | `testnet` | `localnet`)
 
 ##### txs[] entry (UI-ready)
 - `txId = "{lt}:{hash}"`
@@ -108,6 +117,9 @@ Response:
 - Contract addresses loaded from:
   - `registry/mainnet.json` (mainnet default).
   - `registry/testnet.json` (testnet runs).
+  - `registry/localnet.json` (empty bootstrap; release runs use a generated registry).
+  - A canonical release manifest may be configured; startup then requires
+    exact network, contract-key, address, and registry-hash parity.
   - `../tonswap_tolk/tmp_debug/module_addresses.json` (dev/testnet sync source).
   - `../tonswap_tolk/tmp_debug/dlmm.*.address` (if DLMM pools are used).
 - Opcode map loaded from `../tonswap_tolk/config/opcodes.json`:
@@ -176,8 +188,9 @@ Response:
 - [x] Decide persistence: **memory-only** (history lost on restart).
 - [x] Decide cache: Redis vs in-process LRU (start in-process if disk is tight).
 - [x] Finalize API response shapes to match `tonswap_web` types.
-- [x] Define network config flags (mainnet/testnet explicit; invalid enum values fail closed).
-- [x] Create `registry/mainnet.json` and `registry/testnet.json` (testnet mirrors `../tonswap_tolk/tmp_debug/module_addresses.json` + token roots).
+- [x] Define network config flags (mainnet/testnet/localnet explicit; invalid enum values fail closed).
+- [x] Create `registry/mainnet.json`, `registry/testnet.json`, and a localnet bootstrap registry.
+- [x] Bind generated registries to canonical release manifests and expose their hashes.
 - [x] Add a sync note/script to refresh `registry/testnet.json` after redeploys.
 - [x] Harden production startup validation so mainnet required registry keys reject placeholders, malformed values, and testnet-only friendly addresses.
 - [x] Gate mutable snapshot save/load plus diagnostic debug endpoints behind an explicit admin token while keeping public read/get-method routes open.
@@ -197,6 +210,7 @@ Response:
 - [x] Map decoded ops to `WalletHistoryEntry.detail` fields for UI.
 - [x] Reuse `getTransactionStatus` logic from `tonswap_web` for status mapping.
 - [x] Track pool addresses (seed from registry, then expand via ClmmPoolFactory deploy events).
+- [x] Aggregate successful, actual-output DLMM swaps into forward/reverse-normalized OHLCV candles.
 
 ### Phase 3 — Pagination + Backfill
 - [x] Implement on-demand backfill worker per address.

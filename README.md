@@ -22,6 +22,17 @@ Run dev on mainnet (lite client):
 npm run dev:mainnet
 ```
 
+Run against a local TON network:
+```bash
+LITESERVER_POOL_LOCALNET=../tonswap_tolk/tmp_mylocalton/global.config.json \
+INDEXER_REGISTRY_PATH=../tonswap_tolk/tmp_release/localnet.registry.json \
+INDEXER_RELEASE_MANIFEST_PATH=../tonswap_tolk/tmp_release/localnet.manifest.json \
+npm run dev:localnet
+```
+Localnet never falls back to a public TON endpoint: the lite datasource requires
+`LITESERVER_POOL_LOCALNET`, while the HTTP datasource requires
+`TON_HTTP_ENDPOINT`.
+
 ## Build + Run
 ```bash
 npm run build
@@ -47,20 +58,36 @@ TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production
 The smoke check verifies that the target host serves the TONSWAP API contract,
 not another indexer service.
 
+The expected network, release, and registry can be pinned for testnet/localnet
+release gates:
+```bash
+TON_INDEXER_BASE_URL=http://127.0.0.1:8787 \
+TON_INDEXER_EXPECTED_NETWORK=localnet \
+TON_INDEXER_EXPECTED_SERVICE_ID=tonswap-local-indexer \
+TON_INDEXER_EXPECTED_PUBLIC_BASE_URL=http://127.0.0.1:8787 \
+TON_INDEXER_EXPECTED_RELEASE_ID=local-run-1 \
+TON_INDEXER_EXPECTED_REGISTRY_HASH=<sha256> \
+npm run smoke:production
+```
+
 ## Configuration
 Environment variables (all optional):
 - `PORT` (default: `8787`)
 - `HOST` (default: `127.0.0.1`)
 - `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (`true` only when the service is behind a trusted proxy)
 - `INDEXER_MODE` (`dev` | `production`, default: `dev`)
-- `TON_NETWORK` (`mainnet` | `testnet`, default: `testnet`)
+- `TON_NETWORK` (`mainnet` | `testnet` | `localnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
 - `TON_HTTP_ENDPOINT` (explicit TonClient4 endpoint; if unset uses `@orbs-network/ton-access`)
 - `INDEXER_WRITE_RPC_ENDPOINT` (optional upstream JSON-RPC endpoint for proxying write methods)
 - `INDEXER_ENABLE_WRITE_RPC` (`true` to allow proxied write methods; default `false`)
 - `INDEXER_WRITE_RPC_API_KEY` (optional API key passed as `X-API-Key` to `INDEXER_WRITE_RPC_ENDPOINT`)
 - `INDEXER_RPC_PROXY_TIMEOUT_MS` (default: `30000`)
-- `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` (lite client pool; see below)
+- `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` / `LITESERVER_POOL_LOCALNET` (lite client pool; see below)
+- `INDEXER_REGISTRY_PATH` (selected network registry; defaults to `registry/{network}.json`)
+- `INDEXER_RELEASE_MANIFEST_PATH` / `TONSWAP_RELEASE_MANIFEST_PATH` (canonical release manifest; when set, startup requires exact network, key, address, and registry-hash parity with the selected registry)
+- `INDEXER_SERVICE_ID` (default: `ti.soramitsu.io`)
+- `INDEXER_PUBLIC_BASE_URL` (default: `https://ti.soramitsu.io`)
 - `SORA_RPC_HTTP_ENDPOINT` (optional SORA JSON-RPC endpoint used to resolve the on-chain TON trusted checkpoint automatically)
 - `SORA_RPC_TIMEOUT_MS` (default: `10000`)
 - `SORA_TON_TRUSTED_CHECKPOINT_CACHE_TTL_MS` (default: `10000`)
@@ -118,9 +145,13 @@ Production safeguards:
 - `GET /api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload`
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
 - `GET /api/indexer/v1/accounts/{addr}/swaps?limit=100&from_utime=1700000000&to_utime=1700003600&pay_token=TON&receive_token=T3&include_reverse=true`
+- `GET /api/indexer/v1/markets/{market}/candles?market_address={pool}&asset_symbol=TOKEN&quote_symbol=T3&interval=1m`
 - `GET /api/indexer/v1/accounts/{addr}/state`
 - `GET /api/indexer/v1/sccp/ton/burn-proof-material?jetton_master={addr}&message_id=0x...`
-- `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64`
+- `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64` — `status.feeBps`
+  is read from the canonical 36-field `engine_config` getter and is `null` if that tuple cannot be
+  decoded exactly or the base fee is outside `0..10000`; clients must combine it with each market's
+  signed `controlFeeDeltaBps` and clamp the result to `0..10000`.
 - `GET /api/indexer/v1/vol-index/{vol_index}/snapshot?pool={pool}&route_ids={job_ids}`
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
 - `GET /api/indexer/v1/farms/{factory}/snapshot?max_scan=20&max_misses=2`
@@ -171,6 +202,14 @@ npm run sync-registry
 ```
 `sync-registry` prefers `tmp_debug/referral.registry.repair.address` when present so the indexer tracks the latest repaired referral registry deployment.
 
+Release runs may instead provide the canonical
+`tonswap-testnet-release-v1` manifest with `network`, `releaseId`, `contracts`,
+`registryHash`, and `manifestHash`. Contract entries may be address strings or
+`{ "address": "..." }` objects. The selected registry must contain exactly the
+same keys and address strings. `registryHash` is SHA-256 of the sorted contract
+map encoded as compact JSON plus a trailing newline; `manifestHash` is SHA-256
+of the recursively key-sorted manifest with the `manifestHash` field omitted.
+
 ## Notes
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
 - `/api/indexer/v1/sccp/ton/burn-proof-material` can omit `trusted_checkpoint_seqno/hash`; when omitted, the indexer resolves the current SORA-governed TON checkpoint automatically via `SORA_RPC_HTTP_ENDPOINT` or the static checkpoint override env vars.
@@ -179,6 +218,12 @@ npm run sync-registry
 - Swap classifier now also decodes optional execution hints from swap `queryId` (market/limit/twap, optional twap slice/total, and optional token symbol codes) and returns them in both `detail` and `actions` for `kind: "swap"` tx entries.
 - Swap hint decoding also exposes `querySequence` + `queryNonce` (from queryId metadata) so clients can group TWAP slices by run.
 - `/accounts/{addr}/swaps` provides a chart-friendly swap execution feed with server-side filters for pair direction, execution type, status, and optional `from_utime` / `to_utime` time windows.
+- `/markets/{market}/candles` aggregates only successful DLMM swaps for which
+  the actual outbound transfer amount was decoded and matched to the inbound
+  swap query ID. It excludes `minOut` fallbacks, normalizes both directions
+  into quote-per-base OHLCV, and includes the source transaction IDs in every
+  candle. With a release manifest configured, the requested key, pool, symbols,
+  and decimals must exactly match one of its canonical markets.
 - `/accounts/{addr}/swaps` also returns chart helpers:
   - `summary` (status + execution type counters, pending limit count, twap run count)
   - `twap_runs` (run-level progress/status snapshots)
@@ -194,7 +239,8 @@ npm run sync-registry
 - If `queryId` metadata is absent, classifier still falls back to opcode-level swap decoding.
 
 ### Liteserver Pool Format
-`LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` can be one of:
+`LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` /
+`LITESERVER_POOL_LOCALNET` can be one of:
 - URL to a TON global config JSON
   - mainnet: `https://ton.org/global.config.json`
   - testnet: `https://ton.org/testnet-global.config.json`

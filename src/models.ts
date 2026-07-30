@@ -1,4 +1,4 @@
-export type Network = 'mainnet' | 'testnet';
+export type Network = 'mainnet' | 'testnet' | 'localnet';
 
 export type TxKind =
   | 'swap'

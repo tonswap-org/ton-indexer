@@ -50,6 +50,30 @@ export const swapQuerySchema = {
   },
 };
 
+export const marketCandleParamsSchema = {
+  type: 'object',
+  properties: {
+    market: { type: 'string', minLength: 1, maxLength: 160 },
+  },
+  required: ['market'],
+};
+
+export const marketCandleQuerySchema = {
+  type: 'object',
+  properties: {
+    market_address: { type: 'string' },
+    asset_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    quote_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    asset_decimals: { type: 'integer', minimum: 0, maximum: 30 },
+    quote_decimals: { type: 'integer', minimum: 0, maximum: 30 },
+    interval: { type: 'string', enum: ['1m', '5m', '15m', '1h', '4h', '1d'] },
+    from_utime: { type: 'integer', minimum: 1 },
+    to_utime: { type: 'integer', minimum: 1 },
+    limit: { type: 'integer', minimum: 1, maximum: 1000 },
+  },
+  required: ['market_address', 'asset_symbol', 'quote_symbol'],
+};
+
 export const debugQuerySchema = {
   type: 'object',
   properties: {

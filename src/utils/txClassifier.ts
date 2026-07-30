@@ -542,7 +542,11 @@ export const classifyTransaction = (
       const recipientWallet = swap?.recipient;
       const amountOut =
         recipientWallet
-          ? jettonTransfers.find((t) => t.decoded.destination === recipientWallet)?.decoded.amount
+          ? jettonTransfers.find(
+              (t) =>
+                t.decoded.destination === recipientWallet &&
+                t.decoded.queryId === swapViaNotify.decoded.queryId
+            )?.decoded.amount
           : undefined;
       actions.push({
         kind: 'swap',

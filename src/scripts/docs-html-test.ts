@@ -8,6 +8,7 @@ assert.ok(html.includes('/api/indexer/v1/openapi.json'));
 assert.ok(html.includes('/api/indexer/v1/contracts'));
 assert.ok(html.includes('/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload'));
 assert.ok(html.includes('/api/indexer/v1/accounts/{addr}/swaps'));
+assert.ok(html.includes('/api/indexer/v1/markets/spot:T3-X/candles'));
 assert.ok(html.includes('/api/indexer/v1/perps/{addr}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/vol-index/{addr}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/governance/{voting}/snapshot'));

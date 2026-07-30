@@ -1,6 +1,7 @@
 import { Config } from '../config';
 
 export const buildOpenApi = (config: Config) => {
+  const serviceId = config.serviceId?.trim() || 'ti.soramitsu.io';
   return {
     openapi: '3.0.3',
     info: {
@@ -49,7 +50,7 @@ export const buildOpenApi = (config: Config) => {
         HealthStatus: {
           type: 'object',
           properties: {
-            serviceId: { type: 'string', enum: ['ti.soramitsu.io'] },
+            serviceId: { type: 'string', enum: [serviceId] },
             ecosystem: { type: 'string', enum: ['ton'] },
             chainId: { type: 'string' },
             network: { type: 'string' },
@@ -65,14 +66,17 @@ export const buildOpenApi = (config: Config) => {
             network: { type: ['string', 'null'] },
             count: { type: 'integer' },
             contracts: { type: 'object', additionalProperties: { type: 'string' } },
+            release_id: { type: ['string', 'null'] },
+            registry_hash: { type: ['string', 'null'] },
+            release_manifest_hash: { type: ['string', 'null'] },
           },
-          required: ['count', 'contracts'],
+          required: ['count', 'contracts', 'release_id', 'registry_hash', 'release_manifest_hash'],
         },
         ServiceInfoResponse: {
           type: 'object',
           properties: {
             schemaVersion: { type: 'integer', enum: [1] },
-            serviceId: { type: 'string', enum: ['ti.soramitsu.io'] },
+            serviceId: { type: 'string', enum: [serviceId] },
             serviceName: { type: 'string' },
             ecosystem: { type: 'string', enum: ['ton'] },
             chainId: { type: 'string' },
@@ -81,6 +85,15 @@ export const buildOpenApi = (config: Config) => {
             readOnly: { type: 'boolean' },
             capabilities: { type: 'array', items: { type: 'string' } },
             endpoints: { type: 'object', additionalProperties: { type: 'string' } },
+            release: {
+              type: 'object',
+              properties: {
+                releaseId: { type: ['string', 'null'] },
+                registryHash: { type: ['string', 'null'] },
+                releaseManifestHash: { type: ['string', 'null'] },
+              },
+              required: ['releaseId', 'registryHash', 'releaseManifestHash'],
+            },
           },
           required: [
             'schemaVersion',
@@ -92,7 +105,8 @@ export const buildOpenApi = (config: Config) => {
             'publicBaseUrl',
             'readOnly',
             'capabilities',
-            'endpoints'
+            'endpoints',
+            'release'
           ],
         },
         RunGetMethodRequest: {
@@ -380,6 +394,7 @@ export const buildOpenApi = (config: Config) => {
             receiveToken: { type: 'string' },
             payAmount: { type: 'string' },
             receiveAmount: { type: 'string' },
+            receiveAmountSource: { type: 'string', enum: ['actual', 'minimum'] },
             queryId: { type: 'string' },
             executionType: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
             twapSlice: { type: 'integer' },
@@ -480,6 +495,58 @@ export const buildOpenApi = (config: Config) => {
             'pending_limits',
           ],
         },
+        MarketCandle: {
+          type: 'object',
+          properties: {
+            ts: { type: 'integer' },
+            open: { type: 'number' },
+            high: { type: 'number' },
+            low: { type: 'number' },
+            close: { type: 'number' },
+            volumeBase: { type: 'number' },
+            volumeQuote: { type: 'number' },
+            tradeCount: { type: 'integer' },
+            sourceTxIds: { type: 'array', items: { type: 'string' } },
+          },
+          required: [
+            'ts',
+            'open',
+            'high',
+            'low',
+            'close',
+            'volumeBase',
+            'volumeQuote',
+            'tradeCount',
+            'sourceTxIds',
+          ],
+        },
+        MarketCandlesResponse: {
+          type: 'object',
+          properties: {
+            market_key: { type: 'string' },
+            market_address: { type: 'string' },
+            interval: { type: 'string', enum: ['1m', '5m', '15m', '1h', '4h', '1d'] },
+            from_utime: { type: ['integer', 'null'] },
+            to_utime: { type: ['integer', 'null'] },
+            candle_count: { type: 'integer' },
+            history_complete: { type: 'boolean' },
+            synced_at: { type: 'integer' },
+            network: { type: 'string' },
+            candles: { type: 'array', items: { $ref: '#/components/schemas/MarketCandle' } },
+          },
+          required: [
+            'market_key',
+            'market_address',
+            'interval',
+            'from_utime',
+            'to_utime',
+            'candle_count',
+            'history_complete',
+            'synced_at',
+            'network',
+            'candles',
+          ],
+        },
         StateResponse: {
           type: 'object',
           properties: {
@@ -557,8 +624,13 @@ export const buildOpenApi = (config: Config) => {
           properties: {
             governance: { type: ['string', 'null'] },
             enabled: { type: 'boolean' },
+            feeBps: {
+              type: ['string', 'null'],
+              description:
+                'Base T3 trade fee in basis points from the canonical 36-field engine_config getter; null when that getter cannot be decoded exactly or the value is outside 0..10000.',
+            },
           },
-          required: ['enabled'],
+          required: ['enabled', 'feeBps'],
         },
         PerpsAutomationResponse: {
           type: 'object',
@@ -1224,6 +1296,44 @@ export const buildOpenApi = (config: Config) => {
           },
         },
       },
+      '/api/indexer/v1/markets/{market}/candles': {
+        get: {
+          summary: 'Confirmed DLMM swap-derived OHLCV candles',
+          description:
+            'Aggregates successful swaps with query-ID-matched outbound amounts. Reverse-direction swaps are normalized into quote-per-base prices; minimum-output fallbacks are excluded. When a release manifest is configured, the market key, pool, symbols, and decimals must exactly match its canonical market metadata.',
+          parameters: [
+            {
+              name: 'market',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1, maxLength: 160 },
+            },
+            { name: 'market_address', in: 'query', required: true, schema: { type: 'string' } },
+            { name: 'asset_symbol', in: 'query', required: true, schema: { type: 'string', maxLength: 32 } },
+            { name: 'quote_symbol', in: 'query', required: true, schema: { type: 'string', maxLength: 32 } },
+            { name: 'asset_decimals', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 30, default: 9 } },
+            { name: 'quote_decimals', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 30, default: 9 } },
+            {
+              name: 'interval',
+              in: 'query',
+              schema: { type: 'string', enum: ['1m', '5m', '15m', '1h', '4h', '1d'], default: '1m' },
+            },
+            { name: 'from_utime', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            { name: 'to_utime', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 1000, default: 320 } },
+          ],
+          responses: {
+            200: {
+              description: 'Market candle response',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/MarketCandlesResponse' } } },
+            },
+            400: {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
       '/api/indexer/v1/accounts/{addr}/state': {
         get: {
           summary: 'Account state',
@@ -1280,7 +1390,7 @@ export const buildOpenApi = (config: Config) => {
       },
       '/api/indexer/v1/perps/{engine}/snapshot': {
         get: {
-          summary: 'Perps engine snapshot',
+          summary: 'Perps engine snapshot, including canonical engine_config base fee',
           parameters: [
             { name: 'engine', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'market_ids', in: 'query', schema: { type: 'string' } },

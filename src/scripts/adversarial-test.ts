@@ -11,6 +11,7 @@ import { MemoryStore } from '../store/memoryStore';
 import { loadSnapshotFile } from '../snapshot';
 import { IndexedTx } from '../models';
 import { BlockFollower } from '../workers/blockFollower';
+import { BackfillWorker } from '../workers/backfillWorker';
 import { TonDataSource, RawTransaction } from '../data/dataSource';
 import { createLogger } from '../utils/logger';
 import { loadOpcodes } from '../utils/opcodes';
@@ -827,6 +828,39 @@ const testJsonRpcProxySurfacesInvalidUpstreamJson = async () => {
     assert.equal(response.json().code, 502);
     assert.match(response.json().error, /Invalid upstream RPC JSON/);
     assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+};
+
+const testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints = async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  (globalThis as any).fetch = async () => {
+    calls += 1;
+    throw new Error('localnet must not call a public endpoint');
+  };
+  const app = fastify({ logger: false });
+  try {
+    const config = testConfig({
+      network: 'localnet',
+      rpcProxyEndpoint: undefined,
+      rpcProxyEndpoints: [],
+      enableWriteRpc: true,
+    });
+    registerTestRoutes(app, config, {} as any);
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/jsonRPC',
+      payload: { id: 'local-no-discovery', jsonrpc: '2.0', method: 'getMasterchainInfo', params: {} },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().ok, false);
+    assert.equal(response.json().code, 404);
+    assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;
     await app.close();
@@ -1750,6 +1784,264 @@ const testBlockFollowerCatchesUpAcrossMultipleBatches = async () => {
   assert.equal(entry?.stats.lastUpdateSeqno, 123);
 };
 
+const testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, 'old')]);
+  store.markHistoryComplete(validAddress);
+
+  const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '158', lastTxHash: 'h158' };
+    },
+    async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
+      calls.push({ lt, hash, limit });
+      if (lt === '158') {
+        return Array.from({ length: 18 }, (_, index) => makeRawTx(158 - index));
+      }
+      if (lt === '141') {
+        return Array.from({ length: 41 }, (_, index) => {
+          const nextLt = 140 - index;
+          return makeRawTx(nextLt, nextLt === 100 ? 'old' : `h${nextLt}`);
+        });
+      }
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const follower = new BlockFollower(config, store, source, loadOpcodes(undefined), createLogger('fatal'), service);
+
+  await (follower as any).refreshAddress(validAddress, 124);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((call) => call.limit), [50, 50]);
+  assert.deepEqual(calls.map((call) => call.lt), ['158', '141']);
+  assert.equal(entry?.txs.length, 59);
+  assert.deepEqual(
+    entry?.txs.map((tx) => tx.lt),
+    Array.from({ length: 59 }, (_, index) => String(158 - index))
+  );
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.equal(entry?.stats.lastUpdateSeqno, 124);
+};
+
+const testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
+  const source = makeSource({
+    async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
+      calls.push({ lt, hash, limit });
+      return Array.from({ length: 18 }, (_, index) => makeRawTx(158 - index));
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.deepEqual(calls, [{ lt: undefined, hash: undefined, limit: 50 }]);
+  assert.equal(entry?.txs.length, 18);
+  assert.equal(entry?.stats.lastBackfillLt, '141');
+  assert.equal(entry?.stats.historyComplete, false);
+  assert.deepEqual(queued, [validAddress]);
+};
+
+const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  let calls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      calls += 1;
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls, 1);
+  assert.equal(entry?.txs.length, 0);
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.deepEqual(queued, []);
+};
+
+const testBackfillContinuesAfterShortPagesUntilExplicitEmpty = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(
+    validAddress,
+    Array.from({ length: 18 }, (_, index) => makeIndexedTx(158 - index))
+  );
+  const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
+  const source = makeSource({
+    async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
+      calls.push({ lt, hash, limit });
+      if (lt === '141') {
+        return Array.from({ length: 18 }, (_, index) => makeRawTx(140 - index));
+      }
+      if (lt === '123') {
+        return Array.from({ length: 22 }, (_, index) => makeRawTx(122 - index));
+      }
+      if (lt === '101') return [];
+      throw new Error(`unexpected cursor ${String(lt)}:${String(hash)}`);
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(undefined),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.deepEqual(calls.map((call) => call.lt), ['141', '123', '101']);
+  assert.deepEqual(calls.map((call) => call.limit), [50, 50, 50]);
+  assert.equal(entry?.txs.length, 58);
+  assert.deepEqual(
+    entry?.txs.map((tx) => tx.lt),
+    Array.from({ length: 58 }, (_, index) => String(158 - index))
+  );
+  assert.equal(entry?.stats.lastBackfillLt, '101');
+  assert.equal(entry?.stats.historyComplete, true);
+};
+
+const testBackfillDuplicateCursorStaysIncomplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, 'old')]);
+  let calls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      calls += 1;
+      return [makeRawTx(100, 'old')];
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(undefined),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls, 1);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.stats.lastBackfillLt, '100');
+  assert.equal(entry?.stats.historyComplete, false);
+};
+
+const testBackfillPageCapStaysIncomplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 1,
+    backfillMaxPagesPerAddress: 1,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100), makeIndexedTx(99)]);
+  let calls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      calls += 1;
+      return [makeRawTx(98)];
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(undefined),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  assert.equal(calls, 0);
+  assert.equal(store.get(validAddress)?.stats.historyComplete, false);
+};
+
+const testPartialCachedHistoryIsQueuedForBackfill = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(90, 'partial')]);
+
+  let sourceCalls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      sourceCalls += 1;
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  assert.equal(sourceCalls, 0);
+  assert.deepEqual(queued, [validAddress]);
+  assert.equal(store.get(validAddress)?.stats.historyComplete, false);
+};
+
 const testBlockFollowerMarksHistoryIncompleteWhenCatchupIsCapped = async () => {
   const config = {
     ...loadConfig(),
@@ -1864,6 +2156,7 @@ const run = async () => {
   await testJsonRpcAddressInformationNormalizesMissingStateFields();
   await testJsonRpcRejectsUnsupportedAndDisabledWriteMethods();
   await testJsonRpcProxySurfacesInvalidUpstreamJson();
+  await testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints();
   await testRunGetMethodRejectsMalformedStackBeforeServiceCall();
   await testRunGetMethodRejectsOversizedStackBeforeServiceCall();
   await testJsonRpcCursorPaginationStopsOnDuplicateCursor();
@@ -1892,6 +2185,13 @@ const run = async () => {
   await testSccpProofRejectsPartialTrustedCheckpoint();
   await testSccpProofRejectsMalformedRequiredFieldsBeforeServiceCall();
   await testBlockFollowerCatchesUpAcrossMultipleBatches();
+  await testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest();
+  await testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill();
+  await testInitialTransactionsEmptyPageMarksHistoryComplete();
+  await testBackfillContinuesAfterShortPagesUntilExplicitEmpty();
+  await testBackfillDuplicateCursorStaysIncomplete();
+  await testBackfillPageCapStaysIncomplete();
+  await testPartialCachedHistoryIsQueuedForBackfill();
   await testBlockFollowerMarksHistoryIncompleteWhenCatchupIsCapped();
   await testBlockFollowerStopsOnDuplicateCursorPage();
   await testBlockFollowerSkipsFetchWhenLatestTransactionIsUnchanged();

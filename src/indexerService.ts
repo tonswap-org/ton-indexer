@@ -25,6 +25,12 @@ import { MetricsCollector } from './metricsCollector';
 import { PoolTracker } from './poolTracker';
 import { SoraTonCheckpointResolver } from './soraCheckpoint';
 import { LRUCache } from 'lru-cache';
+import {
+  buildTonswapJettonWalletInitialData,
+  isSuccessfulGetterResult,
+  parseCanonicalJettonRootData,
+  parseCanonicalJettonWalletAddress
+} from './data/jettonAbi';
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRunResult = {
@@ -76,6 +82,7 @@ export type AccountSwapExecution = {
   receiveToken?: string;
   payAmount?: string;
   receiveAmount?: string;
+  receiveAmountSource?: 'actual' | 'minimum';
   queryId?: string;
   executionType: SwapExecutionType;
   twapSlice?: number;
@@ -146,6 +153,55 @@ export type AccountSwapsResponse = {
   pending_limits: AccountPendingLimitOrder[];
 };
 
+export type MarketCandleInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+
+export type MarketCandle = {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volumeBase: number;
+  volumeQuote: number;
+  tradeCount: number;
+  sourceTxIds: string[];
+};
+
+export type MarketCandlesResponse = {
+  market_key: string;
+  market_address: string;
+  interval: MarketCandleInterval;
+  from_utime: number | null;
+  to_utime: number | null;
+  candle_count: number;
+  history_complete: boolean;
+  synced_at: number;
+  network: Network;
+  candles: MarketCandle[];
+};
+
+const MARKET_CANDLE_INTERVAL_SECONDS: Record<MarketCandleInterval, number> = {
+  '1m': 60,
+  '5m': 5 * 60,
+  '15m': 15 * 60,
+  '1h': 60 * 60,
+  '4h': 4 * 60 * 60,
+  '1d': 24 * 60 * 60,
+};
+
+const rawAmountToNumber = (value: string | undefined, decimals: number): number | null => {
+  if (!value || !/^\d+$/.test(value)) return null;
+  let raw: bigint;
+  try {
+    raw = BigInt(value);
+  } catch {
+    return null;
+  }
+  if (raw <= 0n) return null;
+  const result = Number(raw) / 10 ** decimals;
+  return Number.isFinite(result) && result > 0 ? result : null;
+};
+
 export type JettonTransferPayloadResponse = {
   custom_payload: string | null;
   state_init: string | null;
@@ -190,6 +246,27 @@ const tupleItemAddress = (item?: TupleItem): string | null => {
   } catch {
     return null;
   }
+};
+
+// `engine_config` is a canonical, fixed-width getter for the first Perps
+// release. Keep its arity and fee slot explicit so a truncated or unrelated
+// tuple can never be mistaken for a trade-fee quote.
+const PERPS_ENGINE_CONFIG_STACK_ARITY = 36;
+const PERPS_ENGINE_CONFIG_FEE_BPS_INDEX = 9;
+
+const canonicalPerpsFeeBps = (
+  response: { exitCode: number; stack: TupleItem[] } | null
+): string | null => {
+  if (
+    !response
+    || response.exitCode !== 0
+    || response.stack.length !== PERPS_ENGINE_CONFIG_STACK_ARITY
+  ) {
+    return null;
+  }
+  const feeBps = tupleItemBigInt(response.stack[PERPS_ENGINE_CONFIG_FEE_BPS_INDEX]);
+  if (feeBps === null || feeBps < 0n || feeBps > 10_000n) return null;
+  return feeBps.toString(10);
 };
 
 const toBocBase64 = (cell: any): string | null => {
@@ -362,10 +439,12 @@ const GET_METHOD_CACHE_TTL_MS = 1_000;
 const GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS = 30_000;
 const GET_METHOD_CACHE_ENTRY_MIN_TTL_MS = 60_000;
 
-// Some getters are used as liveness/confirmation signals (e.g. Jetton wallet `wallet_data`).
+// Some getters are used as liveness/confirmation signals (e.g. Jetton wallet `get_wallet_data`).
 // Caching these for 30s makes UI/automation flows flaky because balance changes are invisible
 // during the cache window. Keep these on the base (short) TTL even when they take no args.
-const GET_METHOD_CACHE_NO_ARGS_FAST_METHODS = new Set(['wallet_data']);
+const GET_METHOD_CACHE_NO_ARGS_FAST_METHODS = new Set([
+  'get_wallet_data'
+]);
 
 const DEFI_SNAPSHOT_CACHE_TTL_MS = 5_000;
 const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
@@ -1419,27 +1498,30 @@ export class IndexerService {
       return null;
     }
 
-    for (const method of ['wallet_address', 'get_wallet_address'] as const) {
-      const result = await this.runGetMethodSourceCached(jettonMaster, method, [{ type: 'slice', cell: ownerSlice }]);
-      if (result?.exitCode !== 0) continue;
-      const stack = unwrapTupleStack(result.stack);
-      const resolved = tupleItemAddress(stack[0]);
-      if (resolved) return normalizeAddress(resolved);
-    }
+    const result = await this.runGetMethodSourceCached(
+      jettonMaster,
+      'get_wallet_address',
+      [{ type: 'slice', cell: ownerSlice }]
+    );
+    if (!isSuccessfulGetterResult(result)) return null;
+    const resolved = parseCanonicalJettonWalletAddress(result.stack);
+    if (!resolved) return null;
 
-    const fallbackState = await this.buildJettonWalletState(jettonMaster, ownerAddress);
-    return fallbackState?.address ?? null;
+    // This endpoint emits TONSWAP's wallet state-init, whose persistent-data
+    // layout is implementation-specific rather than standardized by TEP-74.
+    // Require the root getter to agree with that exact state-init; arbitrary
+    // canonical Jettons with a different layout fail closed instead.
+    const expected = await this.buildJettonWalletState(jettonMaster, ownerAddress);
+    if (!expected || normalizeAddress(expected.address) !== resolved.toRawString()) {
+      return null;
+    }
+    return resolved.toRawString();
   }
 
   private async loadJettonWalletCode(jettonMaster: string): Promise<Cell | null> {
-    for (const method of ['get_jetton_data', 'jetton_data'] as const) {
-      const result = await this.runGetMethodSourceCached(jettonMaster, method, []);
-      if (result?.exitCode !== 0) continue;
-      const stack = unwrapTupleStack(result.stack);
-      const walletCode = tupleItemCell(stack[4]);
-      if (walletCode) return walletCode;
-    }
-    return null;
+    const result = await this.runGetMethodSourceCached(jettonMaster, 'get_jetton_data', []);
+    if (!isSuccessfulGetterResult(result)) return null;
+    return parseCanonicalJettonRootData(result.stack)?.walletCode ?? null;
   }
 
   private async buildJettonWalletStateInit(jettonMaster: string, ownerAddress: string): Promise<string | null> {
@@ -1457,17 +1539,7 @@ export class IndexerService {
     try {
       const owner = Address.parse(ownerAddress);
       const master = Address.parse(jettonMaster);
-      const walletData = beginCell()
-        .storeCoins(0n)
-        .storeAddress(owner)
-        .storeAddress(master)
-        .storeCoins(0n)
-        .storeCoins(0n)
-        .storeAddress(null)
-        .storeUint(0, 32)
-        .storeUint(0, 64)
-        .storeCoins(0n)
-        .endCell();
+      const walletData = buildTonswapJettonWalletInitialData(owner, master);
 
       const stateInit = { code: walletCode, data: walletData };
       const stateCell = beginCell().store(storeStateInit(stateInit)).endCell();
@@ -1594,9 +1666,10 @@ export class IndexerService {
       )
     ).slice(0, maxMarkets);
 
-    const [governanceRes, enabledRes, automationRes] = await Promise.all([
+    const [governanceRes, enabledRes, configRes, automationRes] = await Promise.all([
       this.runGetMethodSourceCached(normalizedEngine, 'engine_governance', []),
       this.runGetMethodSourceCached(normalizedEngine, 'engine_enabled', []),
+      this.runGetMethodSourceCached(normalizedEngine, 'engine_config', []),
       this.runGetMethodSourceCached(normalizedEngine, 'automation_state', [])
     ]);
 
@@ -1608,7 +1681,8 @@ export class IndexerService {
       governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
         ? {
             governance: tupleItemAddress(governanceRes.stack[0]),
-            enabled: tupleItemBool(enabledRes.stack[0])
+            enabled: tupleItemBool(enabledRes.stack[0]),
+            feeBps: canonicalPerpsFeeBps(configRes)
           }
         : null;
 
@@ -3648,6 +3722,176 @@ export class IndexerService {
     };
   }
 
+  async getMarketCandles(
+    marketKey: string,
+    marketAddress: string,
+    options: {
+      assetSymbol: string;
+      quoteSymbol: string;
+      assetDecimals?: number;
+      quoteDecimals?: number;
+      interval?: MarketCandleInterval;
+      fromUtime?: number;
+      toUtime?: number;
+      limit?: number;
+    }
+  ): Promise<MarketCandlesResponse> {
+    const syncedAt = Math.trunc(Date.now() / 1000);
+    const interval = options.interval ?? '1m';
+    const intervalSeconds = MARKET_CANDLE_INTERVAL_SECONDS[interval];
+    if (!intervalSeconds) {
+      throw new Error('unsupported candle interval');
+    }
+    const fromUtime =
+      typeof options.fromUtime === 'number' && Number.isFinite(options.fromUtime)
+        ? Math.max(1, Math.trunc(options.fromUtime))
+        : null;
+    const toUtime =
+      typeof options.toUtime === 'number' && Number.isFinite(options.toUtime)
+        ? Math.max(1, Math.trunc(options.toUtime))
+        : null;
+    if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
+      throw new Error('fromUtime must be less than or equal to toUtime');
+    }
+    const limit =
+      typeof options.limit === 'number' && Number.isFinite(options.limit)
+        ? Math.max(1, Math.min(1_000, Math.trunc(options.limit)))
+        : 320;
+    const assetSymbol = normalizeTokenSymbol(options.assetSymbol);
+    const quoteSymbol = normalizeTokenSymbol(options.quoteSymbol);
+    if (!assetSymbol || !quoteSymbol || assetSymbol === quoteSymbol) {
+      throw new Error('assetSymbol and quoteSymbol must be distinct non-empty symbols');
+    }
+    const assetDecimals =
+      typeof options.assetDecimals === 'number' && Number.isFinite(options.assetDecimals)
+        ? Math.max(0, Math.min(30, Math.trunc(options.assetDecimals)))
+        : 9;
+    const quoteDecimals =
+      typeof options.quoteDecimals === 'number' && Number.isFinite(options.quoteDecimals)
+        ? Math.max(0, Math.min(30, Math.trunc(options.quoteDecimals)))
+        : 9;
+
+    this.store.touch(marketAddress);
+    try {
+      await this.ensureInitialTransactions(marketAddress);
+    } catch (_error) {
+      // Return any already-indexed confirmed history and report it as incomplete.
+    }
+
+    const entry = this.store.get(marketAddress);
+    if (!entry) {
+      return {
+        market_key: marketKey,
+        market_address: marketAddress,
+        interval,
+        from_utime: fromUtime,
+        to_utime: toUtime,
+        candle_count: 0,
+        history_complete: false,
+        synced_at: syncedAt,
+        network: this.network,
+        candles: [],
+      };
+    }
+
+    const trades: Array<{
+      utime: number;
+      lt: bigint;
+      txId: string;
+      price: number;
+      base: number;
+      quote: number;
+    }> = [];
+    for (const tx of entry.txs) {
+      const swap = this.toSwapExecution(tx);
+      if (!swap || swap.status !== 'success' || swap.receiveAmountSource !== 'actual') continue;
+      if (fromUtime !== null && swap.utime < fromUtime) continue;
+      if (toUtime !== null && swap.utime > toUtime) continue;
+
+      const paySymbolRaw = normalizeTokenSymbol(swap.payToken);
+      const receiveSymbolRaw = normalizeTokenSymbol(swap.receiveToken);
+      const paySymbol: string | null = paySymbolRaw === 'X' ? assetSymbol : paySymbolRaw;
+      const receiveSymbol: string | null = receiveSymbolRaw === 'X' ? assetSymbol : receiveSymbolRaw;
+
+      let baseRaw: string | undefined;
+      let quoteRaw: string | undefined;
+      if (paySymbol === assetSymbol && receiveSymbol === quoteSymbol) {
+        baseRaw = swap.payAmount;
+        quoteRaw = swap.receiveAmount;
+      } else if (paySymbol === quoteSymbol && receiveSymbol === assetSymbol) {
+        baseRaw = swap.receiveAmount;
+        quoteRaw = swap.payAmount;
+      } else {
+        continue;
+      }
+
+      const base = rawAmountToNumber(baseRaw, assetDecimals);
+      const quote = rawAmountToNumber(quoteRaw, quoteDecimals);
+      if (base === null || quote === null) continue;
+      const price = quote / base;
+      if (!Number.isFinite(price) || price <= 0) continue;
+      trades.push({
+        utime: swap.utime,
+        lt: BigInt(swap.lt),
+        txId: swap.txId,
+        price,
+        base,
+        quote,
+      });
+    }
+
+    trades.sort((left, right) => {
+      if (left.utime !== right.utime) return left.utime - right.utime;
+      if (left.lt !== right.lt) return left.lt < right.lt ? -1 : 1;
+      return left.txId.localeCompare(right.txId);
+    });
+
+    const byBucket = new Map<number, MarketCandle>();
+    for (const trade of trades) {
+      const ts = Math.floor(trade.utime / intervalSeconds) * intervalSeconds;
+      const candle = byBucket.get(ts);
+      if (!candle) {
+        byBucket.set(ts, {
+          ts,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+          volumeBase: trade.base,
+          volumeQuote: trade.quote,
+          tradeCount: 1,
+          sourceTxIds: [trade.txId],
+        });
+        continue;
+      }
+      candle.high = Math.max(candle.high, trade.price);
+      candle.low = Math.min(candle.low, trade.price);
+      candle.close = trade.price;
+      candle.volumeBase += trade.base;
+      candle.volumeQuote += trade.quote;
+      candle.tradeCount += 1;
+      if (!candle.sourceTxIds.includes(trade.txId)) {
+        candle.sourceTxIds.push(trade.txId);
+      }
+    }
+
+    const candles = [...byBucket.values()]
+      .sort((left, right) => left.ts - right.ts)
+      .slice(-limit);
+    return {
+      market_key: marketKey,
+      market_address: marketAddress,
+      interval,
+      from_utime: fromUtime,
+      to_utime: toUtime,
+      candle_count: candles.length,
+      history_complete: entry.stats.historyComplete,
+      synced_at: syncedAt,
+      network: this.network,
+      candles,
+    };
+  }
+
   async refreshAccountState(address: string, options: { lite?: boolean } = {}) {
     const previous = this.store.get(address)?.balance;
     const previousSignature = balanceStateSignature(previous);
@@ -3674,10 +3918,29 @@ export class IndexerService {
 
   async ensureInitialTransactions(address: string) {
     const entry = this.store.get(address);
-    if (entry && entry.txs.length > 0) return;
+    const maxPages = Math.min(
+      this.config.backfillMaxPagesPerAddress,
+      this.config.maxPagesPerAddress
+    );
+    if (entry && entry.txs.length > 0) {
+      if (
+        !entry.stats.historyComplete &&
+        entry.stats.totalPagesMin < maxPages &&
+        this.enqueueBackfill
+      ) {
+        this.enqueueBackfill(address);
+      }
+      return;
+    }
 
     const limit = this.config.pageSize * this.config.backfillPageBatch;
     const raw = await this.source.getTransactions(address, limit);
+    if (raw.length === 0) {
+      this.store.markHistoryComplete(address);
+      this.store.setLastBackfillLt(address, undefined);
+      return;
+    }
+
     this.poolTracker?.observeTransactions(raw);
     const indexed = raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
     this.store.addTransactions(address, indexed);
@@ -3686,10 +3949,11 @@ export class IndexerService {
     if (!updated) return;
     const oldest = updated.txs[updated.txs.length - 1];
     this.store.setLastBackfillLt(address, oldest?.lt);
-
-    if (raw.length < limit) {
-      this.store.markHistoryComplete(address);
-    } else if (this.enqueueBackfill) {
+    // Lite servers may return a proof-size-capped short page even when older
+    // transactions exist. A nonempty initial page therefore never proves that
+    // history is complete; background cursor pagination must reach an empty page.
+    this.store.markHistoryIncomplete(address);
+    if (updated.stats.totalPagesMin < maxPages && this.enqueueBackfill) {
       this.enqueueBackfill(address);
     }
   }
@@ -3725,6 +3989,9 @@ export class IndexerService {
     const queryNonce = detail?.queryNonce ?? swapAction?.queryNonce;
     const twapRunId = executionType === 'twap' && querySequence !== undefined ? `seq:${querySequence}` : undefined;
 
+    const actualReceiveAmount = swapAction?.amountOut;
+    const fallbackReceiveAmount = detail?.receiveAmount ?? swapAction?.minOut;
+
     return {
       txId: tx.ui.txId,
       lt: tx.lt,
@@ -3735,7 +4002,13 @@ export class IndexerService {
       payToken: detail?.payToken ?? actionPayToken,
       receiveToken: detail?.receiveToken ?? actionReceiveToken,
       payAmount: detail?.payAmount ?? swapAction?.amountIn,
-      receiveAmount: detail?.receiveAmount ?? swapAction?.amountOut ?? swapAction?.minOut,
+      receiveAmount: actualReceiveAmount ?? fallbackReceiveAmount,
+      receiveAmountSource:
+        actualReceiveAmount !== undefined
+          ? 'actual'
+          : fallbackReceiveAmount !== undefined
+            ? 'minimum'
+            : undefined,
       queryId: detail?.queryId ?? swapAction?.queryId,
       executionType,
       twapSlice: detail?.twapSlice ?? swapAction?.twapSlice,

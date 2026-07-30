@@ -80,36 +80,74 @@ export class BackfillWorker {
   }
 
   private async processAddress(address: string) {
-    const entry = this.store.get(address);
+    let entry = this.store.get(address);
     if (!entry) return;
     if (entry.stats.historyComplete) return;
 
-    const knownPages = Math.ceil(entry.stats.txCount / this.config.pageSize);
-    if (knownPages >= this.config.backfillMaxPagesPerAddress) {
-      return;
-    }
-
-    const oldest = entry.txs[entry.txs.length - 1];
-    if (!oldest) return;
-
     const limit = this.config.pageSize * this.config.backfillPageBatch;
-    const rawTxs = await this.source.getTransactions(address, limit, oldest.lt, oldest.hash);
-    const beforeCount = entry.stats.txCount;
+    const maxPages = Math.min(
+      this.config.backfillMaxPagesPerAddress,
+      this.config.maxPagesPerAddress
+    );
+    const maxRequests = Math.max(1, maxPages);
+    const seenCursors = new Set<string>();
 
-    this.poolTracker?.observeTransactions(rawTxs);
-    const indexed = rawTxs.map((tx) => classifyTransaction(address, tx, this.opcodes));
-    this.store.addTransactions(address, indexed);
-    this.metrics?.recordBackfillBatch(rawTxs.length);
+    for (let requestIndex = 0; requestIndex < maxRequests; requestIndex += 1) {
+      entry = this.store.get(address);
+      if (!entry || entry.stats.historyComplete) return;
+      if (entry.stats.totalPagesMin >= maxPages) {
+        this.store.markHistoryIncomplete(address);
+        return;
+      }
 
-    const updated = this.store.get(address);
-    if (!updated) return;
-    const newOldest = updated.txs[updated.txs.length - 1];
-    this.store.setLastBackfillLt(address, newOldest?.lt);
+      const oldest = entry.txs[entry.txs.length - 1];
+      if (!oldest) return;
+      const cursorKey = `${oldest.lt}:${oldest.hash}`;
+      if (seenCursors.has(cursorKey)) {
+        this.store.markHistoryIncomplete(address);
+        this.logger.warn('backfill cursor stalled before history exhaustion', {
+          address,
+          cursorLt: oldest.lt
+        });
+        return;
+      }
+      seenCursors.add(cursorKey);
 
-    if (rawTxs.length < limit || updated.stats.txCount === beforeCount) {
-      this.store.markHistoryComplete(address);
-    } else {
-      this.enqueue(address);
+      const rawTxs = await this.source.getTransactions(address, limit, oldest.lt, oldest.hash);
+      this.metrics?.recordBackfillBatch(rawTxs.length);
+      if (rawTxs.length === 0) {
+        this.store.setLastBackfillLt(address, oldest.lt);
+        this.store.markHistoryComplete(address);
+        return;
+      }
+
+      const beforeCount = entry.stats.txCount;
+      this.poolTracker?.observeTransactions(rawTxs);
+      const indexed = rawTxs.map((tx) => classifyTransaction(address, tx, this.opcodes));
+      this.store.addTransactions(address, indexed);
+
+      const updated = this.store.get(address);
+      if (!updated) return;
+      const newOldest = updated.txs[updated.txs.length - 1];
+      this.store.setLastBackfillLt(address, newOldest?.lt);
+      const progressed =
+        updated.stats.txCount > beforeCount &&
+        newOldest !== undefined &&
+        (newOldest.lt !== oldest.lt || newOldest.hash !== oldest.hash);
+      if (!progressed) {
+        this.store.markHistoryIncomplete(address);
+        this.logger.warn('backfill cursor stalled before history exhaustion', {
+          address,
+          cursorLt: oldest.lt
+        });
+        return;
+      }
     }
+
+    this.store.markHistoryIncomplete(address);
+    this.logger.warn('backfill request cap reached before history exhaustion', {
+      address,
+      maxRequests
+    });
   }
 }

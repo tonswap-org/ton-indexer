@@ -31,6 +31,7 @@ export const buildDocsHtml = (nonce?: string) => {
     '        <option value=\"/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload\">/jettons/{jetton}/transfer/{owner}/payload</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/txs\">/accounts/{addr}/txs</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/swaps\">/accounts/{addr}/swaps</option>',
+    '        <option value=\"/api/indexer/v1/markets/spot:T3-X/candles\">/markets/{market}/candles</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/state\">/accounts/{addr}/state</option>',
     '        <option value=\"/api/indexer/v1/perps/{addr}/snapshot\">/perps/{addr}/snapshot</option>',
     '        <option value=\"/api/indexer/v1/vol-index/{addr}/snapshot\">/vol-index/{addr}/snapshot</option>',

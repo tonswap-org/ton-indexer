@@ -9,6 +9,7 @@ assert.ok(spec.paths['/api/indexer/v1/contracts']);
 assert.ok(spec.paths['/api/indexer/v1/service-info']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/swaps']);
+assert.ok(spec.paths['/api/indexer/v1/markets/{market}/candles']);
 assert.ok(spec.paths['/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload']);
 assert.ok(spec.paths['/api/indexer/v1/perps/{engine}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/vol-index/{volIndex}/snapshot']);
@@ -39,16 +40,27 @@ assert.ok('queryId' in txEntry);
 assert.ok('querySequence' in txEntry);
 assert.ok('queryNonce' in txEntry);
 assert.ok(spec.components?.schemas?.SwapsResponse);
+assert.ok(spec.components?.schemas?.MarketCandle);
+assert.ok(spec.components?.schemas?.MarketCandlesResponse);
 const swapsResponseProps =
   spec.components?.schemas?.SwapsResponse?.properties ??
   ({} as Record<string, unknown>);
 assert.ok('synced_at' in swapsResponseProps);
+const candleProps =
+  spec.components?.schemas?.MarketCandle?.properties ??
+  ({} as Record<string, unknown>);
+assert.ok('sourceTxIds' in candleProps);
 assert.ok(spec.components?.schemas?.SwapExecutionEntry);
 assert.ok(spec.components?.schemas?.SwapsSummary);
 assert.ok(spec.components?.schemas?.TwapRunSummaryEntry);
 assert.ok(spec.components?.schemas?.PendingLimitOrderEntry);
 assert.ok(spec.components?.schemas?.JettonTransferPayloadResponse);
 assert.ok(spec.components?.schemas?.VolIndexSnapshotResponse);
+const perpsStatusProps =
+  spec.components?.schemas?.PerpsStatusResponse?.properties ??
+  ({} as Record<string, unknown>);
+assert.ok('feeBps' in perpsStatusProps);
+assert.ok(spec.components?.schemas?.PerpsStatusResponse?.required?.includes('feeBps'));
 const serviceInfoProps =
   spec.components?.schemas?.ServiceInfoResponse?.properties ??
   ({} as Record<string, { enum?: string[] }>);

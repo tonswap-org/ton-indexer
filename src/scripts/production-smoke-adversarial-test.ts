@@ -10,14 +10,18 @@ type Route = {
 };
 
 type Routes = Record<string, Route>;
+const registryHash = 'a'.repeat(64);
+const releaseId = 'release-1';
 
 const openApiPaths = () => ({
   '/api/indexer/v1/service-info': {},
+  '/api/indexer/v1/contracts': {},
   '/api/indexer/v1/accounts/{addr}/balance': {},
   '/api/indexer/v1/accounts/{addr}/balances': {},
   '/api/indexer/v1/accounts/{addr}/assets': {},
   '/api/indexer/v1/accounts/{addr}/txs': {},
   '/api/indexer/v1/accounts/{addr}/state': {},
+  '/api/indexer/v1/markets/{market}/candles': {},
   '/api/indexer/v1/runGetMethod': {},
   '/api/indexer/v1/runGetMethods': {},
 });
@@ -46,6 +50,19 @@ const validRoutes = (): Routes => ({
       endpoints: {
         openapi: '/api/indexer/v1/openapi.json',
       },
+      release: {
+        releaseId,
+        registryHash,
+      },
+    },
+  },
+  '/api/indexer/v1/contracts': {
+    body: {
+      network: 'mainnet',
+      count: 1,
+      contracts: { T3Root: `0:${'1'.repeat(64)}` },
+      registry_hash: registryHash,
+      release_id: releaseId,
     },
   },
   '/api/indexer/v1/openapi.json': {
@@ -92,7 +109,43 @@ const assertSmokeRejects = async (routes: Routes, expected: RegExp) => {
 
 const main = async () => {
   await withServer(validRoutes(), async (baseUrl) => {
-    await runProductionSmoke(baseUrl);
+    await runProductionSmoke(baseUrl, {
+      expectedRegistryHash: registryHash,
+      expectedReleaseId: releaseId,
+    });
+  });
+  await withServer(validRoutes(), async (baseUrl) => {
+    await assert.rejects(
+      () => runProductionSmoke(baseUrl, { expectedRegistryHash: 'b'.repeat(64) }),
+      /service-info registryHash must be/
+    );
+  });
+
+  const testnet = validRoutes();
+  for (const path of ['/api/indexer/v1/health', '/api/indexer/v1/service-info']) {
+    const body = testnet[path].body as Record<string, unknown>;
+    body.network = 'testnet';
+    body.chainId = 'ton:testnet';
+  }
+  (testnet['/api/indexer/v1/contracts'].body as Record<string, unknown>).network = 'testnet';
+  await withServer(testnet, async (baseUrl) => {
+    await runProductionSmoke(baseUrl, { expectedNetwork: 'testnet' });
+  });
+
+  const localnet = validRoutes();
+  for (const path of ['/api/indexer/v1/health', '/api/indexer/v1/service-info']) {
+    const body = localnet[path].body as Record<string, unknown>;
+    body.network = 'localnet';
+    body.chainId = 'ton:localnet';
+    body.serviceId = 'tonswap-local-indexer';
+  }
+  const localContracts = localnet['/api/indexer/v1/contracts'].body as Record<string, unknown>;
+  localContracts.network = 'localnet';
+  await withServer(localnet, async (baseUrl) => {
+    await runProductionSmoke(baseUrl, {
+      expectedNetwork: 'localnet',
+      expectedServiceId: 'tonswap-local-indexer',
+    });
   });
 
   const solswapHealth = validRoutes();
