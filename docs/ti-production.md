@@ -14,6 +14,7 @@ This service is the TON indexer backing `https://ti.soramitsu.io`.
   - `/api/indexer/v1/accounts/{addr}/assets`
   - `/api/indexer/v1/accounts/{addr}/txs`
   - `/api/indexer/v1/accounts/{addr}/state`
+  - `/api/indexer/v1/markets/{market}/candles`
   - `/api/indexer/v1/runGetMethod`
   - `/api/indexer/v1/runGetMethods`
 - Public write RPC must stay disabled unless an explicit release decision enables it.
@@ -78,6 +79,12 @@ The checked-in `Dockerfile` defaults to those production values. It is expected
 to fail startup while `registry/mainnet.json` still contains placeholders; that
 failure is the release guard, not a container failure.
 
+For the testnet product release, override the image defaults with
+`TON_NETWORK=testnet`,
+`LITESERVER_POOL_TESTNET=https://ton.org/testnet-global.config.json`, the
+generated `INDEXER_REGISTRY_PATH`, and its matching
+`INDEXER_RELEASE_MANIFEST_PATH`. Keep `INDEXER_ENABLE_WRITE_RPC=false`.
+
 ## Preflight
 
 Run before promoting a `master` build:
@@ -105,8 +112,18 @@ curl -fsS https://ti.soramitsu.io/api/indexer/v1/openapi.json
 curl -fsS https://ti.soramitsu.io/api/indexer/v1/contracts
 ```
 
-The smoke command validates service identity, OpenAPI shape, required wallet
-routes, and the write-RPC posture. Verify service info reports
+For testnet, bind the smoke to the exact release:
+
+```sh
+TON_INDEXER_BASE_URL=https://ti.soramitsu.io \
+TON_INDEXER_EXPECTED_NETWORK=testnet \
+TON_INDEXER_EXPECTED_RELEASE_ID="$RELEASE_ID" \
+TON_INDEXER_EXPECTED_REGISTRY_HASH="$REGISTRY_HASH" \
+npm run smoke:production
+```
+
+The smoke command validates service identity, registry parity, OpenAPI shape,
+required wallet routes, and the write-RPC posture. Verify service info reports
 `serviceId = ti.soramitsu.io`, OpenAPI title is `TONSWAP Indexer API`, and write
 RPC remains disabled unless the release explicitly requires otherwise.
 

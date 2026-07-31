@@ -8,6 +8,9 @@ This repository contains a **TypeScript TONSWAP indexer service** plus the desig
 - `roadmap.md`: detailed architecture, API shape, storage model, and phased roadmap.
 - `registry/mainnet.json`: **placeholder** addresses for mainnet contracts (must be replaced).
 - `registry/testnet.json`: known testnet contract addresses.
+- `registry/localnet.json`: empty bootstrap registry; local release runs should point
+  `INDEXER_REGISTRY_PATH` at a generated registry and
+  `INDEXER_RELEASE_MANIFEST_PATH` at the matching canonical manifest.
 - `src/`: TypeScript implementation (server, store, data source, workers, API).
 - Snapshots: optional JSON snapshots for in-memory state are supported via `SNAPSHOT_PATH` + `SNAPSHOT_ON_EXIT`.
 
@@ -20,6 +23,9 @@ This repository contains a **TypeScript TONSWAP indexer service** plus the desig
 - Keep key names consistent across networks.
 - `registry/mainnet.json` is intentionally a placeholder; it should be replaced with real addresses before any mainnet usage.
 - `registry/testnet.json` should be refreshed whenever testnet deployments change.
+- When a canonical release manifest is configured, its network and complete
+  contract map must exactly match the selected registry. The service exposes the
+  resulting registry and manifest hashes from `/contracts` and `/service-info`.
 
 ## Related Context (External Repos)
 The roadmap references sibling repos for contract definitions and UI alignment:

@@ -12,6 +12,12 @@ import {
   TonSccpBurnProofMaterialRequest
 } from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
+import {
+  cellFromAccountCodeBoc,
+  isSuccessfulGetterResult,
+  parseCanonicalJettonRootData,
+  readCanonicalJettonBalance
+} from './jettonAbi';
 
 type TonClient4Like = {
   getLastBlock(): Promise<any>;
@@ -19,20 +25,15 @@ type TonClient4Like = {
   getAccountLite(seqno: number, address: Address): Promise<any>;
   getAccountTransactionsParsed(address: Address, lt: bigint, hash: Buffer, limit: number): Promise<any>;
   runMethod(seqno: number, address: Address, name: string, args?: TupleItem[]): Promise<any>;
-  open<T>(contract: T): T;
 };
 
 type TonClient4Ctor = new (args: { endpoint: string }) => TonClient4Like;
 
 const tonExports = require('ton') as {
   TonClient4?: TonClient4Ctor;
-  JettonMaster?: { create: (address: Address) => any };
-  JettonWallet?: { create: (address: Address) => any };
 };
 
 const TonClient4Ctor = tonExports.TonClient4;
-const JettonMaster = tonExports.JettonMaster;
-const JettonWallet = tonExports.JettonWallet;
 
 const hasTonClient4 =
   typeof TonClient4Ctor === 'function' && typeof (TonClient4Ctor as any).prototype === 'object';
@@ -217,6 +218,9 @@ export class TonClient4DataSource implements TonDataSource {
       const client = new TonClient4Ctor({ endpoint });
       return new TonClient4DataSource(network, client, [endpoint]);
     }
+    if (network === 'localnet') {
+      throw new Error('TON_HTTP_ENDPOINT is required when TON_NETWORK=localnet and TON_DATASOURCE=http');
+    }
 
     let endpoints = await getHttpV4Endpoints({ network });
     if (!endpoints || endpoints.length === 0) {
@@ -388,34 +392,24 @@ export class TonClient4DataSource implements TonDataSource {
   }
 
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
-    try {
-      if (!JettonMaster || !JettonWallet) return null;
-      const ownerAddr = Address.parse(owner);
-      const masterAddr = Address.parse(master);
-      return await this.call(async (client) => {
-        const masterContract = client.open(JettonMaster.create(masterAddr));
-        const walletAddr = await masterContract.getWalletAddress(ownerAddr);
-        const walletContract = client.open(JettonWallet.create(walletAddr));
-        const balance = await walletContract.getBalance();
-        return {
-          wallet: walletAddr.toString({ urlSafe: true, bounceable: true }),
-          balance: balance.toString(),
-        };
-      });
-    } catch {
-      return null;
-    }
+    return readCanonicalJettonBalance({
+      owner,
+      master,
+      runGetMethod: (address, method, args = []) => this.runGetMethod(address, method, args),
+      readAccountCode: async (address) => {
+        const state = await this.getAccountState(address);
+        if (state.accountState !== 'active') return null;
+        return cellFromAccountCodeBoc(state.codeBoc);
+      }
+    });
   }
 
   async getJettonMetadata(master: string) {
     try {
-      if (!JettonMaster) return null;
-      const masterAddr = Address.parse(master);
-      return await this.call(async (client) => {
-        const masterContract = client.open(JettonMaster.create(masterAddr));
-        const data = await masterContract.getJettonData();
-        return parseJettonMetadata(data.content);
-      });
+      const result = await this.runGetMethod(master, 'get_jetton_data', []);
+      if (!isSuccessfulGetterResult(result)) return null;
+      const data = parseCanonicalJettonRootData(result.stack);
+      return data ? parseJettonMetadata(data.content) : null;
     } catch {
       return null;
     }

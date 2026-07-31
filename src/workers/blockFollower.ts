@@ -127,7 +127,10 @@ export class BlockFollower {
       }
 
       const oldest = batch[batch.length - 1];
-      if (!oldest || batch.length < batchSize || reachedPreviousLatest) break;
+      // Lite servers may return a proof-size-capped short page before the requested
+      // limit. Only the prior head, an empty page, or a stalled cursor proves that
+      // catch-up cannot continue.
+      if (!oldest || reachedPreviousLatest) break;
       if (oldest.lt === cursorLt && oldest.hash === cursorHash) break;
       if (added === 0) break;
       cursorLt = oldest.lt;

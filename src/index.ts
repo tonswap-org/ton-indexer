@@ -21,6 +21,7 @@ import { DebugService } from './debugService';
 import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
 import { validateMainnetRegistry } from './config/registry';
+import { buildRegistryBundle, RegistryMetadata } from './config/releaseManifest';
 
 const isPortAvailable = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
@@ -44,10 +45,14 @@ const start = async () => {
   const logger = createLogger(config.logLevel);
 
   let registry: Record<string, string> = {};
+  let registryMetadata: RegistryMetadata | undefined;
   try {
     registry = readRegistryFile(config.registryPath);
+    const bundle = buildRegistryBundle(registry, config.network, config.releaseManifestPath);
+    registry = bundle.contracts;
+    registryMetadata = bundle.metadata;
   } catch (error) {
-    if (config.mode === 'production') {
+    if (config.mode === 'production' || config.releaseManifestPath) {
       throw error;
     }
     logger.warn('registry load failed', { error: (error as Error).message });
@@ -128,7 +133,17 @@ const start = async () => {
   const snapshotService = new SnapshotService(config, store);
   const debugService = new DebugService(config, store, backfillWorker, poolTracker);
   const rateLimiter = new RateLimiter(config);
-  registerRoutes(app, config, service, metrics, snapshotService, debugService, rateLimiter, registry);
+  registerRoutes(
+    app,
+    config,
+    service,
+    metrics,
+    snapshotService,
+    debugService,
+    rateLimiter,
+    registry,
+    registryMetadata
+  );
   const snapshotAutosaveTimer =
     config.snapshotAutosaveEnabled && config.snapshotPath
       ? setInterval(() => {

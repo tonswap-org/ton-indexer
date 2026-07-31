@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Address, Cell, TupleItem, TupleReader, beginCell, loadTransaction, parseTuple, serializeTuple } from '@ton/core';
+import { Address, Cell, TupleItem, beginCell, loadTransaction, parseTuple, serializeTuple } from '@ton/core';
 import { LiteClient, LiteRoundRobinEngine, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
 import { Functions } from 'ton-lite-client/dist/schema';
 import { Network } from '../models';
@@ -16,6 +16,12 @@ import {
   TonDataSource,
 } from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
+import {
+  cellFromAccountCodeBoc,
+  isSuccessfulGetterResult,
+  parseCanonicalJettonRootData,
+  readCanonicalJettonBalance
+} from './jettonAbi';
 
 type LiteServerConfig = {
   ip: number;
@@ -108,7 +114,12 @@ const resolveLiteServers = async (network: Network, pool?: string): Promise<Lite
   const defaultUrl =
     network === 'mainnet'
       ? 'https://ton.org/global.config.json'
-      : 'https://ton.org/testnet-global.config.json';
+      : network === 'testnet'
+        ? 'https://ton.org/testnet-global.config.json'
+        : null;
+  if (!defaultUrl) {
+    throw new Error('LITESERVER_POOL_LOCALNET is required when TON_NETWORK=localnet');
+  }
   return await readConfigFromUrl(defaultUrl);
 };
 
@@ -483,17 +494,6 @@ export class LiteClientDataSource implements TonDataSource {
     throw new Error('Failed to locate a forward block-proof step for the target masterchain block.');
   }
 
-  private async runGetMethodReader(address: Address, method: string, args: TupleItem[] = []): Promise<TupleReader> {
-    const master = await this.getMasterchainRef();
-    const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
-    const res = await this.call((client) => client.runMethod(address, method, params, master.last));
-    if (res.exitCode !== 0 && res.exitCode !== 1) {
-      throw new Error(`runMethod ${method} failed with exit code ${res.exitCode}`);
-    }
-    const tuple = res.result ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0]) : [];
-    return new TupleReader(tuple);
-  }
-
   async getMasterchainInfo(): Promise<MasterchainInfo> {
     const master = await this.call((client) => client.getMasterchainInfoExt());
     return {
@@ -655,50 +655,24 @@ export class LiteClientDataSource implements TonDataSource {
   }
 
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
-    try {
-      const ownerAddr = Address.parse(owner);
-      const masterAddr = Address.parse(master);
-      const args: TupleItem[] = [{ type: 'slice', cell: beginCell().storeAddress(ownerAddr).endCell() }];
-      let walletAddr: Address | null = null;
-      for (const method of ['wallet_address', 'get_wallet_address']) {
-        try {
-          const walletReader = await this.runGetMethodReader(masterAddr, method, args);
-          walletAddr = walletReader.readAddress();
-          break;
-        } catch {
-          continue;
-        }
+    return readCanonicalJettonBalance({
+      owner,
+      master,
+      runGetMethod: (address, method, args = []) => this.runGetMethod(address, method, args),
+      readAccountCode: async (address) => {
+        const state = await this.getAccountState(address);
+        if (state.accountState !== 'active') return null;
+        return cellFromAccountCodeBoc(state.codeBoc);
       }
-      if (!walletAddr) return null;
-      let balance: bigint | null = null;
-      for (const method of ['wallet_data', 'get_wallet_data']) {
-        try {
-          const balanceReader = await this.runGetMethodReader(walletAddr, method);
-          balance = balanceReader.readBigNumber();
-          break;
-        } catch {
-          continue;
-        }
-      }
-      if (balance === null) return null;
-      return {
-        wallet: walletAddr.toString({ urlSafe: true, bounceable: true }),
-        balance: balance.toString(),
-      };
-    } catch {
-      return null;
-    }
+    });
   }
 
   async getJettonMetadata(master: string) {
     try {
-      const masterAddr = Address.parse(master);
-      const reader = await this.runGetMethodReader(masterAddr, 'get_jetton_data');
-      reader.readBigNumber();
-      reader.readBoolean();
-      reader.readAddressOpt();
-      const content = reader.readCell();
-      return parseJettonMetadata(content);
+      const result = await this.runGetMethod(master, 'get_jetton_data', []);
+      if (!isSuccessfulGetterResult(result)) return null;
+      const data = parseCanonicalJettonRootData(result.stack);
+      return data ? parseJettonMetadata(data.content) : null;
     } catch {
       return null;
     }

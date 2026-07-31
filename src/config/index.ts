@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-export type Network = 'mainnet' | 'testnet';
+export type Network = 'mainnet' | 'testnet' | 'localnet';
 export type IndexerMode = 'dev' | 'production';
 export type RateLimitBucketName = 'accounts' | 'stream' | 'snapshot' | 'rpc' | 'docs' | 'default';
 export type RateLimitBucketConfig = { windowMs: number; max: number };
@@ -64,6 +64,9 @@ export type Config = {
   logLevel: string;
   adminToken?: string;
   registryPath: string;
+  releaseManifestPath?: string;
+  serviceId: string;
+  publicBaseUrl: string;
   opcodesPath?: string;
 };
 
@@ -130,7 +133,7 @@ const modeFromEnv = (): IndexerMode => {
 
 const networkFromEnv = (): Network => {
   // Default to testnet for current TONSWAP deployments; mainnet requires real registry addresses.
-  return enumFromEnv<Network>('TON_NETWORK', 'testnet', ['mainnet', 'testnet']);
+  return enumFromEnv<Network>('TON_NETWORK', 'testnet', ['mainnet', 'testnet', 'localnet']);
 };
 
 const dataSourceFromEnv = (): 'http' | 'lite' => {
@@ -271,7 +274,11 @@ export const loadConfig = (): Config => {
     rpcProxyRetryAttempts: numberFromEnv('INDEXER_RPC_PROXY_RETRY_ATTEMPTS', 4, { min: 1, integer: true }),
     rpcProxyRetryDelayMs: numberFromEnv('INDEXER_RPC_PROXY_RETRY_DELAY_MS', 600, { min: 0, integer: true }),
     liteserverPool: stringFromEnv(
-      network === 'mainnet' ? 'LITESERVER_POOL_MAINNET' : 'LITESERVER_POOL_TESTNET'
+      network === 'mainnet'
+        ? 'LITESERVER_POOL_MAINNET'
+        : network === 'testnet'
+          ? 'LITESERVER_POOL_TESTNET'
+          : 'LITESERVER_POOL_LOCALNET'
     ),
     soraRpcEndpoint:
       stringFromEnv('SORA_RPC_HTTP_ENDPOINT') ||
@@ -292,6 +299,11 @@ export const loadConfig = (): Config => {
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
     adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN') || stringFromEnv('INDEXER_ADMIN_API_KEY'),
     registryPath,
+    releaseManifestPath:
+      stringFromEnv('INDEXER_RELEASE_MANIFEST_PATH') ||
+      stringFromEnv('TONSWAP_RELEASE_MANIFEST_PATH'),
+    serviceId: stringFromEnv('INDEXER_SERVICE_ID', 'ti.soramitsu.io')!,
+    publicBaseUrl: stringFromEnv('INDEXER_PUBLIC_BASE_URL', 'https://ti.soramitsu.io')!,
     opcodesPath,
   };
 };

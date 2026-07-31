@@ -90,6 +90,9 @@ export interface TonDataSource {
     args?: TupleItem[]
   ): Promise<{ exitCode: number; stack: TupleItem[] } | null>;
   getTonSccpBurnProofMaterial?(request: TonSccpBurnProofMaterialRequest): Promise<TonSccpBurnProofMaterial>;
+  // Canonical TEP-74 only. Implementations return null unless the root and
+  // wallet getters have exact canonical shapes and the wallet owner/root/code
+  // identities can be verified against active account code.
   getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null>;
   getJettonMetadata(master: string): Promise<JettonMetadata | null>;
   close(): Promise<void>;

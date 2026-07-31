@@ -2,7 +2,8 @@ import { Address, Cell } from '@ton/core';
 import { getHttpEndpoints } from '@orbs-network/ton-access';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
-import { IndexerService } from '../indexerService';
+import { IndexerService, MarketCandleInterval } from '../indexerService';
+import type { RegistryMetadata } from '../config/releaseManifest';
 import { MetricsService } from '../metrics';
 import { SnapshotService } from '../snapshotService';
 import { DebugService } from '../debugService';
@@ -15,6 +16,8 @@ import {
   farmsSnapshotQuerySchema,
   jettonTransferPayloadParamsSchema,
   governanceSnapshotQuerySchema,
+  marketCandleParamsSchema,
+  marketCandleQuerySchema,
   optionsSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
   volIndexSnapshotQuerySchema,
@@ -51,6 +54,8 @@ type ToncenterRpcCompatRequest = {
 
 type RoutesConfig = {
   network?: string;
+  serviceId?: string;
+  publicBaseUrl?: string;
   pageSize?: number;
   rpcProxyEndpoint?: string;
   rpcProxyEndpoints?: string[];
@@ -368,7 +373,12 @@ const classifyRateLimitBucket = (url: string) => {
   }
   if (path.startsWith('/api/indexer/v1/stream')) return 'stream' as const;
   if (path.includes('/snapshot')) return 'snapshot' as const;
-  if (path.startsWith('/api/indexer/v1/accounts')) return 'accounts' as const;
+  if (
+    path.startsWith('/api/indexer/v1/accounts') ||
+    path.startsWith('/api/indexer/v1/markets')
+  ) {
+    return 'accounts' as const;
+  }
   if (
     path.startsWith('/api/indexer/v1/docs') ||
     path.startsWith('/api/indexer/v1/openapi.json') ||
@@ -390,10 +400,19 @@ export const registerRoutes = (
   snapshots?: SnapshotService,
   debug?: DebugService,
   rateLimiter?: RateLimiter,
-  contracts?: Record<string, string>
+  contracts?: Record<string, string>,
+  registryMetadata?: RegistryMetadata
 ) => {
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
   const contractMap = Object.fromEntries(contractEntries);
+  const canonicalMarkets = registryMetadata?.markets ?? [];
+  const rawAddress = (value: string) => {
+    try {
+      return Address.parse(value).toRawString();
+    } catch {
+      return null;
+    }
+  };
   const adminToken = typeof config.adminToken === 'string' && config.adminToken.length > 0 ? config.adminToken : null;
   const requireAdmin = (
     request: FastifyRequest,
@@ -409,18 +428,26 @@ export const registerRoutes = (
     }
     return null;
   };
-  const network = String(config.network || 'mainnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+  const requestedNetwork = String(config.network || 'mainnet').toLowerCase();
+  const network =
+    requestedNetwork === 'mainnet'
+      ? 'mainnet'
+      : requestedNetwork === 'localnet'
+        ? 'localnet'
+        : 'testnet';
+  const serviceId = config.serviceId?.trim() || 'ti.soramitsu.io';
+  const publicBaseUrl = config.publicBaseUrl?.trim() || 'https://ti.soramitsu.io';
   const serviceIdentity = {
-    serviceId: 'ti.soramitsu.io',
+    serviceId,
     ecosystem: 'ton',
-    chainId: network === 'mainnet' ? 'ton:mainnet' : 'ton:testnet',
+    chainId: `ton:${network}`,
     network
   } as const;
   const serviceInfo = {
     schemaVersion: 1,
     ...serviceIdentity,
     serviceName: 'TON Indexer',
-    publicBaseUrl: 'https://ti.soramitsu.io',
+    publicBaseUrl,
     readOnly: !config.enableWriteRpc,
     capabilities: [
       'account-balance',
@@ -429,7 +456,8 @@ export const registerRoutes = (
       'account-transactions',
       'account-state',
       'run-get-method',
-      'run-get-methods'
+      'run-get-methods',
+      'market-candles'
     ],
     endpoints: {
       health: '/api/indexer/v1/health',
@@ -440,7 +468,13 @@ export const registerRoutes = (
       transactions: '/api/indexer/v1/accounts/{addr}/txs',
       state: '/api/indexer/v1/accounts/{addr}/state',
       runGetMethod: '/api/indexer/v1/runGetMethod',
-      runGetMethods: '/api/indexer/v1/runGetMethods'
+      runGetMethods: '/api/indexer/v1/runGetMethods',
+      marketCandles: '/api/indexer/v1/markets/{market}/candles'
+    },
+    release: {
+      releaseId: registryMetadata?.releaseId ?? null,
+      registryHash: registryMetadata?.registryHash ?? null,
+      releaseManifestHash: registryMetadata?.releaseManifestHash ?? null
     }
   };
 
@@ -474,7 +508,10 @@ export const registerRoutes = (
     return {
       network: config.network ?? null,
       count: contractEntries.length,
-      contracts: contractMap
+      contracts: contractMap,
+      release_id: registryMetadata?.releaseId ?? null,
+      registry_hash: registryMetadata?.registryHash ?? null,
+      release_manifest_hash: registryMetadata?.releaseManifestHash ?? null
     };
   });
 
@@ -531,8 +568,13 @@ export const registerRoutes = (
     if (discoveredRpcProxyEndpoints) return discoveredRpcProxyEndpoints;
     if (rpcEndpointDiscoveryPromise) return rpcEndpointDiscoveryPromise;
 
-    const network = String(config.network || 'testnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
-    rpcEndpointDiscoveryPromise = getHttpEndpoints({ network })
+    const rpcNetwork = String(config.network || 'testnet').toLowerCase();
+    if (rpcNetwork === 'localnet') {
+      discoveredRpcProxyEndpoints = [];
+      return discoveredRpcProxyEndpoints;
+    }
+    const tonAccessNetwork = rpcNetwork === 'mainnet' ? 'mainnet' : 'testnet';
+    rpcEndpointDiscoveryPromise = getHttpEndpoints({ network: tonAccessNetwork })
       .then((endpoints) => uniqueRpcEndpoints(endpoints ?? []))
       .catch(() => [])
       .then((endpoints) => {
@@ -1722,6 +1764,109 @@ export const registerRoutes = (
         });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'swaps request failed'));
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/markets/:market/candles',
+    { schema: { params: marketCandleParamsSchema, querystring: marketCandleQuerySchema } },
+    async (request, reply) => {
+      const marketKey = (request.params as { market: string }).market.trim();
+      const query = request.query as {
+        market_address: string;
+        asset_symbol: string;
+        quote_symbol: string;
+        asset_decimals?: number | string;
+        quote_decimals?: number | string;
+        interval?: MarketCandleInterval;
+        from_utime?: number | string;
+        to_utime?: number | string;
+        limit?: number | string;
+      };
+      if (!marketKey) {
+        return sendError(reply, 400, 'bad_request', 'market must not be empty');
+      }
+      if (!isValidAddress(query.market_address)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid market_address');
+      }
+      const assetSymbol = query.asset_symbol?.trim().toUpperCase();
+      const quoteSymbol = query.quote_symbol?.trim().toUpperCase();
+      if (!assetSymbol || !quoteSymbol || assetSymbol === quoteSymbol) {
+        return sendError(reply, 400, 'bad_request', 'asset_symbol and quote_symbol must be distinct');
+      }
+      const canonicalMarket =
+        canonicalMarkets.length > 0
+          ? canonicalMarkets.find((market) => market.marketKey === marketKey)
+          : undefined;
+      if (canonicalMarkets.length > 0 && !canonicalMarket) {
+        return sendError(reply, 404, 'not_found', 'market is absent from the canonical release manifest');
+      }
+      if (
+        canonicalMarket &&
+        (rawAddress(query.market_address) !== rawAddress(canonicalMarket.marketAddress) ||
+          assetSymbol !== canonicalMarket.assetSymbol ||
+          quoteSymbol !== canonicalMarket.quoteSymbol)
+      ) {
+        return sendError(
+          reply,
+          400,
+          'bad_request',
+          'market address and symbols must match the canonical release manifest'
+        );
+      }
+
+      const hasFromUtime = query.from_utime !== undefined;
+      const hasToUtime = query.to_utime !== undefined;
+      const fromUtime = parsePositiveIntQuery(query.from_utime);
+      const toUtime = parsePositiveIntQuery(query.to_utime);
+      if (hasFromUtime && fromUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be a positive integer');
+      }
+      if (hasToUtime && toUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'to_utime must be a positive integer');
+      }
+      if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be less than or equal to to_utime');
+      }
+
+      const hasAssetDecimals = query.asset_decimals !== undefined;
+      const hasQuoteDecimals = query.quote_decimals !== undefined;
+      const assetDecimals = parseNonNegativeIntQuery(query.asset_decimals);
+      const quoteDecimals = parseNonNegativeIntQuery(query.quote_decimals);
+      if (hasAssetDecimals && (assetDecimals === null || assetDecimals > 30)) {
+        return sendError(reply, 400, 'bad_request', 'asset_decimals must be an integer from 0 to 30');
+      }
+      if (hasQuoteDecimals && (quoteDecimals === null || quoteDecimals > 30)) {
+        return sendError(reply, 400, 'bad_request', 'quote_decimals must be an integer from 0 to 30');
+      }
+      if (
+        canonicalMarket &&
+        ((hasAssetDecimals && assetDecimals !== canonicalMarket.assetDecimals) ||
+          (hasQuoteDecimals && quoteDecimals !== canonicalMarket.quoteDecimals))
+      ) {
+        return sendError(reply, 400, 'bad_request', 'market decimals must match the canonical release manifest');
+      }
+      const limitRaw = parsePositiveIntQuery(query.limit);
+      const limit = Math.min(1_000, limitRaw ?? 320);
+
+      try {
+        return await service.getMarketCandles(
+          canonicalMarket?.marketKey ?? marketKey,
+          canonicalMarket?.marketAddress ?? query.market_address,
+          {
+          assetSymbol: canonicalMarket?.assetSymbol ?? assetSymbol,
+          quoteSymbol: canonicalMarket?.quoteSymbol ?? quoteSymbol,
+          assetDecimals: canonicalMarket?.assetDecimals ?? assetDecimals ?? undefined,
+          quoteDecimals: canonicalMarket?.quoteDecimals ?? quoteDecimals ?? undefined,
+          interval: query.interval,
+          fromUtime: fromUtime ?? undefined,
+          toUtime: toUtime ?? undefined,
+          limit,
+          }
+        );
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'candles request failed'));
       }
     }
   );
