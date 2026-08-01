@@ -1357,7 +1357,7 @@ const testDocsRouteSetsNonceCspAndSecurityHeaders = async () => {
   await app.close();
 };
 
-const testDangerousEnvValuesFallBack = () => {
+const testDangerousEnvValuesFailClosed = () => {
   const original = {
     port: process.env.PORT,
     pageSize: process.env.PAGE_SIZE,
@@ -1365,27 +1365,37 @@ const testDangerousEnvValuesFallBack = () => {
     retry: process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS,
     rateLimit: process.env.RATE_LIMIT_MAX,
   };
-  process.env.PORT = '99999';
-  process.env.PAGE_SIZE = '-20';
-  process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS = '0';
-  process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS = '0';
-  process.env.RATE_LIMIT_MAX = '-1';
-  const config = loadConfig();
-  assert.equal(config.port, 8787);
-  assert.equal(config.pageSize, 10);
-  assert.equal(config.snapshotAutosaveIntervalMs, 30_000);
-  assert.equal(config.rpcProxyRetryAttempts, 4);
-  assert.equal(config.rateLimitMax, 10_000);
-  if (original.port === undefined) delete process.env.PORT;
-  else process.env.PORT = original.port;
-  if (original.pageSize === undefined) delete process.env.PAGE_SIZE;
-  else process.env.PAGE_SIZE = original.pageSize;
-  if (original.interval === undefined) delete process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS;
-  else process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS = original.interval;
-  if (original.retry === undefined) delete process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS;
-  else process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS = original.retry;
-  if (original.rateLimit === undefined) delete process.env.RATE_LIMIT_MAX;
-  else process.env.RATE_LIMIT_MAX = original.rateLimit;
+  const keys = [
+    'PORT',
+    'PAGE_SIZE',
+    'SNAPSHOT_AUTOSAVE_INTERVAL_MS',
+    'INDEXER_RPC_PROXY_RETRY_ATTEMPTS',
+    'RATE_LIMIT_MAX',
+  ];
+  try {
+    for (const [key, value] of [
+      ['PORT', '99999'],
+      ['PAGE_SIZE', '-20'],
+      ['SNAPSHOT_AUTOSAVE_INTERVAL_MS', '0'],
+      ['INDEXER_RPC_PROXY_RETRY_ATTEMPTS', '0'],
+      ['RATE_LIMIT_MAX', '-1'],
+    ]) {
+      keys.forEach((candidate) => delete process.env[candidate]);
+      process.env[key] = value;
+      assert.throws(() => loadConfig(), new RegExp(`${key} must be an integer`));
+    }
+  } finally {
+    if (original.port === undefined) delete process.env.PORT;
+    else process.env.PORT = original.port;
+    if (original.pageSize === undefined) delete process.env.PAGE_SIZE;
+    else process.env.PAGE_SIZE = original.pageSize;
+    if (original.interval === undefined) delete process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS;
+    else process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS = original.interval;
+    if (original.retry === undefined) delete process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS;
+    else process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS = original.retry;
+    if (original.rateLimit === undefined) delete process.env.RATE_LIMIT_MAX;
+    else process.env.RATE_LIMIT_MAX = original.rateLimit;
+  }
 };
 
 const testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides = () => {
@@ -1397,23 +1407,22 @@ const testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides = () => {
   try {
     process.env.RATE_LIMIT_WINDOW_MS = '1000';
     process.env.RATE_LIMIT_MAX = '5';
-    process.env.RATE_LIMIT_BUCKETS_JSON = JSON.stringify({
-      accounts: { windowMs: -1, max: 0 },
-      docs: { windowMs: 1234.8, max: 2.9 },
-      unknown: { windowMs: 1, max: 1 },
-    });
+    process.env.RATE_LIMIT_BUCKETS_JSON = JSON.stringify({ docs: { windowMs: 1234, max: 2 } });
     const merged = loadConfig();
     assert.equal(merged.rateLimitBuckets.accounts.windowMs, 1000);
     assert.equal(merged.rateLimitBuckets.accounts.max, 5);
     assert.equal(merged.rateLimitBuckets.docs.windowMs, 1234);
     assert.equal(merged.rateLimitBuckets.docs.max, 2);
-    assert.equal((merged.rateLimitBuckets as any).unknown, undefined);
 
-    process.env.RATE_LIMIT_BUCKETS_JSON = '{not-json';
-    const fallback = loadConfig();
-    assert.equal(fallback.rateLimitBuckets.accounts.windowMs, 1000);
-    assert.equal(fallback.rateLimitBuckets.accounts.max, 5);
-    assert.equal(fallback.rateLimitBuckets.docs.max, 2_000);
+    for (const [value, expected] of [
+      [JSON.stringify({ accounts: { windowMs: -1, max: 1 } }), /accounts\.windowMs must be a positive integer/],
+      [JSON.stringify({ docs: { windowMs: 1234.8, max: 2 } }), /docs\.windowMs must be a positive integer/],
+      [JSON.stringify({ unknown: { windowMs: 1, max: 1 } }), /contains unsupported bucket/],
+      ['{not-json', /must be valid JSON/],
+    ] as Array<[string, RegExp]>) {
+      process.env.RATE_LIMIT_BUCKETS_JSON = value;
+      assert.throws(() => loadConfig(), expected);
+    }
   } finally {
     if (original.buckets === undefined) delete process.env.RATE_LIMIT_BUCKETS_JSON;
     else process.env.RATE_LIMIT_BUCKETS_JSON = original.buckets;
@@ -1808,7 +1817,7 @@ const run = async () => {
   await testWriteRpcRelayIsPublicWhenExplicitlyEnabled();
   testCorsExactOriginAllowlistAndWildcardFallback();
   await testDocsRouteSetsNonceCspAndSecurityHeaders();
-  testDangerousEnvValuesFallBack();
+  testDangerousEnvValuesFailClosed();
   testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides();
   testSnapshotFileLoaderRejectsMalformedFiles();
   testClassifierIgnoresMalformedBodies();
