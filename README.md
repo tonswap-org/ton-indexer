@@ -45,13 +45,20 @@ TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production
 ```
 
 The smoke check verifies that the target host serves the TONSWAP API contract,
-not another indexer service.
+not another indexer service, and requires a positive masterchain sequence with
+`indexerLagSec` no older than 300 seconds by default. Requests refuse redirects,
+time out after 10 seconds, and reject decoded response bodies above 1 MiB.
+Override those bounded gates only when diagnosing a reviewed deployment with
+`TON_INDEXER_SMOKE_TIMEOUT_MS`, `TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES`, and
+`TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC` (hard maxima: 60 seconds, 5 MiB, and one
+hour).
 
 ## Configuration
 Environment variables (all optional):
 - `PORT` (default: `8787`)
 - `HOST` (default: `127.0.0.1`)
-- `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (`true` only when the service is behind a trusted proxy)
+- `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (development only; production rejects blanket trust)
+- `TRUSTED_PROXY_CIDRS` (canonical, non-overlapping immediate-proxy IP/CIDR list)
 - `INDEXER_MODE` (`dev` | `production`, default: `dev`)
 - `TON_NETWORK` (`mainnet` | `testnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
@@ -76,16 +83,21 @@ Environment variables (all optional):
 - `SNAPSHOT_ON_EXIT` (`true` to write snapshot on shutdown; default `false`)
 - `SNAPSHOT_AUTOSAVE_ENABLED` (`true` to periodically persist snapshots; default `true` in production when `SNAPSHOT_PATH` is set)
 - `SNAPSHOT_AUTOSAVE_INTERVAL_MS` (default: `30000`)
-- `RATE_LIMIT_ENABLED` (`true` to enable simple per-IP rate limiting; default `true`)
+- `RATE_LIMIT_ENABLED` (`true` to enable per-IP rate limiting; default `true`;
+  production rejects `false`, `0`, and `no`)
 - `RATE_LIMIT_WINDOW_MS` (default: `60000`)
 - `RATE_LIMIT_MAX` (default: `10000`)
+- `RATE_LIMIT_MAX_KEYS` (production default: `20000`)
+- `RATE_LIMIT_GLOBAL_WINDOW_MS` (default: `RATE_LIMIT_WINDOW_MS`)
+- `RATE_LIMIT_GLOBAL_MAX` (production default: `50000`)
 - `RATE_LIMIT_BUCKETS_JSON` (optional endpoint-class limits override JSON)
 - `RESPONSE_CACHE_ENABLED` (`true` to enable response caching; default `true`)
 - `BALANCE_CACHE_TTL_MS` (default: `2000`)
 - `JETTON_BALANCE_TIMEOUT_MS` (default: `2000`; caps per-root jetton balance probes so native TON balance reads stay responsive)
 - `TX_CACHE_TTL_MS` (default: `1000`)
 - `STATE_CACHE_TTL_MS` (default: `1000`)
-- `HEALTH_CACHE_TTL_MS` (default: `1000`)
+- `HEALTH_CACHE_TTL_MS` (default: `1000`, maximum: `5000`; the cap prevents a
+  stale healthy lag value from masking an indexing outage)
 - `METRICS_CACHE_TTL_MS` (default: `1000`)
 - `PAGE_SIZE` (default: `10`)
 - `MAX_PAGES_PER_ADDRESS` (default: `150`)
@@ -100,10 +112,26 @@ Environment variables (all optional):
 - `OPCODES_PATH` (default: `../tonswap_tolk/config/opcodes.json`)
 - `LOG_LEVEL` (default: `info`)
 
-If the requested `PORT` is already in use, the server will bind to the next available port and log the selected one.
+In development, an occupied `PORT` may select the next available port and log
+the selected value. Production fails closed when its fixed port is unavailable;
+it never moves the service to an unexpected port.
+
+Explicit environment values are validated fail-closed. Invalid mode, network,
+data-source, boolean, numeric, trusted-checkpoint, or rate-limit bucket values
+abort startup with the affected variable named in the diagnostic instead of
+silently selecting a development or testnet default.
+
+Proxy-derived client addresses are disabled unless `TRUSTED_PROXY_CIDRS`
+contains canonical, non-overlapping IP/CIDR entries. Production rejects blanket
+`TRUST_PROXY=true`. `RATE_LIMIT_MAX_KEYS` bounds in-memory client state, while
+`RATE_LIMIT_GLOBAL_WINDOW_MS` and `RATE_LIMIT_GLOBAL_MAX` provide a backstop for
+rotating-source attacks. See `docker-compose.production.yml` for the loopback-only
+container contract.
 
 Production safeguards:
 - In `TON_NETWORK=mainnet`, placeholder or malformed required registry addresses fail startup.
+- In `INDEXER_MODE=production`, rate limiting is mandatory and
+  `RATE_LIMIT_ENABLED=false` fails before the service listens.
 - `npm run audit:deployment-evidence -- --require-ready` also rejects ready
   deployment evidence while `registry/mainnet.json` still has placeholder,
   missing, or malformed required mainnet addresses.

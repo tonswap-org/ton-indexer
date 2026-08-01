@@ -1031,7 +1031,10 @@ export class IndexerService {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const lag = this.lastMasterTimestamp ? Math.max(0, now - this.lastMasterTimestamp) : undefined;
+    const rawLag = this.lastMasterTimestamp ? now - this.lastMasterTimestamp : undefined;
+    // Tolerate ordinary clock skew, but preserve a materially future source
+    // timestamp as a negative lag so production health validation fails closed.
+    const lag = rawLag === undefined ? undefined : rawLag >= -30 ? Math.max(0, rawLag) : rawLag;
     const response = {
       lastMasterSeqno: this.lastMasterSeqno,
       indexerLagSec: lag,

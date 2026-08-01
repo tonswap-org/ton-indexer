@@ -20,6 +20,7 @@ write_blocked_manifest() {
   "baseUrl": "https://ti.soramitsu.io",
   "status": "blocked",
   "releaseEnabled": false,
+  "lastReviewed": "2026-06-26",
   "blockers": [
     "production-deployment-evidence-missing",
     "live-production-smoke-failing",
@@ -62,6 +63,7 @@ write_ready_manifest() {
   "baseUrl": "https://ti.soramitsu.io",
   "status": "ready",
   "releaseEnabled": true,
+  "lastReviewed": "2026-06-26",
   "blockers": [],
   "smokeCommand": "TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production",
   "dockerBuildCommand": "docker build -t ton-indexer:release .",
@@ -231,6 +233,72 @@ cp "$blocked" "$bad_schema"
 perl -0pi -e 's/"schemaVersion": 1/"schemaVersion": 2/' "$bad_schema"
 expect_failure "bad schema" "schemaVersion must be 1" run_audit "$bad_schema" --mainnet-registry "$placeholder_registry"
 
+cross_service_swap="$tmp_dir/si-manifest-substitution.json"
+cp "$blocked" "$cross_service_swap"
+node - "$cross_service_swap" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+Object.assign(manifest, {
+  scope: 'solswap-indexer-production-deployment-readiness',
+  serviceId: 'si.soramitsu.io',
+  baseUrl: 'https://si.soramitsu.io',
+  blockers: [
+    'production-deployment-evidence-missing',
+    'live-production-smoke-failing',
+    'production-routing-mismatch',
+  ],
+  smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
+  dockerBuildCommand: 'docker build -t solswap-indexer:release .',
+  readyVerificationCommands: [
+    'npm run test:deployment-evidence-template',
+    'npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json',
+    'npm run test:deployment-evidence-audit',
+    'npm run audit:deployment-evidence -- --require-ready',
+    'docker build -t solswap-indexer:release .',
+    'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
+  ],
+});
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure \
+  "cross-service SI manifest substitution" \
+  "serviceId must be ti.soramitsu.io" \
+  run_audit "$cross_service_swap" --mainnet-registry "$placeholder_registry"
+
+bad_last_reviewed="$tmp_dir/bad-last-reviewed.json"
+cp "$blocked" "$bad_last_reviewed"
+perl -0pi -e 's/"lastReviewed": "2026-06-26"/"lastReviewed": "today"/' "$bad_last_reviewed"
+expect_failure "bad lastReviewed date" "lastReviewed must be YYYY-MM-DD" run_audit "$bad_last_reviewed" --mainnet-registry "$placeholder_registry"
+
+invalid_calendar_last_reviewed="$tmp_dir/invalid-calendar-last-reviewed.json"
+cp "$blocked" "$invalid_calendar_last_reviewed"
+perl -0pi -e 's/"lastReviewed": "2026-06-26"/"lastReviewed": "2026-02-31"/' "$invalid_calendar_last_reviewed"
+expect_failure "invalid calendar lastReviewed date" "lastReviewed must be a valid YYYY-MM-DD date" run_audit "$invalid_calendar_last_reviewed" --mainnet-registry "$placeholder_registry"
+
+future_last_reviewed="$tmp_dir/future-last-reviewed.json"
+cp "$blocked" "$future_last_reviewed"
+perl -0pi -e 's/"lastReviewed": "2026-06-26"/"lastReviewed": "2999-01-01"/' "$future_last_reviewed"
+expect_failure "future lastReviewed date" "lastReviewed must not be in the future" run_audit "$future_last_reviewed" --mainnet-registry "$placeholder_registry"
+
+stale_multi_record_review="$tmp_dir/stale-multi-record-review.json"
+cp "$ready" "$stale_multi_record_review"
+node - "$stale_multi_record_review" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+const second = structuredClone(manifest.deploymentEvidence[0]);
+second.deploymentId = 'ti-release-20260627';
+second.deployedAt = '2026-06-27T00:00:00Z';
+second.smokePassedAt = '2026-06-27T00:05:00Z';
+manifest.deploymentEvidence.push(second);
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure \
+  "lastReviewed predates later smoke in multiple deployment records" \
+  "lastReviewed must be on or after deploymentEvidence[1].smokePassedAt UTC date" \
+  run_audit "$stale_multi_record_review" --mainnet-registry "$valid_registry" --require-ready
+
 release_enabled_blocked="$tmp_dir/release-enabled-blocked.json"
 cp "$blocked" "$release_enabled_blocked"
 perl -0pi -e 's/"releaseEnabled": false/"releaseEnabled": true/' "$release_enabled_blocked"
@@ -399,6 +467,39 @@ dummy_operator="$tmp_dir/dummy-operator.json"
 cp "$ready" "$dummy_operator"
 perl -0pi -e 's/"operator": "release"/"operator": "dummy operator"/' "$dummy_operator"
 expect_failure "dummy operator evidence" "operator must not be a placeholder operator" run_audit "$dummy_operator" --mainnet-registry "$valid_registry" --require-ready
+
+multiline_operator="$tmp_dir/multiline-operator.json"
+cp "$ready" "$multiline_operator"
+node - "$multiline_operator" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].operator = 'release\noperator';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "multiline operator evidence" "operator must be a single-line public value" run_audit "$multiline_operator" --mainnet-registry "$valid_registry" --require-ready
+
+secret_operator="$tmp_dir/secret-operator.json"
+cp "$ready" "$secret_operator"
+node - "$secret_operator" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].operator = 'ghp_1234567890abcdefghijklmnop';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "secret-like operator evidence" "operator must not contain secret-like token" run_audit "$secret_operator" --mainnet-registry "$valid_registry" --require-ready
+
+secret_value="$tmp_dir/secret-value.json"
+cp "$ready" "$secret_value"
+node - "$secret_value" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.deploymentEvidence[0].deploymentId = 'ti-ghp_1234567890abcdefghijklmnop';
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure "secret-like deployment evidence value" "deploymentId must not contain secret-like token" run_audit "$secret_value" --mainnet-registry "$valid_registry" --require-ready
 
 duplicate_deployment="$tmp_dir/duplicate-deployment.json"
 cp "$ready" "$duplicate_deployment"
@@ -600,6 +701,26 @@ bad_deployed_timestamp="$tmp_dir/bad-deployed-timestamp.json"
 cp "$ready" "$bad_deployed_timestamp"
 perl -0pi -e 's/"deployedAt": "2026-06-26T00:00:00Z"/"deployedAt": "2026-06-26"/' "$bad_deployed_timestamp"
 expect_failure "bad deployed timestamp evidence" "deployedAt must be an ISO-8601 UTC second timestamp" run_audit "$bad_deployed_timestamp" --mainnet-registry "$valid_registry" --require-ready
+
+impossible_deployed_date="$tmp_dir/impossible-deployed-date.json"
+cp "$ready" "$impossible_deployed_date"
+perl -0pi -e 's/"deployedAt": "2026-06-26T00:00:00Z"/"deployedAt": "2026-02-30T00:00:00Z"/' "$impossible_deployed_date"
+expect_failure "impossible deployed calendar date" "deployedAt must be an ISO-8601 UTC second timestamp" run_audit "$impossible_deployed_date" --mainnet-registry "$valid_registry" --require-ready
+
+non_leap_smoke_date="$tmp_dir/non-leap-smoke-date.json"
+cp "$ready" "$non_leap_smoke_date"
+perl -0pi -e 's/"smokePassedAt": "2026-06-26T00:00:00Z"/"smokePassedAt": "2025-02-29T00:05:00Z"/' "$non_leap_smoke_date"
+expect_failure "non-leap-day smoke timestamp" "smokePassedAt must be an ISO-8601 UTC second timestamp" run_audit "$non_leap_smoke_date" --mainnet-registry "$valid_registry" --require-ready
+
+hour_24_smoke="$tmp_dir/hour-24-smoke.json"
+cp "$ready" "$hour_24_smoke"
+perl -0pi -e 's/"smokePassedAt": "2026-06-26T00:00:00Z"/"smokePassedAt": "2026-06-26T24:00:00Z"/' "$hour_24_smoke"
+expect_failure "hour-24 smoke timestamp" "smokePassedAt must be an ISO-8601 UTC second timestamp" run_audit "$hour_24_smoke" --mainnet-registry "$valid_registry" --require-ready
+
+valid_leap_day="$tmp_dir/valid-leap-day.json"
+cp "$ready" "$valid_leap_day"
+perl -0pi -e 's/"deployedAt": "2026-06-26T00:00:00Z"/"deployedAt": "2024-02-29T00:00:00Z"/; s/"smokePassedAt": "2026-06-26T00:00:00Z"/"smokePassedAt": "2024-02-29T00:05:00Z"/' "$valid_leap_day"
+run_audit "$valid_leap_day" --mainnet-registry "$valid_registry" --require-ready >/dev/null
 
 future_timestamp="$tmp_dir/future-timestamp.json"
 cp "$ready" "$future_timestamp"
