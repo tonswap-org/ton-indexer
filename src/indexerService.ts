@@ -3,9 +3,12 @@ import { EventEmitter } from 'node:events';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
 import {
+  RawTransaction,
   TonDataSource,
   TonSccpBurnProofMaterial,
-  TonSccpBurnProofMaterialRequest
+  TonSccpBurnProofMaterialRequest,
+  transactionPageIsLinkedInclusiveSegment,
+  transactionPageReachesHistoryStart
 } from './data/dataSource';
 import { OpcodeSets } from './utils/opcodes';
 import {
@@ -31,6 +34,7 @@ import {
   parseCanonicalJettonRootData,
   parseCanonicalJettonWalletAddress
 } from './data/jettonAbi';
+import { resolveConfirmedDlmmSwapOutputs } from './utils/dlmmSettlementEvidence';
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRunResult = {
@@ -56,6 +60,20 @@ const normalizeAddress = (value: string) => {
   } catch {
     return value.trim().toLowerCase();
   }
+};
+
+const transactionIdentity = (transaction: { lt: string; hash: string }) =>
+  `${transaction.lt}:${transaction.hash}`;
+
+const retainedExactInitialTransactionPage = (
+  raw: readonly RawTransaction[],
+  retained: readonly IndexedTx[]
+) => {
+  const rawIdentities = new Set(raw.map(transactionIdentity));
+  if (rawIdentities.size !== raw.length || retained.length !== raw.length) return false;
+  const retainedIdentities = new Set(retained.map(transactionIdentity));
+  return retainedIdentities.size === retained.length &&
+    [...rawIdentities].every((identity) => retainedIdentities.has(identity));
 };
 
 const balanceStateSignature = (state?: AccountState) => {
@@ -205,6 +223,184 @@ const rawAmountToNumber = (value: string | undefined, decimals: number): number 
 export type JettonTransferPayloadResponse = {
   custom_payload: string | null;
   state_init: string | null;
+};
+
+export type TonSccpBurnStatusRequest = {
+  jettonMaster: string;
+  burnInitiator: string;
+  queryId: string;
+  soraAssetId: string;
+  destDomain: string;
+  recipient32: string;
+  amount: string;
+  afterLt?: string;
+  afterHash?: string;
+};
+
+export type TonSccpBurnStatusResponse = {
+  status: 'pending' | 'confirmed';
+  jettonMaster: string;
+  burnInitiator: string;
+  queryId: string;
+  soraAssetId: string;
+  currentMasterNonce: string;
+  masterCursor: { lt: string; hash: string } | null;
+  burnRecord: {
+    messageId: string;
+    nonce: string;
+    destDomain: number;
+    recipient32: string;
+    amount: string;
+    masterTransaction: { lt: string; hash: string; utime: number };
+  } | null;
+};
+
+const SCCP_BURNED_NOTIFICATION_OPCODE = 0x1fd0ab62;
+const SCCP_BURN_STATUS_PAGE_SIZE = 64;
+const SCCP_BURN_STATUS_MAX_PAGES = 8;
+const MAX_UINT32 = (1n << 32n) - 1n;
+const MAX_UINT64 = (1n << 64n) - 1n;
+const MAX_UINT128 = (1n << 128n) - 1n;
+const MAX_UINT256 = (1n << 256n) - 1n;
+
+const parseBoundedUnsignedDecimal = (
+  value: string,
+  label: string,
+  maximum: bigint,
+  allowZero = true
+) => {
+  if (
+    value.length > maximum.toString(10).length ||
+    !/^(0|[1-9][0-9]*)$/.test(value)
+  ) {
+    throw new Error(`${label} must be a canonical unsigned decimal integer.`);
+  }
+  const parsed = BigInt(value);
+  if ((!allowZero && parsed === 0n) || parsed > maximum) {
+    throw new Error(`${label} is outside its supported range.`);
+  }
+  return parsed;
+};
+
+const parseHex256Value = (value: string, label: string) => {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(`${label} must be 0x-prefixed 32-byte hex.`);
+  }
+  return BigInt(value);
+};
+
+const formatHex256 = (value: bigint) => `0x${value.toString(16).padStart(64, '0')}`;
+
+const parseExactMaybeAddressTupleItem = (
+  item: TupleItem | undefined
+): { valid: true; address: string | null } | { valid: false; address: null } => {
+  if (!item) return { valid: false, address: null };
+  if (item.type === 'null') return { valid: true, address: null };
+  if (item.type !== 'cell' && item.type !== 'slice' && item.type !== 'builder') {
+    return { valid: false, address: null };
+  }
+  try {
+    const slice = item.cell.beginParse();
+    const address = slice.loadMaybeAddress();
+    if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
+      return { valid: false, address: null };
+    }
+    return { valid: true, address: address?.toRawString() ?? null };
+  } catch {
+    return { valid: false, address: null };
+  }
+};
+
+const parseHash32Bytes = (value: string): Buffer | null => {
+  const trimmed = value.trim();
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed)) return null;
+  const normalized = trimmed.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+  if (normalized.length % 4 === 1) return null;
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  const decoded = Buffer.from(padded, 'base64');
+  if (decoded.length !== 32) return null;
+  if (decoded.toString('base64').replace(/=+$/, '') !== normalized) return null;
+  return decoded;
+};
+
+const sameTonTransactionCursor = (
+  left: { lt: string; hash: string },
+  right: { lt: string; hash: string }
+) => {
+  const leftHash = parseHash32Bytes(left.hash);
+  const rightHash = parseHash32Bytes(right.hash);
+  return left.lt === right.lt && Boolean(leftHash && rightHash && leftHash.equals(rightHash));
+};
+
+const parseCanonicalAddress = (value: string, label: string) => {
+  try {
+    return Address.parse(value).toRawString();
+  } catch {
+    throw new Error(`${label} is not a valid TON address.`);
+  }
+};
+
+type TonSccpBurnedNotification = {
+  queryId: bigint;
+  messageId: bigint;
+  nonce: bigint;
+};
+
+const parseSccpBurnedNotification = (
+  body: string | undefined,
+  declaredOpcode: number | undefined
+): TonSccpBurnedNotification | null => {
+  if (!body) {
+    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
+      throw new Error('SCCP burned notification body is missing.');
+    }
+    return null;
+  }
+  let roots: Cell[];
+  try {
+    roots = Cell.fromBoc(Buffer.from(body, 'base64'));
+  } catch {
+    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
+      throw new Error('SCCP burned notification body is not a valid BOC.');
+    }
+    return null;
+  }
+  if (roots.length !== 1) {
+    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
+      throw new Error('SCCP burned notification must contain exactly one root cell.');
+    }
+    return null;
+  }
+  const slice = roots[0].beginParse();
+  if (slice.remainingBits < 32) {
+    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
+      throw new Error('SCCP burned notification opcode is truncated.');
+    }
+    return null;
+  }
+  const opcode = slice.loadUint(32);
+  if (opcode !== SCCP_BURNED_NOTIFICATION_OPCODE) {
+    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
+      throw new Error('SCCP burned notification opcode metadata does not match its body.');
+    }
+    return null;
+  }
+  if (declaredOpcode !== undefined && declaredOpcode !== opcode) {
+    throw new Error('SCCP burned notification opcode metadata does not match its body.');
+  }
+  try {
+    const notification = {
+      queryId: slice.loadUintBig(64),
+      messageId: slice.loadUintBig(256),
+      nonce: slice.loadUintBig(64),
+    };
+    if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
+      throw new Error('trailing data');
+    }
+    return notification;
+  } catch {
+    throw new Error('SCCP burned notification body has a non-canonical shape.');
+  }
 };
 
 const tupleItemBigInt = (item?: TupleItem): bigint | null => {
@@ -1151,11 +1347,6 @@ export class IndexerService {
           this.config.jettonBalanceTimeoutMs
         );
         if (!balance) return null;
-        try {
-          if (BigInt(balance.balance) === 0n) return null;
-        } catch {
-          // Keep malformed balances visible so issues can be diagnosed upstream.
-        }
         const meta = await this.getJettonMetadata(root.master);
         return {
           master: root.master,
@@ -1436,6 +1627,288 @@ export class IndexerService {
       data_boc: entry?.balance?.dataBoc ?? null,
       balance_raw: entry?.balance?.balance ?? '0',
       network: this.network,
+    };
+  }
+
+  async getTonSccpBurnStatus(
+    request: TonSccpBurnStatusRequest
+  ): Promise<TonSccpBurnStatusResponse> {
+    const jettonMaster = parseCanonicalAddress(request.jettonMaster, 'jetton_master');
+    const burnInitiator = parseCanonicalAddress(request.burnInitiator, 'burn_initiator');
+    const queryId = parseBoundedUnsignedDecimal(request.queryId, 'query_id', MAX_UINT64);
+    const expectedSoraAssetId = parseHex256Value(request.soraAssetId, 'sora_asset_id');
+    const expectedDestDomain = parseBoundedUnsignedDecimal(
+      request.destDomain,
+      'dest_domain',
+      MAX_UINT32
+    );
+    const expectedRecipient32 = parseHex256Value(request.recipient32, 'recipient32');
+    const expectedAmount = parseBoundedUnsignedDecimal(
+      request.amount,
+      'amount',
+      MAX_UINT128,
+      false
+    );
+
+    if ((request.afterLt === undefined) !== (request.afterHash === undefined)) {
+      throw new Error('after_lt and after_hash must be provided together.');
+    }
+    const afterCursor = request.afterLt && request.afterHash
+      ? {
+          lt: parseBoundedUnsignedDecimal(
+            request.afterLt,
+            'after_lt',
+            MAX_UINT64,
+            false
+          ).toString(10),
+          hash: request.afterHash,
+        }
+      : null;
+    if (afterCursor && !parseHash32Bytes(afterCursor.hash)) {
+      throw new Error('after_hash must identify a 32-byte TON transaction hash.');
+    }
+
+    const accountState = this.source.getAccountStateLite
+      ? await this.source.getAccountStateLite(jettonMaster)
+      : await this.source.getAccountState(jettonMaster);
+    if ((accountState.lastTxLt === undefined) !== (accountState.lastTxHash === undefined)) {
+      throw new Error('SCCP master returned an incomplete transaction cursor.');
+    }
+    const masterCursor = accountState.lastTxLt && accountState.lastTxHash
+      ? {
+          lt: parseBoundedUnsignedDecimal(
+            accountState.lastTxLt,
+            'SCCP master transaction lt',
+            MAX_UINT64,
+            false
+          ).toString(10),
+          hash: accountState.lastTxHash,
+        }
+      : null;
+    if (masterCursor && !parseHash32Bytes(masterCursor.hash)) {
+      throw new Error('SCCP master returned an invalid transaction hash.');
+    }
+
+    const configResult = await this.source
+      .runGetMethod(jettonMaster, 'get_sccp_config', [])
+      .catch(() => null);
+    if (!configResult || configResult.exitCode !== 0) {
+      throw new Error('Configured jetton master does not expose get_sccp_config.');
+    }
+    const configStack = unwrapTupleStack(configResult.stack);
+    if (configStack.length !== 6) {
+      throw new Error('get_sccp_config returned a non-canonical stack shape.');
+    }
+    const governor = parseExactMaybeAddressTupleItem(configStack[0]);
+    const verifier = parseExactMaybeAddressTupleItem(configStack[1]);
+    const configuredSoraAssetId = tupleItemBigInt(configStack[2]);
+    const currentMasterNonce = tupleItemBigInt(configStack[3]);
+    const inboundPausedMask = tupleItemBigInt(configStack[4]);
+    const outboundPausedMask = tupleItemBigInt(configStack[5]);
+    if (!governor.valid || governor.address === null || !verifier.valid) {
+      throw new Error('get_sccp_config returned malformed address fields.');
+    }
+    if (
+      configuredSoraAssetId === null ||
+      configuredSoraAssetId < 0n ||
+      configuredSoraAssetId > MAX_UINT256 ||
+      currentMasterNonce === null ||
+      currentMasterNonce < 0n ||
+      currentMasterNonce > MAX_UINT64 ||
+      inboundPausedMask === null ||
+      inboundPausedMask < 0n ||
+      inboundPausedMask > MAX_UINT64 ||
+      outboundPausedMask === null ||
+      outboundPausedMask < 0n ||
+      outboundPausedMask > MAX_UINT64
+    ) {
+      throw new Error('get_sccp_config returned malformed integer fields.');
+    }
+    if (configuredSoraAssetId !== expectedSoraAssetId) {
+      throw new Error('Configured SCCP master soraAssetId does not match the requested asset.');
+    }
+
+    const responseBase = {
+      jettonMaster,
+      burnInitiator,
+      queryId: queryId.toString(10),
+      soraAssetId: formatHex256(configuredSoraAssetId),
+      currentMasterNonce: currentMasterNonce.toString(10),
+      masterCursor,
+    };
+    const pending = (): TonSccpBurnStatusResponse => ({
+      status: 'pending',
+      ...responseBase,
+      burnRecord: null,
+    });
+
+    // A cursor-free request is the pre-submit handshake. It validates that the
+    // configured address really implements this SCCP asset and gives the
+    // caller an exact account-history boundary without interpreting old burns.
+    if (!afterCursor) return pending();
+    if (!masterCursor) {
+      throw new Error('SCCP master transaction history disappeared after preflight.');
+    }
+    if (sameTonTransactionCursor(masterCursor, afterCursor)) return pending();
+    if (BigInt(masterCursor.lt) <= BigInt(afterCursor.lt)) {
+      throw new Error('after cursor is not an ancestor of the current SCCP master state.');
+    }
+
+    const matches: Array<{
+      transaction: RawTransaction;
+      notification: TonSccpBurnedNotification;
+    }> = [];
+    let scanCursor = masterCursor;
+    let reachedAfterCursor = false;
+
+    for (let pageIndex = 0; pageIndex < SCCP_BURN_STATUS_MAX_PAGES; pageIndex += 1) {
+      const page = await this.source.getTransactions(
+        jettonMaster,
+        SCCP_BURN_STATUS_PAGE_SIZE,
+        scanCursor.lt,
+        scanCursor.hash
+      );
+      if (page.length === 0) {
+        throw new Error('SCCP master transaction scan returned an empty cursor page.');
+      }
+      const oldest = page[page.length - 1];
+      if (
+        !oldest ||
+        !transactionPageIsLinkedInclusiveSegment(page, scanCursor, {
+          lt: oldest.lt,
+          hash: oldest.hash,
+        })
+      ) {
+        throw new Error('SCCP master transaction history is not a linked canonical segment.');
+      }
+
+      for (const transaction of page) {
+        if (sameTonTransactionCursor(transaction, afterCursor)) {
+          reachedAfterCursor = true;
+          break;
+        }
+        if (!transaction.success || (transaction.status && transaction.status !== 'success')) {
+          continue;
+        }
+        for (const message of transaction.outMessages) {
+          let destination: string | null = null;
+          try {
+            destination = message.destination
+              ? Address.parse(message.destination).toRawString()
+              : null;
+          } catch {
+            destination = null;
+          }
+          if (destination !== burnInitiator) continue;
+          const notification = parseSccpBurnedNotification(message.body, message.op);
+          if (!notification || notification.queryId !== queryId) continue;
+          const source = message.source
+            ? parseCanonicalAddress(message.source, 'SCCP notification source')
+            : null;
+          if (source !== jettonMaster) {
+            throw new Error('SCCP burned notification source does not match its master.');
+          }
+          if (!Number.isSafeInteger(transaction.utime) || transaction.utime < 0) {
+            throw new Error('SCCP burned notification transaction has an invalid timestamp.');
+          }
+          matches.push({ transaction, notification });
+        }
+      }
+      if (reachedAfterCursor) break;
+
+      if (!oldest.prevTransactionLt || !oldest.prevTransactionHash) {
+        throw new Error('SCCP master transaction page is missing its predecessor cursor.');
+      }
+      const predecessor = {
+        lt: oldest.prevTransactionLt,
+        hash: oldest.prevTransactionHash,
+      };
+      if (sameTonTransactionCursor(predecessor, afterCursor)) {
+        reachedAfterCursor = true;
+        break;
+      }
+      if (transactionPageReachesHistoryStart(page, scanCursor)) {
+        throw new Error('after cursor is not present in SCCP master transaction history.');
+      }
+      scanCursor = predecessor;
+    }
+
+    if (!reachedAfterCursor) {
+      throw new Error('after cursor is outside the bounded SCCP master transaction scan window.');
+    }
+    if (matches.length === 0) return pending();
+    if (matches.length !== 1) {
+      throw new Error('Multiple SCCP burned notifications matched the same query_id.');
+    }
+
+    const match = matches[0];
+    const burnRecordResult = await this.source
+      .runGetMethod(jettonMaster, 'get_sccp_burn_record', [
+        { type: 'int', value: match.notification.messageId },
+      ])
+      .catch(() => null);
+    if (!burnRecordResult || burnRecordResult.exitCode !== 0) return pending();
+    const burnRecordStack = unwrapTupleStack(burnRecordResult.stack);
+    if (burnRecordStack.length !== 1) {
+      throw new Error('get_sccp_burn_record returned a non-canonical stack shape.');
+    }
+    if (burnRecordStack[0]?.type === 'null') return pending();
+    const burnRecordCell = tupleItemCell(burnRecordStack[0]);
+    if (!burnRecordCell) {
+      throw new Error('get_sccp_burn_record returned a malformed record cell.');
+    }
+
+    let actualBurnInitiator: string;
+    let actualDestDomain: bigint;
+    let actualRecipient32: bigint;
+    let actualAmount: bigint;
+    let actualNonce: bigint;
+    try {
+      const slice = burnRecordCell.beginParse();
+      const recordInitiator = slice.loadAddress();
+      if (!recordInitiator) throw new Error('missing initiator');
+      actualBurnInitiator = recordInitiator.toRawString();
+      actualDestDomain = slice.loadUintBig(32);
+      actualRecipient32 = slice.loadUintBig(256);
+      actualAmount = slice.loadCoins();
+      actualNonce = slice.loadUintBig(64);
+      if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
+        throw new Error('trailing data');
+      }
+    } catch {
+      throw new Error('get_sccp_burn_record returned a non-canonical record cell.');
+    }
+
+    if (
+      actualBurnInitiator !== burnInitiator ||
+      actualDestDomain !== expectedDestDomain ||
+      actualRecipient32 !== expectedRecipient32 ||
+      actualAmount !== expectedAmount ||
+      actualNonce !== match.notification.nonce
+    ) {
+      throw new Error('SCCP burn record does not match the submitted burn intent.');
+    }
+    if (actualNonce > currentMasterNonce) {
+      // The transaction and getter views can briefly straddle adjacent blocks.
+      // Keep this normal propagation state out of browser error telemetry.
+      return pending();
+    }
+
+    return {
+      status: 'confirmed',
+      ...responseBase,
+      burnRecord: {
+        messageId: formatHex256(match.notification.messageId),
+        nonce: actualNonce.toString(10),
+        destDomain: Number(actualDestDomain),
+        recipient32: formatHex256(actualRecipient32),
+        amount: actualAmount.toString(10),
+        masterTransaction: {
+          lt: match.transaction.lt,
+          hash: match.transaction.hash,
+          utime: match.transaction.utime,
+        },
+      },
     };
   }
 
@@ -3802,9 +4275,15 @@ export class IndexerService {
       base: number;
       quote: number;
     }> = [];
+    const durableSettlementOutputs = resolveConfirmedDlmmSwapOutputs(marketAddress, entry.txs);
     for (const tx of entry.txs) {
       const swap = this.toSwapExecution(tx);
-      if (!swap || swap.status !== 'success' || swap.receiveAmountSource !== 'actual') continue;
+      if (!swap || swap.status !== 'success') continue;
+      const receiveAmount =
+        swap.receiveAmountSource === 'actual'
+          ? swap.receiveAmount
+          : durableSettlementOutputs.get(swap.txId);
+      if (receiveAmount === undefined) continue;
       if (fromUtime !== null && swap.utime < fromUtime) continue;
       if (toUtime !== null && swap.utime > toUtime) continue;
 
@@ -3817,9 +4296,9 @@ export class IndexerService {
       let quoteRaw: string | undefined;
       if (paySymbol === assetSymbol && receiveSymbol === quoteSymbol) {
         baseRaw = swap.payAmount;
-        quoteRaw = swap.receiveAmount;
+        quoteRaw = receiveAmount;
       } else if (paySymbol === quoteSymbol && receiveSymbol === assetSymbol) {
-        baseRaw = swap.receiveAmount;
+        baseRaw = receiveAmount;
         quoteRaw = swap.payAmount;
       } else {
         continue;
@@ -3936,10 +4415,22 @@ export class IndexerService {
     const limit = this.config.pageSize * this.config.backfillPageBatch;
     const raw = await this.source.getTransactions(address, limit);
     if (raw.length === 0) {
-      this.store.markHistoryComplete(address);
+      await this.refreshAccountState(address, { lite: true });
+      const balance = this.store.get(address)?.balance;
+      const hasHeadLt = typeof balance?.lastTxLt === 'string' && balance.lastTxLt.length > 0;
+      const hasHeadHash = typeof balance?.lastTxHash === 'string' && balance.lastTxHash.length > 0;
       this.store.setLastBackfillLt(address, undefined);
+      if (!hasHeadLt && !hasHeadHash) {
+        this.store.markHistoryComplete(address);
+        return;
+      }
+      this.store.markHistoryIncomplete(address);
+      if (this.enqueueBackfill) this.enqueueBackfill(address);
       return;
     }
+
+    this.store.markHistoryIncomplete(address);
+    const reachesHistoryStart = transactionPageReachesHistoryStart(raw);
 
     this.poolTracker?.observeTransactions(raw);
     const indexed = raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
@@ -3949,9 +4440,24 @@ export class IndexerService {
     if (!updated) return;
     const oldest = updated.txs[updated.txs.length - 1];
     this.store.setLastBackfillLt(address, oldest?.lt);
+    if (reachesHistoryStart && retainedExactInitialTransactionPage(raw, updated.txs)) {
+      await this.refreshAccountState(address, { lite: true });
+      const confirmed = this.store.get(address);
+      const newest = confirmed?.txs[0];
+      if (
+        confirmed &&
+        newest &&
+        confirmed.balance?.lastTxLt === newest.lt &&
+        confirmed.balance?.lastTxHash === newest.hash &&
+        retainedExactInitialTransactionPage(raw, confirmed.txs)
+      ) {
+        this.store.markHistoryComplete(address);
+        return;
+      }
+    }
     // Lite servers may return a proof-size-capped short page even when older
-    // transactions exist. A nonempty initial page therefore never proves that
-    // history is complete; background cursor pagination must reach an empty page.
+    // transactions exist. Without an intact predecessor chain through the
+    // canonical history-start marker, the page remains incomplete.
     this.store.markHistoryIncomplete(address);
     if (updated.stats.totalPagesMin < maxPages && this.enqueueBackfill) {
       this.enqueueBackfill(address);

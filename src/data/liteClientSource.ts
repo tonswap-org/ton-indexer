@@ -1,8 +1,22 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Address, Cell, TupleItem, beginCell, loadTransaction, parseTuple, serializeTuple } from '@ton/core';
+import {
+  Address,
+  Cell,
+  CellType,
+  Dictionary,
+  type DictionaryValue,
+  TupleItem,
+  beginCell,
+  loadAccount,
+  loadDepthBalanceInfo,
+  loadShardStateUnsplit,
+  loadTransaction,
+  parseTuple,
+  serializeTuple,
+} from '@ton/core';
 import { LiteClient, LiteRoundRobinEngine, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
-import { Functions } from 'ton-lite-client/dist/schema';
+import { Codecs, Functions } from 'ton-lite-client/dist/schema';
 import { Network } from '../models';
 import {
   AccountStateResponse,
@@ -155,6 +169,194 @@ const blockIdToResponse = (id: {
   fileHashHex: bytesToHex(id.fileHash),
 });
 
+type LiteBlockId = {
+  seqno: number;
+  workchain: number;
+  shard: string;
+  rootHash: Buffer;
+  fileHash: Buffer;
+};
+
+const blockIdsEqual = (actual: LiteBlockId, expected: LiteBlockId) =>
+  actual.seqno === expected.seqno &&
+  actual.workchain === expected.workchain &&
+  actual.shard === expected.shard &&
+  actual.rootHash.equals(expected.rootHash) &&
+  actual.fileHash.equals(expected.fileHash);
+
+const assertBlockId = (actual: LiteBlockId, expected: LiteBlockId, label: string) => {
+  if (!blockIdsEqual(actual, expected)) {
+    throw new Error(`${label} does not match the requested block.`);
+  }
+};
+
+const decodeTaggedShard = (raw: string) => {
+  const tagged = BigInt.asUintN(64, BigInt(raw));
+  if (tagged === 0n) throw new Error('Tagged shard identifier cannot be zero.');
+  const terminator = tagged & -tagged;
+  let trailingZeroes = 0;
+  for (let cursor = terminator; (cursor & 1n) === 0n; cursor >>= 1n) {
+    trailingZeroes += 1;
+  }
+  const shardPrefixBits = 63 - trailingZeroes;
+  if (shardPrefixBits < 0 || shardPrefixBits > 60) {
+    throw new Error('Tagged shard identifier has an invalid prefix length.');
+  }
+  return {
+    shardPrefixBits,
+    shardPrefix: tagged ^ terminator,
+  };
+};
+
+const assertShardStateIdentity = (cell: Cell, expected: LiteBlockId, label: string) => {
+  if (cell.type !== CellType.Ordinary) {
+    throw new Error(`${label} does not contain an ordinary shard-state root.`);
+  }
+  const expectedShard = decodeTaggedShard(expected.shard);
+  const state = loadShardStateUnsplit(cell.beginParse());
+  if (
+    state.seqno !== expected.seqno ||
+    state.shardId.workchainId !== expected.workchain ||
+    state.shardId.shardPrefixBits !== expectedShard.shardPrefixBits ||
+    state.shardId.shardPrefix !== expectedShard.shardPrefix
+  ) {
+    throw new Error(`${label} shard-state identity does not match the requested block.`);
+  }
+};
+
+const parseMerkleProofRoots = (proof: Buffer, expectedRoots: number, label: string) => {
+  if (!Buffer.isBuffer(proof) || proof.length === 0) {
+    throw new Error(`${label} is empty.`);
+  }
+  const roots = Cell.fromBoc(proof);
+  if (roots.length !== expectedRoots) {
+    throw new Error(`${label} must contain exactly ${expectedRoots} Merkle-proof root(s).`);
+  }
+  for (const root of roots) {
+    if (root.type !== CellType.MerkleProof || root.refs.length !== 1) {
+      throw new Error(`${label} contains a malformed Merkle-proof root.`);
+    }
+  }
+  return roots;
+};
+
+const assertBlockProofRoot = (root: Cell, expected: LiteBlockId, label: string) => {
+  if (!root.refs[0].hash(0).equals(expected.rootHash)) {
+    throw new Error(`${label} does not bind the requested block root hash.`);
+  }
+};
+
+const shardAccountReferenceValue: DictionaryValue<Cell> = {
+  parse: (slice) => {
+    loadDepthBalanceInfo(slice);
+    const accountRef = slice.loadRef();
+    slice.loadUintBig(256);
+    slice.loadUintBig(64);
+    return accountRef;
+  },
+  serialize: () => {
+    throw new Error('Shard-account proof values are read-only.');
+  },
+};
+
+const loadShardAccountsRoot = (shardStateRoot: Cell) => {
+  const slice = shardStateRoot.beginParse();
+  if (slice.loadUint(32) !== 0x9023afe2) throw new Error('Invalid shard-state root.');
+  slice.loadInt(32);
+  if (slice.loadUint(2) !== 0) throw new Error('Invalid shard identifier prefix.');
+  slice.loadUint(6);
+  slice.loadInt(32);
+  slice.loadUintBig(64);
+  slice.loadUint(32);
+  slice.loadUint(32);
+  slice.loadUint(32);
+  slice.loadUintBig(64);
+  slice.loadUint(32);
+  slice.loadRef();
+  slice.loadBit();
+  return slice.loadRef();
+};
+
+const parseBoundAccountRoot = (raw: Buffer, jettonMaster: Address) => {
+  const roots = Cell.fromBoc(raw);
+  if (roots.length !== 1 || roots[0].type !== CellType.Ordinary) {
+    throw new Error('Jetton-master account state must contain exactly one ordinary root.');
+  }
+  const accountRoot = roots[0];
+  const slice = accountRoot.beginParse();
+  if (!slice.loadBit()) throw new Error('Jetton-master account is absent from the account-state response.');
+  const account = loadAccount(slice);
+  if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
+    throw new Error('Jetton-master account state contains trailing data.');
+  }
+  if (!account.addr.equals(jettonMaster)) {
+    throw new Error('Jetton-master account state belongs to another address.');
+  }
+  const storage = account.storage.state;
+  if (storage.type !== 'active' || !storage.state.code || !storage.state.data) {
+    throw new Error('Jetton-master account state is not active with exact code and data.');
+  }
+  return accountRoot;
+};
+
+const graftAccountIntoShardState = (
+  shardStateRoot: Cell,
+  accountRoot: Cell,
+  jettonMaster: Address
+) => {
+  const accountsRoot = loadShardAccountsRoot(shardStateRoot);
+  const accountRefs = Dictionary.load(
+    Dictionary.Keys.BigUint(256),
+    shardAccountReferenceValue,
+    accountsRoot.beginParse()
+  );
+  const accountId = BigInt(`0x${jettonMaster.hash.toString('hex')}`);
+  const provenAccountRef = accountRefs.get(accountId);
+  if (!provenAccountRef || provenAccountRef.type !== CellType.PrunedBranch) {
+    throw new Error('Jetton-master account proof does not contain one pruned account branch.');
+  }
+  if (
+    !provenAccountRef.hash(0).equals(accountRoot.hash(0)) ||
+    provenAccountRef.depth(0) !== accountRoot.depth(0)
+  ) {
+    throw new Error('Jetton-master account state does not match its proven pruned branch.');
+  }
+
+  let replacements = 0;
+  const graft = (cell: Cell): Cell => {
+    if (cell === provenAccountRef) {
+      replacements += 1;
+      return accountRoot;
+    }
+    const refs = cell.refs.map(graft);
+    if (refs.every((ref, index) => ref === cell.refs[index])) return cell;
+    const next = new Cell({ exotic: cell.isExotic, bits: cell.bits, refs });
+    if (!next.hash(0).equals(cell.hash(0)) || next.depth(0) !== cell.depth(0)) {
+      throw new Error('Account-proof graft changed a proven ancestor hash or depth.');
+    }
+    return next;
+  };
+  const expanded = graft(shardStateRoot);
+  if (replacements !== 1) {
+    throw new Error('Jetton-master account proof must expose exactly one bound account branch.');
+  }
+  if (!expanded.hash(0).equals(shardStateRoot.hash(0)) || expanded.depth(0) !== shardStateRoot.depth(0)) {
+    throw new Error('Expanded shard-state proof changed its root hash or depth.');
+  }
+
+  const verified = loadShardStateUnsplit(expanded.beginParse()).accounts?.get(accountId)?.shardAccount.account;
+  if (
+    !verified ||
+    !verified.addr.equals(jettonMaster) ||
+    verified.storage.state.type !== 'active' ||
+    !verified.storage.state.state.code ||
+    !verified.storage.state.state.data
+  ) {
+    throw new Error('Expanded shard-state proof does not reveal the bound active jetton master.');
+  }
+  return expanded;
+};
+
 const decodeOp = (cell: Cell | null | undefined): number | undefined => {
   if (!cell) return undefined;
   try {
@@ -264,23 +466,14 @@ const evaluateStatus = (tx: any): { status: RawTransactionStatus; reason?: strin
 const decodeTransactions = (payload: Buffer): any[] => {
   const cells = Cell.fromBoc(payload);
   const parsed: any[] = [];
-  let parseFailures = 0;
-  let lastParseError: Error | null = null;
 
   for (const cell of cells) {
     try {
       parsed.push(loadTransaction(cell.beginParse()));
     } catch (error) {
-      parseFailures += 1;
-      if (error instanceof Error) {
-        lastParseError = error;
-      }
+      const suffix = error instanceof Error && error.message ? `: ${error.message}` : '';
+      throw new Error(`Failed to decode complete transaction page${suffix}`);
     }
-  }
-
-  if (parseFailures > 0 && parsed.length === 0 && cells.length > 0) {
-    const suffix = lastParseError?.message ? `: ${lastParseError.message}` : '';
-    throw new Error(`Failed to decode transaction page${suffix}`);
   }
 
   return parsed;
@@ -290,6 +483,200 @@ const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 200;
 const MASTERCHAIN_INFO_TTL_MS = 1_000;
 type LiteMasterchainRef = Awaited<ReturnType<LiteClient['getMasterchainInfo']>>;
+
+// ton-lite-client 3.1.1 predates TON's boxed Simplex signature-set arm. Keep
+// the compatibility decoder release-owned and scoped to getBlockProof so an
+// unrelated response can never be reinterpreted through a global codec patch.
+const PARTIAL_BLOCK_PROOF_TL_ID = -1898917183;
+const BLOCK_LINK_BACK_TL_ID = -276947985;
+const BLOCK_LINK_FORWARD_TL_ID = 1376767516;
+const ORDINARY_SIGNATURE_SET_TL_ID = -163272986;
+const SIMPLEX_SIGNATURE_SET_TL_ID = -1406887936;
+const CANDIDATE_HASH_DATA_ORDINARY_TL_ID = -386286372;
+const CANDIDATE_HASH_DATA_EMPTY_TL_ID = 1924454707;
+const CANDIDATE_ID_TL_ID = -1231958721;
+const CANDIDATE_PARENT_TL_ID = 441162481;
+const CANDIDATE_WITHOUT_PARENTS_TL_ID = 583781545;
+const MAX_BLOCK_PROOF_STEPS = 16;
+const MAX_BLOCK_SIGNATURES = 1024;
+
+type BlockProofDecoder = Parameters<typeof Functions.liteServer_getBlockProof.decodeResponse>[0];
+
+const decodeBoundedVector = <T>(
+  decoder: BlockProofDecoder,
+  max: number,
+  label: string,
+  decode: (decoder: BlockProofDecoder) => T
+) => {
+  const count = decoder.readUInt32();
+  if (count > max) {
+    throw new Error(`${label} exceeds ${max} entries.`);
+  }
+  const values: T[] = [];
+  for (let index = 0; index < count; index += 1) {
+    values.push(decode(decoder));
+  }
+  return values;
+};
+
+const decodeOwnedSignature = (decoder: BlockProofDecoder) => {
+  const nodeIdShort = decoder.readInt256();
+  const signature = decoder.readBuffer();
+  if (nodeIdShort.length !== 32 || signature.length !== 64) {
+    throw new Error('TON block-proof signature has an invalid width.');
+  }
+  return {
+    kind: 'liteServer.signature' as const,
+    nodeIdShort,
+    signature,
+  };
+};
+
+const decodeOwnedSignatureSet = (decoder: BlockProofDecoder) => {
+  const constructor = decoder.readInt32();
+  if (constructor === ORDINARY_SIGNATURE_SET_TL_ID) {
+    const validatorSetHash = decoder.readInt32();
+    const catchainSeqno = decoder.readInt32();
+    const signatures = decodeBoundedVector(
+      decoder,
+      MAX_BLOCK_SIGNATURES,
+      'TON block-proof signature set',
+      decodeOwnedSignature
+    );
+    return {
+      kind: 'liteServer.signatureSet' as const,
+      validatorSetHash,
+      catchainSeqno,
+      signatures,
+    };
+  }
+  if (constructor === SIMPLEX_SIGNATURE_SET_TL_ID) {
+    const ccSeqno = decoder.readInt32();
+    const validatorSetHash = decoder.readInt32();
+    const signatures = decodeBoundedVector(
+      decoder,
+      MAX_BLOCK_SIGNATURES,
+      'TON Simplex block-proof signature set',
+      decodeOwnedSignature
+    );
+    const sessionId = decoder.readInt256();
+    const slot = decoder.readInt32() >>> 0;
+    const candidate = decoder.readBuffer();
+    return {
+      kind: 'liteServer.signatureSet.simplex' as const,
+      ccSeqno,
+      validatorSetHash,
+      signatures,
+      sessionId,
+      slot,
+      candidate,
+    };
+  }
+  throw new Error(`Unknown TON block-proof signature-set constructor: ${constructor}`);
+};
+
+const decodeOwnedBlockLink = (decoder: BlockProofDecoder) => {
+  const constructor = decoder.readInt32();
+  if (constructor === BLOCK_LINK_BACK_TL_ID) {
+    return Codecs.liteServer_blockLinkBack.decode(decoder);
+  }
+  if (constructor === BLOCK_LINK_FORWARD_TL_ID) {
+    const toKeyBlock = decoder.readBool();
+    const from = Codecs.tonNode_blockIdExt.decode(decoder);
+    const to = Codecs.tonNode_blockIdExt.decode(decoder);
+    const destProof = decoder.readBuffer();
+    const configProof = decoder.readBuffer();
+    const signatures = decodeOwnedSignatureSet(decoder);
+    return {
+      kind: 'liteServer.blockLinkForward' as const,
+      toKeyBlock,
+      from,
+      to,
+      destProof,
+      configProof,
+      signatures,
+    };
+  }
+  throw new Error(`Unknown TON block-proof link constructor: ${constructor}`);
+};
+
+const ownedGetBlockProofFunction = {
+  encodeRequest: Functions.liteServer_getBlockProof.encodeRequest,
+  decodeResponse: (decoder: BlockProofDecoder) => {
+    const constructor = decoder.readInt32();
+    if (constructor !== PARTIAL_BLOCK_PROOF_TL_ID) {
+      throw new Error(`Unexpected TON partial-block-proof constructor: ${constructor}`);
+    }
+    const complete = decoder.readBool();
+    const from = Codecs.tonNode_blockIdExt.decode(decoder);
+    const to = Codecs.tonNode_blockIdExt.decode(decoder);
+    const steps = decodeBoundedVector(
+      decoder,
+      MAX_BLOCK_PROOF_STEPS,
+      'TON partial block-proof chain',
+      decodeOwnedBlockLink
+    );
+    return {
+      kind: 'liteServer.partialBlockProof' as const,
+      complete,
+      from,
+      to,
+      steps,
+    };
+  },
+};
+
+const assertSimplexCandidateBindsTarget = (candidate: Buffer, target: LiteBlockId) => {
+  let offset = 0;
+  const take = (length: number) => {
+    if (!Number.isSafeInteger(length) || length < 0 || offset + length > candidate.length) {
+      throw new Error('Simplex candidate is truncated.');
+    }
+    const value = candidate.subarray(offset, offset + length);
+    offset += length;
+    return value;
+  };
+  const readInt32 = () => take(4).readInt32LE(0);
+  const readInt64 = () => take(8).readBigInt64LE(0).toString();
+  const readHash = () => Buffer.from(take(32));
+
+  const constructor = readInt32();
+  if (
+    constructor !== CANDIDATE_HASH_DATA_ORDINARY_TL_ID &&
+    constructor !== CANDIDATE_HASH_DATA_EMPTY_TL_ID
+  ) {
+    throw new Error('Simplex candidate has an unsupported constructor.');
+  }
+  const block: LiteBlockId = {
+    workchain: readInt32(),
+    shard: readInt64(),
+    seqno: readInt32(),
+    rootHash: readHash(),
+    fileHash: readHash(),
+  };
+  assertBlockId(block, target, 'Simplex candidate block');
+
+  if (constructor === CANDIDATE_HASH_DATA_ORDINARY_TL_ID) {
+    readHash();
+    const parentConstructor = readInt32();
+    if (parentConstructor === CANDIDATE_PARENT_TL_ID) {
+      if (readInt32() !== CANDIDATE_ID_TL_ID) {
+        throw new Error('Simplex candidate parent has an invalid candidate-id constructor.');
+      }
+      readInt32();
+      readHash();
+    } else if (parentConstructor !== CANDIDATE_WITHOUT_PARENTS_TL_ID) {
+      throw new Error('Simplex candidate has an invalid parent constructor.');
+    }
+  } else {
+    readInt32();
+    readHash();
+  }
+
+  if (offset !== candidate.length) {
+    throw new Error('Simplex candidate contains trailing data.');
+  }
+};
 
 export class LiteClientDataSource implements TonDataSource {
   network: Network;
@@ -392,7 +779,7 @@ export class LiteClientDataSource implements TonDataSource {
     );
   }
 
-  private async getStateData(block: {
+  private async getMasterchainConfigProof(block: {
     seqno: number;
     workchain: number;
     shard: string;
@@ -400,8 +787,9 @@ export class LiteClientDataSource implements TonDataSource {
     fileHash: Buffer;
   }) {
     return this.queryLite(() =>
-      this.client.engine.query(Functions.liteServer_getState, {
-        kind: 'liteServer.getState',
+      this.client.engine.query(Functions.liteServer_getConfigAll, {
+        kind: 'liteServer.getConfigAll',
+        mode: 0,
         id: {
           kind: 'tonNode.blockIdExt',
           seqno: block.seqno,
@@ -431,9 +819,11 @@ export class LiteClientDataSource implements TonDataSource {
     }
   ) {
     return this.queryLite(() =>
-      this.client.engine.query(Functions.liteServer_getBlockProof, {
+      this.client.engine.query(ownedGetBlockProofFunction, {
         kind: 'liteServer.getBlockProof',
-        mode: 0,
+        // Bit 0 is mandatory when targetBlock is supplied. Without it the
+        // liteserver silently proves its moving latest head instead.
+        mode: 1,
         knownBlock: {
           kind: 'tonNode.blockIdExt',
           seqno: knownBlock.seqno,
@@ -482,13 +872,47 @@ export class LiteClientDataSource implements TonDataSource {
         continue;
       }
       const signatures = Array.isArray(step.signatures?.signatures) ? step.signatures.signatures : [];
+      if (signatures.length === 0) {
+        throw new Error('Target masterchain block proof does not contain validator signatures.');
+      }
+      const mappedSignatures = signatures.map((signature: any) => ({
+        nodeIdShortHex: bytesToHex(signature.nodeIdShort),
+        signatureHex: bytesToHex(signature.signature),
+      }));
+      if (step.signatures?.kind === 'liteServer.signatureSet.simplex') {
+        const sessionId = step.signatures.sessionId;
+        const candidate = step.signatures.candidate;
+        const slot = Number(step.signatures.slot);
+        if (!Buffer.isBuffer(sessionId) || sessionId.length !== 32) {
+          throw new Error('Simplex signature set has an invalid session id.');
+        }
+        if (!Buffer.isBuffer(candidate) || candidate.length === 0) {
+          throw new Error('Simplex signature set has an empty candidate.');
+        }
+        if (!Number.isInteger(slot) || slot < 0 || slot > 0xffffffff) {
+          throw new Error('Simplex signature set has an invalid slot.');
+        }
+        assertSimplexCandidateBindsTarget(candidate, target);
+        return {
+          scheme: 'simplex' as const,
+          // TL decodes these uint32 protocol fields through signed int32 values.
+          validatorListHashShort: Number(step.signatures.validatorSetHash) >>> 0,
+          catchainSeqno: Number(step.signatures.ccSeqno) >>> 0,
+          signatures: mappedSignatures,
+          sessionIdHex: bytesToHex(sessionId),
+          slot,
+          candidateBase64: bytesToBase64(candidate),
+        };
+      }
+      if (step.signatures?.kind !== 'liteServer.signatureSet') {
+        throw new Error('Target masterchain block proof has an unsupported signature-set kind.');
+      }
       return {
-        validatorListHashShort: Number(step.signatures?.validatorSetHash ?? 0),
-        catchainSeqno: Number(step.signatures?.catchainSeqno ?? 0),
-        signatures: signatures.map((signature: any) => ({
-          nodeIdShortHex: bytesToHex(signature.nodeIdShort),
-          signatureHex: bytesToHex(signature.signature),
-        })),
+        scheme: 'ordinary' as const,
+        // TL decodes these uint32 protocol fields through signed int32 values.
+        validatorListHashShort: Number(step.signatures.validatorSetHash) >>> 0,
+        catchainSeqno: Number(step.signatures.catchainSeqno) >>> 0,
+        signatures: mappedSignatures,
       };
     }
     throw new Error('Failed to locate a forward block-proof step for the target masterchain block.');
@@ -536,21 +960,60 @@ export class LiteClientDataSource implements TonDataSource {
       throw new Error('Burn record is not available on the jetton master yet.');
     }
 
-    const [checkpointBlockData, checkpointStateData, targetBlockData, targetStateData, targetProof, accountState] =
-      await Promise.all([
-        this.getBlockData(trustedCheckpoint.id),
-        this.getStateData(trustedCheckpoint.id),
-        this.getBlockData(targetBlockId),
-        this.getStateData(targetBlockId),
-        this.getBlockProof(trustedCheckpoint.id, targetBlockId),
-        this.call((client) => client.getAccountStateRaw(jettonMaster, targetBlockId)),
-      ]);
+    const accountState = await this.call((client) => client.getAccountStateRaw(jettonMaster, targetBlockId));
+    assertBlockId(accountState.block, targetBlockId, 'SCCP account-state masterchain block');
 
     const shardBlockId = accountState.shardBlock;
-    const [shardBlockData, shardStateData] = await Promise.all([
-      this.getBlockData(shardBlockId),
-      this.getStateData(shardBlockId),
-    ]);
+    const [checkpointBlockData, checkpointConfig, targetBlockData, targetProof, shardBlockData] =
+      await Promise.all([
+        this.getBlockData(trustedCheckpoint.id),
+        this.getMasterchainConfigProof(trustedCheckpoint.id),
+        this.getBlockData(targetBlockId),
+        this.getBlockProof(trustedCheckpoint.id, targetBlockId),
+        this.getBlockData(shardBlockId),
+      ]);
+    assertBlockId(checkpointBlockData.id, trustedCheckpoint.id, 'Trusted-checkpoint block response');
+    assertBlockId(checkpointConfig.id, trustedCheckpoint.id, 'Trusted-checkpoint config response');
+    assertBlockId(targetBlockData.id, targetBlockId, 'Target masterchain block response');
+    assertBlockId(shardBlockData.id, shardBlockId, 'Target shard block response');
+    if (!targetProof.complete) {
+      throw new Error('TON block proof is incomplete for the requested target masterchain block.');
+    }
+    assertBlockId(targetProof.from, trustedCheckpoint.id, 'TON block-proof checkpoint');
+    assertBlockId(targetProof.to, targetBlockId, 'TON block-proof target');
+
+    const checkpointBlockProof = parseMerkleProofRoots(
+      checkpointConfig.stateProof,
+      1,
+      'trusted-checkpoint block proof'
+    )[0];
+    assertBlockProofRoot(checkpointBlockProof, trustedCheckpoint.id, 'Trusted-checkpoint block proof');
+    const checkpointState = parseMerkleProofRoots(
+      checkpointConfig.configProof,
+      1,
+      'trusted-checkpoint config proof'
+    )[0].refs[0];
+    assertShardStateIdentity(checkpointState, trustedCheckpoint.id, 'Trusted-checkpoint config proof');
+
+    const targetProofRoots = parseMerkleProofRoots(
+      accountState.shardProof,
+      2,
+      'target masterchain shard proof'
+    );
+    assertBlockProofRoot(targetProofRoots[0], targetBlockId, 'Target masterchain block proof');
+    const targetState = targetProofRoots[1].refs[0];
+    assertShardStateIdentity(targetState, targetBlockId, 'Target masterchain shard proof');
+
+    const accountProofRoots = parseMerkleProofRoots(
+      accountState.proof,
+      2,
+      'jetton-master account proof'
+    );
+    assertBlockProofRoot(accountProofRoots[0], shardBlockId, 'Target shard block proof');
+    const partialShardState = accountProofRoots[1].refs[0];
+    assertShardStateIdentity(partialShardState, shardBlockId, 'Jetton-master account proof');
+    const accountRoot = parseBoundAccountRoot(accountState.raw, jettonMaster);
+    const shardState = graftAccountIntoShardState(partialShardState, accountRoot, jettonMaster);
 
     return {
       trustedCheckpoint: blockIdToResponse(trustedCheckpoint.id),
@@ -558,11 +1021,11 @@ export class LiteClientDataSource implements TonDataSource {
       targetSignatures: this.extractForwardSignatureSet(targetProof, targetBlockId),
       targetShard: blockIdToResponse(shardBlockId),
       checkpointBlockBoc: bytesToBase64(checkpointBlockData.data),
-      checkpointStateBoc: bytesToBase64(checkpointStateData.data),
+      checkpointStateBoc: bytesToBase64(checkpointState.toBoc({ idx: false })),
       targetBlockBoc: bytesToBase64(targetBlockData.data),
-      targetStateBoc: bytesToBase64(targetStateData.data),
+      targetStateBoc: bytesToBase64(targetState.toBoc({ idx: false })),
       shardBlockBoc: bytesToBase64(shardBlockData.data),
-      shardStateBoc: bytesToBase64(shardStateData.data),
+      shardStateBoc: bytesToBase64(shardState.toBoc({ idx: false })),
       burnRecordPresent,
     };
   }
@@ -619,6 +1082,8 @@ export class LiteClientDataSource implements TonDataSource {
       return {
         lt: tx.lt.toString(),
         hash: tx.hash().toString('base64'),
+        prevTransactionLt: tx.prevTransactionLt.toString(),
+        prevTransactionHash: bigintToBuffer(tx.prevTransactionHash).toString('base64'),
         utime: tx.now,
         success: statusInfo.success,
         status: statusInfo.status,

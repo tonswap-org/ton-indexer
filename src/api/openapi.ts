@@ -584,11 +584,80 @@ export const buildOpenApi = (config: Config) => {
         TonSccpProofSignatureSet: {
           type: 'object',
           properties: {
+            scheme: { type: 'string', enum: ['ordinary', 'simplex'] },
             validatorListHashShort: { type: 'integer' },
             catchainSeqno: { type: 'integer' },
             signatures: { type: 'array', items: { $ref: '#/components/schemas/TonSccpProofSignature' } },
+            sessionIdHex: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
+            slot: { type: 'integer', minimum: 0, maximum: 4294967295 },
+            candidateBase64: { type: 'string' },
           },
-          required: ['validatorListHashShort', 'catchainSeqno', 'signatures'],
+          required: ['scheme', 'validatorListHashShort', 'catchainSeqno', 'signatures'],
+        },
+        TonSccpMasterCursor: {
+          type: 'object',
+          properties: {
+            lt: { type: 'string', pattern: '^[1-9][0-9]*$' },
+            hash: { type: 'string' },
+          },
+          required: ['lt', 'hash'],
+        },
+        TonSccpBurnMasterTransaction: {
+          type: 'object',
+          properties: {
+            lt: { type: 'string', pattern: '^[1-9][0-9]*$' },
+            hash: { type: 'string' },
+            utime: { type: 'integer', minimum: 0 },
+          },
+          required: ['lt', 'hash', 'utime'],
+        },
+        TonSccpBurnRecord: {
+          type: 'object',
+          properties: {
+            messageId: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
+            nonce: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
+            destDomain: { type: 'integer', minimum: 0, maximum: 4294967295 },
+            recipient32: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
+            amount: { type: 'string', pattern: '^[1-9][0-9]*$' },
+            masterTransaction: { $ref: '#/components/schemas/TonSccpBurnMasterTransaction' },
+          },
+          required: [
+            'messageId',
+            'nonce',
+            'destDomain',
+            'recipient32',
+            'amount',
+            'masterTransaction',
+          ],
+        },
+        TonSccpBurnStatusResponse: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['pending', 'confirmed'] },
+            jettonMaster: { type: 'string' },
+            burnInitiator: { type: 'string' },
+            queryId: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
+            soraAssetId: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
+            currentMasterNonce: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
+            masterCursor: {
+              allOf: [{ $ref: '#/components/schemas/TonSccpMasterCursor' }],
+              nullable: true,
+            },
+            burnRecord: {
+              allOf: [{ $ref: '#/components/schemas/TonSccpBurnRecord' }],
+              nullable: true,
+            },
+          },
+          required: [
+            'status',
+            'jettonMaster',
+            'burnInitiator',
+            'queryId',
+            'soraAssetId',
+            'currentMasterNonce',
+            'masterCursor',
+            'burnRecord',
+          ],
         },
         TonSccpBurnProofMaterialResponse: {
           type: 'object',
@@ -1345,6 +1414,67 @@ export const buildOpenApi = (config: Config) => {
             },
             400: {
               description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+          },
+        },
+      },
+      '/api/indexer/v1/sccp/ton/burn-status': {
+        get: {
+          summary: 'Resolve an authoritative TON SCCP burn identity',
+          description:
+            'Without after_lt/after_hash, validates the SCCP master configuration and returns its current transaction cursor. With that exact cursor, scans only newer linked master transactions for SccpBurnedNotification(queryId), verifies the matching get_sccp_burn_record cell, and returns the master-owned messageId and nonce. A burn that has not finalized is a successful HTTP 200 response with status pending.',
+          parameters: [
+            { name: 'jetton_master', in: 'query', required: true, schema: { type: 'string', maxLength: 128 } },
+            { name: 'burn_initiator', in: 'query', required: true, schema: { type: 'string', maxLength: 128 } },
+            {
+              name: 'query_id',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', maxLength: 20, pattern: '^(0|[1-9][0-9]*)$' },
+            },
+            {
+              name: 'sora_asset_id',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
+            },
+            {
+              name: 'dest_domain',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', maxLength: 10, pattern: '^(0|[1-9][0-9]*)$' },
+            },
+            {
+              name: 'recipient32',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
+            },
+            {
+              name: 'amount',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', maxLength: 39, pattern: '^[1-9][0-9]*$' },
+            },
+            {
+              name: 'after_lt',
+              in: 'query',
+              schema: { type: 'string', maxLength: 20, pattern: '^[1-9][0-9]*$' },
+            },
+            { name: 'after_hash', in: 'query', schema: { type: 'string', maxLength: 64 } },
+          ],
+          responses: {
+            200: {
+              description: 'Pending or authoritatively confirmed SCCP burn status',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/TonSccpBurnStatusResponse' },
+                },
+              },
+            },
+            400: {
+              description: 'Malformed intent, unsupported master, cursor discontinuity, or evidence mismatch',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
           },

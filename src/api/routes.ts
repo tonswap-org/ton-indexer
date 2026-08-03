@@ -21,6 +21,7 @@ import {
   optionsSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
   volIndexSnapshotQuerySchema,
+  tonSccpBurnStatusQuerySchema,
   tonSccpBurnProofQuerySchema,
   swapQuerySchema,
   txQuerySchema
@@ -1872,6 +1873,71 @@ export const registerRoutes = (
   );
 
   app.get(
+    '/api/indexer/v1/sccp/ton/burn-status',
+    { schema: { querystring: tonSccpBurnStatusQuerySchema } },
+    async (request, reply) => {
+      reply.header('cache-control', 'no-store');
+      const query = request.query as {
+        jetton_master: string;
+        burn_initiator: string;
+        query_id: string;
+        sora_asset_id: string;
+        dest_domain: string;
+        recipient32: string;
+        amount: string;
+        after_lt?: string;
+        after_hash?: string;
+      };
+      if (!isValidAddress(query.jetton_master)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid jetton_master');
+      }
+      if (!isValidAddress(query.burn_initiator)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid burn_initiator');
+      }
+      if (!HEX_256_RE.test(query.sora_asset_id)) {
+        return sendError(reply, 400, 'bad_request', 'sora_asset_id must be 0x-prefixed 32-byte hex');
+      }
+      if (!HEX_256_RE.test(query.recipient32)) {
+        return sendError(reply, 400, 'bad_request', 'recipient32 must be 0x-prefixed 32-byte hex');
+      }
+      if ((query.after_lt === undefined) !== (query.after_hash === undefined)) {
+        return sendError(
+          reply,
+          400,
+          'bad_request',
+          'after_lt and after_hash must be provided together'
+        );
+      }
+      if (
+        query.after_lt !== undefined &&
+        (!isValidLt(query.after_lt) || !query.after_hash || !isValidHashBase64(query.after_hash))
+      ) {
+        return sendError(reply, 400, 'bad_request', 'invalid SCCP master after cursor');
+      }
+      try {
+        return await service.getTonSccpBurnStatus({
+          jettonMaster: query.jetton_master,
+          burnInitiator: query.burn_initiator,
+          queryId: query.query_id,
+          soraAssetId: query.sora_asset_id,
+          destDomain: query.dest_domain,
+          recipient32: query.recipient32,
+          amount: query.amount,
+          afterLt: query.after_lt,
+          afterHash: query.after_hash,
+        });
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          'bad_request',
+          publicErrorMessage(error, 'SCCP burn status request failed')
+        );
+      }
+    }
+  );
+
+  app.get(
     '/api/indexer/v1/sccp/ton/burn-proof-material',
     { schema: { querystring: tonSccpBurnProofQuerySchema } },
     async (request, reply) => {
@@ -1923,7 +1989,11 @@ export const registerRoutes = (
           targetSeqno: targetSeqno ?? undefined,
         });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'proof material request failed'));
+        const message =
+          error instanceof Error && error.message === 'Burn record is not available on the jetton master yet.'
+            ? error.message
+            : publicErrorMessage(error, 'proof material request failed');
+        return sendError(reply, 400, 'bad_request', message);
       }
     }
   );

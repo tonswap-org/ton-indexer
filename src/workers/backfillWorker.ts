@@ -1,11 +1,41 @@
 import { Config } from '../config';
 import { MemoryStore } from '../store/memoryStore';
-import { TonDataSource } from '../data/dataSource';
+import {
+  RawTransaction,
+  TonDataSource,
+  transactionPageReachesHistoryStart
+} from '../data/dataSource';
 import { classifyTransaction } from '../utils/txClassifier';
 import { OpcodeSets } from '../utils/opcodes';
 import { Logger } from '../utils/logger';
 import { MetricsCollector } from '../metricsCollector';
 import { PoolTracker } from '../poolTracker';
+
+const transactionIdentity = (transaction: { lt: string; hash: string }) =>
+  `${transaction.lt}:${transaction.hash}`;
+
+const retainedExactInclusiveBackfillPage = (
+  raw: readonly RawTransaction[],
+  before: readonly { lt: string; hash: string }[],
+  after: readonly { lt: string; hash: string }[]
+) => {
+  if (raw.length === 0) return false;
+  const rawIdentities = raw.map(transactionIdentity);
+  const rawIdentitySet = new Set(rawIdentities);
+  const beforeIdentities = new Set(before.map(transactionIdentity));
+  const afterIdentities = new Set(after.map(transactionIdentity));
+  if (
+    rawIdentitySet.size !== raw.length ||
+    beforeIdentities.size !== before.length ||
+    afterIdentities.size !== after.length ||
+    !beforeIdentities.has(rawIdentities[0]) ||
+    rawIdentities.slice(1).some((identity) => beforeIdentities.has(identity)) ||
+    after.length !== before.length + raw.length - 1
+  ) {
+    return false;
+  }
+  return rawIdentities.every((identity) => afterIdentities.has(identity));
+};
 
 export class BackfillWorker {
   private config: Config;
@@ -117,10 +147,19 @@ export class BackfillWorker {
       this.metrics?.recordBackfillBatch(rawTxs.length);
       if (rawTxs.length === 0) {
         this.store.setLastBackfillLt(address, oldest.lt);
-        this.store.markHistoryComplete(address);
+        this.store.markHistoryIncomplete(address);
+        this.logger.warn('backfill returned empty inclusive page without history-start proof', {
+          address,
+          cursorLt: oldest.lt
+        });
         return;
       }
 
+      const reachesHistoryStart = transactionPageReachesHistoryStart(rawTxs, oldest);
+      const beforeTransactions = entry.txs.map((transaction) => ({
+        lt: transaction.lt,
+        hash: transaction.hash,
+      }));
       const beforeCount = entry.stats.txCount;
       this.poolTracker?.observeTransactions(rawTxs);
       const indexed = rawTxs.map((tx) => classifyTransaction(address, tx, this.opcodes));
@@ -130,6 +169,31 @@ export class BackfillWorker {
       if (!updated) return;
       const newOldest = updated.txs[updated.txs.length - 1];
       this.store.setLastBackfillLt(address, newOldest?.lt);
+      if (
+        reachesHistoryStart &&
+        retainedExactInclusiveBackfillPage(rawTxs, beforeTransactions, updated.txs)
+      ) {
+        const accountState = await this.source.getAccountState(address);
+        const finalEntry = this.store.get(address);
+        const newest = finalEntry?.txs[0];
+        if (
+          finalEntry &&
+          newest &&
+          accountState.lastTxLt === newest.lt &&
+          accountState.lastTxHash === newest.hash &&
+          retainedExactInclusiveBackfillPage(rawTxs, beforeTransactions, finalEntry.txs)
+        ) {
+          this.store.markHistoryComplete(address);
+          return;
+        }
+        this.store.markHistoryIncomplete(address);
+        this.logger.warn('backfill reached history start but retained head does not match account state', {
+          address,
+          retainedHeadLt: newest?.lt,
+          accountHeadLt: accountState.lastTxLt
+        });
+        return;
+      }
       const progressed =
         updated.stats.txCount > beforeCount &&
         newOldest !== undefined &&

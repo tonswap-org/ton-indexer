@@ -12,7 +12,11 @@ import { loadSnapshotFile } from '../snapshot';
 import { IndexedTx } from '../models';
 import { BlockFollower } from '../workers/blockFollower';
 import { BackfillWorker } from '../workers/backfillWorker';
-import { TonDataSource, RawTransaction } from '../data/dataSource';
+import {
+  TonDataSource,
+  RawTransaction,
+  transactionPageReachesHistoryStart
+} from '../data/dataSource';
 import { createLogger } from '../utils/logger';
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
@@ -69,6 +73,29 @@ const makeRawTx = (lt: number, hash = `h${lt}`): RawTransaction => ({
   inMessage: undefined,
   outMessages: [],
 });
+
+const linkedHistoryHash = (lt: number) =>
+  Buffer.from(BigInt(lt).toString(16).padStart(64, '0'), 'hex').toString('base64');
+
+const makeLinkedRawTx = (lt: number): RawTransaction => ({
+  ...makeRawTx(lt, linkedHistoryHash(lt)),
+  prevTransactionLt: String(lt - 1),
+  prevTransactionHash: linkedHistoryHash(lt - 1),
+});
+
+const makeLinkedRawRange = (newestLt: number, oldestLt: number) =>
+  Array.from(
+    { length: newestLt - oldestLt + 1 },
+    (_, index) => makeLinkedRawTx(newestLt - index)
+  );
+
+const testHistoryStartProofRejectsOutOfRangeLt = () => {
+  const malformed = {
+    ...makeLinkedRawTx(1),
+    lt: '18446744073709551616',
+  };
+  assert.equal(transactionPageReachesHistoryStart([malformed]), false);
+};
 
 const makeSource = (overrides: Partial<TonDataSource> = {}): TonDataSource => ({
   network: 'testnet',
@@ -1757,18 +1784,18 @@ const testBlockFollowerCatchesUpAcrossMultipleBatches = async () => {
     globalMaxPages: 100,
   };
   const store = new MemoryStore(config);
-  store.addTransactions(validAddress, [makeIndexedTx(90, 'old')]);
+  store.addTransactions(validAddress, [makeIndexedTx(90, linkedHistoryHash(90))]);
   store.markHistoryComplete(validAddress);
 
   const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
   const source = makeSource({
     async getAccountState() {
-      return { balance: '1', lastTxLt: '100', lastTxHash: 'h100' };
+      return { balance: '1', lastTxLt: '100', lastTxHash: linkedHistoryHash(100) };
     },
     async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
       calls.push({ lt, hash, limit });
-      if (lt === '100') return [makeRawTx(100), makeRawTx(99), makeRawTx(98), makeRawTx(97)];
-      if (lt === '97') return [makeRawTx(96), makeRawTx(95), makeRawTx(90, 'old')];
+      if (lt === '100') return makeLinkedRawRange(100, 97);
+      if (lt === '97') return makeLinkedRawRange(97, 90);
       return [];
     },
   });
@@ -1794,24 +1821,21 @@ const testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest = async () =
     globalMaxPages: 100,
   };
   const store = new MemoryStore(config);
-  store.addTransactions(validAddress, [makeIndexedTx(100, 'old')]);
+  store.addTransactions(validAddress, [makeIndexedTx(100, linkedHistoryHash(100))]);
   store.markHistoryComplete(validAddress);
 
   const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
   const source = makeSource({
     async getAccountState() {
-      return { balance: '1', lastTxLt: '158', lastTxHash: 'h158' };
+      return { balance: '1', lastTxLt: '158', lastTxHash: linkedHistoryHash(158) };
     },
     async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
       calls.push({ lt, hash, limit });
       if (lt === '158') {
-        return Array.from({ length: 18 }, (_, index) => makeRawTx(158 - index));
+        return makeLinkedRawRange(158, 141);
       }
       if (lt === '141') {
-        return Array.from({ length: 41 }, (_, index) => {
-          const nextLt = 140 - index;
-          return makeRawTx(nextLt, nextLt === 100 ? 'old' : `h${nextLt}`);
-        });
+        return makeLinkedRawRange(141, 100);
       }
       return [];
     },
@@ -1832,6 +1856,104 @@ const testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest = async () =
   );
   assert.equal(entry?.stats.historyComplete, true);
   assert.equal(entry?.stats.lastUpdateSeqno, 124);
+};
+
+const testBlockFollowerRejectsReorderedCatchupSegment = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, linkedHistoryHash(100))]);
+  store.markHistoryComplete(validAddress);
+
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '103', lastTxHash: linkedHistoryHash(103) };
+    },
+    async getTransactions() {
+      const linked = makeLinkedRawRange(103, 100);
+      return [linked[0]!, linked[2]!, linked[1]!, linked[3]!];
+    },
+  });
+  const opcodes = loadOpcodes(undefined);
+  const service = new IndexerService(config, store, source, opcodes, []);
+  const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
+
+  await (follower as any).refreshAddress(validAddress, 125);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.txs[0]?.lt, '100');
+  assert.equal(entry?.stats.historyComplete, false);
+  assert.equal(entry?.stats.lastUpdateSeqno, 125);
+};
+
+const testBlockFollowerProvesFirstTransactionHistory = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.getOrCreate(validAddress);
+  store.markHistoryComplete(validAddress);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '3', lastTxHash: linkedHistoryHash(3) };
+    },
+    async getTransactions() {
+      return makeLinkedRawRange(3, 1);
+    },
+  });
+  const opcodes = loadOpcodes(undefined);
+  const service = new IndexerService(config, store, source, opcodes, []);
+  const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
+
+  await (follower as any).refreshAddress(validAddress, 126);
+
+  const entry = store.get(validAddress);
+  assert.deepEqual(entry?.txs.map((transaction) => transaction.lt), ['3', '2', '1']);
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.equal(entry?.stats.lastUpdateSeqno, 126);
+};
+
+const testBlockFollowerMarksIncompleteBeforeCatchupFailure = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, linkedHistoryHash(100))]);
+  store.markHistoryComplete(validAddress);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '103', lastTxHash: linkedHistoryHash(103) };
+    },
+    async getTransactions() {
+      throw new Error('catch-up unavailable');
+    },
+  });
+  const opcodes = loadOpcodes(undefined);
+  const service = new IndexerService(config, store, source, opcodes, []);
+  const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
+
+  await assert.rejects(() => (follower as any).refreshAddress(validAddress, 127), /catch-up unavailable/);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.stats.historyComplete, false);
 };
 
 const testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill = async () => {
@@ -1877,6 +1999,9 @@ const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
   const store = new MemoryStore(config);
   let calls = 0;
   const source = makeSource({
+    async getAccountState() {
+      return { balance: '0' };
+    },
     async getTransactions() {
       calls += 1;
       return [];
@@ -1895,7 +2020,7 @@ const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
   assert.deepEqual(queued, []);
 };
 
-const testBackfillContinuesAfterShortPagesUntilExplicitEmpty = async () => {
+const testInitialTransactionsEmptyPageWithHeadStaysIncomplete = async () => {
   const config = {
     ...loadConfig(),
     pageSize: 10,
@@ -1905,21 +2030,89 @@ const testBackfillContinuesAfterShortPagesUntilExplicitEmpty = async () => {
     globalMaxPages: 100,
   };
   const store = new MemoryStore(config);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '7', lastTxHash: linkedHistoryHash(7) };
+    },
+    async getTransactions() {
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 0);
+  assert.equal(entry?.stats.historyComplete, false);
+  assert.deepEqual(queued, [validAddress]);
+};
+
+const testInitialTransactionsLinkedHistoryStartMarksComplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '7', lastTxHash: linkedHistoryHash(7) };
+    },
+    async getTransactions() {
+      return makeLinkedRawRange(7, 1);
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 7);
+  assert.equal(entry?.stats.lastBackfillLt, '1');
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.deepEqual(queued, []);
+};
+
+const testBackfillContinuesAfterShortPagesUntilHistoryStartProof = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 20,
+    maxPagesPerAddress: 30,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
   store.addTransactions(
     validAddress,
-    Array.from({ length: 18 }, (_, index) => makeIndexedTx(158 - index))
+    Array.from(
+      { length: 18 },
+      (_, index) => makeIndexedTx(158 - index, linkedHistoryHash(158 - index))
+    )
   );
   const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
   const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '158', lastTxHash: linkedHistoryHash(158) };
+    },
     async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
       calls.push({ lt, hash, limit });
       if (lt === '141') {
-        return Array.from({ length: 18 }, (_, index) => makeRawTx(140 - index));
+        return makeLinkedRawRange(141, 123);
       }
       if (lt === '123') {
-        return Array.from({ length: 22 }, (_, index) => makeRawTx(122 - index));
+        return makeLinkedRawRange(123, 75);
       }
-      if (lt === '101') return [];
+      if (lt === '75') return makeLinkedRawRange(75, 27);
+      if (lt === '27') return makeLinkedRawRange(27, 1);
       throw new Error(`unexpected cursor ${String(lt)}:${String(hash)}`);
     },
   });
@@ -1934,14 +2127,14 @@ const testBackfillContinuesAfterShortPagesUntilExplicitEmpty = async () => {
   await (worker as any).processAddress(validAddress);
 
   const entry = store.get(validAddress);
-  assert.deepEqual(calls.map((call) => call.lt), ['141', '123', '101']);
-  assert.deepEqual(calls.map((call) => call.limit), [50, 50, 50]);
-  assert.equal(entry?.txs.length, 58);
+  assert.deepEqual(calls.map((call) => call.lt), ['141', '123', '75', '27']);
+  assert.deepEqual(calls.map((call) => call.limit), [50, 50, 50, 50]);
+  assert.equal(entry?.txs.length, 158);
   assert.deepEqual(
     entry?.txs.map((tx) => tx.lt),
-    Array.from({ length: 58 }, (_, index) => String(158 - index))
+    Array.from({ length: 158 }, (_, index) => String(158 - index))
   );
-  assert.equal(entry?.stats.lastBackfillLt, '101');
+  assert.equal(entry?.stats.lastBackfillLt, '1');
   assert.equal(entry?.stats.historyComplete, true);
 };
 
@@ -1976,6 +2169,40 @@ const testBackfillDuplicateCursorStaysIncomplete = async () => {
   const entry = store.get(validAddress);
   assert.equal(calls, 1);
   assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.stats.lastBackfillLt, '100');
+  assert.equal(entry?.stats.historyComplete, false);
+};
+
+const testBackfillEmptyInclusivePageStaysIncomplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, 'old')]);
+  let calls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      calls += 1;
+      return [];
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(undefined),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls, 1);
   assert.equal(entry?.stats.lastBackfillLt, '100');
   assert.equal(entry?.stats.historyComplete, false);
 };
@@ -2069,6 +2296,8 @@ const testBlockFollowerMarksHistoryIncompleteWhenCatchupIsCapped = async () => {
 
   await (follower as any).refreshAddress(validAddress, 124);
   const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.txs[0]?.lt, '50');
   assert.equal(entry?.stats.historyComplete, false);
   assert.equal(entry?.stats.lastUpdateSeqno, 124);
 };
@@ -2176,6 +2405,7 @@ const run = async () => {
   testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides();
   testSnapshotFileLoaderRejectsMalformedFiles();
   testClassifierIgnoresMalformedBodies();
+  testHistoryStartProofRejectsOutOfRangeLt();
   testMemoryOverflowMarksHistoryIncomplete();
   testMemoryStoreDeduplicatesTransactions();
   testMemoryStoreImportNormalizesStatsAndSortOrder();
@@ -2186,9 +2416,15 @@ const run = async () => {
   await testSccpProofRejectsMalformedRequiredFieldsBeforeServiceCall();
   await testBlockFollowerCatchesUpAcrossMultipleBatches();
   await testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest();
+  await testBlockFollowerRejectsReorderedCatchupSegment();
+  await testBlockFollowerProvesFirstTransactionHistory();
+  await testBlockFollowerMarksIncompleteBeforeCatchupFailure();
   await testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill();
   await testInitialTransactionsEmptyPageMarksHistoryComplete();
-  await testBackfillContinuesAfterShortPagesUntilExplicitEmpty();
+  await testInitialTransactionsEmptyPageWithHeadStaysIncomplete();
+  await testInitialTransactionsLinkedHistoryStartMarksComplete();
+  await testBackfillContinuesAfterShortPagesUntilHistoryStartProof();
+  await testBackfillEmptyInclusivePageStaysIncomplete();
   await testBackfillDuplicateCursorStaysIncomplete();
   await testBackfillPageCapStaysIncomplete();
   await testPartialCachedHistoryIsQueuedForBackfill();

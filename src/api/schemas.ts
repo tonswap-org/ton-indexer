@@ -36,6 +36,30 @@ export const tonSccpBurnProofQuerySchema = {
   required: ['jetton_master', 'message_id'],
 };
 
+export const tonSccpBurnStatusQuerySchema = {
+  type: 'object',
+  properties: {
+    jetton_master: { type: 'string', maxLength: 128 },
+    burn_initiator: { type: 'string', maxLength: 128 },
+    query_id: { type: 'string', maxLength: 20, pattern: '^(0|[1-9][0-9]*)$' },
+    sora_asset_id: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
+    dest_domain: { type: 'string', maxLength: 10, pattern: '^(0|[1-9][0-9]*)$' },
+    recipient32: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
+    amount: { type: 'string', maxLength: 39, pattern: '^(0|[1-9][0-9]*)$' },
+    after_lt: { type: 'string', maxLength: 20, pattern: '^[1-9][0-9]*$' },
+    after_hash: { type: 'string', maxLength: 64 },
+  },
+  required: [
+    'jetton_master',
+    'burn_initiator',
+    'query_id',
+    'sora_asset_id',
+    'dest_domain',
+    'recipient32',
+    'amount',
+  ],
+};
+
 export const swapQuerySchema = {
   type: 'object',
   properties: {

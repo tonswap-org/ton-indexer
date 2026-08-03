@@ -316,6 +316,8 @@ export class TonClient4DataSource implements TonDataSource {
       return {
         lt: tx.lt,
         hash: tx.hash,
+        prevTransactionLt: tx.prevTransaction.lt,
+        prevTransactionHash: tx.prevTransaction.hash,
         utime: tx.time,
         success: status === 'success',
         status,

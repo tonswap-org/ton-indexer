@@ -147,6 +147,7 @@ Production safeguards:
 - `GET /api/indexer/v1/accounts/{addr}/swaps?limit=100&from_utime=1700000000&to_utime=1700003600&pay_token=TON&receive_token=T3&include_reverse=true`
 - `GET /api/indexer/v1/markets/{market}/candles?market_address={pool}&asset_symbol=TOKEN&quote_symbol=T3&interval=1m`
 - `GET /api/indexer/v1/accounts/{addr}/state`
+- `GET /api/indexer/v1/sccp/ton/burn-status?jetton_master={addr}&burn_initiator={addr}&query_id={u64}&sora_asset_id=0x...&dest_domain={u32}&recipient32=0x...&amount={raw}`
 - `GET /api/indexer/v1/sccp/ton/burn-proof-material?jetton_master={addr}&message_id=0x...`
 - `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64` — `status.feeBps`
   is read from the canonical 36-field `engine_config` getter and is `null` if that tuple cannot be
@@ -212,6 +213,7 @@ of the recursively key-sorted manifest with the `manifestHash` field omitted.
 
 ## Notes
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
+- `/api/indexer/v1/sccp/ton/burn-status` is a two-step, read-only confirmation API. First call it without `after_lt`/`after_hash` to validate the SCCP master and capture `masterCursor`; poll with that exact cursor pair after wallet submission. Expected propagation returns HTTP 200 with `status: "pending"`. `status: "confirmed"` is returned only after a successful, linked master transaction emits the requested `SccpBurnedNotification` and `get_sccp_burn_record` exactly matches the initiator, asset intent, destination, amount, and authoritative nonce. Cursor discontinuities and evidence mismatches fail closed.
 - `/api/indexer/v1/sccp/ton/burn-proof-material` can omit `trusted_checkpoint_seqno/hash`; when omitted, the indexer resolves the current SORA-governed TON checkpoint automatically via `SORA_RPC_HTTP_ENDPOINT` or the static checkpoint override env vars.
 - Jetton balances are fetched for registry keys ending with `Root` (e.g., `T3Root`, `TSRoot`, `UsdtRoot`), with metadata pulled from on-chain content and cached in memory.
 - Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.

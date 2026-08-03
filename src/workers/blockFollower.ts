@@ -1,11 +1,41 @@
 import { Config } from '../config';
 import { MemoryStore } from '../store/memoryStore';
-import { RawTransaction, TonDataSource } from '../data/dataSource';
+import {
+  RawTransaction,
+  TonDataSource,
+  transactionPageIsLinkedInclusiveSegment,
+  transactionPageReachesHistoryStart
+} from '../data/dataSource';
 import { OpcodeSets } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 import { Logger } from '../utils/logger';
 import { IndexerService } from '../indexerService';
 import { PoolTracker } from '../poolTracker';
+
+const transactionIdentity = (transaction: { lt: string; hash: string }) =>
+  `${transaction.lt}:${transaction.hash}`;
+
+const retainedExactTransactionUnion = (
+  raw: readonly RawTransaction[],
+  before: readonly { lt: string; hash: string }[],
+  after: readonly { lt: string; hash: string }[]
+) => {
+  if (raw.length === 0) return false;
+  const rawIdentities = raw.map(transactionIdentity);
+  const beforeIdentities = before.map(transactionIdentity);
+  const afterIdentities = after.map(transactionIdentity);
+  const expectedIdentities = new Set([...beforeIdentities, ...rawIdentities]);
+  if (
+    new Set(rawIdentities).size !== rawIdentities.length ||
+    new Set(beforeIdentities).size !== beforeIdentities.length ||
+    new Set(afterIdentities).size !== afterIdentities.length ||
+    afterIdentities.length !== expectedIdentities.size
+  ) {
+    return false;
+  }
+  const retained = new Set(afterIdentities);
+  return [...expectedIdentities].every((identity) => retained.has(identity));
+};
 
 export class BlockFollower {
   private config: Config;
@@ -86,18 +116,39 @@ export class BlockFollower {
   private async refreshAddress(address: string, seqno: number) {
     const previousEntry = this.store.get(address);
     const previousLatest = previousEntry?.txs[0];
+    const previousHistoryComplete = previousEntry?.stats.historyComplete === true;
+    const previousTransactions = (previousEntry?.txs ?? []).map((transaction) => ({
+      lt: transaction.lt,
+      hash: transaction.hash,
+    }));
     await this.service.refreshAccountState(address);
     const entry = this.store.get(address);
-    if (!entry?.balance?.lastTxLt || !entry.balance.lastTxHash) return;
+    if (!entry?.balance) return;
+
+    const headLt = entry.balance.lastTxLt;
+    const headHash = entry.balance.lastTxHash;
+    const hasHeadLt = typeof headLt === 'string' && headLt.length > 0;
+    const hasHeadHash = typeof headHash === 'string' && headHash.length > 0;
+    if (!hasHeadLt || !hasHeadHash) {
+      if (hasHeadLt !== hasHeadHash || previousLatest || !previousHistoryComplete) {
+        this.store.markHistoryIncomplete(address);
+      }
+      this.store.setLastUpdateSeqno(address, seqno);
+      return;
+    }
 
     if (
       previousLatest &&
-      previousLatest.lt === entry.balance.lastTxLt &&
-      previousLatest.hash === entry.balance.lastTxHash
+      previousLatest.lt === headLt &&
+      previousLatest.hash === headHash
     ) {
       this.store.setLastUpdateSeqno(address, seqno);
       return;
     }
+
+    // Once a fresh account head differs from the retained head, the cached
+    // history is incomplete until continuity and exact retention are proven.
+    this.store.markHistoryIncomplete(address);
 
     const batchSize = Math.max(1, this.config.pageSize * this.config.backfillPageBatch);
     const maxBatches = Math.max(
@@ -106,9 +157,10 @@ export class BlockFollower {
     );
     const raw: RawTransaction[] = [];
     const seen = new Set<string>();
-    let cursorLt = entry.balance.lastTxLt;
-    let cursorHash = entry.balance.lastTxHash;
-    let reachedPreviousLatest = !previousLatest;
+    let cursorLt = headLt;
+    let cursorHash = headHash;
+    let reachedPreviousLatest = false;
+    let reachedHistoryStart = false;
 
     for (let batchIndex = 0; batchIndex < maxBatches; batchIndex += 1) {
       const batch = await this.source.getTransactions(address, batchSize, cursorLt, cursorHash);
@@ -123,6 +175,7 @@ export class BlockFollower {
         added += 1;
         if (previousLatest && tx.lt === previousLatest.lt && tx.hash === previousLatest.hash) {
           reachedPreviousLatest = true;
+          break;
         }
       }
 
@@ -131,23 +184,52 @@ export class BlockFollower {
       // limit. Only the prior head, an empty page, or a stalled cursor proves that
       // catch-up cannot continue.
       if (!oldest || reachedPreviousLatest) break;
+      if (
+        !previousLatest &&
+        transactionPageReachesHistoryStart(raw, { lt: headLt, hash: headHash })
+      ) {
+        reachedHistoryStart = true;
+        break;
+      }
       if (oldest.lt === cursorLt && oldest.hash === cursorHash) break;
       if (added === 0) break;
       cursorLt = oldest.lt;
       cursorHash = oldest.hash;
     }
 
-    if (raw.length > 0) {
+    const continuityProven = previousLatest
+      ? reachedPreviousLatest &&
+        transactionPageIsLinkedInclusiveSegment(
+          raw,
+          { lt: headLt, hash: headHash },
+          previousLatest
+        )
+      : reachedHistoryStart ||
+        transactionPageReachesHistoryStart(raw, { lt: headLt, hash: headHash });
+
+    let retainedExactly = false;
+    if (continuityProven) {
       this.poolTracker?.observeTransactions(raw);
       const indexed = raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
       this.store.addTransactions(address, indexed);
+      const updated = this.store.get(address);
+      retainedExactly = Boolean(
+        updated && retainedExactTransactionUnion(raw, previousTransactions, updated.txs)
+      );
+      if (retainedExactly && (!previousLatest || previousHistoryComplete)) {
+        this.store.markHistoryComplete(address);
+      }
     }
-    if (previousLatest && !reachedPreviousLatest) {
-      this.store.markHistoryIncomplete(address);
-      this.logger.warn('watchlist catch-up capped before previous latest transaction', {
+
+    if (!continuityProven || !retainedExactly) {
+      this.logger.warn('watchlist catch-up did not preserve one exact complete history segment', {
         address,
         fetched: raw.length,
-        previousLt: previousLatest.lt
+        previousLt: previousLatest?.lt,
+        reachedPreviousLatest,
+        reachedHistoryStart,
+        continuityProven,
+        retainedExactly
       });
     }
     this.store.setLastUpdateSeqno(address, seqno);
