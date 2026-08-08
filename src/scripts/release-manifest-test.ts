@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  linkSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,9 +20,17 @@ import {
   readCanonicalReleaseManifest,
 } from '../config/releaseManifest';
 
-const root = mkdtempSync(join(tmpdir(), 'ton-indexer-release-manifest-'));
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'ton-indexer-release-manifest-')));
 const addressA = `0:${'1'.repeat(64)}`;
 const addressB = `0:${'2'.repeat(64)}`;
+const usdtRootAndDiscovery = `0:${'a'.repeat(64)}`;
+const usdcRootAndDiscovery = `0:${'b'.repeat(64)}`;
+const kusdRootAndDiscovery = `0:${'c'.repeat(64)}`;
+const reserveRootDiscoveryPairs = [
+  ['UsdtRoot', 'UsdtDiscovery', usdtRootAndDiscovery],
+  ['UsdcRoot', 'UsdcDiscovery', usdcRootAndDiscovery],
+  ['KusdRoot', 'KusdDiscovery', kusdRootAndDiscovery],
+] as const;
 const marketAddresses = Array.from(
   { length: 15 },
   (_, index) => `0:${(index + 3).toString(16).padStart(64, '0')}`
@@ -32,6 +51,12 @@ const releaseMarkets = (['fixed', 'bonding', 'dutch'] as const).map((saleModel, 
 const contracts = {
   DlmmPoolFactory: addressA,
   T3Root: addressB,
+  UsdtRoot: usdtRootAndDiscovery,
+  UsdtDiscovery: usdtRootAndDiscovery,
+  UsdcRoot: usdcRootAndDiscovery,
+  UsdcDiscovery: usdcRootAndDiscovery,
+  KusdRoot: kusdRootAndDiscovery,
+  KusdDiscovery: kusdRootAndDiscovery,
   LaunchpadFixedTokenRoot: releaseMarkets[0].tokenRoot,
   LaunchpadFixedSale: releaseMarkets[0].sale,
   LaunchpadFixedLpVault: releaseMarkets[0].lpVault,
@@ -75,10 +100,20 @@ try {
   assert.equal(parsed.releaseId, 'local-run-1');
   assert.equal(parsed.registryHash, hashRegistry(contracts));
   assert.deepEqual(parsed.contracts, contracts);
+  for (const [rootLabel, discoveryLabel, address] of reserveRootDiscoveryPairs) {
+    assert.equal(parsed.contracts[rootLabel], address);
+    assert.equal(parsed.contracts[discoveryLabel], address);
+    assert.equal(parsed.contracts[discoveryLabel], parsed.contracts[rootLabel]);
+  }
   assert.equal(parsed.releaseManifestHash, hashReleaseManifest(JSON.parse(readFileSync(path, 'utf8'))));
 
   const bundle = buildRegistryBundle(contracts, 'localnet', path);
   assert.deepEqual(bundle.contracts, contracts);
+  for (const [rootLabel, discoveryLabel, address] of reserveRootDiscoveryPairs) {
+    assert.equal(bundle.contracts[rootLabel], address);
+    assert.equal(bundle.contracts[discoveryLabel], address);
+    assert.equal(bundle.contracts[discoveryLabel], bundle.contracts[rootLabel]);
+  }
   assert.equal(bundle.metadata.releaseId, 'local-run-1');
   assert.equal(bundle.metadata.registryHash, hashRegistry(contracts));
 
@@ -242,6 +277,57 @@ try {
         'localnet'
       ),
     /invalid TON address/
+  );
+
+  assert.throws(
+    () => readCanonicalReleaseManifest('good.json', 'localnet'),
+    /canonical absolute path/
+  );
+
+  const symlinkPath = join(root, 'manifest-symlink.json');
+  symlinkSync(path, symlinkPath);
+  assert.throws(
+    () => readCanonicalReleaseManifest(symlinkPath, 'localnet'),
+    /must not contain symlink aliases/
+  );
+  unlinkSync(symlinkPath);
+
+  const hardlinkPath = join(root, 'manifest-hardlink.json');
+  linkSync(path, hardlinkPath);
+  assert.throws(
+    () => readCanonicalReleaseManifest(hardlinkPath, 'localnet'),
+    /single-link regular file/
+  );
+  unlinkSync(hardlinkPath);
+
+  const unsafeModePath = writeManifest('unsafe-mode.json');
+  chmodSync(unsafeModePath, 0o664);
+  assert.throws(
+    () => readCanonicalReleaseManifest(unsafeModePath, 'localnet'),
+    /not group\/other-writable/
+  );
+
+  const duplicateKeyPath = join(root, 'duplicate-key.json');
+  const duplicateKeyRaw = readFileSync(path, 'utf8').replace(
+    '"releaseId": "local-run-1",',
+    '"releaseId": "shadowed-release",\n  "releaseId": "local-run-1",'
+  );
+  writeFileSync(duplicateKeyPath, duplicateKeyRaw);
+  assert.throws(
+    () => readCanonicalReleaseManifest(duplicateKeyPath, 'localnet'),
+    /duplicate object key "releaseId"/
+  );
+
+  const racePath = writeManifest('race-target.json');
+  const raceReplacementPath = writeManifest('race-replacement.json', {
+    releaseId: 'replacement-release',
+  });
+  assert.throws(
+    () =>
+      readCanonicalReleaseManifest(racePath, 'localnet', {
+        afterOpen: () => renameSync(raceReplacementPath, racePath),
+      }),
+    /single-link regular file|changed during/
   );
 
   const plain = buildRegistryBundle(contracts, 'testnet');

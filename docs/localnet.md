@@ -35,6 +35,9 @@ Readiness requires:
 
 Run the parity-aware smoke after startup:
 
+`MANIFEST_PATH` must resolve to the canonical, single-link retained manifest;
+the CLI has no unbound mode.
+
 ```bash
 TON_INDEXER_BASE_URL=http://127.0.0.1:8787 \
 TON_INDEXER_EXPECTED_NETWORK=localnet \
@@ -42,5 +45,8 @@ TON_INDEXER_EXPECTED_SERVICE_ID=tonswap-local-indexer \
 TON_INDEXER_EXPECTED_PUBLIC_BASE_URL=http://127.0.0.1:8787 \
 TON_INDEXER_EXPECTED_RELEASE_ID="$RELEASE_ID" \
 TON_INDEXER_EXPECTED_REGISTRY_HASH="$REGISTRY_HASH" \
+TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH="$MANIFEST_HASH" \
+TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH="$MANIFEST_PATH" \
+TON_INDEXER_EXPECTED_CORS_ORIGIN=http://127.0.0.1:5173 \
 npm run smoke:production
 ```

@@ -144,13 +144,10 @@ const isEmptyCell = (cell: Cell) => {
 const isExactMarker = (cell: Cell, expected: number) => {
   try {
     const slice = cell.beginParse();
-    return (
-      slice.remainingBits === 32 &&
-      slice.remainingRefs === 0 &&
-      slice.loadUint(32) === expected &&
-      slice.remainingBits === 0 &&
-      slice.remainingRefs === 0
-    );
+    if (slice.remainingBits !== 32 || slice.remainingRefs !== 0) return false;
+    if (slice.loadUint(32) !== expected) return false;
+    slice.endParse();
+    return true;
   } catch {
     return false;
   }

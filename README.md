@@ -56,10 +56,16 @@ TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production
 ```
 
 The smoke check verifies that the target host serves the TONSWAP API contract,
-not another indexer service.
+not another indexer service. The CLI is always release-bound: either command
+above fails until all of the release inputs below are present in its environment.
 
-The expected network, release, and registry can be pinned for testnet/localnet
-release gates:
+Release-bound checks fail closed unless the network, release ID, registry hash,
+canonical manifest path/hash, and allowed browser origin are all pinned. The
+manifest must be a canonical absolute path to a stable, single-link regular
+file in a non-symlink, non-group/other-writable parent. A release-bound check
+also requires the public service to expose the manifest's exact 62-contract
+map, the three discovery/root equality pairs, and exactly two complete
+one-minute single-trade candles for each of its three canonical markets:
 ```bash
 TON_INDEXER_BASE_URL=http://127.0.0.1:8787 \
 TON_INDEXER_EXPECTED_NETWORK=localnet \
@@ -67,8 +73,21 @@ TON_INDEXER_EXPECTED_SERVICE_ID=tonswap-local-indexer \
 TON_INDEXER_EXPECTED_PUBLIC_BASE_URL=http://127.0.0.1:8787 \
 TON_INDEXER_EXPECTED_RELEASE_ID=local-run-1 \
 TON_INDEXER_EXPECTED_REGISTRY_HASH=<sha256> \
+TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH=<sha256> \
+TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH=/absolute/path/to/release-manifest.json \
+TON_INDEXER_EXPECTED_CORS_ORIGIN=http://127.0.0.1:5173 \
 npm run smoke:production
 ```
+
+The smoke sends simple and POST-preflight requests for both the allowed origin
+and a distinct hostile origin. Hostile responses must omit both CORS
+allow-origin and credential headers.
+
+The certified manifest binds the three market identities and query metadata,
+but does not contain the certified candle transaction IDs or time windows. The
+standalone smoke therefore enforces six distinct, coherent transaction-backed
+candles; the canonical release wrapper remains responsible for matching those
+candles to the retained release proof.
 
 ## Configuration
 Environment variables (all optional):

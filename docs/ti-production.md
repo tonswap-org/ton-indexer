@@ -102,7 +102,8 @@ will fail until `registry/mainnet.json` is populated.
 
 ## Smoke Checks
 
-After deployment routing is updated:
+After deployment routing is updated and the full release-bound environment
+shown below has been exported:
 
 ```sh
 TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production
@@ -119,8 +120,20 @@ TON_INDEXER_BASE_URL=https://ti.soramitsu.io \
 TON_INDEXER_EXPECTED_NETWORK=testnet \
 TON_INDEXER_EXPECTED_RELEASE_ID="$RELEASE_ID" \
 TON_INDEXER_EXPECTED_REGISTRY_HASH="$REGISTRY_HASH" \
+TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH="$MANIFEST_HASH" \
+TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH="$MANIFEST_PATH" \
+TON_INDEXER_EXPECTED_CORS_ORIGIN=https://test.tonswap.org \
 npm run smoke:production
 ```
+
+`MANIFEST_PATH` must be the canonical absolute path to the retained certified
+single-link regular manifest; aliases and unsafe writable modes are rejected.
+The release-bound smoke verifies its canonical hash, exact 62-contract public
+map, the three discovery/root equality pairs, three complete two-candle market
+histories, production CORS allowlisting (including POST preflight), and
+hostile-origin denial. The manifest does not contain the certified candle
+transaction IDs or time windows, so their exact release-proof binding remains
+the canonical release wrapper's responsibility.
 
 The smoke command validates service identity, registry parity, OpenAPI shape,
 required wallet routes, and the write-RPC posture. Verify service info reports

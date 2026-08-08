@@ -41,8 +41,10 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - Confirm `https://ti.soramitsu.io` deployment target and read-only public write
   RPC posture.
 - For testnet/localnet releases, pin `TON_INDEXER_EXPECTED_NETWORK`,
-  `TON_INDEXER_EXPECTED_RELEASE_ID`, and
-  `TON_INDEXER_EXPECTED_REGISTRY_HASH` to the canonical release receipt.
+  `TON_INDEXER_EXPECTED_RELEASE_ID`, `TON_INDEXER_EXPECTED_REGISTRY_HASH`,
+  `TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH`, the canonical single-link absolute
+  `TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH`, and
+  `TON_INDEXER_EXPECTED_CORS_ORIGIN` to the canonical release evidence.
 - Run `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
   against the deployed service and confirm health, service-info, OpenAPI, and
   required wallet routes pass before declaring the release production-ready.
