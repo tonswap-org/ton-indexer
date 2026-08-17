@@ -1519,6 +1519,25 @@ const testDangerousEnvValuesFallBack = () => {
   else process.env.RATE_LIMIT_MAX = original.rateLimit;
 };
 
+const testInitialHistoryTimeoutEnvIsStrictAndBounded = () => {
+  const original = process.env.INITIAL_HISTORY_TIMEOUT_MS;
+  try {
+    delete process.env.INITIAL_HISTORY_TIMEOUT_MS;
+    assert.equal(loadConfig().initialHistoryTimeoutMs, 10_000);
+
+    process.env.INITIAL_HISTORY_TIMEOUT_MS = '17';
+    assert.equal(loadConfig().initialHistoryTimeoutMs, 17);
+
+    for (const invalid of ['0', ' 17', '17 ', '+17', '1.5', '120001']) {
+      process.env.INITIAL_HISTORY_TIMEOUT_MS = invalid;
+      assert.throws(() => loadConfig(), /INITIAL_HISTORY_TIMEOUT_MS must be a canonical integer/);
+    }
+  } finally {
+    if (original === undefined) delete process.env.INITIAL_HISTORY_TIMEOUT_MS;
+    else process.env.INITIAL_HISTORY_TIMEOUT_MS = original;
+  }
+};
+
 const testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides = () => {
   const original = {
     buckets: process.env.RATE_LIMIT_BUCKETS_JSON,
@@ -1987,6 +2006,88 @@ const testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill = async (
   assert.deepEqual(queued, [validAddress]);
 };
 
+const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = async () => {
+  const baseConfig = {
+    ...loadConfig(),
+    initialHistoryTimeoutMs: 20,
+    rateLimitEnabled: false,
+  };
+
+  const finiteFailureConfig = { ...baseConfig, dataSource: 'http' as const };
+  const finiteFailureStore = new MemoryStore(finiteFailureConfig);
+  const finiteFailureService = new IndexerService(
+    finiteFailureConfig,
+    finiteFailureStore,
+    makeSource({
+      async getTransactions() {
+        throw new Error('finite lite read failure');
+      },
+    }),
+    loadOpcodes(undefined),
+    []
+  );
+  const fallback = await finiteFailureService.getTransactions(validAddress, 1);
+  assert.equal(fallback.history_complete, false);
+  assert.equal(fallback.total_txs, 0);
+  assert.deepEqual(fallback.txs, []);
+
+  for (const dataSource of ['http', 'lite'] as const) {
+    const config = { ...baseConfig, dataSource };
+    const hangingStore = new MemoryStore(config);
+    const hangingService = new IndexerService(
+      config,
+      hangingStore,
+      makeSource({
+        async getTransactions() {
+          return await new Promise<RawTransaction[]>(() => undefined);
+        },
+      }),
+      loadOpcodes(undefined),
+      []
+    );
+    const app = fastify({ logger: false });
+    registerTestRoutes(app, config, hangingService);
+    await app.ready();
+
+    const startedAt = Date.now();
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/indexer/v1/accounts/${validAddress}/txs?page=1`,
+    });
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().code, 'history_source_timeout');
+    assert.ok(elapsedMs >= config.initialHistoryTimeoutMs);
+    assert.ok(elapsedMs < 1_000, `hanging ${dataSource} history read escaped its owned bound (${elapsedMs}ms)`);
+    assert.equal(hangingStore.get(validAddress)?.stats.historyComplete, false);
+    await app.close();
+  }
+
+  let rejectedAfterTimeout = false;
+  const lateFailureService = new IndexerService(
+    finiteFailureConfig,
+    new MemoryStore(finiteFailureConfig),
+    makeSource({
+      async getTransactions() {
+        return await new Promise<RawTransaction[]>((_resolve, reject) => {
+          setTimeout(() => {
+            rejectedAfterTimeout = true;
+            reject(new Error('late source rejection'));
+          }, 50);
+        });
+      },
+    }),
+    loadOpcodes(undefined),
+    []
+  );
+  await assert.rejects(
+    () => lateFailureService.getTransactions(validAddress, 1),
+    /Initial transaction history source timed out/
+  );
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(rejectedAfterTimeout, true);
+};
+
 const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
   const config = {
     ...loadConfig(),
@@ -2402,6 +2503,7 @@ const run = async () => {
   testCorsExactOriginAllowlistAndWildcardFallback();
   await testDocsRouteSetsNonceCspAndSecurityHeaders();
   testDangerousEnvValuesFallBack();
+  testInitialHistoryTimeoutEnvIsStrictAndBounded();
   testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides();
   testSnapshotFileLoaderRejectsMalformedFiles();
   testClassifierIgnoresMalformedBodies();
@@ -2419,6 +2521,7 @@ const run = async () => {
   await testBlockFollowerRejectsReorderedCatchupSegment();
   await testBlockFollowerProvesFirstTransactionHistory();
   await testBlockFollowerMarksIncompleteBeforeCatchupFailure();
+  await testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback();
   await testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill();
   await testInitialTransactionsEmptyPageMarksHistoryComplete();
   await testInitialTransactionsEmptyPageWithHeadStaysIncomplete();

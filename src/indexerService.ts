@@ -54,6 +54,15 @@ export type BalanceChangeEvent = {
   };
 };
 
+export class InitialHistoryReadTimeoutError extends Error {
+  readonly code = 'INITIAL_HISTORY_READ_TIMEOUT';
+
+  constructor(timeoutMs: number) {
+    super(`Initial transaction history source timed out after ${timeoutMs}ms`);
+    this.name = 'InitialHistoryReadTimeoutError';
+  }
+}
+
 const normalizeAddress = (value: string) => {
   try {
     return Address.parse(value).toRawString();
@@ -1551,6 +1560,26 @@ export class IndexerService {
 
     try {
       return await Promise.race([guarded, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private async withInitialHistoryTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+    const ms = Math.max(1, Math.trunc(timeoutMs));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const guarded = operation.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error })
+    );
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new InitialHistoryReadTimeoutError(ms)), ms);
+    });
+
+    try {
+      const outcome = await Promise.race([guarded, timeout]);
+      if (!outcome.ok) throw outcome.error;
+      return outcome.value;
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -3870,7 +3899,8 @@ export class IndexerService {
     this.store.touch(address);
     try {
       await this.ensureInitialTransactions(address);
-    } catch (_error) {
+    } catch (error) {
+      if (error instanceof InitialHistoryReadTimeoutError) throw error;
       const fallback = this.store.getPage(address, page);
       if (!fallback) {
         return {
@@ -3936,7 +3966,8 @@ export class IndexerService {
     this.store.touch(address);
     try {
       await this.ensureInitialTransactions(address);
-    } catch (_error) {
+    } catch (error) {
+      if (error instanceof InitialHistoryReadTimeoutError) throw error;
       const fallback = this.store.getPageByCursor(address, { lt, hash });
       if (!fallback) {
         return {
@@ -4413,7 +4444,10 @@ export class IndexerService {
     }
 
     const limit = this.config.pageSize * this.config.backfillPageBatch;
-    const raw = await this.source.getTransactions(address, limit);
+    const raw = await this.withInitialHistoryTimeout(
+      this.source.getTransactions(address, limit),
+      this.config.initialHistoryTimeoutMs
+    );
     if (raw.length === 0) {
       await this.refreshAccountState(address, { lite: true });
       const balance = this.store.get(address)?.balance;

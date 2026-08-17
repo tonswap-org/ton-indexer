@@ -129,6 +129,7 @@ Environment variables (all optional):
 - `RESPONSE_CACHE_ENABLED` (`true` to enable response caching; default `true`)
 - `BALANCE_CACHE_TTL_MS` (default: `2000`)
 - `JETTON_BALANCE_TIMEOUT_MS` (default: `2000`; caps per-root jetton balance probes so native TON balance reads stay responsive)
+- `INITIAL_HISTORY_TIMEOUT_MS` (default: `10000`, range: `1..120000`; caps the first account-history source read and returns `503` if it expires)
 - `TX_CACHE_TTL_MS` (default: `1000`)
 - `STATE_CACHE_TTL_MS` (default: `1000`)
 - `HEALTH_CACHE_TTL_MS` (default: `1000`)

@@ -2,7 +2,11 @@ import { Address, Cell } from '@ton/core';
 import { getHttpEndpoints } from '@orbs-network/ton-access';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
-import { IndexerService, MarketCandleInterval } from '../indexerService';
+import {
+  IndexerService,
+  InitialHistoryReadTimeoutError,
+  MarketCandleInterval
+} from '../indexerService';
 import type { RegistryMetadata } from '../config/releaseManifest';
 import { MetricsService } from '../metrics';
 import { SnapshotService } from '../snapshotService';
@@ -1708,6 +1712,14 @@ export const registerRoutes = (
         }
         return await service.getTransactions(addr, page);
       } catch (error) {
+        if (error instanceof InitialHistoryReadTimeoutError) {
+          return sendError(
+            reply,
+            503,
+            'history_source_timeout',
+            'transaction history source timed out'
+          );
+        }
         return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'transaction request failed'));
       }
     }

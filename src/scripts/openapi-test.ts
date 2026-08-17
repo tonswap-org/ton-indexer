@@ -8,6 +8,7 @@ assert.ok(spec.paths['/api/indexer/v1/health']);
 assert.ok(spec.paths['/api/indexer/v1/contracts']);
 assert.ok(spec.paths['/api/indexer/v1/service-info']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs']);
+assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs'].get.responses[503]);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/swaps']);
 assert.ok(spec.paths['/api/indexer/v1/markets/{market}/candles']);
 assert.ok(spec.paths['/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload']);

@@ -1332,6 +1332,10 @@ export const buildOpenApi = (config: Config) => {
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
+            503: {
+              description: 'Initial transaction history source timed out',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
           },
         },
       },

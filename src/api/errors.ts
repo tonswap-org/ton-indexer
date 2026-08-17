@@ -12,6 +12,7 @@ export type ErrorCode =
   | 'debug_disabled'
   | 'unauthorized'
   | 'not_found'
+  | 'history_source_timeout'
   | 'bad_request';
 
 export const sendError = (reply: FastifyReply, status: number, code: ErrorCode, message: string) => {

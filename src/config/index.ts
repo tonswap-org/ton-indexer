@@ -32,6 +32,7 @@ export type Config = {
   responseCacheEnabled: boolean;
   balanceCacheTtlMs: number;
   jettonBalanceTimeoutMs: number;
+  initialHistoryTimeoutMs: number;
   txCacheTtlMs: number;
   stateCacheTtlMs: number;
   healthCacheTtlMs: number;
@@ -82,6 +83,23 @@ const numberFromEnv = (
   const value = options.integer ? Math.trunc(parsed) : parsed;
   if (options.min !== undefined && value < options.min) return fallback;
   if (options.max !== undefined && value > options.max) return fallback;
+  return value;
+};
+
+const strictBoundedIntegerFromEnv = (
+  key: string,
+  fallback: number,
+  options: { min: number; max: number }
+) => {
+  const raw = process.env[key];
+  if (raw === undefined || raw === '') return fallback;
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) {
+    throw new Error(`${key} must be a canonical integer between ${options.min} and ${options.max}`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < options.min || value > options.max) {
+    throw new Error(`${key} must be a canonical integer between ${options.min} and ${options.max}`);
+  }
   return value;
 };
 
@@ -244,6 +262,10 @@ export const loadConfig = (): Config => {
     responseCacheEnabled: booleanFromEnv('RESPONSE_CACHE_ENABLED', true),
     balanceCacheTtlMs: numberFromEnv('BALANCE_CACHE_TTL_MS', 2_000, { min: 0, integer: true }),
     jettonBalanceTimeoutMs: numberFromEnv('JETTON_BALANCE_TIMEOUT_MS', 2_000, { min: 0, integer: true }),
+    initialHistoryTimeoutMs: strictBoundedIntegerFromEnv('INITIAL_HISTORY_TIMEOUT_MS', 10_000, {
+      min: 1,
+      max: 120_000
+    }),
     txCacheTtlMs: numberFromEnv('TX_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
     stateCacheTtlMs: numberFromEnv('STATE_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
     healthCacheTtlMs: numberFromEnv('HEALTH_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
