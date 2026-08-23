@@ -19,7 +19,12 @@ assert.equal(isValidLt('12a'), false);
 // 32-byte hash base64 (all zero)
 const hash = Buffer.alloc(32, 0).toString('base64');
 assert.equal(isValidHashBase64(hash), true);
+const urlSafeHash = Buffer.alloc(32, 0xff).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+assert.equal(isValidHashBase64(urlSafeHash), true);
 assert.equal(isValidHashBase64('not-base64'), false);
+assert.equal(isValidHashBase64(`${hash}!`), false);
+assert.equal(isValidHashBase64(`!${hash}`), false);
+assert.equal(isValidHashBase64(`${hash}=`), false);
 
 // Valid TON address (raw format)
 assert.equal(isValidAddress(`0:${'1'.repeat(64)}`), true);

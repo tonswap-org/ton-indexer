@@ -11,12 +11,14 @@ const dir = mkdtempSync(join(tmpdir(), 'ton-indexer-'));
 const path = join(dir, 'snapshot.json');
 const store = new MemoryStore({ ...config, maxAddresses: 10 });
 const service = new SnapshotService({ ...config, snapshotPath: path }, store);
+const firstHash = Buffer.alloc(32, 2).toString('base64');
+const secondHash = Buffer.alloc(32, 1).toString('base64');
 
 store.addTransactions('addr1', [
   {
     address: 'addr1',
     lt: '2',
-    hash: 'b',
+    hash: firstHash,
     utime: 2,
     success: true,
     inMessage: undefined,
@@ -24,7 +26,7 @@ store.addTransactions('addr1', [
     kind: 'transfer',
     actions: [],
     ui: {
-      txId: '2:b',
+      txId: `2:${firstHash}`,
       utime: 2,
       status: 'success',
       txType: 'Transfer',
@@ -43,7 +45,7 @@ store.addTransactions('addr1', [
   {
     address: 'addr1',
     lt: '1',
-    hash: 'a',
+    hash: secondHash,
     utime: 1,
     success: true,
     inMessage: undefined,
@@ -51,7 +53,7 @@ store.addTransactions('addr1', [
     kind: 'transfer',
     actions: [],
     ui: {
-      txId: '1:a',
+      txId: `1:${secondHash}`,
       utime: 1,
       status: 'success',
       txType: 'Transfer',

@@ -1335,6 +1335,7 @@ export class IndexerService {
   }
 
   async getBalance(address: string): Promise<AccountBalance> {
+    address = normalizeAddress(address);
     this.store.touch(address);
     const entry = this.store.get(address);
     const cached = Boolean(entry?.balance);
@@ -1357,28 +1358,31 @@ export class IndexerService {
         );
         if (!balance) return null;
         const meta = await this.getJettonMetadata(root.master);
+        const decimals = meta?.decimals ?? this.fallbackJettonDecimals(meta?.symbol ?? root.symbol);
         return {
           master: root.master,
           wallet: balance.wallet,
           balance: balance.balance,
           symbol: meta?.symbol ?? root.symbol,
-          decimals: meta?.decimals ?? this.fallbackJettonDecimals(meta?.symbol ?? root.symbol),
+          ...(decimals === null ? {} : { decimals }),
         };
       })
     );
     const [jettons] = await Promise.all([jettonPromise, refreshStatePromise]);
     const updated = this.store.get(address)?.balance;
-    const now = Math.floor(Date.now() / 1000);
+    if (!updated) {
+      throw new Error(`Account state unavailable for ${address}`);
+    }
 
     const response = {
       ton: {
-        balance: updated?.balance ?? '0',
-        last_tx_lt: updated?.lastTxLt,
-        last_tx_hash: updated?.lastTxHash,
+        balance: updated.balance,
+        last_tx_lt: updated.lastTxLt,
+        last_tx_hash: updated.lastTxHash,
       },
       jettons: jettons.filter(Boolean) as AccountBalance['jettons'],
-      confirmed: true,
-      updated_at: now,
+      confirmed: jettons.every((jetton) => jetton !== null),
+      updated_at: Math.floor(updated.updatedAt / 1000),
       network: this.network,
     };
     const signature = this.getAccountSignature(this.store.get(address));
@@ -1387,6 +1391,7 @@ export class IndexerService {
   }
 
   async getBalances(address: string): Promise<AccountBalances> {
+    address = normalizeAddress(address);
     const snapshot = await this.getBalance(address);
     const tonRaw = snapshot.ton.balance ?? '0';
     const ton = this.formatRawAmount(tonRaw, 9);
@@ -1403,15 +1408,19 @@ export class IndexerService {
       ...snapshot.jettons.map((jetton) => {
         const decimals = typeof jetton.decimals === 'number' && Number.isFinite(jetton.decimals)
           ? Math.max(0, Math.trunc(jetton.decimals))
-          : this.fallbackJettonDecimals(jetton.symbol) ?? 9;
+          : this.fallbackJettonDecimals(jetton.symbol);
         return {
           kind: 'jetton' as const,
           symbol: jetton.symbol,
           address: jetton.master,
           wallet: jetton.wallet,
           balance_raw: jetton.balance,
-          balance: this.formatRawAmount(jetton.balance, decimals),
-          decimals,
+          ...(decimals === null
+            ? {}
+            : {
+                balance: this.formatRawAmount(jetton.balance, decimals),
+                decimals,
+              }),
         };
       }),
     ];
@@ -1432,11 +1441,11 @@ export class IndexerService {
       .map((asset) => {
         const kind = asset.kind ?? 'unknown';
         const key = asset.address ?? asset.wallet ?? asset.symbol ?? '';
-        return `${kind}:${key}:${asset.balance_raw ?? ''}`;
+        return `${kind}:${key}:${asset.balance_raw ?? ''}:${asset.balance ?? ''}:${asset.decimals ?? ''}`;
       })
       .sort()
       .join('|');
-    return `${snapshot.ton_raw ?? ''}:${assetsSignature}`;
+    return `${snapshot.ton_raw ?? ''}:${snapshot.confirmed ? '1' : '0'}:${assetsSignature}`;
   }
 
   subscribeBalanceChanges(addresses: string[], listener: (event: BalanceChangeEvent) => void) {
@@ -1608,6 +1617,7 @@ export class IndexerService {
   }
 
   async getState(address: string) {
+    address = normalizeAddress(address);
     this.store.touch(address);
     let entry = this.store.get(address);
     if (!entry?.balance) {
@@ -1638,6 +1648,7 @@ export class IndexerService {
   }
 
   async getNativeState(address: string) {
+    address = normalizeAddress(address);
     this.store.touch(address);
     let entry = this.store.get(address);
     if (!entry?.balance) {
@@ -3896,6 +3907,7 @@ export class IndexerService {
   }
 
   async getTransactions(address: string, page: number) {
+    address = normalizeAddress(address);
     this.store.touch(address);
     try {
       await this.ensureInitialTransactions(address);
@@ -3940,7 +3952,11 @@ export class IndexerService {
     }
 
     if (!result.historyComplete && this.enqueueBackfill) {
-      const backfillCapped = result.totalPagesMin >= this.config.backfillMaxPagesPerAddress;
+      const maxPages = Math.min(
+        this.config.backfillMaxPagesPerAddress,
+        this.config.maxPagesPerAddress
+      );
+      const backfillCapped = result.totalTxs >= this.config.pageSize * maxPages;
       if (!backfillCapped && page >= result.totalPagesMin) {
         this.enqueueBackfill(address);
       }
@@ -3963,6 +3979,7 @@ export class IndexerService {
   }
 
   async getTransactionsByCursor(address: string, lt: string, hash: string) {
+    address = normalizeAddress(address);
     this.store.touch(address);
     try {
       await this.ensureInitialTransactions(address);
@@ -4034,6 +4051,7 @@ export class IndexerService {
       includeReverse?: boolean;
     } = {}
   ): Promise<AccountSwapsResponse> {
+    address = normalizeAddress(address);
     const syncedAt = Math.trunc(Date.now() / 1000);
     const emptySummary: AccountSwapsSummary = {
       status_counts: { success: 0, failed: 0, pending: 0 },
@@ -4240,6 +4258,7 @@ export class IndexerService {
       limit?: number;
     }
   ): Promise<MarketCandlesResponse> {
+    marketAddress = normalizeAddress(marketAddress);
     const syncedAt = Math.trunc(Date.now() / 1000);
     const interval = options.interval ?? '1m';
     const intervalSeconds = MARKET_CANDLE_INTERVAL_SECONDS[interval];
@@ -4402,7 +4421,29 @@ export class IndexerService {
     };
   }
 
-  async refreshAccountState(address: string, options: { lite?: boolean } = {}) {
+  async refreshAccountState(
+    address: string,
+    options: { lite?: boolean } = {},
+    expectedWorkflowGeneration?: number
+  ) {
+    address = normalizeAddress(address);
+    return this.store.withAddressLock(
+      address,
+      () => this.refreshAccountStateUnlocked(address, options),
+      expectedWorkflowGeneration
+    );
+  }
+
+  /** Caller must already hold MemoryStore's lock for this normalized address. */
+  async refreshAccountStateWithinAddressLock(
+    address: string,
+    options: { lite?: boolean } = {}
+  ) {
+    address = normalizeAddress(address);
+    return this.refreshAccountStateUnlocked(address, options);
+  }
+
+  private async refreshAccountStateUnlocked(address: string, options: { lite?: boolean } = {}) {
     const previous = this.store.get(address)?.balance;
     const previousSignature = balanceStateSignature(previous);
     const state =
@@ -4420,6 +4461,21 @@ export class IndexerService {
       updatedAt: Date.now(),
     };
     this.store.setBalance(address, accountState);
+    const retainedHead = this.store.get(address)?.txs[0];
+    const hasHeadLt = typeof accountState.lastTxLt === 'string' && accountState.lastTxLt.length > 0;
+    const hasHeadHash = typeof accountState.lastTxHash === 'string' && accountState.lastTxHash.length > 0;
+    const retainedHeadMatches =
+      hasHeadLt &&
+      hasHeadHash &&
+      retainedHead?.lt === accountState.lastTxLt &&
+      retainedHead?.hash === accountState.lastTxHash;
+    if (
+      hasHeadLt !== hasHeadHash ||
+      (hasHeadLt && hasHeadHash && !retainedHeadMatches) ||
+      (!hasHeadLt && !hasHeadHash && retainedHead)
+    ) {
+      this.store.markHistoryIncomplete(address);
+    }
     const nextSignature = balanceStateSignature(accountState);
     if (nextSignature !== previousSignature) {
       this.emitBalanceChanged(address);
@@ -4427,34 +4483,89 @@ export class IndexerService {
   }
 
   async ensureInitialTransactions(address: string) {
+    address = normalizeAddress(address);
+    return this.store.withAddressLock(address, () =>
+      this.ensureInitialTransactionsUnlocked(address)
+    );
+  }
+
+  private async ensureInitialTransactionsUnlocked(address: string) {
     const entry = this.store.get(address);
+    let replaceRetainedHistory = false;
     const maxPages = Math.min(
       this.config.backfillMaxPagesPerAddress,
       this.config.maxPagesPerAddress
     );
+    const maxTransactions = this.config.pageSize * maxPages;
     if (entry && entry.txs.length > 0) {
-      if (
-        !entry.stats.historyComplete &&
-        entry.stats.totalPagesMin < maxPages &&
-        this.enqueueBackfill
-      ) {
-        this.enqueueBackfill(address);
+      const newest = entry.txs[0];
+      const oldest = entry.txs[entry.txs.length - 1];
+      const retainedSegmentIsLinked = Boolean(
+        newest &&
+        oldest &&
+        transactionPageIsLinkedInclusiveSegment(entry.txs, newest, oldest)
+      );
+      const retainedCompleteHistoryIsValid = Boolean(
+        retainedSegmentIsLinked &&
+        newest &&
+        entry.balance?.lastTxLt === newest.lt &&
+        entry.balance?.lastTxHash === newest.hash &&
+        transactionPageReachesHistoryStart(entry.txs, newest)
+      );
+      const hasBalanceHeadLt = Boolean(entry.balance?.lastTxLt);
+      const hasBalanceHeadHash = Boolean(entry.balance?.lastTxHash);
+      const retainedHistoryContradictsBalance = Boolean(
+        entry.balance &&
+        (
+          hasBalanceHeadLt !== hasBalanceHeadHash ||
+          (!hasBalanceHeadLt && !hasBalanceHeadHash) ||
+          (hasBalanceHeadLt &&
+            hasBalanceHeadHash &&
+            (entry.balance.lastTxLt !== newest?.lt || entry.balance.lastTxHash !== newest?.hash))
+        )
+      );
+      if (entry.stats.historyComplete && !retainedCompleteHistoryIsValid) {
+        this.store.markHistoryIncomplete(address);
       }
-      return;
+      if (!retainedSegmentIsLinked || retainedHistoryContradictsBalance) {
+        // Legacy or malformed snapshots cannot be extended safely because the
+        // retained transactions no longer prove one predecessor chain or its
+        // head is contradicted by the last observed account state. Keep the
+        // old incomplete suffix available until a replacement source page has
+        // been fetched, linked, and anchored to a fresh account head.
+        replaceRetainedHistory = true;
+        this.store.markHistoryIncomplete(address);
+        this.store.setLastBackfillLt(address, undefined);
+      } else {
+        if (
+          !entry.stats.historyComplete &&
+          entry.stats.txCount < maxTransactions &&
+          this.enqueueBackfill
+        ) {
+          this.enqueueBackfill(address);
+        }
+        return;
+      }
     }
 
-    const limit = this.config.pageSize * this.config.backfillPageBatch;
-    const raw = await this.withInitialHistoryTimeout(
+    const limit = Math.min(
+      this.config.pageSize * this.config.backfillPageBatch,
+      maxTransactions
+    );
+    const receivedRaw = await this.withInitialHistoryTimeout(
       this.source.getTransactions(address, limit),
       this.config.initialHistoryTimeoutMs
     );
+    const initialResponseTruncated = receivedRaw.length > limit;
+    const raw = receivedRaw.slice(0, limit);
     if (raw.length === 0) {
-      await this.refreshAccountState(address, { lite: true });
+      await this.refreshAccountStateUnlocked(address, { lite: true });
       const balance = this.store.get(address)?.balance;
       const hasHeadLt = typeof balance?.lastTxLt === 'string' && balance.lastTxLt.length > 0;
       const hasHeadHash = typeof balance?.lastTxHash === 'string' && balance.lastTxHash.length > 0;
       this.store.setLastBackfillLt(address, undefined);
       if (!hasHeadLt && !hasHeadHash) {
+        if (replaceRetainedHistory) this.store.replaceTransactions(address, []);
         this.store.markHistoryComplete(address);
         return;
       }
@@ -4464,18 +4575,57 @@ export class IndexerService {
     }
 
     this.store.markHistoryIncomplete(address);
+    const firstRaw = raw[0];
+    const lastRaw = raw[raw.length - 1];
+    if (
+      !firstRaw ||
+      !lastRaw ||
+      !transactionPageIsLinkedInclusiveSegment(
+        raw,
+        { lt: firstRaw.lt, hash: firstRaw.hash },
+        { lt: lastRaw.lt, hash: lastRaw.hash }
+      )
+    ) {
+      this.store.setLastBackfillLt(address, undefined);
+      await this.refreshAccountStateUnlocked(address, { lite: true });
+      const current = this.store.get(address)?.balance;
+      if (current?.lastTxLt && current.lastTxHash && this.enqueueBackfill) {
+        this.enqueueBackfill(address);
+      }
+      return;
+    }
+    await this.refreshAccountStateUnlocked(address, { lite: true });
+    const observedHead = this.store.get(address)?.balance;
+    if (
+      observedHead?.lastTxLt !== firstRaw.lt ||
+      observedHead?.lastTxHash !== firstRaw.hash
+    ) {
+      this.store.setLastBackfillLt(address, undefined);
+      this.store.markHistoryIncomplete(address);
+      if (observedHead?.lastTxLt && observedHead.lastTxHash && this.enqueueBackfill) {
+        this.enqueueBackfill(address);
+      }
+      return;
+    }
     const reachesHistoryStart = transactionPageReachesHistoryStart(raw);
 
     this.poolTracker?.observeTransactions(raw);
     const indexed = raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
-    this.store.addTransactions(address, indexed);
+    if (replaceRetainedHistory) {
+      this.store.replaceTransactions(address, indexed);
+    } else {
+      this.store.addTransactions(address, indexed);
+    }
 
     const updated = this.store.get(address);
     if (!updated) return;
     const oldest = updated.txs[updated.txs.length - 1];
     this.store.setLastBackfillLt(address, oldest?.lt);
-    if (reachesHistoryStart && retainedExactInitialTransactionPage(raw, updated.txs)) {
-      await this.refreshAccountState(address, { lite: true });
+    if (
+      !initialResponseTruncated &&
+      reachesHistoryStart &&
+      retainedExactInitialTransactionPage(raw, updated.txs)
+    ) {
       const confirmed = this.store.get(address);
       const newest = confirmed?.txs[0];
       if (
@@ -4483,6 +4633,10 @@ export class IndexerService {
         newest &&
         confirmed.balance?.lastTxLt === newest.lt &&
         confirmed.balance?.lastTxHash === newest.hash &&
+        transactionPageReachesHistoryStart(confirmed.txs, {
+          lt: newest.lt,
+          hash: newest.hash
+        }) &&
         retainedExactInitialTransactionPage(raw, confirmed.txs)
       ) {
         this.store.markHistoryComplete(address);
@@ -4493,17 +4647,21 @@ export class IndexerService {
     // transactions exist. Without an intact predecessor chain through the
     // canonical history-start marker, the page remains incomplete.
     this.store.markHistoryIncomplete(address);
-    if (updated.stats.totalPagesMin < maxPages && this.enqueueBackfill) {
+    if (updated.stats.txCount < maxTransactions && this.enqueueBackfill) {
       this.enqueueBackfill(address);
     }
   }
 
   async updateWithNewTransactions(address: string, rawTxs: IndexedTx[]) {
+    address = normalizeAddress(address);
     if (rawTxs.length === 0) return;
-    this.store.addTransactions(address, rawTxs);
+    await this.store.withAddressLock(address, () => {
+      this.store.addTransactions(address, rawTxs);
+    });
   }
 
   classify(address: string, raw: any[]): IndexedTx[] {
+    address = normalizeAddress(address);
     return raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
   }
 

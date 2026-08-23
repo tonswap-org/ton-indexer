@@ -9,6 +9,8 @@ import { MemoryStore } from '../store/memoryStore';
 import { OpcodeSets } from '../utils/opcodes';
 
 const marketAddress = `0:${'1'.repeat(64)}`;
+const transactionHash = (lt: number) =>
+  Buffer.from(BigInt(lt).toString(16).padStart(64, '0'), 'hex').toString('base64');
 
 const source: TonDataSource = {
   network: 'localnet',
@@ -16,7 +18,7 @@ const source: TonDataSource = {
     return { seqno: 1 };
   },
   async getAccountState() {
-    return { balance: '0' };
+    return { balance: '0', lastTxLt: '6', lastTxHash: transactionHash(6) };
   },
   async getTransactions() {
     return [];
@@ -67,7 +69,9 @@ const makeSwap = (options: {
   return {
     address: marketAddress,
     lt: String(options.lt),
-    hash: `hash-${options.lt}`,
+    hash: transactionHash(options.lt),
+    prevTransactionLt: String(options.lt - 1),
+    prevTransactionHash: transactionHash(options.lt - 1),
     utime: options.utime,
     success: status === 'success',
     outMessages: [],
@@ -150,6 +154,13 @@ async function main() {
       receiveAmount: '100',
     }),
   ]);
+  store.setBalance(marketAddress, {
+    address: marketAddress,
+    balance: '0',
+    lastTxLt: '6',
+    lastTxHash: transactionHash(6),
+    updatedAt: Date.now(),
+  });
   store.markHistoryComplete(marketAddress);
 
   const service = new IndexerService(config, store, source, opcodes, []);

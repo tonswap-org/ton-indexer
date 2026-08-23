@@ -416,7 +416,9 @@ const formatComputeSkipReason = (reason?: string) => {
   return `Compute phase skipped: ${reason}.`;
 };
 
-const evaluateStatus = (tx: any): { status: RawTransactionStatus; reason?: string; success: boolean } => {
+export const evaluateTransactionStatus = (
+  tx: any
+): { status: RawTransactionStatus; reason?: string; success: boolean } => {
   const description = tx.description;
   if (!description) return { status: 'pending', success: false };
   if (description.aborted === true) {
@@ -426,6 +428,9 @@ const evaluateStatus = (tx: any): { status: RawTransactionStatus; reason?: strin
         ? `Transaction aborted (VM exit code ${computeExit}).`
         : 'Transaction aborted by contract.';
     return { status: 'failed', reason, success: false };
+  }
+  if (description.type === 'split-install' && description.installed === false) {
+    return { status: 'failed', reason: 'Split installation failed.', success: false };
   }
 
   const compute = description.computePhase;
@@ -460,7 +465,10 @@ const evaluateStatus = (tx: any): { status: RawTransactionStatus; reason?: strin
     return { status: 'success', success: true };
   }
 
-  return { status: 'pending', success: false };
+  // Lite servers only return transactions already included in a block. Some
+  // valid finalized descriptions (notably storage-only transactions) have no
+  // compute or action phase, so absence of those phases is not "pending".
+  return { status: 'success', success: true };
 };
 
 const decodeTransactions = (payload: Buffer): any[] => {
@@ -947,14 +955,18 @@ export class LiteClientDataSource implements TonDataSource {
       throw new Error('Target masterchain block precedes the trusted checkpoint.');
     }
 
-    const burnRecord = await this.runGetMethod(jettonMaster.toRawString(), 'get_sccp_burn_record', [
-      { type: 'int', value: BigInt(request.messageIdHex) },
-    ]);
+    const burnRecord = await this.runGetMethodAtBlock(
+      jettonMaster,
+      'get_sccp_burn_record',
+      [{ type: 'int', value: BigInt(request.messageIdHex) }],
+      targetBlockId
+    ).catch(() => null);
     const burnRecordPresent = Boolean(
       burnRecord &&
         burnRecord.exitCode === 0 &&
         Array.isArray(burnRecord.stack) &&
-        burnRecord.stack[0]?.type !== 'null'
+        burnRecord.stack.length === 1 &&
+        burnRecord.stack[0]?.type === 'cell'
     );
     if (!burnRecordPresent) {
       throw new Error('Burn record is not available on the jetton master yet.');
@@ -1078,7 +1090,7 @@ export class LiteClientDataSource implements TonDataSource {
     const parsedTxs = decodeTransactions(txs.transactions);
 
     return parsedTxs.map((tx) => {
-      const statusInfo = evaluateStatus(tx);
+      const statusInfo = evaluateTransactionStatus(tx);
       return {
         lt: tx.lt.toString(),
         hash: tx.hash().toString('base64'),
@@ -1102,21 +1114,31 @@ export class LiteClientDataSource implements TonDataSource {
     try {
       const target = Address.parse(address);
       const master = await this.getMasterchainRef();
-      const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
-      const res = await this.call((client) => client.runMethod(target, method, params, master.last));
-      const exitCode = typeof res?.exitCode === 'number' ? res.exitCode : Number.NaN;
-      if (!Number.isFinite(exitCode)) return null;
-      const stack =
-        res?.result && typeof res.result === 'string'
-          ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0])
-          : [];
-      return {
-        exitCode,
-        stack
-      };
+      return await this.runGetMethodAtBlock(target, method, args, master.last);
     } catch {
       return null;
     }
+  }
+
+  private async runGetMethodAtBlock(
+    target: Address,
+    method: string,
+    args: TupleItem[],
+    block: LiteBlockId
+  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
+    const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
+    const res = await this.call((client) => client.runMethod(target, method, params, block));
+    assertBlockId(res.block, block, `Getter ${method} masterchain block`);
+    const exitCode = typeof res?.exitCode === 'number' ? res.exitCode : Number.NaN;
+    if (!Number.isFinite(exitCode)) return null;
+    const stack =
+      res?.result && typeof res.result === 'string'
+        ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0])
+        : [];
+    return {
+      exitCode,
+      stack
+    };
   }
 
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {

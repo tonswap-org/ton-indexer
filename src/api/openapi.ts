@@ -3,7 +3,7 @@ import { Config } from '../config';
 export const buildOpenApi = (config: Config) => {
   const serviceId = config.serviceId?.trim() || 'ti.soramitsu.io';
   return {
-    openapi: '3.0.3',
+    openapi: '3.1.0',
     info: {
       title: 'TONSWAP Indexer API',
       version: '1.0.0',
@@ -264,14 +264,24 @@ export const buildOpenApi = (config: Config) => {
                   master: { type: 'string' },
                   wallet: { type: 'string' },
                   balance: { type: 'string' },
-                  decimals: { type: 'integer' },
+                  decimals: {
+                    type: 'integer',
+                    minimum: 0,
+                    description: 'Decimal precision. Omitted when it cannot be read or inferred safely.',
+                  },
                   symbol: { type: 'string' },
                 },
                 required: ['master', 'wallet', 'balance'],
               },
             },
-            confirmed: { type: 'boolean' },
-            updated_at: { type: 'integer' },
+            confirmed: {
+              type: 'boolean',
+              description: 'True only when every configured jetton balance was read and canonically verified.',
+            },
+            updated_at: {
+              type: 'integer',
+              description: 'Unix timestamp of the TON account-state observation represented by this response.',
+            },
             network: { type: 'string' },
           },
           required: ['ton', 'jettons', 'confirmed', 'updated_at', 'network'],
@@ -284,10 +294,30 @@ export const buildOpenApi = (config: Config) => {
             address: { type: ['string', 'null'] },
             wallet: { type: ['string', 'null'] },
             balance_raw: { type: 'string' },
-            balance: { type: 'string' },
-            decimals: { type: 'integer' },
+            balance: {
+              type: 'string',
+              description: 'Formatted amount. Omitted for a jetton when its decimal precision is unknown.',
+            },
+            decimals: {
+              type: 'integer',
+              minimum: 0,
+              description: 'Decimal precision. Omitted for a jetton when it cannot be read or inferred safely.',
+            },
           },
-          required: ['kind', 'balance_raw', 'balance', 'decimals'],
+          required: ['kind', 'balance_raw'],
+          dependentRequired: {
+            balance: ['decimals'],
+            decimals: ['balance'],
+          },
+          allOf: [
+            {
+              if: {
+                properties: { kind: { const: 'native' } },
+                required: ['kind'],
+              },
+              then: { required: ['balance', 'decimals'] },
+            },
+          ],
         },
         BalancesResponse: {
           type: 'object',
@@ -296,8 +326,14 @@ export const buildOpenApi = (config: Config) => {
             ton_raw: { type: 'string' },
             ton: { type: 'string' },
             assets: { type: 'array', items: { $ref: '#/components/schemas/AssetBalanceResponse' } },
-            confirmed: { type: 'boolean' },
-            updated_at: { type: 'integer' },
+            confirmed: {
+              type: 'boolean',
+              description: 'True only when every configured jetton balance was read and canonically verified.',
+            },
+            updated_at: {
+              type: 'integer',
+              description: 'Unix timestamp of the TON account-state observation represented by this response.',
+            },
             network: { type: 'string' },
           },
           required: ['address', 'ton_raw', 'ton', 'assets', 'confirmed', 'updated_at', 'network'],
@@ -640,12 +676,10 @@ export const buildOpenApi = (config: Config) => {
             soraAssetId: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
             currentMasterNonce: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
             masterCursor: {
-              allOf: [{ $ref: '#/components/schemas/TonSccpMasterCursor' }],
-              nullable: true,
+              oneOf: [{ $ref: '#/components/schemas/TonSccpMasterCursor' }, { type: 'null' }],
             },
             burnRecord: {
-              allOf: [{ $ref: '#/components/schemas/TonSccpBurnRecord' }],
-              nullable: true,
+              oneOf: [{ $ref: '#/components/schemas/TonSccpBurnRecord' }, { type: 'null' }],
             },
           },
           required: [

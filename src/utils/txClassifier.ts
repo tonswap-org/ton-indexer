@@ -39,6 +39,15 @@ const toFriendlyAddress = (addr?: unknown): string | undefined => {
   return addr.toString({ urlSafe: true, bounceable: true });
 };
 
+const addressesEqual = (left?: string, right?: string): boolean => {
+  if (!left || !right) return false;
+  try {
+    return Address.parse(left).equals(Address.parse(right));
+  } catch {
+    return left === right;
+  }
+};
+
 type DecodedJettonTransfer = {
   queryId: bigint;
   amount: string;
@@ -254,18 +263,15 @@ const decodeDlmmAddLiquidityForward = (payload?: Cell): DecodedDlmmAddLiquidityF
   if (!payload) return null;
   try {
     const slice = payload.beginParse();
-    if (slice.remainingBits < 32) return null;
+    if (slice.remainingBits < 32 + 64) return null;
     const op = slice.loadUint(32);
     if (op !== OP_DLMM_ADD_LIQUIDITY_FORWARD) return null;
+    // The business query id is part of the forwarded DLMM wire format even
+    // though it is not currently exposed by the indexer's LP action model.
+    slice.loadUintBig(64);
     const owner = slice.loadAddressAny();
-    if (slice.remainingBits < 32) {
-      return { owner: toFriendlyAddress(owner) };
-    }
-    const rawBin = slice.loadUint(32);
-    const binId = rawBin > 0x7fffffff ? rawBin - 0x1_0000_0000 : rawBin;
-    if (slice.remainingBits < 256) {
-      return { owner: toFriendlyAddress(owner), binId };
-    }
+    if (slice.remainingBits < 32 + 256) return null;
+    const binId = slice.loadInt(32);
     const minLpOut = slice.loadUintBig(256);
     return { owner: toFriendlyAddress(owner), binId, minLpOut: minLpOut.toString() };
   } catch {
@@ -486,10 +492,10 @@ export const classifyTransaction = (
     outMsgs.some((m) => opMatches(m, opcodes.jettonTransfer) || opMatches(m, opcodes.jettonNotify))
   ) {
     kind = 'transfer';
-  } else if (inMsg?.value || outMsgs.some((m) => m.value)) {
-    kind = 'transfer';
   } else if (inMsg?.op || outMsgs.some((m) => m.op)) {
     kind = 'contract_call';
+  } else if (inMsg?.value || outMsgs.some((m) => m.value)) {
+    kind = 'transfer';
   }
 
   const actions: TxAction[] = [];
@@ -587,7 +593,7 @@ export const classifyTransaction = (
       const receiveToken = executionHint?.receiveTokenSymbol ?? inferredReceiveToken;
       actions.push({
         kind: 'swap',
-        pool: pickPool(inMsg ?? outMsgs[0]),
+        pool: pickPool(swapMsg),
         amountIn: swap?.amountIn,
         minOut: swap?.minAmountOut,
         queryId: queryIdRaw,
@@ -636,7 +642,7 @@ export const classifyTransaction = (
         amountA,
         binId: forward?.binId,
         minLpOut: forward?.minLpOut,
-        owner: forward?.owner,
+        owner: forward?.owner ?? lpDepositViaNotify[0]?.decoded.sender,
       });
       detail = { kind: 'lp', amountA };
     } else {
@@ -644,7 +650,7 @@ export const classifyTransaction = (
       const lp = decodeLpDeposit(lpMsg?.body);
       actions.push({
         kind: 'lp_deposit',
-        pool: pickPool(inMsg ?? outMsgs[0]),
+        pool: pickPool(lpMsg),
         amountA: lp?.amountA,
         amountB: lp?.amountB,
         binId: lp?.binId,
@@ -656,7 +662,7 @@ export const classifyTransaction = (
     const lp = decodeLpWithdraw(lpMsg?.body);
     actions.push({
       kind: 'lp_withdraw',
-      pool: pickPool(inMsg ?? outMsgs[0]),
+      pool: pickPool(lpMsg),
       amountA: lp?.amountA,
       amountB: lp?.amountB,
       lpBurned: lp?.lpBurned,
@@ -690,7 +696,7 @@ export const classifyTransaction = (
       amount: amount ?? '0',
       from: fromAddress,
       to: toAddress,
-      source: toAddress === address ? 'in' : 'out',
+      source: addressesEqual(toAddress, address) ? 'in' : 'out',
     });
     detail = { kind: 'transfer', asset: isJetton ? 'jetton' : 'ton', amount };
   } else if (kind === 'contract_call') {
@@ -719,6 +725,8 @@ export const classifyTransaction = (
     address,
     lt: tx.lt,
     hash: tx.hash,
+    prevTransactionLt: tx.prevTransactionLt,
+    prevTransactionHash: tx.prevTransactionHash,
     utime: tx.utime,
     success: tx.success,
     inMessage: inMsg,

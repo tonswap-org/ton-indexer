@@ -50,12 +50,6 @@ const TON_RPC_WRITE_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'es
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; error: string; code?: number };
-type ToncenterRpcCompatRequest = {
-  id?: number | string | null;
-  jsonrpc?: string;
-  method?: string;
-  params?: Record<string, unknown> | null;
-};
 
 type RoutesConfig = {
   network?: string;
@@ -91,18 +85,43 @@ type IndexedTxCompat = {
   outMessages?: IndexedTxMessageCompat[];
 };
 
-const normalizeBase64 = (input: string) => {
-  let value = input.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = value.length % 4;
-  if (pad === 2) value += '==';
-  if (pad === 3) value += '=';
-  if (pad === 1) return null;
-  return value;
+const decodeCanonicalBase64 = (input: string): Buffer | null => {
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(input)) return null;
+  if (/[+/]/.test(input) && /[-_]/.test(input)) return null;
+  const standardInput = input.replace(/-/g, '+').replace(/_/g, '/');
+  const unpadded = standardInput.replace(/=+$/, '');
+  if (unpadded.length % 4 === 1) return null;
+  const padded = unpadded.padEnd(Math.ceil(unpadded.length / 4) * 4, '=');
+  try {
+    const decoded = Buffer.from(padded, 'base64');
+    const canonical = decoded.toString('base64');
+    if (standardInput !== canonical && standardInput !== canonical.replace(/=+$/, '')) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+};
+
+const equalBase64Bytes = (left: string, right: string) => {
+  const leftBytes = decodeCanonicalBase64(left);
+  const rightBytes = decodeCanonicalBase64(right);
+  return Boolean(leftBytes && rightBytes && leftBytes.equals(rightBytes));
+};
+
+const equalLogicalTime = (left: string, right: string) => {
+  if (!isValidLt(left) || !isValidLt(right)) return false;
+  try {
+    return BigInt(left) === BigInt(right);
+  } catch {
+    return false;
+  }
 };
 
 const parseBigIntLike = (value: unknown): bigint | null => {
   if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -156,11 +175,11 @@ const parseStackArgs = (stack: unknown): { ok: boolean; args?: any[]; error?: st
       if (typeof value !== 'string') {
         return { ok: false, error: 'invalid cell stack value' };
       }
-      const normalizedB64 = normalizeBase64(value);
-      if (!normalizedB64) return { ok: false, error: 'invalid base64 stack value' };
+      const boc = decodeCanonicalBase64(value);
+      if (!boc) return { ok: false, error: 'invalid base64 stack value' };
       let cell: Cell;
       try {
-        cell = Cell.fromBoc(Buffer.from(normalizedB64, 'base64'))[0];
+        cell = Cell.fromBoc(boc)[0];
       } catch {
         return { ok: false, error: 'invalid boc stack value' };
       }
@@ -178,15 +197,16 @@ const parseStackArgs = (stack: unknown): { ok: boolean; args?: any[]; error?: st
   return { ok: true, args };
 };
 
-const parseStreamAddresses = (query: { address?: string; wallet?: string; addresses?: string }) => {
-  const fromCsv = query.addresses
-    ? query.addresses
+const parseStreamAddresses = (query: { address?: unknown; wallet?: unknown; addresses?: unknown }) => {
+  const rawAddresses = query.addresses;
+  const fromCsv = typeof rawAddresses === 'string'
+    ? rawAddresses
         .split(',')
         .map((value) => value.trim())
         .filter((value) => value.length > 0)
     : [];
   const candidates = [query.address, query.wallet, ...fromCsv]
-    .map((value) => value?.trim())
+    .map((value) => (typeof value === 'string' ? value.trim() : undefined))
     .filter((value): value is string => Boolean(value));
   const normalized: string[] = [];
   for (const candidate of candidates) {
@@ -814,6 +834,19 @@ export const registerRoutes = (
         const response = await service.getTransactionsByCursor(address, cursorLt, cursorHash);
         const entries = (response?.txs ?? []) as IndexedTxCompat[];
         if (entries.length === 0) break;
+        const inclusiveLt = readString(entries[0]?.lt);
+        const inclusiveHash = readString(entries[0]?.hash);
+        if (
+          !inclusiveLt ||
+          !equalLogicalTime(inclusiveLt, cursorLt) ||
+          !inclusiveHash ||
+          !equalBase64Bytes(inclusiveHash, cursorHash)
+        ) {
+          // Toncenter's account cursor is exact and inclusive. The REST store
+          // intentionally supports lower-bound cursors, so enforce exactness
+          // only in this compatibility adapter.
+          break;
+        }
         pageSize =
           typeof response?.page_size === 'number' && Number.isFinite(response.page_size) && response.page_size > 0
             ? Math.trunc(response.page_size)
@@ -847,9 +880,13 @@ export const registerRoutes = (
   };
 
   const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = (request.body ?? null) as ToncenterRpcCompatRequest | null;
-    const method = body?.method?.trim();
-    const id = body?.id ?? 1;
+    const body = asRecord(request.body);
+    const method = readString(body?.method);
+    const rawId = body?.id;
+    const id =
+      typeof rawId === 'number' || typeof rawId === 'string' || rawId === null
+        ? rawId
+        : 1;
     const params = asRecord(body?.params ?? null) ?? {};
 
     if (!method) {
@@ -989,9 +1026,9 @@ export const registerRoutes = (
   app.post('/api/v2/jsonRPC', handleToncenterCompat);
 
   app.post('/api/indexer/v1/runGetMethod', async (request, reply) => {
-    const body = request.body as { address?: string; method?: string; stack?: ToncenterStackEntry[] } | null;
-    const address = body?.address?.trim();
-    const method = body?.method?.trim();
+    const body = asRecord(request.body);
+    const address = readString(body?.address);
+    const method = readString(body?.method);
     if (!address || !isValidAddress(address)) {
       return sendError(reply, 400, 'invalid_address', 'invalid address');
     }
@@ -1013,9 +1050,7 @@ export const registerRoutes = (
   });
 
   app.post('/api/indexer/v1/runGetMethods', async (request, reply) => {
-    const body = request.body as
-      | { calls?: Array<{ address?: string; method?: string; stack?: ToncenterStackEntry[] }> }
-      | null;
+    const body = asRecord(request.body);
     const calls = body?.calls;
     if (!Array.isArray(calls)) {
       return sendError(reply, 400, 'bad_request', 'calls must be an array');
@@ -1028,9 +1063,13 @@ export const registerRoutes = (
       | { ok: true; stack: ToncenterStackEntry[]; exit_code: number; gas_used: number }
       | { ok: false; code: string; error: string };
 
-    const results = await mapConcurrent(calls, GET_METHOD_BATCH_CONCURRENCY, async (call) => {
-      const address = call.address?.trim();
-      const method = call.method?.trim();
+    const results = await mapConcurrent(calls, GET_METHOD_BATCH_CONCURRENCY, async (candidate) => {
+      const call = asRecord(candidate);
+      if (!call) {
+        return { ok: false, code: 'bad_request', error: 'call must be an object' } satisfies BatchResult;
+      }
+      const address = readString(call.address);
+      const method = readString(call.method);
       if (!address || !isValidAddress(address)) {
         return { ok: false, code: 'invalid_address', error: 'invalid address' } satisfies BatchResult;
       }
@@ -1561,13 +1600,19 @@ export const registerRoutes = (
   );
 
   const handleBalanceStream = async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as { address?: string; wallet?: string; addresses?: string };
+    const query = asRecord(request.query) ?? {};
     const addresses = parseStreamAddresses(query);
     if (addresses.length === 0) {
       return sendError(reply, 400, 'invalid_address', 'at least one valid address is required');
     }
 
+    const inheritedHeaders = reply.getHeaders();
     reply.hijack();
+    for (const [name, value] of Object.entries(inheritedHeaders)) {
+      if (value !== undefined) {
+        reply.raw.setHeader(name, value);
+      }
+    }
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',

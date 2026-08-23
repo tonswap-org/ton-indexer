@@ -17,6 +17,8 @@ const config = {
 const store = new MemoryStore({ ...config, maxAddresses: 10 });
 const opcodes = loadOpcodes(undefined);
 let accountStateCalls = 0;
+const txHash = (lt: number) =>
+  Buffer.from(BigInt(lt).toString(16).padStart(64, '0'), 'hex').toString('base64');
 
 const dummySource: TonDataSource = {
   network: 'mainnet',
@@ -59,8 +61,8 @@ const run = async () => {
   const updatedState: AccountState = {
     address: addr,
     balance: '200',
-    lastTxLt: '2',
-    lastTxHash: 'hash2',
+    lastTxLt: '10',
+    lastTxHash: txHash(10),
     updatedAt: Date.now(),
   };
   store.setBalance(addr, updatedState);
@@ -71,7 +73,9 @@ const run = async () => {
     {
       address: addr,
       lt: '10',
-      hash: 'tx1',
+      hash: txHash(10),
+      prevTransactionLt: '0',
+      prevTransactionHash: txHash(0),
       utime: 0,
       success: true,
       inMessage: undefined,
@@ -94,11 +98,19 @@ const run = async () => {
   const txs1 = await service.getTransactions(addr, 1);
   assert.equal(txs1.txs[0]?.lt, '10');
 
+  store.setBalance(addr, {
+    ...updatedState,
+    lastTxLt: '11',
+    lastTxHash: txHash(11),
+    updatedAt: Date.now(),
+  });
   store.addTransactions(addr, [
     {
       address: addr,
       lt: '11',
-      hash: 'tx2',
+      hash: txHash(11),
+      prevTransactionLt: '10',
+      prevTransactionHash: txHash(10),
       utime: 0,
       success: true,
       inMessage: undefined,
@@ -121,11 +133,19 @@ const run = async () => {
   const txs2 = await service.getTransactions(addr, 1);
   assert.equal(txs2.txs[0]?.lt, '11');
 
+  store.setBalance(addr, {
+    ...updatedState,
+    lastTxLt: '13',
+    lastTxHash: txHash(13),
+    updatedAt: Date.now(),
+  });
   store.addTransactions(addr, [
     {
       address: addr,
       lt: '12',
-      hash: 'swap1',
+      hash: txHash(12),
+      prevTransactionLt: '11',
+      prevTransactionHash: txHash(11),
       utime: 100,
       success: true,
       inMessage: undefined,
@@ -170,7 +190,9 @@ const run = async () => {
     {
       address: addr,
       lt: '13',
-      hash: 'swap2',
+      hash: txHash(13),
+      prevTransactionLt: '12',
+      prevTransactionHash: txHash(12),
       utime: 101,
       success: false,
       inMessage: undefined,

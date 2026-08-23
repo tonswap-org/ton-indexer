@@ -114,7 +114,7 @@ export class MetricsService {
     gauge('indexer_last_master_seqno', health.lastMasterSeqno ?? null, 'Latest masterchain seqno seen');
     gauge('indexer_lag_sec', health.indexerLagSec ?? null, 'Indexer lag in seconds');
 
-    const output = `${lines.join('\\n')}\\n`;
+    const output = `${lines.join('\n')}\n`;
     if (this.config.responseCacheEnabled && this.config.metricsCacheTtlMs > 0) {
       this.prometheusCache = { value: output, expiresAt: Date.now() + this.config.metricsCacheTtlMs };
     }

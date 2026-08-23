@@ -605,7 +605,7 @@ export async function runProductionSmoke(
   }
 
   const spec = await fetchJson(baseUrl, '/api/indexer/v1/openapi.json') as OpenApiSpec;
-  assert.equal(spec.openapi, '3.0.3', 'OpenAPI version must be 3.0.3');
+  assert.equal(spec.openapi, '3.1.0', 'OpenAPI version must be 3.1.0');
   assert.equal(spec.info?.title, 'TONSWAP Indexer API', 'OpenAPI title must be TONSWAP Indexer API');
   assert.equal(spec.info?.version, '1.0.0', 'OpenAPI info.version must be 1.0.0');
   assert.equal(spec.servers?.[0]?.url, '/', 'OpenAPI primary server URL must be /');

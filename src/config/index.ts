@@ -215,13 +215,21 @@ export const loadConfig = (): Config => {
       for (const key of Object.keys(defaultBuckets) as RateLimitBucketName[]) {
         const candidate = parsed[key];
         if (!candidate || typeof candidate !== 'object') continue;
-        const windowMs =
-          typeof candidate.windowMs === 'number' && Number.isFinite(candidate.windowMs) && candidate.windowMs > 0
+        const candidateWindowMs =
+          typeof candidate.windowMs === 'number' && Number.isFinite(candidate.windowMs)
             ? Math.trunc(candidate.windowMs)
+            : Number.NaN;
+        const candidateMax =
+          typeof candidate.max === 'number' && Number.isFinite(candidate.max)
+            ? Math.trunc(candidate.max)
+            : Number.NaN;
+        const windowMs =
+          Number.isSafeInteger(candidateWindowMs) && candidateWindowMs > 0
+            ? candidateWindowMs
             : merged[key].windowMs;
         const max =
-          typeof candidate.max === 'number' && Number.isFinite(candidate.max) && candidate.max > 0
-            ? Math.trunc(candidate.max)
+          Number.isSafeInteger(candidateMax) && candidateMax > 0
+            ? candidateMax
             : merged[key].max;
         merged[key] = { windowMs, max };
       }

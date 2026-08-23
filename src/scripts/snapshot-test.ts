@@ -5,12 +5,13 @@ import { StoreSnapshot } from '../store/memoryStore';
 
 const config = loadConfig();
 const store = new MemoryStore({ ...config, maxAddresses: 10 });
+const txHash = Buffer.alloc(32, 2).toString('base64');
 
 store.addTransactions('addr1', [
   {
     address: 'addr1',
     lt: '2',
-    hash: 'b',
+    hash: txHash,
     utime: 2,
     success: true,
     inMessage: undefined,
@@ -18,7 +19,7 @@ store.addTransactions('addr1', [
     kind: 'transfer',
     actions: [],
     ui: {
-      txId: '2:b',
+      txId: `2:${txHash}`,
       utime: 2,
       status: 'success',
       txType: 'Transfer',

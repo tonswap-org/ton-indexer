@@ -110,5 +110,5 @@ export const buildDocsHtml = (nonce?: string) => {
     '</html>',
   ];
 
-  return parts.join('\\n');
+  return parts.join('\n');
 };

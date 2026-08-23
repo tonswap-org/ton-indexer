@@ -19,5 +19,7 @@ assert.equal(html.includes('<option value="/api/indexer/v1/debug">'), false);
 assert.ok(html.includes('fetch('));
 assert.ok(nonceHtml.includes('<style nonce="test-nonce">'));
 assert.ok(nonceHtml.includes('<script nonce="test-nonce">'));
+assert.ok(html.includes('\n<html>'));
+assert.equal(html.includes('\\n<html>'), false);
 
 console.log('docs html ok');

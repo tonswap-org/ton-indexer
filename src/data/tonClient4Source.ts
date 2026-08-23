@@ -1,5 +1,6 @@
 import { Address, Cell, TupleItem } from '@ton/core';
 import { Buffer } from 'node:buffer';
+import { createRequire } from 'node:module';
 import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
 import { Network } from '../models';
 import {
@@ -27,7 +28,14 @@ type TonClient4Like = {
   runMethod(seqno: number, address: Address, name: string, args?: TupleItem[]): Promise<any>;
 };
 
-type TonClient4Ctor = new (args: { endpoint: string }) => TonClient4Like;
+export type TonClient4HttpAdapter = (
+  config: unknown
+) => Promise<{ data: unknown; [key: string]: unknown }>;
+
+type TonClient4Ctor = new (args: {
+  endpoint: string;
+  httpAdapter?: TonClient4HttpAdapter;
+}) => TonClient4Like;
 
 const tonExports = require('ton') as {
   TonClient4?: TonClient4Ctor;
@@ -37,6 +45,116 @@ const TonClient4Ctor = tonExports.TonClient4;
 
 const hasTonClient4 =
   typeof TonClient4Ctor === 'function' && typeof (TonClient4Ctor as any).prototype === 'object';
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
+const STORAGE_STAT_JSON_FIELD = '"storageStat"';
+
+const parseHttpJson = (value: unknown): unknown => {
+  if (typeof value === 'string') {
+    if (!value.includes(STORAGE_STAT_JSON_FIELD)) return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  if (Buffer.isBuffer(value)) {
+    if (!value.includes(STORAGE_STAT_JSON_FIELD)) return value;
+    try {
+      return JSON.parse(value.toString('utf8'));
+    } catch {
+      return value;
+    }
+  }
+  return value;
+};
+
+export const normalizeTonClient4AccountResponse = (value: unknown): unknown => {
+  const parsed = parseHttpJson(value);
+  const root = asRecord(parsed);
+  const account = asRecord(root?.account);
+  const storageStat = asRecord(account?.storageStat);
+  const used = asRecord(storageStat?.used);
+  if (
+    !root ||
+    !account ||
+    !storageStat ||
+    !used ||
+    used.publicCells !== undefined ||
+    typeof used.bits !== 'number' ||
+    !Number.isFinite(used.bits) ||
+    typeof used.cells !== 'number' ||
+    !Number.isFinite(used.cells)
+  ) {
+    return value;
+  }
+
+  // ton@13.9.0 requires this obsolete field, while current Ton API V4
+  // responses omit it. It is not consumed by the indexer; supplying zero only
+  // restores compatibility with the old codec before our account mapper runs.
+  return {
+    ...root,
+    account: {
+      ...account,
+      storageStat: {
+        ...storageStat,
+        used: {
+          ...used,
+          publicCells: 0
+        }
+      }
+    }
+  };
+};
+
+export const createTonClient4CompatibilityAdapter = (
+  adapter: TonClient4HttpAdapter
+): TonClient4HttpAdapter => async (config) => {
+  const response = await adapter(config);
+  return {
+    ...response,
+    data: normalizeTonClient4AccountResponse(response.data)
+  };
+};
+
+const resolveTonClient4DefaultAdapter = (): TonClient4HttpAdapter | undefined => {
+  try {
+    // Resolve Axios from ton itself so the compatibility layer does not depend
+    // on a separately hoisted, undeclared package.
+    const tonRequire = createRequire(require.resolve('ton/package.json'));
+    const axios = tonRequire('axios') as {
+      defaults?: { adapter?: unknown };
+      getAdapter?: (adapter: unknown) => unknown;
+    };
+    const candidate =
+      typeof axios.getAdapter === 'function'
+        ? axios.getAdapter(axios.defaults?.adapter ?? 'http')
+        : axios.defaults?.adapter;
+    return typeof candidate === 'function'
+      ? (candidate as TonClient4HttpAdapter)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const defaultTonClient4Adapter = resolveTonClient4DefaultAdapter();
+
+const createTonClient4 = (endpoint: string): TonClient4Like => {
+  if (!TonClient4Ctor) {
+    throw new Error('TonClient4 is unavailable.');
+  }
+  return new TonClient4Ctor({
+    endpoint,
+    ...(defaultTonClient4Adapter
+      ? { httpAdapter: createTonClient4CompatibilityAdapter(defaultTonClient4Adapter) }
+      : {})
+  });
+};
 
 const decodeOp = (bodyBase64?: string): number | undefined => {
   if (!bodyBase64) return undefined;
@@ -54,11 +172,6 @@ const decodeOp = (bodyBase64?: string): number | undefined => {
 const parseAddress = (raw?: string | null): string | undefined => {
   if (!raw) return undefined;
   return raw;
-};
-
-const asRecord = (value: unknown): Record<string, unknown> | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
 };
 
 const readStateKind = (value: unknown): 'active' | 'uninitialized' | 'frozen' | null => {
@@ -123,13 +236,34 @@ const readLastTxLt = (lastTx: unknown): string | undefined => {
   return undefined;
 };
 
+const decodeHash32 = (value: unknown): Buffer | null => {
+  if (Buffer.isBuffer(value)) return value.length === 32 ? Buffer.from(value) : null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) return Buffer.from(trimmed, 'hex');
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed)) return null;
+  const normalized = trimmed.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+  if (normalized.length % 4 === 1) return null;
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  const decoded = Buffer.from(padded, 'base64');
+  if (decoded.length !== 32) return null;
+  if (decoded.toString('base64').replace(/=+$/, '') !== normalized) return null;
+  return decoded;
+};
+
+const requireHash32 = (value: unknown, label: string): Buffer => {
+  const decoded = decodeHash32(value);
+  if (!decoded) throw new Error(`${label} must be a 32-byte hex or base64 transaction hash.`);
+  return decoded;
+};
+
+const canonicalHash32 = (value: unknown, label: string): string =>
+  requireHash32(value, label).toString('base64');
+
 const readLastTxHash = (lastTx: unknown): string | undefined => {
   const record = asRecord(lastTx);
   if (!record) return undefined;
-  const hash = record.hash;
-  if (typeof hash === 'string' && hash.trim().length > 0) return hash.trim();
-  if (Buffer.isBuffer(hash)) return hash.toString('base64');
-  return undefined;
+  return decodeHash32(record.hash)?.toString('base64');
 };
 
 const parseRunMethodResponse = (response: unknown): { exitCode: number; stack: TupleItem[] } | null => {
@@ -215,7 +349,7 @@ export class TonClient4DataSource implements TonDataSource {
       );
     }
     if (endpoint) {
-      const client = new TonClient4Ctor({ endpoint });
+      const client = createTonClient4(endpoint);
       return new TonClient4DataSource(network, client, [endpoint]);
     }
     if (network === 'localnet') {
@@ -226,7 +360,7 @@ export class TonClient4DataSource implements TonDataSource {
     if (!endpoints || endpoints.length === 0) {
       endpoints = [await getHttpV4Endpoint({ network })];
     }
-    const client = new TonClient4Ctor({ endpoint: endpoints[0] });
+    const client = createTonClient4(endpoints[0]);
     return new TonClient4DataSource(network, client, endpoints);
   }
 
@@ -301,11 +435,12 @@ export class TonClient4DataSource implements TonDataSource {
       return [];
     }
 
+    const cursorHashBytes = requireHash32(cursorHash, 'Transaction cursor hash');
     const txs = await this.call((client) =>
       client.getAccountTransactionsParsed(
         parsed,
         BigInt(cursorLt),
-        Buffer.from(cursorHash, 'base64'),
+        cursorHashBytes,
         limit
       )
     );
@@ -315,9 +450,9 @@ export class TonClient4DataSource implements TonDataSource {
       const status = parsedStatus === 'success' ? 'success' : parsedStatus === 'failed' ? 'failed' : 'pending';
       return {
         lt: tx.lt,
-        hash: tx.hash,
+        hash: canonicalHash32(tx.hash, 'Transaction hash'),
         prevTransactionLt: tx.prevTransaction.lt,
-        prevTransactionHash: tx.prevTransaction.hash,
+        prevTransactionHash: canonicalHash32(tx.prevTransaction.hash, 'Predecessor transaction hash'),
         utime: tx.time,
         success: status === 'success',
         status,
@@ -445,7 +580,7 @@ export class TonClient4DataSource implements TonDataSource {
     if (!TonClient4Ctor) {
       throw new Error('TonClient4 unavailable while rotating endpoint');
     }
-    this.client = new TonClient4Ctor({ endpoint: this.endpoints[this.endpointIndex] });
+    this.client = createTonClient4(this.endpoints[this.endpointIndex]);
     // Drop cached masterchain references on endpoint rotation to avoid sticking to a stale instance.
     this.lastBlock = null;
     this.lastBlockExpiresAt = 0;

@@ -116,6 +116,9 @@ export type IndexedTx = {
   address: string;
   lt: string;
   hash: string;
+  /** Canonical account-chain predecessor retained for history integrity checks. */
+  prevTransactionLt?: string;
+  prevTransactionHash?: string;
   utime: number;
   success: boolean;
   inMessage?: MessageSummary;
@@ -143,15 +146,26 @@ export type AccountBalance = {
   network: Network;
 };
 
-export type AccountAssetBalance = {
-  kind: 'native' | 'jetton';
+type AccountAssetBalanceBase = {
   symbol?: string;
   address?: string;
   wallet?: string;
   balance_raw: string;
-  balance: string;
-  decimals: number;
 };
+
+export type AccountAssetBalance =
+  | (AccountAssetBalanceBase & {
+      kind: 'native';
+      balance: string;
+      decimals: number;
+    })
+  | (AccountAssetBalanceBase & {
+      kind: 'jetton';
+      /** Formatted amount; omitted when the asset's decimal precision is unknown. */
+      balance?: string;
+      /** Decimal precision; omitted when it cannot be read or inferred safely. */
+      decimals?: number;
+    });
 
 export type AccountBalances = {
   address: string;

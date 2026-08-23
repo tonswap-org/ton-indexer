@@ -39,6 +39,16 @@ npm run build
 npm run start
 ```
 
+## Test
+```bash
+npm test
+npm run build
+```
+
+The regression suite covers transaction-chain continuity, reorg replacement,
+snapshot integrity, datasource fallbacks, classifier decoding, and public API
+validation/streaming behavior.
+
 ## Production Container
 ```bash
 docker build -t ti-indexer:release .

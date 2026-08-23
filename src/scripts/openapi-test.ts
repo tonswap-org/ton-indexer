@@ -3,7 +3,17 @@ import { loadConfig } from '../config';
 import { buildOpenApi } from '../api/openapi';
 
 const spec = buildOpenApi(loadConfig());
-assert.equal(spec.openapi, '3.0.3');
+assert.equal(spec.openapi, '3.1.0');
+const assertNoLegacyNullableKeyword = (value: unknown, path = '$'): void => {
+  if (!value || typeof value !== 'object') return;
+  if ('nullable' in value) {
+    assert.fail(`OpenAPI 3.1 schema uses legacy nullable keyword at ${path}`);
+  }
+  for (const [key, child] of Object.entries(value)) {
+    assertNoLegacyNullableKeyword(child, `${path}.${key}`);
+  }
+};
+assertNoLegacyNullableKeyword(spec);
 assert.ok(spec.paths['/api/indexer/v1/health']);
 assert.ok(spec.paths['/api/indexer/v1/contracts']);
 assert.ok(spec.paths['/api/indexer/v1/service-info']);
@@ -43,6 +53,19 @@ assert.ok('queryNonce' in txEntry);
 assert.ok(spec.components?.schemas?.SwapsResponse);
 assert.ok(spec.components?.schemas?.MarketCandle);
 assert.ok(spec.components?.schemas?.MarketCandlesResponse);
+const assetBalanceSchema = spec.components?.schemas?.AssetBalanceResponse;
+assert.ok(assetBalanceSchema);
+assert.equal(assetBalanceSchema.required?.includes('balance'), false);
+assert.equal(assetBalanceSchema.required?.includes('decimals'), false);
+assert.deepEqual(assetBalanceSchema.dependentRequired, {
+  balance: ['decimals'],
+  decimals: ['balance'],
+});
+assert.deepEqual(assetBalanceSchema.allOf?.[0]?.then?.required, ['balance', 'decimals']);
+assert.match(
+  spec.components.schemas.BalanceResponse.properties.confirmed.description,
+  /every configured jetton balance/
+);
 const swapsResponseProps =
   spec.components?.schemas?.SwapsResponse?.properties ??
   ({} as Record<string, unknown>);

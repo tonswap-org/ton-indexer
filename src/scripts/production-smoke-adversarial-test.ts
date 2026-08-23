@@ -64,7 +64,7 @@ const openApiPaths = () => ({
 });
 
 const openApi = () => ({
-  openapi: '3.0.3',
+  openapi: '3.1.0',
   info: { title: 'TONSWAP Indexer API', version: '1.0.0' },
   servers: [{ url: '/' }],
   paths: openApiPaths(),

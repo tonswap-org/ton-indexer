@@ -11,8 +11,16 @@ import { JettonMetadata, Network } from '../models';
 
 type RunGetMethodResult = { exitCode: number; stack: TupleItem[] } | null;
 
-const hasStateCellData = (state: AccountStateResponse | null | undefined) =>
-  Boolean(state && ((state.codeBoc && state.codeBoc.trim()) || (state.dataBoc && state.dataBoc.trim())));
+const hasStateCell = (value: string | null | undefined) => Boolean(value && value.trim());
+
+const hasStateCellData = (state: AccountStateResponse | null | undefined) => {
+  if (!state) return false;
+  const hasCode = hasStateCell(state.codeBoc);
+  const hasData = hasStateCell(state.dataBoc);
+  // Active account state is incomplete when either state cell is absent. In
+  // that case the fallback may supply the missing cell (or a complete pair).
+  return state.accountState === 'active' ? hasCode && hasData : hasCode || hasData;
+};
 
 const mergeAccountState = (primary: AccountStateResponse, fallback: AccountStateResponse): AccountStateResponse => ({
   balance: primary.balance || fallback.balance,
@@ -82,9 +90,14 @@ export class ResilientTonDataSource implements TonDataSource {
 
   async getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]> {
     const primary = await callSafely(() => this.primary.getTransactions(address, limit, lt, hash));
-    if (primary) return primary;
+    const hasExplicitCursor = Boolean(lt && hash);
+    // Transaction pages are cursor-inclusive. An empty page for an explicit
+    // cursor means the primary cannot serve that history point, so retry the
+    // archival fallback instead of treating the empty array as success.
+    if (primary && (!hasExplicitCursor || primary.length > 0)) return primary;
     const secondary = await callSafely(() => this.fallback.getTransactions(address, limit, lt, hash));
     if (secondary) return secondary;
+    if (primary) return primary;
     throw new Error(`Transactions unavailable for ${address}`);
   }
 

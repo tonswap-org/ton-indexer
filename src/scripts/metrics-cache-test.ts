@@ -54,4 +54,9 @@ collector.recordRequest(50);
 const second = metrics.getMetrics();
 assert.equal(second.request_stats.count, first.request_stats.count);
 
+const prometheus = metrics.getPrometheus();
+assert.ok(prometheus.endsWith('\n'));
+assert.ok(prometheus.includes('\n# TYPE indexer_addresses gauge\n'));
+assert.equal(prometheus.includes('\\n'), false);
+
 console.log('metrics cache ok');
