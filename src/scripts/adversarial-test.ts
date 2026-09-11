@@ -1410,12 +1410,12 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
   assert.equal(invalidGovernanceOwner.statusCode, 400);
   assert.equal(invalidGovernanceOwner.json().code, 'invalid_address');
 
-  const invalidFarmFactory = await app.inject({
+  const invalidFarmPool = await app.inject({
     method: 'GET',
-    url: '/api/indexer/v1/farms/not-an-address/snapshot',
+    url: '/api/indexer/v1/pools/not-an-address/farms',
   });
-  assert.equal(invalidFarmFactory.statusCode, 400);
-  assert.equal(invalidFarmFactory.json().code, 'invalid_address');
+  assert.equal(invalidFarmPool.statusCode, 400);
+  assert.equal(invalidFarmPool.json().code, 'invalid_address');
 
   const invalidOptionsFactory = await app.inject({
     method: 'GET',

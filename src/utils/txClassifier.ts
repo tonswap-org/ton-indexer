@@ -416,9 +416,12 @@ const decodeLpWithdraw = (body?: string): DecodedLpWithdraw | null => {
     if (base.remainingBits < 32) return null;
     const op = base.loadUint(32);
     if (op === OP_DLMM_REMOVE_LIQUIDITY) {
+      base.loadUintBig(64); // Current DRMV query ID precedes the signed bin.
       const rawBin = base.loadUint(32);
       const binId = rawBin > 0x7fffffff ? rawBin - 0x1_0000_0000 : rawBin;
       const shares = base.loadUintBig(256);
+      base.loadAddress();
+      if(base.remainingBits||base.remainingRefs)return null;
       return { lpBurned: shares.toString(), binId };
     }
     if (op === OP_REMOVE_LIQ) {
@@ -729,6 +732,7 @@ export const classifyTransaction = (
     prevTransactionHash: tx.prevTransactionHash,
     utime: tx.utime,
     success: tx.success,
+    totalFeesRaw: tx.totalFeesRaw,
     inMessage: inMsg,
     outMessages: outMsgs,
     kind,

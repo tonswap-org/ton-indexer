@@ -16,20 +16,22 @@ import type { Network } from './index';
 type ReleaseManifestContract = string | { address?: unknown };
 
 export type RegistryMarketMetadata = {
-  saleModel: 'fixed' | 'bonding' | 'dutch';
+  saleModel?: 'fixed' | 'bonding' | 'dutch';
   marketKey: string;
   marketAddress: string;
   tokenRoot: string;
-  sale: string;
-  lpVault: string;
+  sale?: string;
+  lpVault?: string;
   optionAddress: string;
   perpsMarketId: number;
   optionSeriesId: string;
-  coverPolicyId: string;
+  coverPolicyId?: string;
   assetSymbol: string;
   quoteSymbol: string;
   assetDecimals: number;
   quoteDecimals: number;
+  configuration?: 'ready';
+  oracle?: {status:'pending'|'ready';reason:string|null;observationTimestamp:string;windows:Array<{seconds:string;available:boolean;elapsed:string;priceQ64:string}>};
 };
 
 export type CanonicalReleaseManifest = {
@@ -335,18 +337,10 @@ const parseContracts = (value: unknown): Record<string, string> => {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(key)) {
       throw new Error(`Release manifest contract key is invalid: ${key}`);
     }
-    const raw =
-      typeof candidate === 'string'
-        ? candidate
-        : candidate && typeof candidate === 'object' && typeof candidate.address === 'string'
-          ? candidate.address
-          : '';
-    const address = raw.trim();
-    if (!address) {
-      throw new Error(`Release manifest contract ${key} is missing an address`);
-    }
+    if (typeof candidate !== 'string') throw new Error(`Release manifest contract ${key} must be a raw address string`);
+    const address = candidate;
     try {
-      Address.parse(address);
+      if (Address.parse(address).toRawString() !== address || !/^0:[0-9a-f]{64}$/.test(address) || address === `0:${'0'.repeat(64)}`) throw new Error('noncanonical');
     } catch {
       throw new Error(`Release manifest contract ${key} has an invalid TON address`);
     }
@@ -358,142 +352,36 @@ const parseContracts = (value: unknown): Record<string, string> => {
   return sortedRecord(contracts);
 };
 
-const parseMarkets = (
-  value: unknown,
-  contracts: Record<string, string>
-): RegistryMarketMetadata[] => {
-  if (!Array.isArray(value)) {
-    throw new Error('Release manifest markets must be an array');
-  }
-  if (value.length !== 3) {
-    throw new Error('Release manifest markets must contain exactly three markets');
-  }
-
-  const seenModels = new Set<string>();
-  const seenKeys = new Set<string>();
-  const seenAddresses = new Set<string>();
-  const seenPerpsMarketIds = new Set<number>();
-  const seenOptionSeriesIds = new Set<string>();
-  const seenCoverPolicyIds = new Set<string>();
-  const markets = value.map((candidate, index): RegistryMarketMetadata => {
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
-      throw new Error(`Release manifest market ${index} must be an object`);
+const parseMarkets = (value: unknown, contracts: Record<string,string>): RegistryMarketMetadata[] => {
+  if (!Array.isArray(value) || value.length === 0) throw new Error('Release manifest markets must contain configured instruments');
+  const sets = Object.fromEntries(['key','symbol','pool','optionAddress','perpsMarketId','optionSeriesId'].map(key => [key,new Set<unknown>()]));
+  return value.map((market: any, index) => {
+    const require = (ok: unknown, field: string) => { if (!ok) throw new Error(`Release manifest market ${index} ${field}`); };
+    const uint = (v:unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]*)$/.test(v);
+    require(market && typeof market === 'object', 'must be an object');
+    require(typeof market.key === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(market.key), 'key');
+    require(typeof market.symbol === 'string' && /^[A-Z0-9_.$-]{1,32}$/.test(market.symbol) && market.symbol !== 'T3', 'symbol');
+    for (const field of ['tokenRoot','pool','optionAddress']) {
+      const role = market.contractRoles?.[field];
+      require(typeof role === 'string' && typeof market[field] === 'string' && /^0:[0-9a-f]{64}$/.test(market[field]) && contracts[role] === market[field], `${field} contract binding`);
     }
-    const market = candidate as Record<string, unknown>;
-    const saleModel =
-      typeof market.saleModel === 'string' ? market.saleModel.trim().toLowerCase() : '';
-    if (!['fixed', 'bonding', 'dutch'].includes(saleModel) || seenModels.has(saleModel)) {
-      throw new Error(`Release manifest market ${index} has an invalid or duplicate saleModel`);
-    }
-    seenModels.add(saleModel);
-
-    const assetSymbol = typeof market.symbol === 'string' ? market.symbol.trim().toUpperCase() : '';
-    if (!/^[A-Z0-9_.$-]{1,32}$/.test(assetSymbol) || assetSymbol === 'T3') {
-      throw new Error(`Release manifest market ${index} has an invalid symbol`);
-    }
-    const quoteSymbol = 'T3';
-    const marketKey = `spot:${assetSymbol}-${quoteSymbol}`;
-    if (seenKeys.has(marketKey)) {
-      throw new Error(`Release manifest market key is duplicated: ${marketKey}`);
-    }
-    seenKeys.add(marketKey);
-
-    const contractModel = `${saleModel[0].toUpperCase()}${saleModel.slice(1)}`;
-    const addressFields = [
-      ['tokenRoot', 'TokenRoot'],
-      ['sale', 'Sale'],
-      ['lpVault', 'LpVault'],
-      ['pool', 'Pool'],
-      ['optionAddress', 'Option'],
-    ] as const;
-    let marketAddress = '';
-    const marketAddresses: Record<string, string> = {};
-    for (const [field, suffix] of addressFields) {
-      const address = typeof market[field] === 'string' ? market[field].trim() : '';
-      let rawAddress: string;
-      try {
-        rawAddress = Address.parse(address).toRawString();
-      } catch {
-        throw new Error(`Release manifest market ${index} has an invalid ${field} address`);
-      }
-      const contractKey = `Launchpad${contractModel}${suffix}`;
-      const contractAddress = contracts[contractKey];
-      if (
-        !contractAddress ||
-        Address.parse(contractAddress).toRawString() !== rawAddress
-      ) {
-        throw new Error(
-          `Release manifest market ${index} ${field} does not match contract ${contractKey}`
-        );
-      }
-      if (seenAddresses.has(rawAddress)) {
-        throw new Error(`Release manifest market address is duplicated: ${rawAddress}`);
-      }
-      seenAddresses.add(rawAddress);
-      marketAddresses[field] = address;
-      if (field === 'pool') marketAddress = address;
-    }
-    const perpsMarketId = Number(market.perpsMarketId);
-    const optionSeriesId =
-      typeof market.optionSeriesId === 'string' ? market.optionSeriesId.trim() : '';
-    const coverPolicyId =
-      typeof market.coverPolicyId === 'string' ? market.coverPolicyId.trim() : '';
-    if (
-      !Number.isSafeInteger(perpsMarketId) ||
-      perpsMarketId <= 0 ||
-      seenPerpsMarketIds.has(perpsMarketId)
-    ) {
-      throw new Error(`Release manifest market ${index} has invalid or duplicate perpsMarketId`);
-    }
-    if (
-      !optionSeriesId ||
-      optionSeriesId.length > 128 ||
-      seenOptionSeriesIds.has(optionSeriesId)
-    ) {
-      throw new Error(`Release manifest market ${index} has invalid or duplicate optionSeriesId`);
-    }
-    if (
-      !coverPolicyId ||
-      coverPolicyId.length > 128 ||
-      seenCoverPolicyIds.has(coverPolicyId)
-    ) {
-      throw new Error(`Release manifest market ${index} has invalid or duplicate coverPolicyId`);
-    }
-    seenPerpsMarketIds.add(perpsMarketId);
-    seenOptionSeriesIds.add(optionSeriesId);
-    seenCoverPolicyIds.add(coverPolicyId);
-
-    const parseDecimals = (raw: unknown, label: string, fallback: number): number => {
-      if (raw === undefined) return fallback;
-      const parsed = Number(raw);
-      if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 18) {
-        throw new Error(`Release manifest market ${index} has invalid ${label}`);
-      }
-      return parsed;
-    };
-    return {
-      saleModel: saleModel as 'fixed' | 'bonding' | 'dutch',
-      marketKey,
-      marketAddress,
-      tokenRoot: marketAddresses.tokenRoot,
-      sale: marketAddresses.sale,
-      lpVault: marketAddresses.lpVault,
-      optionAddress: marketAddresses.optionAddress,
-      perpsMarketId,
-      optionSeriesId,
-      coverPolicyId,
-      assetSymbol,
-      quoteSymbol,
-      assetDecimals: parseDecimals(market.decimals, 'decimals', 9),
-      quoteDecimals: parseDecimals(market.quoteDecimals, 'quoteDecimals', 9),
-    };
-  });
-  for (const model of ['fixed', 'bonding', 'dutch']) {
-    if (!seenModels.has(model)) {
-      throw new Error(`Release manifest markets are missing ${model}`);
-    }
-  }
-  return markets.sort((left, right) => left.marketKey.localeCompare(right.marketKey));
+    require(Number.isSafeInteger(market.perpsMarketId) && market.perpsMarketId > 0, 'perpsMarketId');
+    require(uint(market.optionSeriesId) && BigInt(market.optionSeriesId) > 0n, 'optionSeriesId');
+    require(Number.isSafeInteger(market.optionTemplateId) && market.optionTemplateId > 0 && uint(market.optionExpiry) && BigInt(market.optionExpiry) > 0n, 'option configuration');
+    require(market.coverSource === market.pool, 'cover source');
+    require(market.configuration === 'ready' && market.lifecycle === 'not-run', 'configuration/lifecycle');
+    for (const field of ['decimals','quoteDecimals']) require(Number.isInteger(market[field]) && market[field] >= 0 && market[field] <= 18, field);
+    for (const [field, seen] of Object.entries(sets)) { require(!seen.has(market[field]), `duplicate ${field}`); seen.add(market[field]); }
+    const oracle = market.oracle;
+    require(oracle && ['pending','ready'].includes(oracle.status) && uint(oracle.observationTimestamp), 'oracle');
+    require(Array.isArray(oracle.windows) && JSON.stringify(oracle.windows.map((w:any)=>w.seconds)) === '["300","1800","7200"]', 'oracle windows');
+    for (const window of oracle.windows) require(typeof window.available === 'boolean' && uint(window.elapsed) && uint(window.priceQ64), 'oracle window');
+    if (oracle.status === 'ready') require(oracle.reason === null && oracle.windows.every((w:any)=>w.available && BigInt(w.elapsed)>=BigInt(w.seconds) && BigInt(w.priceQ64)>0n), 'oracle ready');
+    else require(oracle.reason === 'history-incomplete-or-stale', 'oracle pending');
+    return {marketKey:`spot:${market.symbol}-T3`,marketAddress:market.pool,tokenRoot:market.tokenRoot,optionAddress:market.optionAddress,
+      perpsMarketId:market.perpsMarketId,optionSeriesId:market.optionSeriesId,assetSymbol:market.symbol,quoteSymbol:'T3',assetDecimals:market.decimals,
+      quoteDecimals:market.quoteDecimals,configuration:market.configuration,oracle};
+  }).sort((a,b)=>a.marketKey.localeCompare(b.marketKey));
 };
 
 const assertRegistryParity = (
@@ -538,8 +426,15 @@ export const readCanonicalReleaseManifest = (
     throw new Error(`Failed to read release manifest at ${path}: ${(error as Error).message}`);
   }
 
-  if (parsed.schema !== 'tonswap-testnet-release-v1') {
-    throw new Error('Release manifest schema must be tonswap-testnet-release-v1');
+  if (parsed.schema !== 'tonswap-first-release-manifest-v1') {
+    throw new Error('Release manifest schema must be tonswap-first-release-manifest-v1');
+  }
+  for (const field of ['contracts', 'codeHashes', 'artifactCodeHashes', 'webAddresses']) {
+    const values = parsed[field];
+    if (values && typeof values === 'object' &&
+        ['FarmFactory', 'Farm', 'FarmStaker', 'FarmReceiptWallet', 'farmFactory'].some(role => Object.hasOwn(values, role))) {
+      throw new Error('Release manifest contains retired CLMM farming roles; farming must be native to DLMM pools.');
+    }
   }
   const network = normalizeNetwork(parsed.network);
   if (parsed.schemaVersion !== 1) {
@@ -563,6 +458,18 @@ export const readCanonicalReleaseManifest = (
   }
 
   const contracts = parseContracts(parsed.contracts);
+  if (parsed.network !== `ton:${network}` || !['testnet','localnet'].includes(network) ||
+      typeof parsed.attemptId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(parsed.attemptId) ||
+      typeof parsed.candidateDigest !== 'string' || !/^[0-9a-f]{64}$/.test(parsed.candidateDigest) || parsed.setup !== 'ready' || parsed.lifecycle !== 'not-run') {
+    throw new Error('Release manifest candidate/attempt/configuration identity is invalid');
+  }
+  const codeHashes = parsed.codeHashes as Record<string,string>;
+  if (!codeHashes || JSON.stringify(Object.keys(codeHashes).sort()) !== JSON.stringify(Object.keys(contracts).sort()) ||
+      Object.values(codeHashes).some(hash=>typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) throw new Error('Release manifest code/address inventory is invalid');
+  for (const field of ['sourceHashes','artifactHashes']) {
+    const map = parsed[field] as Record<string,string>;
+    if (!map || JSON.stringify(Object.keys(map).sort()) !== '["contracts","indexer","web"]' || Object.values(map).some(hash=>typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) throw new Error(`Release manifest ${field} is invalid`);
+  }
   const markets = parseMarkets(parsed.markets, contracts);
   const registryHash = hashRegistry(contracts);
   if (typeof parsed.registryHash !== 'string' || parsed.registryHash.toLowerCase() !== registryHash) {

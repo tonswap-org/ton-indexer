@@ -77,6 +77,10 @@ export type MessageSummary = {
   value?: string;
   op?: number;
   body?: string;
+  createdLt?: string;
+  bounced?: boolean;
+  forwardFeeRaw?: string;
+  ihrFeeRaw?: string;
 };
 
 export type UiDetail =
@@ -121,6 +125,7 @@ export type IndexedTx = {
   prevTransactionHash?: string;
   utime: number;
   success: boolean;
+  totalFeesRaw?: string;
   inMessage?: MessageSummary;
   outMessages: MessageSummary[];
   kind: TxKind;

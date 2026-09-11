@@ -4,7 +4,9 @@
   "description": "Indexer for faster/more reliable data from TON",
   "main": "dist/index.js",
   "scripts": {
-    "test": "tsx src/scripts/smoke.ts && tsx src/scripts/classifier-test.ts && tsx src/scripts/dataflow-regression-test.ts && tsx src/scripts/metadata-test.ts && tsx src/scripts/snapshot-test.ts && tsx src/scripts/snapshot-service-test.ts && tsx src/scripts/memory-store-integrity-test.ts && tsx src/scripts/debug-service-test.ts && tsx src/scripts/rate-limit-test.ts && tsx src/scripts/validation-test.ts && tsx src/scripts/response-cache-test.ts && tsx src/scripts/metrics-cache-test.ts && tsx src/scripts/sora-checkpoint-test.ts && tsx src/scripts/openapi-test.ts && tsx src/scripts/service-info-test.ts && tsx src/scripts/docs-html-test.ts && tsx src/scripts/adversarial-test.ts && tsx src/scripts/history-integrity-test.ts && tsx src/scripts/jetton-abi-test.ts && tsx src/scripts/perps-snapshot-test.ts && tsx src/scripts/market-candles-test.ts && tsx src/scripts/localnet-config-test.ts && tsx src/scripts/release-manifest-test.ts && tsx src/scripts/deployment-manifest-test.ts && tsx src/scripts/production-smoke-adversarial-test.ts && tsx src/scripts/mainnet-registry-guard-test.ts",
+    "test": "tsx src/scripts/smoke.ts && tsx src/scripts/classifier-test.ts && tsx src/scripts/dataflow-regression-test.ts && tsx src/scripts/metadata-test.ts && tsx src/scripts/snapshot-test.ts && tsx src/scripts/snapshot-service-test.ts && npm run test:farms && tsx src/scripts/memory-store-integrity-test.ts && tsx src/scripts/debug-service-test.ts && tsx src/scripts/rate-limit-test.ts && tsx src/scripts/validation-test.ts && tsx src/scripts/response-cache-test.ts && tsx src/scripts/metrics-cache-test.ts && tsx src/scripts/sora-checkpoint-test.ts && tsx src/scripts/openapi-test.ts && tsx src/scripts/service-info-test.ts && tsx src/scripts/docs-html-test.ts && tsx src/scripts/adversarial-test.ts && tsx src/scripts/shutdown-test.ts && tsx src/scripts/history-integrity-test.ts && tsx src/scripts/jetton-abi-test.ts && tsx src/scripts/perps-snapshot-test.ts && tsx src/scripts/market-candles-test.ts && tsx src/scripts/localnet-config-test.ts && tsx src/scripts/release-manifest-test.ts && tsx src/scripts/deployment-manifest-test.ts && tsx src/scripts/production-smoke-adversarial-test.ts && tsx src/scripts/mainnet-registry-guard-test.ts && npm run test:ledger",
+    "pretest": "npm run test:governance",
+    "test:governance": "tsx src/scripts/governance-pagination-test.ts",
     "dev": "TON_NETWORK=testnet TON_DATASOURCE=lite LITESERVER_POOL_TESTNET=https://ton.org/testnet-global.config.json tsx src/index.ts",
     "dev:mainnet": "TON_NETWORK=mainnet TON_DATASOURCE=lite LITESERVER_POOL_MAINNET=https://ton.org/global.config.json tsx src/index.ts",
     "dev:localnet": "TON_NETWORK=localnet TON_DATASOURCE=lite tsx src/index.ts",
@@ -15,7 +17,14 @@
     "audit:deployment-evidence": "bash scripts/audit-deployment-evidence.sh",
     "test:deployment-evidence-audit": "bash scripts/test-deployment-evidence-audit.sh",
     "test:deployment-evidence-template": "bash scripts/test-deployment-evidence-template.sh",
-    "sync-registry": "tsx src/scripts/refresh-registry.ts"
+    "sync-registry": "tsx src/scripts/refresh-registry.ts",
+    "bootstrap:ledger": "tsx src/scripts/bootstrap-ledger.ts",
+    "test:ledger": "npm run test:ledger:scope && tsx src/scripts/ledger-test.ts && tsx src/scripts/ledger-settlement-test.ts && tsx src/scripts/ledger-options-test.ts && tsx src/scripts/ledger-option-lifecycle-test.ts && tsx src/scripts/ledger-option-abort-test.ts && tsx src/scripts/ledger-option-buy-bounce-test.ts && tsx src/scripts/ledger-sccp-test.ts && tsx src/scripts/ledger-t3-test.ts && tsx src/scripts/ledger-perps-test.ts && npm run test:historical-replay && npm run test:ledger:launchpad && npm run test:ledger:market",
+    "test:historical-replay": "tsx src/scripts/historical-replay-test.ts",
+    "test:ledger:scope": "tsx src/scripts/ledger-projection-scope-test.ts",
+    "test:ledger:launchpad": "tsx src/scripts/ledger-launchpad-config-test.ts && tsx src/scripts/ledger-launchpad-model-state-test.ts && tsx src/scripts/ledger-launchpad-state-test.ts && tsx src/scripts/ledger-launchpad-test.ts && tsx src/scripts/ledger-launchpad-contributions-test.ts && tsx src/scripts/ledger-launchpad-graph-test.ts",
+    "test:ledger:market": "tsx src/scripts/market-ledger-test.ts && tsx src/scripts/market-store-test.ts && tsx src/scripts/market-service-test.ts && tsx src/scripts/ledger-dlmm-wallet-state-test.ts && tsx src/scripts/market-precision-test.ts",
+    "test:farms": "tsx src/scripts/dlmm-farming-test.ts"
   },
   "repository": {
     "type": "git",
@@ -31,16 +40,21 @@
   "homepage": "https://github.com/tonswap-org/ton-indexer#readme",
   "dependencies": {
     "@fastify/helmet": "^13.0.2",
+    "@noble/hashes": "1.8.0",
     "@orbs-network/ton-access": "^2.3.3",
     "@ton/core": "^0.63.0",
+    "@ton/sandbox": "0.42.0",
     "fastify": "^5.8.5",
     "lru-cache": "^11.2.5",
+    "pg": "^8.23.0",
     "pino": "^10.3.0",
     "ton": "^13.9.0",
     "ton-lite-client": "^3.1.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/node": "^25.1.0",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },

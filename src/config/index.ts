@@ -1,5 +1,13 @@
+import {parseLedgerT3RedemptionBinding, type LedgerT3RedemptionBinding} from './ledgerT3';
+import {parseLedgerPerpsCodeHash} from './ledgerPerps';
+import {parseLedgerOptionsCodeHashes, type LedgerOptionsCodeHashes} from './ledgerOptions';
+import {parseLedgerLaunchpadCodeHashes, type LedgerLaunchpadCodeHashes} from './ledgerLaunchpad';
+import { parseLedgerMarketBindings } from './ledgerMarkets';
+import type { DlmmMarketBinding } from '../ledger/marketTypes';
+import { parseLedgerSccpBindings, type LedgerSccpBinding } from './ledgerBridge';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { readDatabaseUrl } from './database';
 
 export type Network = 'mainnet' | 'testnet' | 'localnet';
 export type IndexerMode = 'dev' | 'production';
@@ -22,6 +30,16 @@ export type Config = {
   corsExposeHeaders: string;
   corsMaxAge: number;
   snapshotPath?: string;
+  databaseUrl?: string;
+  ledgerSccpAssets: LedgerSccpBinding[];
+  ledgerPerpsEngineCodeHash?: string;
+  ledgerOptionsCodeHashes?: LedgerOptionsCodeHashes;
+  ledgerLaunchpadCodeHashes?: LedgerLaunchpadCodeHashes;
+  ledgerMarketBindings: DlmmMarketBinding[];
+  ledgerT3RedemptionBinding?: LedgerT3RedemptionBinding;
+  ledgerMaxWatchedAccounts: number;
+  ledgerMaxPagesPerSync: number;
+  ledgerMaxRelatedAccounts: number;
   snapshotOnExit: boolean;
   snapshotAutosaveEnabled: boolean;
   snapshotAutosaveIntervalMs: number;
@@ -257,6 +275,16 @@ export const loadConfig = (): Config => {
     )!,
     corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600, { min: 0, integer: true }),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
+    databaseUrl: readDatabaseUrl(),
+    ledgerSccpAssets: parseLedgerSccpBindings(process.env.LEDGER_SCCP_ASSETS_JSON, network),
+    ledgerPerpsEngineCodeHash: parseLedgerPerpsCodeHash(process.env.LEDGER_PERPS_ENGINE_CODE_HASH),
+    ledgerOptionsCodeHashes: parseLedgerOptionsCodeHashes(process.env.LEDGER_OPTIONS_CODE_HASHES_JSON),
+    ledgerLaunchpadCodeHashes: parseLedgerLaunchpadCodeHashes(process.env.LEDGER_LAUNCHPAD_CODE_HASHES_JSON),
+    ledgerMarketBindings: parseLedgerMarketBindings(process.env.LEDGER_MARKET_BINDINGS_JSON, network),
+    ledgerT3RedemptionBinding: parseLedgerT3RedemptionBinding(process.env.LEDGER_T3_REDEMPTION_BINDING_JSON, network),
+    ledgerMaxWatchedAccounts: numberFromEnv('LEDGER_MAX_WATCHED_ACCOUNTS', 1000, {min:1,max:100000,integer:true}),
+    ledgerMaxPagesPerSync: numberFromEnv('LEDGER_MAX_PAGES_PER_SYNC',20,{min:1,max:100,integer:true}),
+    ledgerMaxRelatedAccounts: numberFromEnv('LEDGER_MAX_RELATED_ACCOUNTS',256,{min:1,max:1024,integer:true}),
     snapshotOnExit: booleanFromEnv('SNAPSHOT_ON_EXIT', false),
     snapshotAutosaveEnabled: booleanFromEnv(
       'SNAPSHOT_AUTOSAVE_ENABLED',

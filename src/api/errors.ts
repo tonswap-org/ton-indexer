@@ -7,6 +7,7 @@ export type ErrorCode =
   | 'invalid_method'
   | 'invalid_stack'
   | 'rate_limited'
+  | 'shutting_down'
   | 'metrics_disabled'
   | 'snapshot_disabled'
   | 'debug_disabled'

@@ -37,14 +37,18 @@ const marketAddresses = Array.from(
 );
 const releaseMarkets = (['fixed', 'bonding', 'dutch'] as const).map((saleModel, index) => ({
   saleModel,
+  key:`market-${index+1}`,optionTemplateId:index+1,optionExpiry:'1900000000',configuration:'ready',lifecycle:'not-run',quoteDecimals:9,
+  contractRoles:{tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
+  oracle:{status:'pending',reason:'history-incomplete-or-stale',observationTimestamp:'0',windows:['300','1800','7200'].map(seconds=>({seconds,available:false,elapsed:'0',priceQ64:'0'}))},
   symbol: `R${index + 1}`,
   tokenRoot: marketAddresses[index * 5],
   sale: marketAddresses[index * 5 + 1],
   lpVault: marketAddresses[index * 5 + 2],
   pool: marketAddresses[index * 5 + 3],
+  coverSource:marketAddresses[index * 5 + 3],
   optionAddress: marketAddresses[index * 5 + 4],
   perpsMarketId: index + 1,
-  optionSeriesId: `series-${index + 1}`,
+  optionSeriesId: String(index + 1),
   coverPolicyId: `cover-${index + 1}`,
   decimals: index + 6,
 }));
@@ -77,8 +81,12 @@ const contracts = {
 const writeManifest = (name: string, overrides: Record<string, unknown> = {}) => {
   const path = join(root, name);
   const unsigned = {
-    schema: 'tonswap-testnet-release-v1',
+    schema: 'tonswap-first-release-manifest-v1',
     schemaVersion: 1,
+    candidateDigest:'a'.repeat(64),attemptId:'first-attempt',setup:'ready',lifecycle:'not-run',
+    codeHashes:Object.fromEntries(Object.keys(contracts).map(key=>[key,'b'.repeat(64)])),
+    sourceHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
+    artifactHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
     network: 'ton:localnet',
     releaseId: 'local-run-1',
     contracts,
@@ -100,6 +108,10 @@ try {
   assert.equal(parsed.releaseId, 'local-run-1');
   assert.equal(parsed.registryHash, hashRegistry(contracts));
   assert.deepEqual(parsed.contracts, contracts);
+  for (const field of ['contracts', 'codeHashes', 'artifactCodeHashes', 'webAddresses']) {
+    const retired = writeManifest(`retired-farm-${field}.json`, { [field]: { ...contracts, FarmFactory: addressA } });
+    assert.throws(() => readCanonicalReleaseManifest(retired, 'localnet'), /retired CLMM farming/);
+  }
   for (const [rootLabel, discoveryLabel, address] of reserveRootDiscoveryPairs) {
     assert.equal(parsed.contracts[rootLabel], address);
     assert.equal(parsed.contracts[discoveryLabel], address);
@@ -164,7 +176,7 @@ try {
         }),
         'localnet'
       ),
-    /pool does not match contract LaunchpadFixedPool/
+    /pool contract binding/
   );
   assert.throws(
     () =>
@@ -176,7 +188,7 @@ try {
         }),
         'localnet'
       ),
-    /optionAddress does not match contract LaunchpadFixedOption/
+    /optionAddress contract binding/
   );
   assert.throws(
     () =>
@@ -207,7 +219,7 @@ try {
         }),
         'localnet'
       ),
-    /pool does not match contract LaunchpadFixedPool/
+    /pool contract binding/
   );
 
   const objectAddressPath = writeManifest('object-address.json', {
@@ -216,7 +228,13 @@ try {
       Object.entries(contracts).map(([key, address]) => [key, { address }])
     ),
   });
-  assert.deepEqual(readCanonicalReleaseManifest(objectAddressPath, 'localnet').contracts, contracts);
+  assert.throws(() => readCanonicalReleaseManifest(objectAddressPath, 'localnet'), /must be a raw address string/);
+  assert.throws(() => readCanonicalReleaseManifest(writeManifest('retired-schema.json', {schema:'tonswap-testnet-release-v1'}), 'localnet'), /schema must be tonswap-first-release-manifest-v1/);
+  const pending = readCanonicalReleaseManifest(writeManifest('pending-one-market.json', {markets:[releaseMarkets[0]]}), 'localnet');
+  assert.equal(pending.markets.length, 1);
+  assert.equal(pending.markets[0].oracle?.status, 'pending');
+  assert.equal(pending.markets[0].coverPolicyId, undefined);
+  assert.throws(() => readCanonicalReleaseManifest(writeManifest('false-oracle-ready.json', {markets:[{...releaseMarkets[0],oracle:{...releaseMarkets[0].oracle,status:'ready'}}]}), 'localnet'), /oracle ready/);
 
   assert.throws(
     () => buildRegistryBundle({ ...contracts, T3Root: addressA }, 'localnet', path),
@@ -248,7 +266,7 @@ try {
         writeManifest('missing-markets.json', { markets: undefined }),
         'localnet'
       ),
-    /markets must be an array/
+    /markets must contain configured/
   );
   assert.throws(
     () =>
@@ -256,7 +274,7 @@ try {
         writeManifest('empty-markets.json', { markets: [] }),
         'localnet'
       ),
-    /exactly three markets/
+    /markets must contain configured/
   );
   assert.throws(
     () => readCanonicalReleaseManifest(writeManifest('bad-hash.json', { registryHash: '0'.repeat(64) }), 'localnet'),

@@ -428,6 +428,14 @@ export const registerRoutes = (
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata
 ) => {
+  const activeBalanceStreams = new Set<() => void>();
+  let closing = false;
+  // Hijacked SSE responses must end before Fastify waits for HTTP connections.
+  app.addHook('preClose', async () => {
+    closing = true;
+    for (const closeStream of activeBalanceStreams) closeStream();
+  });
+
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
   const contractMap = Object.fromEntries(contractEntries);
   const canonicalMarkets = registryMetadata?.markets ?? [];
@@ -1295,6 +1303,7 @@ export const registerRoutes = (
         owner?: string;
         max_scan?: string | number;
         max_misses?: string | number;
+        start_id?: string;
       };
       const owner = query.owner?.trim() ? query.owner.trim() : undefined;
       if (owner && !isValidAddress(owner)) {
@@ -1315,6 +1324,7 @@ export const registerRoutes = (
       try {
         return await service.getGovernanceSnapshot(voting, {
           owner,
+          startId: query.start_id,
           maxScan,
           maxConsecutiveMisses
         });
@@ -1325,42 +1335,22 @@ export const registerRoutes = (
   );
 
   app.get(
-    '/api/indexer/v1/farms/:factory/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { factory: { type: 'string' } }, required: ['factory'] },
-        querystring: farmsSnapshotQuerySchema
-      }
-    },
+    '/api/indexer/v1/pools/:pool/farms',
+    { schema: { params: { type: 'object', properties: { pool: { type: 'string' } }, required: ['pool'] },
+      querystring: farmsSnapshotQuerySchema } },
     async (request, reply) => {
-      const factory = (request.params as { factory: string }).factory;
-      if (!isValidAddress(factory)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid factory address');
+      const pool = (request.params as { pool: string }).pool;
+      const query = request.query as { owner?: string; start_id?: string; limit?: number };
+      if (!isValidAddress(pool) || (query.owner !== undefined && !isValidAddress(query.owner))) {
+        return sendError(reply, 400, 'invalid_address', 'invalid pool or owner address');
       }
-
-      const query = request.query as {
-        max_scan?: string | number;
-        max_misses?: string | number;
-      };
-      const maxScanParsed =
-        typeof query.max_scan === 'number'
-          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
-          : parsePositiveInt(query.max_scan);
-      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
-
-      const maxMissesParsed =
-        typeof query.max_misses === 'number'
-          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
-          : parsePositiveInt(query.max_misses);
-      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
-
+      if (query.start_id !== undefined && BigInt(query.start_id) >= (1n << 64n)) {
+        return sendError(reply, 400, 'bad_request', 'campaign start ID exceeds uint64');
+      }
       try {
-        return await service.getFarmSnapshot(factory, {
-          maxScan,
-          maxConsecutiveMisses
-        });
+        return await service.getFarmSnapshot(pool, { owner: query.owner, startId: query.start_id, limit: query.limit });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'farm snapshot request failed'));
+        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'native DLMM farming snapshot unavailable'));
       }
     }
   );
@@ -1510,7 +1500,6 @@ export const registerRoutes = (
         'anchorGuard',
         'clusterGuard',
         'voting',
-        'farmFactory',
         'coverManager'
       ] as const;
       for (const key of contractKeys) {
@@ -1600,6 +1589,7 @@ export const registerRoutes = (
   );
 
   const handleBalanceStream = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (closing) return sendError(reply, 503, 'shutting_down', 'server is shutting down');
     const query = asRecord(request.query) ?? {};
     const addresses = parseStreamAddresses(query);
     if (addresses.length === 0) {
@@ -1638,7 +1628,9 @@ export const registerRoutes = (
       inFlight = true;
       try {
         for (const address of targets) {
+          if (closed) return;
           const balances = await service.getBalances(address);
+          if (closed) return;
           const signature = service.getBalancesSignature(balances);
           const previous = signatures.get(address);
           const changed = previous !== undefined && previous !== signature;
@@ -1705,6 +1697,7 @@ export const registerRoutes = (
     const closeStream = () => {
       if (closed) return;
       closed = true;
+      activeBalanceStreams.delete(closeStream);
       clearInterval(pollTimer);
       clearInterval(keepAliveTimer);
       unsubscribe();
@@ -1715,6 +1708,7 @@ export const registerRoutes = (
       }
     };
 
+    activeBalanceStreams.add(closeStream);
     request.raw.on('close', closeStream);
     reply.raw.on('close', closeStream);
     writeEvent({

@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import { createIndexerShutdown } from './shutdown';
 import helmet from '@fastify/helmet';
 import { createServer } from 'node:net';
 import { loadConfig, readRegistryFile } from './config';
@@ -22,6 +23,13 @@ import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
 import { validateMainnetRegistry } from './config/registry';
 import { buildRegistryBundle, RegistryMetadata } from './config/releaseManifest';
+import { Pool } from 'pg';
+import { PostgresLedgerStore } from './ledger/store';
+import { LedgerService } from './ledger/service';
+import { registerLedgerRoutes } from './ledger/routes';
+import { registerMarketLedgerRoutes } from './ledger/marketRoutes';
+import { DlmmMarketService } from './ledger/marketService';
+import { PostgresMarketStore } from './ledger/marketStore';
 
 const isPortAvailable = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
@@ -111,6 +119,33 @@ const start = async () => {
           }
         })();
   const service = new IndexerService(config, store, source, opcodes, jettonRoots, metricsCollector, poolTracker);
+  const ledgerPool = config.databaseUrl ? new Pool({connectionString:config.databaseUrl,max:10,connectionTimeoutMillis:10_000}) : undefined;
+  const ledgerStore = ledgerPool ? new PostgresLedgerStore(ledgerPool) : undefined;
+  if (ledgerStore) await ledgerStore.initialize();
+  const ledger = ledgerStore ? new LedgerService(config.network, ledgerStore, source, opcodes, logger, 2, {
+    jettonRoots: jettonRoots.map(root => root.master),
+    dlmmRegistry: registry.DlmmRegistry,
+    optionFactory: registry.OptionFactory,
+    optionVault: registry.OptionVault,
+    optionCodeHashes: config.ledgerOptionsCodeHashes,
+    launchpadCodeHashes: config.ledgerLaunchpadCodeHashes,
+    launchpadControllers: [
+      registry.SaleFactory,
+      registry.VestingVault,
+      ...(registryMetadata?.markets ?? []).map(market => market.sale)
+    ].filter((value): value is string => Boolean(value)),
+    sccpAssets: config.ledgerSccpAssets,
+    t3Hub: registry.T3Hub,
+    t3Root: registry.T3Root,
+    t3RedemptionBinding: config.ledgerT3RedemptionBinding,
+    perpsEngine: registry.PerpsEngine,
+    perpsEngineCodeHash: config.ledgerPerpsEngineCodeHash,
+    maxWatchedAccounts: config.ledgerMaxWatchedAccounts,
+    maxPagesPerSync: config.ledgerMaxPagesPerSync,
+    maxRelatedAccounts: config.ledgerMaxRelatedAccounts
+  }) : undefined;
+
+  const marketLedger = ledger && ledgerStore ? new DlmmMarketService(ledger, source, new PostgresMarketStore(ledgerStore.pool), config.ledgerMarketBindings, logger, config.ledgerMaxRelatedAccounts) : undefined;
 
   const backfillWorker = new BackfillWorker(config, store, source, opcodes, logger, metricsCollector, poolTracker);
   const blockFollower = new BlockFollower(config, store, source, opcodes, logger, service, poolTracker);
@@ -144,6 +179,8 @@ const start = async () => {
     registry,
     registryMetadata
   );
+  registerLedgerRoutes(app,ledger);
+  registerMarketLedgerRoutes(app,marketLedger);
   const snapshotAutosaveTimer =
     config.snapshotAutosaveEnabled && config.snapshotPath
       ? setInterval(() => {
@@ -176,15 +213,19 @@ const start = async () => {
 
   backfillWorker.start();
   blockFollower.start();
+  ledger?.start();
+  marketLedger?.start();
 
   const address = await app.listen({ port, host: config.host });
   logger.info('server started', { address, network: config.network, registryLoaded: Object.keys(registry).length > 0 });
 
-  const shutdown = async () => {
-    try {
+  const shutdown = createIndexerShutdown({
+    close: async () => {
       if (snapshotAutosaveTimer) clearInterval(snapshotAutosaveTimer);
       backfillWorker.stop();
       blockFollower.stop();
+      // Stop accepting requests and drain SSE while ledger work finishes.
+      await Promise.all([app.close(), (async () => { await marketLedger?.stop(); await ledger?.stop(); })()]);
       if (config.snapshotOnExit && config.snapshotPath) {
         try {
           const snapshot = store.exportSnapshot();
@@ -195,13 +236,10 @@ const start = async () => {
         }
       }
       await source.close();
-      await app.close();
-    } catch (error) {
-      logger.error('shutdown error', { error: (error as Error).message });
-    } finally {
-      process.exit(0);
-    }
-  };
+      await ledgerPool?.end();
+    },
+    onFailure: (reason) => logger.error('shutdown failed', { reason }),
+  });
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

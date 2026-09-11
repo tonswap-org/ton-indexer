@@ -125,16 +125,18 @@ export const governanceSnapshotQuerySchema = {
   type: 'object',
   properties: {
     owner: { type: 'string' },
+    start_id: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' },
     max_scan: { type: 'integer', minimum: 1, maximum: 64 },
     max_misses: { type: 'integer', minimum: 1, maximum: 8 },
   },
 };
 
 export const farmsSnapshotQuerySchema = {
-  type: 'object',
+  type: 'object', additionalProperties: false,
   properties: {
-    max_scan: { type: 'integer', minimum: 1, maximum: 64 },
-    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
+    owner: { type: 'string' },
+    start_id: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' },
+    limit: { type: 'integer', minimum: 1, maximum: 64 },
   },
 };
 

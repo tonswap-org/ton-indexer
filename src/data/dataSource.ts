@@ -9,6 +9,10 @@ export type RawMessage = {
   value?: string;
   op?: number;
   body?: string;
+  createdLt?: string;
+  bounced?: boolean;
+  forwardFeeRaw?: string;
+  ihrFeeRaw?: string;
 };
 
 export type RawTransactionStatus = 'success' | 'failed' | 'pending';
@@ -22,6 +26,8 @@ export type RawTransaction = {
   success: boolean;
   status?: RawTransactionStatus;
   reason?: string;
+  /** Total native transaction fees in atomic units; absent when the source did not supply them. */
+  totalFeesRaw?: string;
   inMessage?: RawMessage;
   outMessages: RawMessage[];
 };
@@ -238,6 +244,10 @@ export interface TonDataSource {
   getMasterchainInfo(): Promise<MasterchainInfo>;
   getAccountState(address: string): Promise<AccountStateResponse>;
   getAccountStateLite?(address: string): Promise<AccountStateResponse>;
+  /** Archival account state at a masterchain boundary; callers must bind lastTx to the desired transaction. */
+  getAccountStateAtSeqno?(address: string, seqno: number): Promise<AccountStateResponse>;
+  /** Exact intermediate state, authenticated by the original transaction and Account hashes. */
+  getAccountStateAtTransaction?(address: string, cursor: TransactionCursor, containingSeqno: number): Promise<AccountStateResponse>;
   getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]>;
   runGetMethod(
     address: string,

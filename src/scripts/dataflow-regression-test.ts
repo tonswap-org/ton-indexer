@@ -191,8 +191,10 @@ const testDirectActionsUseMatchedMessagePool = () => {
 
   const withdrawBody = beginCell()
     .storeUint(0x44524d56, 32)
+    .storeUint(7n,64)
     .storeInt(-3, 32)
     .storeUint(44n, 256)
+    .storeAddress(account)
     .endCell()
     .toBoc({ idx: false })
     .toString('base64');
@@ -316,8 +318,9 @@ const testTonClient4HashRoundTrip = async () => {
             prevTransaction: { lt: '99', hash: predecessorBytes.toString('hex') },
             time: 1,
             parsed: { status: 'success' },
+            fees: '9007199254740993123',
             inMessage: null,
-            outMessages: [],
+            outMessages: [{body:beginCell().endCell().toBoc().toString('base64'),info:{type:'internal',src:account.toRawString(),dest:account.toRawString(),value:'9007199254740993125',createdLt:'9007199254740993126',bounced:false,fwdFee:'9007199254740993127',ihrFee:'0'}}],
           },
         ],
       };
@@ -335,6 +338,11 @@ const testTonClient4HashRoundTrip = async () => {
   assert.ok(requestedHashes[0]?.equals(cursorBytes));
   assert.equal(page[0]?.hash, transactionBytes.toString('base64'));
   assert.equal(page[0]?.prevTransactionHash, predecessorBytes.toString('base64'));
+  assert.equal(page[0]?.totalFeesRaw, '9007199254740993123');
+  assert.equal(page[0]?.outMessages[0]?.createdLt,'9007199254740993126');
+  assert.equal(page[0]?.outMessages[0]?.forwardFeeRaw,'9007199254740993127');
+  assert.equal(page[0]?.outMessages[0]?.ihrFeeRaw,'0');
+  assert.equal(page[0]?.outMessages[0]?.bounced,false);
 
   await source.getTransactions(
     account.toRawString(),

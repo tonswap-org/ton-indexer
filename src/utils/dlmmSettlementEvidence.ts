@@ -12,6 +12,8 @@ const OP_JETTON_SETTLEMENT_FINALIZE = 0x4a53464e; // JSFN
 const OP_BOUNCED_MESSAGE_PREFIX = 0xffffffff;
 const DLMM_SETTLEMENT_ID_START = 0x4453000000000001n;
 const MAX_UINT64 = 0xffffffffffffffffn;
+// TL-B VarUInteger16 coin quantities have up to 15 bytes; LTs/query IDs stay uint64.
+const MAX_COINS = (1n << 120n) - 1n;
 
 const RELEVANT_OPS = new Set([
   OP_JETTON_TRANSFER,
@@ -25,6 +27,45 @@ const RELEVANT_OPS = new Set([
 
 type MessageDirection = 'in' | 'out';
 
+export type DlmmPoolTransactionEvidence = {
+  account: string;
+  lt: string;
+  /** The exact 32-byte transaction identity, serialized as lowercase hex. */
+  hash: string;
+  utime: number;
+};
+
+export type DlmmPoolMessageEvidence = {
+  transaction: DlmmPoolTransactionEvidence;
+  direction: MessageDirection;
+  index: number;
+  source: string;
+  destination: string;
+  createdLt: string;
+  opcode: number;
+  bodyHash: string;
+  /** Original canonical base64 BOC bytes, not a reserialized cell. */
+  bodyBoc: string;
+};
+
+/** Pool-side acknowledgement only; physical recipient credit is a separate proof. */
+export type DlmmPoolSettlementEvidence = {
+  kind: 'pool-output-acknowledgement';
+  pool: string;
+  businessQueryId: string;
+  settlementId: string;
+  amountOutRaw: string;
+  payerOwner: string;
+  recipientOwner: string;
+  inputWallet: string;
+  sourceWallet: string;
+  destinationWallet: string;
+  acceptance: DlmmPoolMessageEvidence;
+  request: DlmmPoolMessageEvidence;
+  succeeded: DlmmPoolMessageEvidence;
+  finalizeRequest: DlmmPoolMessageEvidence;
+};
+
 type MessageEnvelope = {
   cell: Cell;
   op: number;
@@ -33,6 +74,7 @@ type MessageEnvelope = {
 };
 
 type EvidenceContext = {
+  message: DlmmPoolMessageEvidence;
   direction: MessageDirection;
   index: number;
   lt: bigint;
@@ -60,7 +102,7 @@ type JettonNotification = {
   forwardPayload: Cell;
 };
 
-type SwapForward = {
+export type SwapForward = {
   queryId: bigint;
   recipient: string;
   minAmountOut: bigint;
@@ -90,12 +132,6 @@ type TupleEvidence = EvidenceContext & SettlementTuple & {
   destinationAddress: string;
 };
 
-type RetryEvidence = EvidenceContext & {
-  queryId: bigint;
-  source: string;
-  destinationAddress: string;
-};
-
 type BounceEvidence = {
   queryId: bigint;
   lt: bigint;
@@ -110,6 +146,11 @@ type SwapCandidate = {
   settlementId: bigint;
   amount: bigint;
   sourceWallet: string;
+  businessQueryId: string;
+  payerOwner: string;
+  recipientOwner: string;
+  inputWallet: string;
+  acceptance: DlmmPoolMessageEvidence;
 };
 
 const canonicalUint = (value: unknown, max = MAX_UINT64): bigint | null => {
@@ -129,6 +170,22 @@ const canonicalAddress = (value: unknown): string | null => {
   } catch {
     return null;
   }
+};
+
+const transactionEvidence = (tx: IndexedTx): DlmmPoolTransactionEvidence | null => {
+  const account = canonicalAddress(tx.address), lt = canonicalUint(tx.lt);
+  if (!account || lt === null || lt === 0n || !Number.isSafeInteger(tx.utime) || tx.utime < 0 ||
+    typeof tx.hash !== 'string' || tx.ui.txId !== `${tx.lt}:${tx.hash}`) return null;
+  let hash: string;
+  if (/^[a-fA-F0-9]{64}$/.test(tx.hash)) hash = tx.hash.toLowerCase();
+  else {
+    if (!/^[A-Za-z0-9+/_-]{43}=?$/.test(tx.hash)) return null;
+    const normalized = tx.hash.replace(/-/g, '+').replace(/_/g, '/').replace(/=$/, '');
+    const bytes = Buffer.from(normalized, 'base64');
+    if (bytes.length !== 32 || bytes.toString('base64').replace(/=$/, '') !== normalized) return null;
+    hash = bytes.toString('hex');
+  }
+  return { account, lt: tx.lt, hash, utime: tx.utime };
 };
 
 const loadedAddress = (value: unknown): string | null => {
@@ -190,13 +247,34 @@ const bodyOpcode = (cell: Cell): number | null => {
 };
 
 const messageEnvelope = (message: MessageSummary): MessageEnvelope | null => {
+  if (message.bounced !== undefined && typeof message.bounced !== 'boolean') return null;
   const cell = strictBodyCell(message.body);
   if (!cell) return null;
   const op = bodyOpcode(cell);
   const source = canonicalAddress(message.source);
   const destination = canonicalAddress(message.destination);
   if (op === null || message.op !== op || !source || !destination) return null;
+  // Actual VM bounces remain negative evidence. They must not invalidate
+  // unrelated settlements, and cannot masquerade as positive acknowledgements.
+  if (message.bounced === true && op !== OP_BOUNCED_MESSAGE_PREFIX) return null;
   return { cell, op, source, destination };
+};
+
+const messageEvidence = (
+  transaction: DlmmPoolTransactionEvidence,
+  message: MessageSummary,
+  envelope: MessageEnvelope,
+  direction: MessageDirection,
+  index: number,
+): DlmmPoolMessageEvidence | null => {
+  const createdLt = canonicalUint(message.createdLt);
+  if (createdLt === null || createdLt === 0n) return null;
+  return {
+    transaction: { ...transaction }, direction, index,
+    source: envelope.source, destination: envelope.destination,
+    createdLt: createdLt.toString(), opcode: envelope.op,
+    bodyHash: envelope.cell.hash().toString('hex'), bodyBoc: message.body!,
+  };
 };
 
 const parseJettonTransfer = (cell: Cell): JettonTransfer | null => {
@@ -254,7 +332,7 @@ const parseJettonNotification = (cell: Cell): JettonNotification | null => {
   }
 };
 
-const parseSwapForward = (cell: Cell): SwapForward | null => {
+export const parseDlmmSwapForward = (cell: Cell): SwapForward | null => {
   try {
     const slice = cell.beginParse();
     if (slice.loadUint(32) !== OP_SWAP_FORWARD) return null;
@@ -346,42 +424,48 @@ const strictSwapAction = (
 };
 
 /**
- * Resolve only outputs proven by the complete durable DLMM settlement chain.
- * The returned map is candle-specific evidence; it intentionally does not
- * mutate transactions or upgrade the `/swaps` receive-amount provenance.
+ * Resolve output amounts from the current immediate pool acknowledgement and
+ * emitted finalization-request proof. Candle and owner-ledger consumers still
+ * own physical recipient-credit, canonical-asset, net-input and coverage checks;
+ * this helper does not establish a market price or complete settlement history.
+ * It does not mutate transactions or upgrade `/swaps` receive-amount provenance.
  */
-export const resolveConfirmedDlmmSwapOutputs = (
+export const resolveDlmmPoolSettlementEvidence = (
   marketAddress: string,
   transactions: readonly IndexedTx[]
-): ReadonlyMap<string, string> => {
+): ReadonlyMap<string, DlmmPoolSettlementEvidence> => {
   const pool = canonicalAddress(marketAddress);
   if (!pool) return new Map();
 
   const transfers = new Map<string, TransferEvidence[]>();
   const succeeded = new Map<string, TupleEvidence[]>();
-  const retries = new Map<string, RetryEvidence[]>();
+  const retries = new Set<string>();
   const finalizers = new Map<string, TupleEvidence[]>();
   const bounces = new Map<string, BounceEvidence[]>();
   const txIdCounts = new Map<string, number>();
+  const physicalTxCounts = new Map<string, number>();
   let malformedEvidence = false;
 
   for (const tx of transactions) {
+    if (!tx || !tx.ui || !Array.isArray(tx.outMessages) || !Array.isArray(tx.actions)) return new Map();
     txIdCounts.set(tx.ui.txId, (txIdCounts.get(tx.ui.txId) ?? 0) + 1);
     const lt = canonicalUint(tx.lt);
     const txAddress = canonicalAddress(tx.address);
-    const txIdentity = `${tx.lt}:${tx.hash}`;
+    const transaction = transactionEvidence(tx);
+    const txIdentity = transaction ? `${transaction.lt}:${transaction.hash}` : '';
+    if (transaction) physicalTxCounts.set(txIdentity, (physicalTxCounts.get(txIdentity) ?? 0) + 1);
     const successful = isConfirmedTransaction(tx);
     const messages: Array<{ message: MessageSummary; direction: MessageDirection; index: number }> = [];
     if (tx.inMessage) messages.push({ message: tx.inMessage, direction: 'in', index: 0 });
     tx.outMessages.forEach((message, index) => messages.push({ message, direction: 'out', index }));
 
     for (const { message, direction, index } of messages) {
-      const envelope = messageEnvelope(message);
+      const envelope = message && messageEnvelope(message);
       if (!envelope) {
-        const decodedCell = strictBodyCell(message.body);
+        const decodedCell = strictBodyCell(message?.body);
         const decodedOp = decodedCell ? bodyOpcode(decodedCell) : null;
         if (
-          (message.op !== undefined && RELEVANT_OPS.has(message.op)) ||
+          (message?.op !== undefined && RELEVANT_OPS.has(message.op)) ||
           (decodedOp !== null && RELEVANT_OPS.has(decodedOp))
         ) {
           malformedEvidence = true;
@@ -389,11 +473,13 @@ export const resolveConfirmedDlmmSwapOutputs = (
         continue;
       }
       if (!RELEVANT_OPS.has(envelope.op)) continue;
-      if (lt === null || lt <= 0n || txAddress !== pool) {
+      const proof = transaction && messageEvidence(transaction, message, envelope, direction, index);
+      if (lt === null || lt <= 0n || txAddress !== pool || !proof) {
         malformedEvidence = true;
         continue;
       }
       const context: EvidenceContext = {
+        message: proof,
         direction,
         index,
         lt,
@@ -448,12 +534,7 @@ export const resolveConfirmedDlmmSwapOutputs = (
           malformedEvidence = true;
           continue;
         }
-        pushById(retries, queryId, {
-          ...context,
-          queryId,
-          source: envelope.source,
-          destinationAddress: envelope.destination,
-        });
+        retries.add(queryId.toString(10));
         continue;
       }
 
@@ -508,6 +589,7 @@ export const resolveConfirmedDlmmSwapOutputs = (
   const candidates: SwapCandidate[] = [];
   for (const tx of transactions) {
     const lt = canonicalUint(tx.lt);
+    const transaction = transactionEvidence(tx);
     const action = strictSwapAction(tx);
     if (
       lt === null ||
@@ -518,6 +600,7 @@ export const resolveConfirmedDlmmSwapOutputs = (
       tx.ui.kind !== 'swap' ||
       tx.ui.txId !== `${tx.lt}:${tx.hash}` ||
       txIdCounts.get(tx.ui.txId) !== 1 ||
+      !transaction || physicalTxCounts.get(`${transaction.lt}:${transaction.hash}`) !== 1 ||
       canonicalAddress(tx.address) !== pool ||
       !isConfirmedTransaction(tx) ||
       !tx.inMessage
@@ -526,10 +609,12 @@ export const resolveConfirmedDlmmSwapOutputs = (
     }
     const notificationEnvelope = messageEnvelope(tx.inMessage);
     if (!notificationEnvelope || notificationEnvelope.op !== OP_JETTON_TRANSFER_NOTIFICATION) continue;
+    const acceptance = messageEvidence(transaction, tx.inMessage, notificationEnvelope, 'in', 0);
+    if (!acceptance) continue;
     const notification = parseJettonNotification(notificationEnvelope.cell);
-    const forward = notification ? parseSwapForward(notification.forwardPayload) : null;
-    const amountIn = canonicalUint(action.amountIn);
-    const minOut = canonicalUint(action.minOut);
+    const forward = notification ? parseDlmmSwapForward(notification.forwardPayload) : null;
+    const amountIn = canonicalUint(action.amountIn, MAX_COINS);
+    const minOut = canonicalUint(action.minOut, MAX_COINS);
     const businessQueryId = canonicalUint(action.queryId);
     if (
       !notification ||
@@ -554,7 +639,7 @@ export const resolveConfirmedDlmmSwapOutputs = (
       .flat()
       .filter(
         (record) =>
-          record.txIdentity === `${tx.lt}:${tx.hash}` &&
+          record.txIdentity === `${transaction.lt}:${transaction.hash}` &&
           record.direction === 'out' &&
           record.successful &&
           record.source === pool &&
@@ -579,6 +664,11 @@ export const resolveConfirmedDlmmSwapOutputs = (
       settlementId: initiation.queryId,
       amount: initiation.amount,
       sourceWallet: initiation.sourceWallet,
+      businessQueryId: businessQueryId.toString(),
+      payerOwner: notification.from,
+      recipientOwner: forward.recipient,
+      inputWallet: notificationEnvelope.source,
+      acceptance,
     });
   }
 
@@ -588,18 +678,17 @@ export const resolveConfirmedDlmmSwapOutputs = (
     candidateIdCounts.set(id, (candidateIdCounts.get(id) ?? 0) + 1);
   }
 
-  const resolved = new Map<string, string>();
+  const resolved = new Map<string, DlmmPoolSettlementEvidence>();
   for (const candidate of candidates) {
     const id = candidate.settlementId.toString(10);
     const transferRecords = transfers.get(id) ?? [];
     const successRecords = succeeded.get(id) ?? [];
-    const retryRecords = retries.get(id) ?? [];
     const finalizeRecords = finalizers.get(id) ?? [];
     if (
       candidateIdCounts.get(id) !== 1 ||
       transferRecords.length !== 1 ||
       successRecords.length !== 1 ||
-      retryRecords.length !== 1 ||
+      retries.has(id) ||
       finalizeRecords.length !== 1 ||
       (bounces.get(id)?.length ?? 0) !== 0
     ) {
@@ -608,35 +697,44 @@ export const resolveConfirmedDlmmSwapOutputs = (
 
     const transfer = transferRecords[0];
     const success = successRecords[0];
-    const retry = retryRecords[0];
     const finalize = finalizeRecords[0];
     if (
       transfer.txIdentity !== candidate.txIdentity ||
       success.direction !== 'in' ||
       !success.successful ||
-      success.outCount !== 0 ||
       success.source !== candidate.sourceWallet ||
       success.destinationAddress !== pool ||
       success.amount !== candidate.amount ||
       success.lt <= candidate.lt ||
-      retry.direction !== 'in' ||
-      !retry.successful ||
-      retry.destinationAddress !== pool ||
-      retry.outCount !== 1 ||
-      retry.lt <= success.lt ||
       finalize.direction !== 'out' ||
       finalize.index !== 0 ||
       !finalize.successful ||
-      finalize.txIdentity !== retry.txIdentity ||
       finalize.source !== pool ||
       finalize.destinationAddress !== candidate.sourceWallet ||
       finalize.amount !== candidate.amount ||
-      finalize.destination !== success.destination ||
-      finalize.lt !== retry.lt
+      finalize.destination !== success.destination
     ) {
       continue;
     }
-    resolved.set(candidate.txId, candidate.amount.toString(10));
+    // Current pools emit JSFN in the authenticated JSUC transaction.
+    // DSRY recovery requires its own physical proof and remains unqualified;
+    // a zero-output JSUC followed by a later finalizer is not this format.
+    const immediateFinalization =
+      success.outCount === 1 &&
+      finalize.txIdentity === success.txIdentity &&
+      finalize.lt === success.lt;
+    if (!immediateFinalization) continue;
+    resolved.set(candidate.txId, {
+      kind: 'pool-output-acknowledgement', pool,
+      businessQueryId: candidate.businessQueryId,
+      settlementId: candidate.settlementId.toString(),
+      amountOutRaw: candidate.amount.toString(),
+      payerOwner: candidate.payerOwner, recipientOwner: candidate.recipientOwner,
+      inputWallet: candidate.inputWallet, sourceWallet: candidate.sourceWallet,
+      destinationWallet: success.destination,
+      acceptance: candidate.acceptance, request: transfer.message,
+      succeeded: success.message, finalizeRequest: finalize.message,
+    });
   }
 
   return resolved;

@@ -112,14 +112,18 @@ const releaseMarkets = () => {
   let nextAddress = 20;
   return (['fixed', 'bonding', 'dutch'] as const).map((saleModel, index) => ({
     saleModel,
+    key:`market-${index+1}`,optionTemplateId:index+1,optionExpiry:'1900000000',configuration:'ready',lifecycle:'not-run',
+    contractRoles:{tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
+    oracle:{status:'pending',reason:'history-incomplete-or-stale',observationTimestamp:'0',windows:['300','1800','7200'].map(seconds=>({seconds,available:false,elapsed:'0',priceQ64:'0'}))},
     symbol: ['FIX', 'BOND', 'DUTCH'][index],
     tokenRoot: address(nextAddress++),
     sale: address(nextAddress++),
     lpVault: address(nextAddress++),
+    coverSource:address(nextAddress),
     pool: address(nextAddress++),
     optionAddress: address(nextAddress++),
     perpsMarketId: index + 1,
-    optionSeriesId: `series-${index + 1}`,
+    optionSeriesId: String(index + 1),
     coverPolicyId: `cover-${index + 1}`,
     decimals: 9,
     quoteDecimals: 9,
@@ -134,6 +138,7 @@ const releaseContracts = (markets: ReturnType<typeof releaseMarkets>) => {
     UsdcRoot: address(3),
     UsdtDiscovery: address(4),
     UsdtRoot: address(4),
+    TestnetFaucet: address(5),
   };
   for (const market of markets) {
     const model = `${market.saleModel[0].toUpperCase()}${market.saleModel.slice(1)}`;
@@ -160,8 +165,12 @@ const writeReleaseManifest = (
   markets: ReturnType<typeof releaseMarkets>
 ) => {
   const unsigned = {
-    schema: 'tonswap-testnet-release-v1',
+    schema: 'tonswap-first-release-manifest-v1',
     schemaVersion: 1,
+    candidateDigest:'a'.repeat(64),attemptId:'first-attempt',setup:'ready',lifecycle:'not-run',
+    codeHashes:Object.fromEntries(Object.keys(contracts).map(key=>[key,'b'.repeat(64)])),
+    sourceHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
+    artifactHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
     network: 'ton:testnet',
     releaseId,
     registryHash: hashRegistry(contracts),
@@ -562,7 +571,7 @@ const main = async () => {
     shortContractBody.count -= 1;
     await assertSmokeRejects(
       shortContracts,
-      /contracts payload must contain exactly 62 contracts/,
+      /contracts payload count must match the supplied release manifest/,
       strict.options,
       { corsOrigins: [expectedCorsOrigin] }
     );

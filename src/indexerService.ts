@@ -1,3 +1,9 @@
+import { readDlmmFarmSnapshot, type DlmmFarmSnapshot, type DlmmFarmSnapshotOptions } from './utils/dlmmFarming';
+import {
+  parseSccpBurnedNotification,
+  parseSccpBurnRecord,
+  type TonSccpBurnedNotification
+} from './utils/sccpEvidence';
 import { Address, Cell, TupleItem, beginCell, contractAddress, storeStateInit } from '@ton/core';
 import { EventEmitter } from 'node:events';
 import { Config } from './config';
@@ -11,6 +17,7 @@ import {
   transactionPageReachesHistoryStart
 } from './data/dataSource';
 import { OpcodeSets } from './utils/opcodes';
+import { governanceProposalRange } from './utils/governanceStorage';
 import {
   AccountBalance,
   AccountBalances,
@@ -34,7 +41,7 @@ import {
   parseCanonicalJettonRootData,
   parseCanonicalJettonWalletAddress
 } from './data/jettonAbi';
-import { resolveConfirmedDlmmSwapOutputs } from './utils/dlmmSettlementEvidence';
+import { resolveDlmmPoolSettlementEvidence } from './utils/dlmmSettlementEvidence';
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRunResult = {
@@ -264,7 +271,6 @@ export type TonSccpBurnStatusResponse = {
   } | null;
 };
 
-const SCCP_BURNED_NOTIFICATION_OPCODE = 0x1fd0ab62;
 const SCCP_BURN_STATUS_PAGE_SIZE = 64;
 const SCCP_BURN_STATUS_MAX_PAGES = 8;
 const MAX_UINT32 = (1n << 32n) - 1n;
@@ -346,69 +352,6 @@ const parseCanonicalAddress = (value: string, label: string) => {
     return Address.parse(value).toRawString();
   } catch {
     throw new Error(`${label} is not a valid TON address.`);
-  }
-};
-
-type TonSccpBurnedNotification = {
-  queryId: bigint;
-  messageId: bigint;
-  nonce: bigint;
-};
-
-const parseSccpBurnedNotification = (
-  body: string | undefined,
-  declaredOpcode: number | undefined
-): TonSccpBurnedNotification | null => {
-  if (!body) {
-    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
-      throw new Error('SCCP burned notification body is missing.');
-    }
-    return null;
-  }
-  let roots: Cell[];
-  try {
-    roots = Cell.fromBoc(Buffer.from(body, 'base64'));
-  } catch {
-    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
-      throw new Error('SCCP burned notification body is not a valid BOC.');
-    }
-    return null;
-  }
-  if (roots.length !== 1) {
-    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
-      throw new Error('SCCP burned notification must contain exactly one root cell.');
-    }
-    return null;
-  }
-  const slice = roots[0].beginParse();
-  if (slice.remainingBits < 32) {
-    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
-      throw new Error('SCCP burned notification opcode is truncated.');
-    }
-    return null;
-  }
-  const opcode = slice.loadUint(32);
-  if (opcode !== SCCP_BURNED_NOTIFICATION_OPCODE) {
-    if (declaredOpcode === SCCP_BURNED_NOTIFICATION_OPCODE) {
-      throw new Error('SCCP burned notification opcode metadata does not match its body.');
-    }
-    return null;
-  }
-  if (declaredOpcode !== undefined && declaredOpcode !== opcode) {
-    throw new Error('SCCP burned notification opcode metadata does not match its body.');
-  }
-  try {
-    const notification = {
-      queryId: slice.loadUintBig(64),
-      messageId: slice.loadUintBig(256),
-      nonce: slice.loadUintBig(64),
-    };
-    if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
-      throw new Error('trailing data');
-    }
-    return notification;
-  } catch {
-    throw new Error('SCCP burned notification body has a non-canonical shape.');
   }
 };
 
@@ -618,12 +561,6 @@ const GOVERNANCE_MAX_SCAN_LIMIT = 64;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const GOVERNANCE_SCAN_BATCH_SIZE = 5;
-const FARM_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const FARM_MAX_SCAN_DEFAULT = 20;
-const FARM_MAX_SCAN_LIMIT = 64;
-const FARM_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
-const FARM_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
-const FARM_SCAN_BATCH_SIZE = 5;
 const OPTIONS_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const OPTIONS_MAX_SCAN_DEFAULT = 2_048;
 const OPTIONS_MAX_SCAN_LIMIT = 1_000_000;
@@ -686,47 +623,16 @@ type GovernanceSnapshotResponse = {
   lock: GovernanceLockSnapshot | null;
   proposal_count: number;
   scanned: number;
+  start_id: string;
+  next_start_id: string | null;
+  coverage: { rangeKnown: boolean; pageComplete: boolean; scanComplete: boolean; nextProposalId: string | null; dataHash: string | null; issues: string[] };
   proposals: GovernanceProposalSnapshot[];
   source: 'lite' | 'http4';
   network: Network;
   updated_at: number;
 };
 
-type FarmFactoryStatusSnapshot = {
-  governance: string | null;
-  enabled: boolean;
-};
-
-type FarmSnapshotRecord = {
-  id: string;
-  farm: string | null;
-  staker: string | null;
-  sponsor: string | null;
-  rewardRoot: string | null;
-  rewardWallet: string | null;
-  rewardAmount: string | null;
-  duration: string | null;
-  sponsorFeeBps: string | null;
-  startTime: string | null;
-  endTime: string | null;
-  gasBudget: string | null;
-  status: string | null;
-  createdAt: string | null;
-  backlogLimit: string | null;
-  resumeBacklog: string | null;
-};
-
-type FarmSnapshotResponse = {
-  factory: string;
-  status: FarmFactoryStatusSnapshot | null;
-  next_id: string | null;
-  farm_count: number;
-  scanned: number;
-  farms: FarmSnapshotRecord[];
-  source: 'lite' | 'http4';
-  network: Network;
-  updated_at: number;
-};
+type FarmSnapshotResponse = DlmmFarmSnapshot & { source: 'lite' | 'http4'; network: Network; updated_at: number };
 
 type OptionFactoryStatusSnapshot = {
   governance: string | null;
@@ -885,12 +791,10 @@ type DefiSnapshotRequest = {
     modules?: boolean;
     moduleGovernance?: boolean;
     governance?: boolean;
-    farms?: boolean;
     cover?: boolean;
   };
   options?: {
     governance?: { maxScan?: number; maxMisses?: number };
-    farms?: { maxScan?: number; maxMisses?: number };
     cover?: { maxScan?: number; maxMisses?: number };
   };
   contracts: {
@@ -905,7 +809,6 @@ type DefiSnapshotRequest = {
     anchorGuard?: string | null;
     clusterGuard?: string | null;
     voting?: string | null;
-    farmFactory?: string | null;
     coverManager?: string | null;
   };
   modules?: Array<{
@@ -1140,7 +1043,6 @@ type DefiSnapshotResponse = {
     systemHealthDetailed?: DefiSnapshotSection<SystemHealthDetailedSnapshot>;
     modules?: DefiSnapshotSection<Record<string, ModuleStatusSnapshot | null>>;
     governance?: DefiSnapshotSection<GovernanceSnapshotResponse>;
-    farms?: DefiSnapshotSection<FarmSnapshotResponse>;
     cover?: DefiSnapshotSection<CoverSnapshotResponse>;
   };
 };
@@ -1194,8 +1096,6 @@ export class IndexerService {
   private stateCache: LRUCache<string, { value: any; signature: string }>;
   private governanceSnapshotCache: LRUCache<string, GovernanceSnapshotResponse>;
   private governanceSnapshotInFlight = new Map<string, Promise<GovernanceSnapshotResponse>>();
-  private farmSnapshotCache: LRUCache<string, FarmSnapshotResponse>;
-  private farmSnapshotInFlight = new Map<string, Promise<FarmSnapshotResponse>>();
   private optionsSnapshotCache: LRUCache<string, OptionsSnapshotResponse>;
   private optionsSnapshotInFlight = new Map<string, Promise<OptionsSnapshotResponse>>();
   private coverSnapshotCache: LRUCache<string, CoverSnapshotResponse>;
@@ -1257,11 +1157,6 @@ export class IndexerService {
     this.governanceSnapshotCache = new LRUCache({
       max: 512,
       ttl: GOVERNANCE_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
-    this.farmSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: FARM_SNAPSHOT_CACHE_TTL_MS,
       allowStale: false
     });
     this.optionsSnapshotCache = new LRUCache({
@@ -1898,26 +1793,13 @@ export class IndexerService {
       throw new Error('get_sccp_burn_record returned a malformed record cell.');
     }
 
-    let actualBurnInitiator: string;
-    let actualDestDomain: bigint;
-    let actualRecipient32: bigint;
-    let actualAmount: bigint;
-    let actualNonce: bigint;
-    try {
-      const slice = burnRecordCell.beginParse();
-      const recordInitiator = slice.loadAddress();
-      if (!recordInitiator) throw new Error('missing initiator');
-      actualBurnInitiator = recordInitiator.toRawString();
-      actualDestDomain = slice.loadUintBig(32);
-      actualRecipient32 = slice.loadUintBig(256);
-      actualAmount = slice.loadCoins();
-      actualNonce = slice.loadUintBig(64);
-      if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
-        throw new Error('trailing data');
-      }
-    } catch {
-      throw new Error('get_sccp_burn_record returned a non-canonical record cell.');
-    }
+    const {
+      burnInitiator: actualBurnInitiator,
+      destDomain: actualDestDomain,
+      recipient32: actualRecipient32,
+      amount: actualAmount,
+      nonce: actualNonce
+    } = parseSccpBurnRecord(burnRecordCell);
 
     if (
       actualBurnInitiator !== burnInitiator ||
@@ -2397,7 +2279,7 @@ export class IndexerService {
 
   async getGovernanceSnapshot(
     votingAddress: string,
-    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number } = {}
+    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number; startId?: string | number } = {}
   ): Promise<GovernanceSnapshotResponse> {
     const normalizedVoting = normalizeAddress(votingAddress);
     const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
@@ -2405,14 +2287,9 @@ export class IndexerService {
       1,
       Math.min(GOVERNANCE_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? GOVERNANCE_MAX_SCAN_DEFAULT))
     );
-    const maxConsecutiveMisses = Math.max(
-      1,
-      Math.min(
-        GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT,
-        Math.trunc(options.maxConsecutiveMisses ?? GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT)
-      )
-    );
-    const cacheKey = [normalizedVoting, normalizedOwner ?? '', maxScan, maxConsecutiveMisses].join('|');
+    const firstId = BigInt(options.startId ?? 1);
+    if (firstId < 1n || firstId >= 1n << 64n) throw new Error('start_id must be a positive uint64');
+    const cacheKey = [normalizedVoting, normalizedOwner ?? '', maxScan, firstId.toString()].join('|');
 
     if (this.config.responseCacheEnabled) {
       const cached = this.governanceSnapshotCache.get(cacheKey);
@@ -2422,6 +2299,12 @@ export class IndexerService {
     }
 
     const request = (async () => {
+      // Fetch the persisted monotonic counter. Getter failures are never interpreted as absence.
+      const account = await this.source.getAccountState(normalizedVoting).catch(() => null);
+      const range = governanceProposalRange(account?.dataBoc);
+      const lastId = range ? (range.nextProposalId - 1n < firstId + BigInt(maxScan) - 1n
+        ? range.nextProposalId - 1n : firstId + BigInt(maxScan) - 1n) : firstId + BigInt(maxScan) - 1n;
+      const issues: string[] = range ? [] : ['governance_range_unavailable'];
       let lockResponded = false;
       const lockPromise = (async (): Promise<GovernanceLockSnapshot | null> => {
         if (!normalizedOwner) return null;
@@ -2444,12 +2327,10 @@ export class IndexerService {
 
       const proposals: GovernanceProposalSnapshot[] = [];
       let scanned = 0;
-      let misses = 0;
       let proposalResponded = false;
-
-      outer: for (let startId = 1; startId <= maxScan; startId += GOVERNANCE_SCAN_BATCH_SIZE) {
-        const endId = Math.min(maxScan, startId + GOVERNANCE_SCAN_BATCH_SIZE - 1);
-        const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
+      for (let startId = firstId; startId <= lastId; startId += BigInt(GOVERNANCE_SCAN_BATCH_SIZE)) {
+        const endId = lastId < startId + BigInt(GOVERNANCE_SCAN_BATCH_SIZE) - 1n ? lastId : startId + BigInt(GOVERNANCE_SCAN_BATCH_SIZE) - 1n;
+        const batchIds = Array.from({ length: Number(endId - startId + 1n) }, (_, index) => startId + BigInt(index));
         const batch = await Promise.all(
           batchIds.map((proposalId) =>
             this.runGetMethodSourceCached(normalizedVoting, 'governance_proposal', [
@@ -2465,22 +2346,15 @@ export class IndexerService {
             proposalResponded = true;
           }
           if (!res || res.exitCode !== 0) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) {
-              break outer;
-            }
+            issues.push(`proposal_unavailable:${batchIds[index]}`);
             continue;
           }
           const stack = res.stack;
           const id = tupleItemBigIntString(stack[0]);
-          if (!id) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) {
-              break outer;
-            }
+          if (!id || id !== batchIds[index]!.toString()) {
+            issues.push(`proposal_id_mismatch:${batchIds[index]}`);
             continue;
           }
-          misses = 0;
           proposals.push({
             id,
             status: tupleItemBigIntString(stack[1]),
@@ -2502,7 +2376,7 @@ export class IndexerService {
       }
 
       const lock = await lockPromise;
-      if (!proposalResponded && !lockResponded) {
+      if (!proposalResponded && !lockResponded && !range) {
         throw new Error('Governance snapshot is unavailable from the configured data source.');
       }
 
@@ -2520,6 +2394,11 @@ export class IndexerService {
         lock,
         proposal_count: proposals.length,
         scanned,
+        start_id: firstId.toString(),
+        next_start_id: issues.length ? firstId.toString() : range && lastId + 1n < range.nextProposalId ? (lastId + 1n).toString() : null,
+        coverage: { rangeKnown: Boolean(range), pageComplete: issues.length === 0,
+          scanComplete: issues.length === 0 && Boolean(range) && lastId + 1n >= range!.nextProposalId,
+          nextProposalId: range?.nextProposalId.toString() ?? null, dataHash: range?.dataHash ?? null, issues },
         proposals,
         source,
         network: this.network,
@@ -2542,147 +2421,13 @@ export class IndexerService {
     }
   }
 
-  async getFarmSnapshot(
-    factoryAddress: string,
-    options: { maxScan?: number; maxConsecutiveMisses?: number } = {}
-  ): Promise<FarmSnapshotResponse> {
-    const normalizedFactory = normalizeAddress(factoryAddress);
-    const maxScan = Math.max(1, Math.min(FARM_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? FARM_MAX_SCAN_DEFAULT)));
-    const maxConsecutiveMisses = Math.max(
-      1,
-      Math.min(
-        FARM_MAX_CONSECUTIVE_MISSES_LIMIT,
-        Math.trunc(options.maxConsecutiveMisses ?? FARM_MAX_CONSECUTIVE_MISSES_DEFAULT)
-      )
-    );
-    const cacheKey = [normalizedFactory, maxScan, maxConsecutiveMisses].join('|');
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.farmSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.farmSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = (async () => {
-      const [governanceRes, enabledRes, nextIdRes] = await Promise.all([
-        this.runGetMethodSourceCached(normalizedFactory, 'governance', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedFactory, 'registry_enabled', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedFactory, 'next_farm_id', []).catch(() => null)
-      ]);
-
-      const status =
-        governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
-          ? {
-              governance: tupleItemAddress(governanceRes.stack[0]),
-              enabled: tupleItemBool(enabledRes.stack[0])
-            }
-          : null;
-
-      const nextId = nextIdRes?.exitCode === 0 ? tupleItemBigInt(nextIdRes.stack[0]) : null;
-      const nextIdString = nextId !== null ? nextId.toString(10) : null;
-      const maxKnownFromNextId = nextId && nextId > 1n ? Number(nextId - 1n) : 0;
-      const scanLimit =
-        nextId !== null
-          ? Number.isFinite(maxKnownFromNextId) && maxKnownFromNextId > 0
-            ? Math.min(maxScan, Math.trunc(maxKnownFromNextId))
-            : 0
-          : maxScan;
-
-      const farms: FarmSnapshotRecord[] = [];
-      let scanned = 0;
-      let misses = 0;
-      let farmResponded = false;
-
-      if (scanLimit > 0) {
-        outer: for (let startId = 1; startId <= scanLimit; startId += FARM_SCAN_BATCH_SIZE) {
-          const endId = Math.min(scanLimit, startId + FARM_SCAN_BATCH_SIZE - 1);
-          const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
-          const batch = await Promise.all(
-            batchIds.map((farmId) =>
-              this.runGetMethodSourceCached(normalizedFactory, 'get_farm', [{ type: 'int', value: BigInt(farmId) }]).catch(
-                () => null
-              )
-            )
-          );
-
-          for (let index = 0; index < batch.length; index += 1) {
-            scanned += 1;
-            const res = batch[index];
-            if (res) farmResponded = true;
-            if (!res || res.exitCode !== 0) {
-              misses += 1;
-              if (misses >= maxConsecutiveMisses) break outer;
-              continue;
-            }
-            const stack = res.stack;
-            const farm = tupleItemAddress(stack[0]);
-            if (!farm) {
-              misses += 1;
-              if (misses >= maxConsecutiveMisses) break outer;
-              continue;
-            }
-            misses = 0;
-            const id = batchIds[index];
-            farms.push({
-              id: String(id),
-              farm,
-              staker: tupleItemAddress(stack[1]),
-              sponsor: tupleItemAddress(stack[2]),
-              rewardRoot: tupleItemAddress(stack[3]),
-              rewardWallet: tupleItemAddress(stack[4]),
-              rewardAmount: tupleItemBigIntString(stack[5]),
-              duration: tupleItemBigIntString(stack[6]),
-              sponsorFeeBps: tupleItemBigIntString(stack[7]),
-              startTime: tupleItemBigIntString(stack[8]),
-              endTime: tupleItemBigIntString(stack[9]),
-              gasBudget: tupleItemBigIntString(stack[10]),
-              status: tupleItemBigIntString(stack[11]),
-              createdAt: tupleItemBigIntString(stack[12]),
-              backlogLimit: tupleItemBigIntString(stack[13]),
-              resumeBacklog: tupleItemBigIntString(stack[14])
-            });
-          }
-        }
-      }
-
-      if (!farmResponded && !governanceRes && !enabledRes && !nextIdRes) {
-        throw new Error('Farm snapshot is unavailable from the configured data source.');
-      }
-
-      farms.sort((left, right) => {
-        const leftId = BigInt(left.id);
-        const rightId = BigInt(right.id);
-        if (leftId === rightId) return 0;
-        return leftId > rightId ? 1 : -1;
-      });
-      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-      return {
-        factory: normalizedFactory,
-        status,
-        next_id: nextIdString,
-        farm_count: farms.length,
-        scanned,
-        farms,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000)
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.farmSnapshotInFlight.set(cacheKey, request);
-    }
-
-    try {
-      const result = await request;
-      if (this.config.responseCacheEnabled) {
-        this.farmSnapshotCache.set(cacheKey, result);
-      }
-      return result;
-    } finally {
-      this.farmSnapshotInFlight.delete(cacheKey);
-    }
+  async getFarmSnapshot(poolAddress: string, options: DlmmFarmSnapshotOptions = {}): Promise<FarmSnapshotResponse> {
+    // Read directly: owner reward state changes with time and wallet actions.
+    // A success certifies a complete current page, never a payout settlement.
+    const pool = Address.parse(poolAddress).toRawString();
+    const snapshot = await readDlmmFarmSnapshot(pool, options, (method, args) => this.source.runGetMethod(pool, method, args));
+    return { ...snapshot, source: this.config.dataSource === 'lite' ? 'lite' : 'http4', network: this.network,
+      updated_at: Math.floor(Date.now() / 1000) };
   }
 
   async getOptionsSnapshot(
@@ -3073,7 +2818,6 @@ export class IndexerService {
     const includeModules = include.modules ?? true;
     const includeModuleGovernance = include.moduleGovernance ?? false;
     const includeGovernance = include.governance ?? true;
-    const includeFarms = include.farms ?? true;
     const includeCover = include.cover ?? true;
 
     const normalizedContracts = Object.fromEntries(
@@ -3100,14 +2844,6 @@ export class IndexerService {
       typeof options.governance?.maxMisses === 'number' && Number.isFinite(options.governance.maxMisses)
         ? Math.max(1, Math.trunc(options.governance.maxMisses))
         : undefined;
-    const farmMaxScan =
-      typeof options.farms?.maxScan === 'number' && Number.isFinite(options.farms.maxScan)
-        ? Math.max(1, Math.trunc(options.farms.maxScan))
-        : undefined;
-    const farmMaxMisses =
-      typeof options.farms?.maxMisses === 'number' && Number.isFinite(options.farms.maxMisses)
-        ? Math.max(1, Math.trunc(options.farms.maxMisses))
-        : undefined;
     const coverMaxScan =
       typeof options.cover?.maxScan === 'number' && Number.isFinite(options.cover.maxScan)
         ? Math.max(1, Math.trunc(options.cover.maxScan))
@@ -3127,10 +2863,8 @@ export class IndexerService {
       includeModules ? 'm1' : 'm0',
       includeModuleGovernance ? 'mg1' : 'mg0',
       includeGovernance ? 'g1' : 'g0',
-      includeFarms ? 'f1' : 'f0',
       includeCover ? 'c1' : 'c0',
       `gov:${govMaxScan ?? ''}:${govMaxMisses ?? ''}`,
-      `farm:${farmMaxScan ?? ''}:${farmMaxMisses ?? ''}`,
       `cover:${coverMaxScan ?? ''}:${coverMaxMisses ?? ''}`,
       ...Object.entries(normalizedContracts)
         .sort(([left], [right]) => left.localeCompare(right))
@@ -3665,28 +3399,6 @@ export class IndexerService {
 	              );
 	            } catch (error) {
 	              sections.governance = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeFarms) {
-	        tasks.push(
-	          (async () => {
-	            const factory = normalizedContracts.farmFactory;
-	            if (!factory) {
-	              sections.farms = err('farmFactory missing');
-	              return;
-	            }
-	            try {
-	              sections.farms = ok(
-	                await this.getFarmSnapshot(factory, {
-	                  maxScan: farmMaxScan,
-	                  maxConsecutiveMisses: farmMaxMisses
-	                })
-	              );
-	            } catch (error) {
-	              sections.farms = err(error);
 	            }
 	          })()
 	        );
@@ -4325,14 +4037,14 @@ export class IndexerService {
       base: number;
       quote: number;
     }> = [];
-    const durableSettlementOutputs = resolveConfirmedDlmmSwapOutputs(marketAddress, entry.txs);
+    const poolSettlementEvidence = resolveDlmmPoolSettlementEvidence(marketAddress, entry.txs);
     for (const tx of entry.txs) {
       const swap = this.toSwapExecution(tx);
       if (!swap || swap.status !== 'success') continue;
       const receiveAmount =
         swap.receiveAmountSource === 'actual'
           ? swap.receiveAmount
-          : durableSettlementOutputs.get(swap.txId);
+          : poolSettlementEvidence.get(swap.txId)?.amountOutRaw;
       if (receiveAmount === undefined) continue;
       if (fromUtime !== null && swap.utime < fromUtime) continue;
       if (toUtime !== null && swap.utime > toUtime) continue;
@@ -4741,6 +4453,7 @@ export class IndexerService {
     actions: any[];
     lt: string;
     hash: string;
+    totalFeesRaw?: string;
     inMessage?: IndexedTx['inMessage'];
     outMessages?: IndexedTx['outMessages'];
   } {
@@ -4750,6 +4463,7 @@ export class IndexerService {
       actions: tx.actions,
       lt: tx.lt,
       hash: tx.hash,
+      totalFeesRaw: tx.totalFeesRaw,
       inMessage: tx.inMessage,
       outMessages: tx.outMessages,
     };

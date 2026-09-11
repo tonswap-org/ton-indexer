@@ -28,7 +28,12 @@ import {
   TonSccpBurnProofMaterial,
   TonSccpBurnProofMaterialRequest,
   TonDataSource,
+  TransactionCursor,
 } from './dataSource';
+import {
+  MAX_HISTORICAL_REPLAY_TRANSACTIONS, replayHistoricalAccount, replayBlockContext,
+  verifiedReplayBlock, type HistoricalReplayStep,
+} from './historicalReplay';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 import {
   cellFromAccountCodeBoc,
@@ -399,6 +404,10 @@ const mapMessage = (message: any): RawMessage | undefined => {
     value,
     op,
     body,
+    createdLt: info?.type === 'internal' ? info.createdLt?.toString() : undefined,
+    bounced: info?.type === 'internal' ? info.bounced : undefined,
+    forwardFeeRaw: info?.type === 'internal' ? info.forwardFee?.toString() : undefined,
+    ihrFeeRaw: info?.type === 'internal' ? info.ihrFee?.toString() : undefined,
   };
 };
 
@@ -1044,8 +1053,83 @@ export class LiteClientDataSource implements TonDataSource {
 
   async getAccountState(address: string): Promise<AccountStateResponse> {
     const master = await this.getMasterchainRef();
+    return this.readAccountStateAtBlock(address, master.last);
+  }
+
+  async getAccountStateAtSeqno(address: string, seqno: number): Promise<AccountStateResponse> {
+    if (!Number.isSafeInteger(seqno) || seqno < 0) throw new Error('Invalid archival block');
+    return this.readAccountStateAtBlock(address, (await this.lookupMasterchainBlock(seqno)).id);
+  }
+
+  async getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number): Promise<AccountStateResponse> {
+    if (!Number.isSafeInteger(containingSeqno) || containingSeqno < 1 ||
+        !/^[1-9][0-9]*$/.test(cursor.lt)) throw new Error('Invalid exact archival cursor.');
     const parsed = Address.parse(address);
-    const state = await this.call((client) => client.getAccountState(parsed, master.last));
+    if (parsed.workChain !== 0) throw new Error('Intermediate replay supports basechain accounts only.');
+    const beforeBlock = (await this.lookupMasterchainBlock(containingSeqno - 1)).id;
+    const before = await this.call((client) => client.getAccountStateRaw(parsed, beforeBlock));
+    assertBlockId(before.block, beforeBlock, 'Historical predecessor masterchain block');
+    if (!before.lastTx || before.lastTx.lt >= BigInt(cursor.lt)) {
+      throw new Error('Historical predecessor is not before the requested cursor.');
+    }
+    const accountRoot = parseBoundAccountRoot(before.raw, parsed);
+    const predecessor = beginCell().storeRef(accountRoot)
+      .storeUint(before.lastTx.hash, 256).storeUint(before.lastTx.lt, 64).endCell();
+    const hash = /^[0-9a-f]{64}$/i.test(cursor.hash)
+      ? Buffer.from(cursor.hash, 'hex') : Buffer.from(cursor.hash, 'base64');
+    if (hash.length !== 32) throw new Error('Invalid exact archival hash.');
+    const page = await this.call((client) => client.getAccountTransactions(
+      parsed, cursor.lt, hash, MAX_HISTORICAL_REPLAY_TRANSACTIONS));
+    const roots = Cell.fromBoc(page.transactions);
+    if (!roots.length || roots.length !== page.ids.length || !roots[0].hash().equals(hash)) {
+      throw new Error('Historical transaction page identity mismatch.');
+    }
+    const selected: { transaction: Cell; blockId: LiteBlockId }[] = [];
+    let complete = false;
+    for (let index = 0; index < roots.length; index++) {
+      const tx = loadTransaction(roots[index].beginParse());
+      selected.push({ transaction: roots[index], blockId: page.ids[index] });
+      if (tx.prevTransactionLt === before.lastTx.lt && tx.prevTransactionHash === before.lastTx.hash) {
+        complete = true; break;
+      }
+    }
+    if (!complete) throw new Error('Historical transaction replay exceeds its bounded predecessor segment.');
+    const contexts = new Map<string, { block: Cell; config: Cell }>();
+    const steps: HistoricalReplayStep[] = [];
+    for (const item of selected.reverse()) {
+      const key = item.blockId.rootHash.toString('hex');
+      let context = contexts.get(key);
+      if (!context) {
+        const blockResponse = await this.getBlockData(item.blockId);
+        assertBlockId(blockResponse.id, item.blockId, 'Historical shard block');
+        const block = verifiedReplayBlock(blockResponse.data, item.blockId);
+        const { masterRef } = replayBlockContext(block);
+        const [masterResponse, configResponse] = await Promise.all([
+          this.getBlockData(masterRef), this.getMasterchainConfigProof(masterRef),
+        ]);
+        assertBlockId(masterResponse.id, masterRef, 'Historical config masterchain block');
+        assertBlockId(configResponse.id, masterRef, 'Historical config response');
+        const master = verifiedReplayBlock(masterResponse.data, masterRef);
+        const stateProof = parseMerkleProofRoots(configResponse.stateProof, 1, 'Historical config block proof')[0];
+        assertBlockProofRoot(stateProof, masterRef, 'Historical config block proof');
+        const configRoot = parseMerkleProofRoots(configResponse.configProof, 1, 'Historical config state proof')[0].refs[0];
+        if (master.refs[2]?.type !== CellType.MerkleUpdate ||
+            !master.refs[2].refs[1].hash(0).equals(configRoot.hash(0))) {
+          throw new Error('Historical config is not committed by its masterchain block.');
+        }
+        const state = loadShardStateUnsplit(configRoot.beginParse());
+        if (state.seqno !== masterRef.seqno || !state.extras) throw new Error('Historical config state identity.');
+        context = { block, config: beginCell().storeDictDirect(state.extras.config).endCell() };
+        contexts.set(key, context);
+      }
+      steps.push({ transaction: item.transaction, ...context });
+    }
+    return replayHistoricalAccount({ address: parsed, cursor, predecessor, steps });
+  }
+
+  private async readAccountStateAtBlock(address: string, block: LiteBlockId): Promise<AccountStateResponse> {
+    const parsed = Address.parse(address);
+    const state = await this.call((client) => client.getAccountState(parsed, block));
     const lastTx = state.lastTx;
     const account = state.state ?? null;
     const storageState = account?.storage?.state;
@@ -1100,6 +1184,7 @@ export class LiteClientDataSource implements TonDataSource {
         success: statusInfo.success,
         status: statusInfo.status,
         reason: statusInfo.reason,
+        totalFeesRaw: tx.totalFees.coins.toString(),
         inMessage: mapMessage(tx.inMessage ? tx.inMessage : undefined),
         outMessages: Array.from(tx.outMessages.values()).map(mapMessage).filter(Boolean) as RawMessage[],
       };

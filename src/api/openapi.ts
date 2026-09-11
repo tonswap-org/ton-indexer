@@ -1,4 +1,5 @@
 import { Config } from '../config';
+import { ledgerPaths, ledgerSchemas } from '../ledger/openapi';
 
 export const buildOpenApi = (config: Config) => {
   const serviceId = config.serviceId?.trim() || 'ti.soramitsu.io';
@@ -42,6 +43,7 @@ export const buildOpenApi = (config: Config) => {
         },
       },
       schemas: {
+        ...ledgerSchemas,
         ErrorResponse: {
           type: 'object',
           properties: { error: { type: 'string' }, code: { type: 'string' } },
@@ -349,6 +351,7 @@ export const buildOpenApi = (config: Config) => {
         TxEntry: {
           type: 'object',
           properties: {
+            totalFeesRaw: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
             txId: { type: 'string' },
             utime: { type: 'integer' },
             status: { type: 'string' },
@@ -925,6 +928,12 @@ export const buildOpenApi = (config: Config) => {
             },
             proposal_count: { type: 'integer' },
             scanned: { type: 'integer' },
+            start_id: { type: 'string' },
+            next_start_id: { type: ['string', 'null'] },
+            coverage: { type: 'object', properties: {
+              rangeKnown: { type: 'boolean' }, pageComplete: { type: 'boolean' }, scanComplete: { type: 'boolean' },
+              nextProposalId: { type: ['string', 'null'] }, dataHash: { type: ['string', 'null'] }, issues: { type: 'array', items: { type: 'string' } },
+            }, required: ['rangeKnown', 'pageComplete', 'scanComplete', 'nextProposalId', 'dataHash', 'issues'] },
             proposals: {
               type: 'array',
               items: { $ref: '#/components/schemas/GovernanceProposalResponse' },
@@ -933,54 +942,31 @@ export const buildOpenApi = (config: Config) => {
             network: { type: 'string' },
             updated_at: { type: 'integer' },
           },
-          required: ['voting', 'proposal_count', 'scanned', 'proposals', 'source', 'network', 'updated_at'],
-        },
-        FarmFactoryStatusResponse: {
-          type: 'object',
-          properties: {
-            governance: { type: ['string', 'null'] },
-            enabled: { type: 'boolean' },
-          },
-          required: ['enabled'],
+          required: ['voting', 'proposal_count', 'scanned', 'start_id', 'next_start_id', 'coverage', 'proposals', 'source', 'network', 'updated_at'],
         },
         FarmSnapshotRecordResponse: {
           type: 'object',
           properties: {
-            id: { type: 'string' },
-            farm: { type: ['string', 'null'] },
-            staker: { type: ['string', 'null'] },
-            sponsor: { type: ['string', 'null'] },
-            rewardRoot: { type: ['string', 'null'] },
-            rewardWallet: { type: ['string', 'null'] },
-            rewardAmount: { type: ['string', 'null'] },
-            duration: { type: ['string', 'null'] },
-            sponsorFeeBps: { type: ['string', 'null'] },
-            startTime: { type: ['string', 'null'] },
-            endTime: { type: ['string', 'null'] },
-            gasBudget: { type: ['string', 'null'] },
-            status: { type: ['string', 'null'] },
-            createdAt: { type: ['string', 'null'] },
-            backlogLimit: { type: ['string', 'null'] },
-            resumeBacklog: { type: ['string', 'null'] },
+            id: { type: 'string' }, sponsor: { type: 'string' }, binId: { type: 'integer' },
+            rewardSide: { type: 'integer', enum: [0, 1] },
+            ...Object.fromEntries(['totalReward', 'startTime', 'endTime', 'totalStaked', 'allocatedReward', 'claimedReward', 'refundedReward', 'cancelledAt'].map(key => [key, { type: 'string' }])),
+            user: { type: ['object', 'null'], properties: Object.fromEntries(['shares', 'claimable', 'claimed', 'lastSettlementId'].map(key => [key, { type: 'string' }])) },
           },
-          required: ['id'],
+          required: ['id', 'sponsor', 'binId', 'rewardSide', 'totalReward', 'startTime', 'endTime', 'totalStaked', 'allocatedReward', 'claimedReward', 'refundedReward', 'cancelledAt', 'user'],
         },
         FarmSnapshotResponse: {
           type: 'object',
           properties: {
-            factory: { type: 'string' },
-            status: {
-              oneOf: [{ $ref: '#/components/schemas/FarmFactoryStatusResponse' }, { type: 'null' }],
-            },
-            next_id: { type: ['string', 'null'] },
-            farm_count: { type: 'integer' },
-            scanned: { type: 'integer' },
-            farms: { type: 'array', items: { $ref: '#/components/schemas/FarmSnapshotRecordResponse' } },
-            source: { type: 'string' },
-            network: { type: 'string' },
-            updated_at: { type: 'integer' },
+            pool: { type: 'string' }, owner: { type: ['string', 'null'] },
+            config: { type: 'object', properties: {
+              version: { type: 'integer', const: 1 },
+              ...Object.fromEntries(['nextCampaignId', 'maxDuration', 'escrowT', 'escrowX'].map(key => [key, { type: 'string' }])),
+            }, required: ['version', 'nextCampaignId', 'maxDuration', 'escrowT', 'escrowX'] },
+            start_id: { type: 'string' }, next_start_id: { type: ['string', 'null'] },
+            campaigns: { type: 'array', items: { $ref: '#/components/schemas/FarmSnapshotRecordResponse' } },
+            source: { type: 'string' }, network: { type: 'string' }, updated_at: { type: 'integer' },
           },
-          required: ['factory', 'farm_count', 'scanned', 'farms', 'source', 'network', 'updated_at'],
+          required: ['pool', 'owner', 'config', 'start_id', 'next_start_id', 'campaigns', 'source', 'network', 'updated_at'],
         },
         OptionFactoryStatusResponse: {
           type: 'object',
@@ -1137,6 +1123,7 @@ export const buildOpenApi = (config: Config) => {
       },
     },
     paths: {
+      ...ledgerPaths,
       '/api/indexer/v1/health': {
         get: {
           summary: 'Health check',
@@ -1602,6 +1589,7 @@ export const buildOpenApi = (config: Config) => {
           parameters: [
             { name: 'voting', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'owner', in: 'query', schema: { type: 'string' } },
+            { name: 'start_id', in: 'query', schema: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' } },
             { name: 'max_scan', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
             { name: 'max_misses', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8 } },
           ],
@@ -1619,25 +1607,19 @@ export const buildOpenApi = (config: Config) => {
           },
         },
       },
-      '/api/indexer/v1/farms/{factory}/snapshot': {
+      '/api/indexer/v1/pools/{pool}/farms': {
         get: {
-          summary: 'Farm factory snapshot',
+          summary: 'Native DLMM pool farming campaigns',
+          description: 'Current bounded on-chain observations. Amounts and IDs are atomic decimal strings. claimedReward records committed payouts; inspect the original settlement before asserting delivery.',
           parameters: [
-            { name: 'factory', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'max_scan', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
-            { name: 'max_misses', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8 } },
+            { name: 'pool', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'owner', in: 'query', schema: { type: 'string' } },
+            { name: 'start_id', in: 'query', schema: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
           ],
           responses: {
-            200: {
-              description: 'Farm snapshot response',
-              content: {
-                'application/json': { schema: { $ref: '#/components/schemas/FarmSnapshotResponse' } },
-              },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
+            200: { description: 'Complete campaign page', content: { 'application/json': { schema: { $ref: '#/components/schemas/FarmSnapshotResponse' } } } },
+            400: { description: 'Invalid request or unavailable/malformed on-chain state', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           },
         },
       },

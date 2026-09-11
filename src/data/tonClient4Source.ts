@@ -313,6 +313,10 @@ const mapMessage = (message: any): RawMessage | undefined => {
     value,
     op,
     body: message.body ?? undefined,
+    createdLt: info?.type === 'internal' ? info.createdLt : undefined,
+    bounced: info?.type === 'internal' ? info.bounced : undefined,
+    forwardFeeRaw: info?.type === 'internal' ? info.fwdFee : undefined,
+    ihrFeeRaw: info?.type === 'internal' ? info.ihrFee : undefined,
   };
 };
 
@@ -377,6 +381,11 @@ export class TonClient4DataSource implements TonDataSource {
     const parsed = Address.parse(address);
     const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
     return this.mapAccountStateResponse(account);
+  }
+
+  async getAccountStateAtSeqno(address: string, seqno: number): Promise<AccountStateResponse> {
+    if (!Number.isSafeInteger(seqno) || seqno < 0) throw new Error('Invalid archival block');
+    return this.mapAccountStateResponse(await this.call(client => client.getAccount(seqno, Address.parse(address))));
   }
 
   async getAccountStateLite(address: string): Promise<AccountStateResponse> {
@@ -456,6 +465,7 @@ export class TonClient4DataSource implements TonDataSource {
         utime: tx.time,
         success: status === 'success',
         status,
+        totalFeesRaw: typeof tx.fees === 'string' && /^(0|[1-9]\d*)$/.test(tx.fees) ? tx.fees : undefined,
         inMessage: mapMessage(tx.inMessage),
         outMessages: (tx.outMessages ?? []).map(mapMessage).filter(Boolean),
       };

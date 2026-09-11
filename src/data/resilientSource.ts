@@ -4,6 +4,7 @@ import {
   AccountStateResponse,
   MasterchainInfo,
   RawTransaction,
+  TransactionCursor,
   TonSccpBurnProofMaterial,
   TonSccpBurnProofMaterialRequest
 } from './dataSource';
@@ -101,6 +102,15 @@ export class ResilientTonDataSource implements TonDataSource {
     throw new Error(`Transactions unavailable for ${address}`);
   }
 
+  async getAccountStateAtSeqno(address: string, seqno: number): Promise<AccountStateResponse> {
+    for (const source of [this.primary, this.fallback]) {
+      if (!source.getAccountStateAtSeqno) continue;
+      const result = await callSafely(() => source.getAccountStateAtSeqno!(address, seqno));
+      if (result && (result.accountState !== 'active' || hasStateCellData(result))) return result;
+    }
+    throw new Error('Archival account state is unavailable.');
+  }
+
   async runGetMethod(address: string, method: string, args: TupleItem[] = []): Promise<RunGetMethodResult> {
     const primary = await callSafely(() => this.primary.runGetMethod(address, method, args));
     if (isGetterSuccess(primary)) return primary;
@@ -109,6 +119,15 @@ export class ResilientTonDataSource implements TonDataSource {
     if (isGetterSuccess(secondary)) return secondary;
 
     return primary ?? secondary ?? null;
+  }
+
+  async getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number): Promise<AccountStateResponse> {
+    for (const source of [this.primary, this.fallback]) {
+      if (!source.getAccountStateAtTransaction) continue;
+      const result = await callSafely(() => source.getAccountStateAtTransaction!(address, cursor, containingSeqno));
+      if (result && (result.accountState !== 'active' || hasStateCellData(result))) return result;
+    }
+    throw new Error('Exact intermediate account state is unavailable.');
   }
 
   async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {

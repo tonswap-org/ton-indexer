@@ -18,6 +18,8 @@ assert.ok(spec.paths['/api/indexer/v1/health']);
 assert.ok(spec.paths['/api/indexer/v1/contracts']);
 assert.ok(spec.paths['/api/indexer/v1/service-info']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs']);
+assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/ledger']);
+assert.ok(spec.components.schemas.LedgerEvent.properties.movements);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs'].get.responses[503]);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/swaps']);
 assert.ok(spec.paths['/api/indexer/v1/markets/{market}/candles']);
@@ -25,7 +27,7 @@ assert.ok(spec.paths['/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload'
 assert.ok(spec.paths['/api/indexer/v1/perps/{engine}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/vol-index/{volIndex}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/governance/{voting}/snapshot']);
-assert.ok(spec.paths['/api/indexer/v1/farms/{factory}/snapshot']);
+assert.ok(spec.paths['/api/indexer/v1/pools/{pool}/farms']);
 assert.ok(spec.paths['/api/indexer/v1/options/{factory}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/cover/{manager}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/openapi.json']);

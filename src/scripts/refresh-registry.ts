@@ -64,7 +64,6 @@ const mapping: Record<string, string | null | undefined> = {
   BuybackExecutor: moduleAddresses.BuybackExecutor,
   SaleFactory: moduleAddresses.SaleFactory,
   BootstrapFactory: moduleAddresses.BootstrapFactory,
-  FarmFactory: moduleAddresses.FarmFactory,
   Voting: moduleAddresses.Voting,
   AutomationRegistry: moduleAddresses.AutomationRegistry,
   AutomationJobQueue: moduleAddresses.AutomationJobQueue,
@@ -83,6 +82,7 @@ const next: Record<string, string> = { ...existing };
 // Remove legacy demo values that were previously populated from tmp_debug.
 delete next.DlmmTokenX;
 delete next.DlmmPool;
+for (const retired of ['FarmFactory', 'Farm', 'FarmStaker', 'FarmReceiptWallet']) delete next[retired];
 for (const [key, value] of Object.entries(mapping)) {
   if (value) next[key] = value;
 }

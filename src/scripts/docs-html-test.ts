@@ -12,7 +12,7 @@ assert.ok(html.includes('/api/indexer/v1/markets/spot:T3-X/candles'));
 assert.ok(html.includes('/api/indexer/v1/perps/{addr}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/vol-index/{addr}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/governance/{voting}/snapshot'));
-assert.ok(html.includes('/api/indexer/v1/farms/{factory}/snapshot'));
+assert.ok(html.includes('/api/indexer/v1/pools/{pool}/farms'));
 assert.ok(html.includes('/api/indexer/v1/options/{factory}/snapshot'));
 assert.ok(html.includes('/api/indexer/v1/cover/{manager}/snapshot'));
 assert.equal(html.includes('<option value="/api/indexer/v1/debug">'), false);

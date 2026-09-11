@@ -1,0 +1,21 @@
+{
+  "network": "ton:localnet",
+  "run": "tonswap-v1-20260906-a53q43-r18",
+  "qualificationAuthority": false,
+  "description": "Public chain data only. Recovered read-only from isolated archived validator DB with no validators or external outbound network. Original OPEN old_hash and full replay transaction/new Account hashes match. No signer or private transport material.",
+  "predecessorMasterchainSeqno": 6416,
+  "containingMasterchainSeqno": 8102,
+  "targetLt": "8218000007",
+  "targetHash": "fcea058440650d76d95713d7bbb9a8949b121681924bfc0ee8c7ab2974e9aa5e",
+  "files": {
+    "predecessor.boc": "80d7c43c21027b08c3a70e40187ce61ef85b60bc9d224c5a457cc11d85fbce0b",
+    "shard-block.boc": "295555cab1bfa428aa8ffbe1304875e8d20a2e7f127420dca05a89a760492bf3",
+    "config.boc": "29dd2590c270142d39ab745dedadd5126c4068531cac4ad577a8600d10c73f28",
+    "tx-8218000007.boc": "38361da9d86164758f7c49ce91295db02aaa699a3ba7c10c33105320fd00209f",
+    "tx-8218000012.boc": "6645c82a5723c0b71853f1fd430163b9d834c4b11620e6178cbdfc6b949b7576",
+    "tx-8218000014.boc": "52de3ca150cfbd05e9d76a255c95ff9a6656cb098cbc18fd2fabbf1b6634b727",
+    "tx-8218000015.boc": "7bc5c8d4465db3877974f0ec9aaa8363599c53d1f3e7dd66c01025c158f667f0",
+    "tx-8218000019.boc": "e7b0cf31f0772976f6179fc48b846a70b5f553489455be7f787a8cdceac596e8",
+    "transactions.json": "92876af74e37a3aa3b11b81f34db5e5404f8fe9fdaebe78e63f42eb07e290d28"
+  }
+}
