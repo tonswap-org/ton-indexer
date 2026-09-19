@@ -12,7 +12,9 @@ Usage: scripts/audit-deployment-evidence.sh [--evidence <path>] [--mainnet-regis
 
 Validates production deployment evidence. The default audit allows the current
 blocked state, but rejects any ready/release-enabled claim unless the deployment
-manifest records a Docker image digest and successful live production smoke.
+manifest records a Docker image digest, successful live production smoke, and
+the current release commit. Set DEPLOYMENT_EVIDENCE_EXPECTED_COMMIT to validate
+evidence for a specific release commit instead of the local repository HEAD.
 USAGE
 }
 
@@ -49,10 +51,11 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-node - "$EVIDENCE_FILE" "$REQUIRE_READY" "$MAINNET_REGISTRY_FILE" <<'NODE'
+node - "$EVIDENCE_FILE" "$REQUIRE_READY" "$MAINNET_REGISTRY_FILE" "$ROOT_DIR" <<'NODE'
 const fs = require('fs');
+const childProcess = require('child_process');
 
-const [evidenceFile, requireReadyRaw, mainnetRegistryFile] = process.argv.slice(2);
+const [evidenceFile, requireReadyRaw, mainnetRegistryFile, rootDir] = process.argv.slice(2);
 const requireReady = requireReadyRaw === 'true';
 const errors = [];
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -231,6 +234,38 @@ function isFutureTimestamp(value) {
 function timestampMillis(value) {
   const millis = Date.parse(value);
   return Number.isFinite(millis) ? millis : null;
+}
+
+function expectedReleaseCommitResult() {
+  const configured = String(process.env.DEPLOYMENT_EVIDENCE_EXPECTED_COMMIT || '').trim();
+  if (configured.length > 0) {
+    if (!/^[0-9a-f]{40}$/i.test(configured)) {
+      return {
+        commit: null,
+        error: 'DEPLOYMENT_EVIDENCE_EXPECTED_COMMIT must be a 40-character git commit'
+      };
+    }
+    return { commit: configured.toLowerCase(), error: null };
+  }
+
+  try {
+    const commit = childProcess.execFileSync('git', ['-C', rootDir, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim();
+    if (!/^[0-9a-f]{40}$/i.test(commit)) {
+      return {
+        commit: null,
+        error: `git rev-parse HEAD returned an invalid commit: ${commit}`
+      };
+    }
+    return { commit: commit.toLowerCase(), error: null };
+  } catch (error) {
+    return {
+      commit: null,
+      error: `could not determine repository HEAD: ${error.message}`
+    };
+  }
 }
 
 function isRepeatedHexPlaceholder(value) {
@@ -412,6 +447,7 @@ function inspectTonMainnetRegistry(file) {
 const manifest = readJson(evidenceFile);
 let contract = null;
 let registryInspection = null;
+const expectedReleaseCommit = expectedReleaseCommitResult();
 
 if (manifest) {
   const secretLikePath = secretLikeKeyReason(manifest);
@@ -596,6 +632,13 @@ if (manifest) {
     }
     if (isRepeatedHexPlaceholder(entry.commit)) {
       fail(`deploymentEvidence[${index}].commit must not be a placeholder git commit`);
+    }
+    if (readyClaimed) {
+      if (expectedReleaseCommit.error) {
+        fail(`expected release commit ${expectedReleaseCommit.error}`);
+      } else if (String(entry.commit || '').toLowerCase() !== expectedReleaseCommit.commit) {
+        fail(`deploymentEvidence[${index}].commit must match expected release commit ${expectedReleaseCommit.commit}`);
+      }
     }
 
     if (!/^sha256:[0-9a-f]{64}$/i.test(String(entry.imageDigest || ''))) {

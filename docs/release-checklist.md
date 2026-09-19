@@ -27,14 +27,17 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
   `npm run test:deployment-evidence-audit` and
   `npm run audit:deployment-evidence`. Before declaring the deployment
   production-ready, use the generated template to prepare the evidence manifest,
-  then record the deployed image digest, deployment ID, tagged commit, operator,
-  UTC smoke timestamp, the production `/api/indexer/v1/service-info` identity
-  payload, and exact
+  then record the deployed image digest, deployment ID, current release commit,
+  operator, UTC smoke timestamp, the production `/api/indexer/v1/service-info`
+  identity payload, and exact
   `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
   result in `scripts/production-deployment-evidence.json`, set
   `status: ready` and `releaseEnabled: true`, and rerun
-  `npm run audit:deployment-evidence -- --require-ready`. The ready audit also
-  rejects placeholder, incomplete, or malformed mainnet registry values.
+  `npm run audit:deployment-evidence -- --require-ready`. If release tooling is
+  validating a tagged commit rather than the local checkout `HEAD`, set
+  `DEPLOYMENT_EVIDENCE_EXPECTED_COMMIT` to that 40-character commit. The ready
+  audit also rejects placeholder, incomplete, or malformed mainnet registry
+  values.
 - Run or confirm green CI for branch-flow audit, public artifact audit,
   TODO-debt audit, install, production dependency audit, tests, build, Docker
   image build, and OpenAPI smoke.
