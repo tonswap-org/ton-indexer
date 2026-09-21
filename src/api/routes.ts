@@ -25,14 +25,12 @@ import {
   optionsSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
   volIndexSnapshotQuerySchema,
-  tonSccpBurnStatusQuerySchema,
-  tonSccpBurnProofQuerySchema,
   swapQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
-import { publicErrorMessage, sendError } from './errors';
+import { publicAdmissionError, publicErrorMessage, sendError } from './errors';
 
 const BALANCE_STREAM_POLL_MS = 1_500;
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
@@ -66,25 +64,6 @@ type RoutesConfig = {
   adminToken?: string;
 };
 
-type IndexedTxMessageCompat = {
-  source?: string;
-  destination?: string;
-  value?: string;
-  op?: number;
-  body?: string;
-};
-
-type IndexedTxCompat = {
-  txId?: string;
-  lt?: string;
-  hash?: string;
-  utime?: number;
-  status?: 'success' | 'failed' | 'pending';
-  reason?: string;
-  inMessage?: IndexedTxMessageCompat;
-  outMessages?: IndexedTxMessageCompat[];
-};
-
 const decodeCanonicalBase64 = (input: string): Buffer | null => {
   if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(input)) return null;
   if (/[+/]/.test(input) && /[-_]/.test(input)) return null;
@@ -101,21 +80,6 @@ const decodeCanonicalBase64 = (input: string): Buffer | null => {
     return decoded;
   } catch {
     return null;
-  }
-};
-
-const equalBase64Bytes = (left: string, right: string) => {
-  const leftBytes = decodeCanonicalBase64(left);
-  const rightBytes = decodeCanonicalBase64(right);
-  return Boolean(leftBytes && rightBytes && leftBytes.equals(rightBytes));
-};
-
-const equalLogicalTime = (left: string, right: string) => {
-  if (!isValidLt(left) || !isValidLt(right)) return false;
-  try {
-    return BigInt(left) === BigInt(right);
-  } catch {
-    return false;
   }
 };
 
@@ -265,7 +229,6 @@ const getAdminToken = (request: FastifyRequest) => {
   return match?.[1];
 };
 
-const HEX_256_RE = /^0x[0-9a-fA-F]{64}$/;
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -301,57 +264,6 @@ const uniqueRpcEndpoints = (endpoints: string[]) => {
   }
   out.sort((left, right) => rankRpcEndpoint(left) - rankRpcEndpoint(right));
   return out;
-};
-
-const mapIndexerMessageToToncenter = (message?: IndexedTxMessageCompat | null) => {
-  if (!message || typeof message !== 'object') return null;
-  const mapped: Record<string, unknown> = {};
-  if (typeof message.source === 'string' && message.source) mapped.source = message.source;
-  if (typeof message.destination === 'string' && message.destination) mapped.destination = message.destination;
-  if (typeof message.value === 'string' && message.value) mapped.value = message.value;
-  if (typeof message.body === 'string' && message.body) {
-    mapped.msg_data = { body: message.body };
-  }
-  return mapped;
-};
-
-const mapIndexerStatusToToncenterDescription = (status?: string, reason?: string) => {
-  if (status === 'success') {
-    return {
-      aborted: false,
-      compute_ph: { success: true, exit_code: 0 },
-      action: { success: true, valid: true, result_code: 0 }
-    };
-  }
-  if (status === 'failed') {
-    return {
-      aborted: false,
-      compute_ph: { type: 'skipped', reason: reason ?? 'Transaction failed.' },
-      action: { success: false, valid: false, result_code: 1 }
-    };
-  }
-  return undefined;
-};
-
-const mapIndexerTxToToncenterTransaction = (entry: IndexedTxCompat) => {
-  const txIdRaw = typeof entry.txId === 'string' ? entry.txId : null;
-  const split = txIdRaw && txIdRaw.includes(':') ? txIdRaw.split(':') : null;
-  const lt = readString(entry.lt) ?? (split ? readString(split[0]) : null) ?? '';
-  const hash = readString(entry.hash) ?? (split ? readString(split[1]) : null) ?? '';
-  const inMsg = mapIndexerMessageToToncenter(entry.inMessage ?? null) ?? undefined;
-  const outMsgs = Array.isArray(entry.outMessages)
-    ? entry.outMessages
-        .map((message) => mapIndexerMessageToToncenter(message))
-        .filter((message): message is Record<string, unknown> => Boolean(message))
-    : [];
-
-  return {
-    transaction_id: { lt, hash },
-    utime: typeof entry.utime === 'number' ? entry.utime : undefined,
-    in_msg: inMsg,
-    out_msgs: outMsgs,
-    description: mapIndexerStatusToToncenterDescription(entry.status, entry.reason)
-  };
 };
 
 const mapConcurrent = async <T, R>(
@@ -439,6 +351,10 @@ export const registerRoutes = (
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
   const contractMap = Object.fromEntries(contractEntries);
   const canonicalMarkets = registryMetadata?.markets ?? [];
+  const canonicalCandleMarkets = [
+    ...(registryMetadata?.spotMarkets ?? []),
+    ...canonicalMarkets.map(market => ({ ...market, marketKey: market.perpsCandleMarketKey, marketAddress: market.perpsPool })),
+  ];
   const rawAddress = (value: string) => {
     try {
       return Address.parse(value).toRawString();
@@ -450,7 +366,7 @@ export const registerRoutes = (
   const requireAdmin = (
     request: FastifyRequest,
     reply: FastifyReply,
-    disabledCode: 'snapshot_disabled' | 'debug_disabled',
+    disabledCode: 'snapshot_disabled' | 'debug_disabled' | 'metrics_disabled',
     disabledMessage: string
   ) => {
     if (!adminToken) {
@@ -530,10 +446,13 @@ export const registerRoutes = (
 
   app.get('/', async () => ({ status: 'ok' }));
 
-  app.get('/api/indexer/v1/health', async () => {
+  app.get('/api/indexer/v1/health', async (_request, reply) => {
+    const admission = service.getAdmissionStatus();
+    if (admission.configured && !admission.ready) reply.status(503);
     return {
       ...service.getHealth(),
-      ...serviceIdentity
+      ...serviceIdentity,
+      admission
     };
   });
 
@@ -553,9 +472,10 @@ export const registerRoutes = (
   const sendToncenterCompat = <T>(
     reply: FastifyReply,
     payload: ToncenterRpcCompatResponse<T>,
-    id?: number | string | null
+    id?: number | string | null,
+    status = 200
   ) => {
-    reply.code(200);
+    reply.code(status);
     return reply.send({
       id: id ?? 1,
       jsonrpc: '2.0',
@@ -809,84 +729,6 @@ export const registerRoutes = (
     return lastError;
   };
 
-  const collectIndexedTransactions = async (
-    address: string,
-    limit: number,
-    lt?: string | null,
-    hash?: string | null
-  ): Promise<IndexedTxCompat[]> => {
-    const defaultPageSize = Math.max(1, Math.trunc(config.pageSize ?? 10));
-    const txs: IndexedTxCompat[] = [];
-    const seen = new Set<string>();
-    const appendUnique = (entries: IndexedTxCompat[]) => {
-      let added = 0;
-      for (const entry of entries) {
-        const entryLt = readString(entry.lt);
-        const entryHash = readString(entry.hash);
-        const key = entryLt && entryHash ? `${entryLt}:${entryHash}` : readString(entry.txId);
-        if (key && seen.has(key)) continue;
-        if (key) seen.add(key);
-        txs.push(entry);
-        added += 1;
-        if (txs.length >= limit) break;
-      }
-      return added;
-    };
-
-    if (lt && hash) {
-      let cursorLt = lt;
-      let cursorHash = hash;
-      let pageSize = defaultPageSize;
-      const maxRequests = Math.max(1, Math.ceil(limit / Math.max(1, pageSize - 1)) + 2);
-      for (let requestIndex = 0; requestIndex < maxRequests && txs.length < limit; requestIndex += 1) {
-        const response = await service.getTransactionsByCursor(address, cursorLt, cursorHash);
-        const entries = (response?.txs ?? []) as IndexedTxCompat[];
-        if (entries.length === 0) break;
-        const inclusiveLt = readString(entries[0]?.lt);
-        const inclusiveHash = readString(entries[0]?.hash);
-        if (
-          !inclusiveLt ||
-          !equalLogicalTime(inclusiveLt, cursorLt) ||
-          !inclusiveHash ||
-          !equalBase64Bytes(inclusiveHash, cursorHash)
-        ) {
-          // Toncenter's account cursor is exact and inclusive. The REST store
-          // intentionally supports lower-bound cursors, so enforce exactness
-          // only in this compatibility adapter.
-          break;
-        }
-        pageSize =
-          typeof response?.page_size === 'number' && Number.isFinite(response.page_size) && response.page_size > 0
-            ? Math.trunc(response.page_size)
-            : pageSize;
-        const added = appendUnique(entries);
-        const last = entries[entries.length - 1];
-        const lastLt = readString(last?.lt);
-        const lastHash = readString(last?.hash);
-        if (!lastLt || !lastHash || entries.length < pageSize) break;
-        if (lastLt === cursorLt && lastHash === cursorHash) break;
-        if (added === 0) break;
-        cursorLt = lastLt;
-        cursorHash = lastHash;
-      }
-      return txs;
-    }
-
-    const maxPages = Math.max(1, Math.ceil(limit / defaultPageSize) + 1);
-    for (let page = 1; page <= maxPages && txs.length < limit; page += 1) {
-      const response = await service.getTransactions(address, page);
-      const entries = (response?.txs ?? []) as IndexedTxCompat[];
-      if (entries.length === 0) break;
-      const pageSize =
-        typeof response?.page_size === 'number' && Number.isFinite(response.page_size) && response.page_size > 0
-          ? Math.trunc(response.page_size)
-          : defaultPageSize;
-      appendUnique(entries);
-      if (entries.length < pageSize) break;
-    }
-    return txs;
-  };
-
   const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
     const body = asRecord(request.body);
     const method = readString(body?.method);
@@ -1010,8 +852,7 @@ export const registerRoutes = (
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid cursor' }, id);
         }
 
-        const indexedTxs = await collectIndexedTransactions(address, limit, lt, hash);
-        const txs = indexedTxs.map((entry: IndexedTxCompat) => mapIndexerTxToToncenterTransaction(entry));
+        const txs = await service.getTransactionEvidence(address, limit, lt ?? undefined, hash ?? undefined);
         return sendToncenterCompat(reply, { ok: true, result: txs }, id);
       }
 
@@ -1022,6 +863,8 @@ export const registerRoutes = (
 
       return sendToncenterCompat(reply, { ok: false, code: 404, error: `unsupported method: ${method}` }, id);
     } catch (error) {
+      const admission = publicAdmissionError(error);
+      if (admission) return sendToncenterCompat(reply, { ok: false, code: admission.status, error: admission.code }, id, admission.status);
       return sendToncenterCompat(
         reply,
         { ok: false, code: 500, error: publicErrorMessage(error, 'JSON-RPC request failed') },
@@ -1053,6 +896,8 @@ export const registerRoutes = (
         GET_METHOD_CALL_TIMEOUT_MS
       );
     } catch (error) {
+      const admission = publicAdmissionError(error);
+      if (admission) return sendError(reply, admission.status, admission.code, admission.message);
       return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'get method call failed'));
     }
   });
@@ -1068,7 +913,7 @@ export const registerRoutes = (
     }
 
     type BatchResult =
-      | { ok: true; stack: ToncenterStackEntry[]; exit_code: number; gas_used: number }
+      | { ok: true; stack: ToncenterStackEntry[]; exit_code: number; gas_used: number | null }
       | { ok: false; code: string; error: string };
 
     const results = await mapConcurrent(calls, GET_METHOD_BATCH_CONCURRENCY, async (candidate) => {
@@ -1099,6 +944,8 @@ export const registerRoutes = (
         );
         return { ok: true, ...response } satisfies BatchResult;
       } catch (error) {
+        const admission = publicAdmissionError(error);
+        if (admission) return { ok: false, code: admission.code, error: admission.message } satisfies BatchResult;
         if (error instanceof Error && error.message === 'timeout') {
           return { ok: false, code: 'timeout', error: 'get method timed out' } satisfies BatchResult;
         }
@@ -1136,12 +983,16 @@ export const registerRoutes = (
     return html;
   });
 
-  app.get('/api/indexer/v1/metrics', async () => {
-    if (!metrics) return { error: 'metrics disabled', code: 'metrics_disabled' };
+  app.get('/api/indexer/v1/metrics', async (request, reply) => {
+    const denied = requireAdmin(request, reply, 'metrics_disabled', 'metrics disabled');
+    if (denied) return denied;
+    if (!metrics) return sendError(reply, 400, 'metrics_disabled', 'metrics disabled');
     return metrics.getMetrics();
   });
 
-  app.get('/api/indexer/v1/metrics/prometheus', async (_request, reply) => {
+  app.get('/api/indexer/v1/metrics/prometheus', async (request, reply) => {
+    const denied = requireAdmin(request, reply, 'metrics_disabled', 'metrics disabled');
+    if (denied) return denied;
     if (!metrics) return sendError(reply, 400, 'metrics_disabled', 'metrics disabled');
     reply.type('text/plain');
     return metrics.getPrometheus();
@@ -1158,7 +1009,7 @@ export const registerRoutes = (
       try {
         return await service.getBalance(addr);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balance request failed'));
+        return sendError(reply, 503, 'balance_unavailable', 'balance source is temporarily unavailable');
       }
     }
   );
@@ -1174,7 +1025,7 @@ export const registerRoutes = (
       try {
         return await service.getBalances(addr);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balances request failed'));
+        return sendError(reply, 503, 'balance_unavailable', 'balance source is temporarily unavailable');
       }
     }
   );
@@ -1190,7 +1041,7 @@ export const registerRoutes = (
       try {
         return await service.getBalances(addr);
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balances request failed'));
+        return sendError(reply, 503, 'balance_unavailable', 'balance source is temporarily unavailable');
       }
     }
   );
@@ -1224,12 +1075,7 @@ export const registerRoutes = (
       }
 
       const query = request.query as { market_ids?: string; max_markets?: string | number };
-      const marketIds = (query.market_ids ?? '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => /^\d+$/.test(value))
-        .map((value) => Number.parseInt(value, 10))
-        .filter((value) => Number.isFinite(value) && value > 0);
+      const marketIds = query.market_ids?.split(',').map(Number);
       const maxMarketsParsed =
         typeof query.max_markets === 'number'
           ? (Number.isInteger(query.max_markets) && query.max_markets > 0 ? query.max_markets : null)
@@ -1238,7 +1084,7 @@ export const registerRoutes = (
 
       try {
         return await service.getPerpsSnapshot(engine, {
-          marketIds: marketIds.length ? marketIds : undefined,
+          marketIds,
           maxMarkets
         });
       } catch (error) {
@@ -1266,18 +1112,12 @@ export const registerRoutes = (
       if (pool && !isValidAddress(pool)) {
         return sendError(reply, 400, 'invalid_address', 'invalid pool address');
       }
-      const routeIds = (query.route_ids ?? '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => /^\d+$/.test(value))
-        .map((value) => Number.parseInt(value, 10))
-        .filter((value) => Number.isFinite(value) && value > 0)
-        .slice(0, 64);
+      const routeIds = query.route_ids?.split(',').map((value) => Number(value));
 
       try {
         return await service.getVolIndexSnapshot(volIndex, {
           sourcePool: pool,
-          routeIds: routeIds.length ? routeIds : undefined
+          routeIds
         });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'vol-index snapshot request failed'));
@@ -1369,32 +1209,12 @@ export const registerRoutes = (
         return sendError(reply, 400, 'invalid_address', 'invalid options factory address');
       }
 
-      const query = request.query as {
-        start_id?: string | number;
-        max_series_id?: string | number;
-        window_size?: string | number;
-        max_empty_windows?: string | number;
-        min_probe_windows?: string | number;
-      };
-      const startIdParsed = parseNonNegativeIntQuery(query.start_id);
-      const startId = startIdParsed !== null ? Math.min(1_000_000, startIdParsed) : undefined;
-      const maxSeriesIdParsed = parsePositiveIntQuery(query.max_series_id);
-      const maxSeriesId = maxSeriesIdParsed !== null ? Math.min(1_000_000, maxSeriesIdParsed) : undefined;
-      const windowSizeParsed = parsePositiveIntQuery(query.window_size);
-      const windowSize = windowSizeParsed !== null ? Math.min(256, windowSizeParsed) : undefined;
-      const maxEmptyWindowsParsed = parsePositiveIntQuery(query.max_empty_windows);
-      const maxEmptyWindows = maxEmptyWindowsParsed !== null ? Math.min(64, maxEmptyWindowsParsed) : undefined;
-      const minProbeWindowsParsed = parseNonNegativeIntQuery(query.min_probe_windows);
-      const minProbeWindows = minProbeWindowsParsed !== null ? Math.min(4096, minProbeWindowsParsed) : undefined;
-
+      const query = request.query as { after_id?: string; limit?: number };
+      if (query.after_id !== undefined && BigInt(query.after_id) >= (1n << 64n)) {
+        return sendError(reply, 400, 'bad_request', 'Options catalog cursor exceeds uint64.');
+      }
       try {
-        return await service.getOptionsSnapshot(factory, {
-          startId,
-          maxSeriesId,
-          windowSize,
-          maxEmptyWindows,
-          minProbeWindows
-        });
+        return await service.getOptionsSnapshot(factory, { afterId: query.after_id, limit: query.limit });
       } catch (error) {
         return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'options snapshot request failed'));
       }
@@ -1493,12 +1313,12 @@ export const registerRoutes = (
         'dlmmRegistry',
         't3Hub',
         'controlMesh',
+        'riskController',
         'riskVault',
         'feeRouter',
         'buybackExecutor',
         'automationRegistry',
         'anchorGuard',
-        'clusterGuard',
         'voting',
         'coverManager'
       ] as const;
@@ -1738,15 +1558,18 @@ export const registerRoutes = (
       const cursorHash = query.cursor_hash;
 
       try {
-        if ((cursorLt && !cursorHash) || (!cursorLt && cursorHash)) {
+        if (query.page !== undefined && (cursorLt !== undefined || cursorHash !== undefined)) {
+          return sendError(reply, 400, 'cursor_mismatch', 'page and cursor fields are mutually exclusive');
+        }
+        if ((cursorLt !== undefined) !== (cursorHash !== undefined)) {
           return sendError(reply, 400, 'cursor_mismatch', 'cursor_lt and cursor_hash must be provided together');
         }
-        if (cursorLt && cursorHash) {
+        if (cursorLt !== undefined && cursorHash !== undefined) {
           if (!isValidLt(cursorLt) || !isValidHashBase64(cursorHash)) {
             return sendError(reply, 400, 'invalid_cursor', 'invalid cursor');
           }
         }
-        if (cursorLt && cursorHash) {
+        if (cursorLt !== undefined && cursorHash !== undefined) {
           return await service.getTransactionsByCursor(addr, cursorLt, cursorHash);
         }
         return await service.getTransactions(addr, page);
@@ -1848,10 +1671,10 @@ export const registerRoutes = (
         return sendError(reply, 400, 'bad_request', 'asset_symbol and quote_symbol must be distinct');
       }
       const canonicalMarket =
-        canonicalMarkets.length > 0
-          ? canonicalMarkets.find((market) => market.marketKey === marketKey)
+        canonicalCandleMarkets.length > 0
+          ? canonicalCandleMarkets.find((market) => market.marketKey === marketKey)
           : undefined;
-      if (canonicalMarkets.length > 0 && !canonicalMarket) {
+      if (registryMetadata?.releaseManifestHash && !canonicalMarket) {
         return sendError(reply, 404, 'not_found', 'market is absent from the canonical release manifest');
       }
       if (
@@ -1903,7 +1726,7 @@ export const registerRoutes = (
       const limit = Math.min(1_000, limitRaw ?? 320);
 
       try {
-        return await service.getMarketCandles(
+        const history = await service.getMarketCandles(
           canonicalMarket?.marketKey ?? marketKey,
           canonicalMarket?.marketAddress ?? query.market_address,
           {
@@ -1917,134 +1740,15 @@ export const registerRoutes = (
           limit,
           }
         );
+        return {...history,
+          token_root: canonicalMarket?.tokenRoot ?? null,
+          asset_symbol: canonicalMarket?.assetSymbol ?? assetSymbol,
+          quote_symbol: canonicalMarket?.quoteSymbol ?? quoteSymbol,
+          asset_decimals: canonicalMarket?.assetDecimals ?? assetDecimals ?? null,
+          quote_decimals: canonicalMarket?.quoteDecimals ?? quoteDecimals ?? null,
+        };
       } catch (error) {
         return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'candles request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/sccp/ton/burn-status',
-    { schema: { querystring: tonSccpBurnStatusQuerySchema } },
-    async (request, reply) => {
-      reply.header('cache-control', 'no-store');
-      const query = request.query as {
-        jetton_master: string;
-        burn_initiator: string;
-        query_id: string;
-        sora_asset_id: string;
-        dest_domain: string;
-        recipient32: string;
-        amount: string;
-        after_lt?: string;
-        after_hash?: string;
-      };
-      if (!isValidAddress(query.jetton_master)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid jetton_master');
-      }
-      if (!isValidAddress(query.burn_initiator)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid burn_initiator');
-      }
-      if (!HEX_256_RE.test(query.sora_asset_id)) {
-        return sendError(reply, 400, 'bad_request', 'sora_asset_id must be 0x-prefixed 32-byte hex');
-      }
-      if (!HEX_256_RE.test(query.recipient32)) {
-        return sendError(reply, 400, 'bad_request', 'recipient32 must be 0x-prefixed 32-byte hex');
-      }
-      if ((query.after_lt === undefined) !== (query.after_hash === undefined)) {
-        return sendError(
-          reply,
-          400,
-          'bad_request',
-          'after_lt and after_hash must be provided together'
-        );
-      }
-      if (
-        query.after_lt !== undefined &&
-        (!isValidLt(query.after_lt) || !query.after_hash || !isValidHashBase64(query.after_hash))
-      ) {
-        return sendError(reply, 400, 'bad_request', 'invalid SCCP master after cursor');
-      }
-      try {
-        return await service.getTonSccpBurnStatus({
-          jettonMaster: query.jetton_master,
-          burnInitiator: query.burn_initiator,
-          queryId: query.query_id,
-          soraAssetId: query.sora_asset_id,
-          destDomain: query.dest_domain,
-          recipient32: query.recipient32,
-          amount: query.amount,
-          afterLt: query.after_lt,
-          afterHash: query.after_hash,
-        });
-      } catch (error) {
-        return sendError(
-          reply,
-          400,
-          'bad_request',
-          publicErrorMessage(error, 'SCCP burn status request failed')
-        );
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/sccp/ton/burn-proof-material',
-    { schema: { querystring: tonSccpBurnProofQuerySchema } },
-    async (request, reply) => {
-      const query = request.query as {
-        jetton_master: string;
-        message_id: string;
-        trusted_checkpoint_seqno?: string | number;
-        trusted_checkpoint_hash?: string;
-        target_seqno?: string | number;
-      };
-      if (!isValidAddress(query.jetton_master)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid jetton_master');
-      }
-      if (!HEX_256_RE.test(query.message_id)) {
-        return sendError(reply, 400, 'bad_request', 'message_id must be 0x-prefixed 32-byte hex');
-      }
-      if ((query.trusted_checkpoint_seqno === undefined) !== (query.trusted_checkpoint_hash === undefined)) {
-        return sendError(
-          reply,
-          400,
-          'bad_request',
-          'trusted_checkpoint_seqno and trusted_checkpoint_hash must be provided together'
-        );
-      }
-      if (
-        query.trusted_checkpoint_hash !== undefined &&
-        !HEX_256_RE.test(query.trusted_checkpoint_hash)
-      ) {
-        return sendError(reply, 400, 'bad_request', 'trusted_checkpoint_hash must be 0x-prefixed 32-byte hex');
-      }
-      const trustedCheckpointSeqno =
-        query.trusted_checkpoint_seqno === undefined
-          ? undefined
-          : parsePositiveIntQuery(query.trusted_checkpoint_seqno);
-      if (query.trusted_checkpoint_seqno !== undefined && trustedCheckpointSeqno === null) {
-        return sendError(reply, 400, 'bad_request', 'trusted_checkpoint_seqno must be a positive integer');
-      }
-      const targetSeqno =
-        query.target_seqno === undefined ? undefined : parsePositiveIntQuery(query.target_seqno);
-      if (query.target_seqno !== undefined && targetSeqno === null) {
-        return sendError(reply, 400, 'bad_request', 'target_seqno must be a positive integer');
-      }
-      try {
-        return await service.getTonSccpBurnProofMaterial({
-          jettonMaster: query.jetton_master,
-          messageIdHex: query.message_id,
-          trustedCheckpointSeqno: trustedCheckpointSeqno ?? undefined,
-          trustedCheckpointHashHex: query.trusted_checkpoint_hash,
-          targetSeqno: targetSeqno ?? undefined,
-        });
-      } catch (error) {
-        const message =
-          error instanceof Error && error.message === 'Burn record is not available on the jetton master yet.'
-            ? error.message
-            : publicErrorMessage(error, 'proof material request failed');
-        return sendError(reply, 400, 'bad_request', message);
       }
     }
   );

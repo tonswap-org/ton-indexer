@@ -1,9 +1,10 @@
+import { discoveryPage, publishDiscoveries } from './discovery';
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Network } from "../models";
 import type { RawTransaction } from "../data/dataSource";
-import { canonicalLedgerAddress } from "./normalize";
+import { canonicalLedgerAddress, canonicalLedgerHash } from "./normalize";
 import type {
   LedgerEvent,
   LedgerProjection,
@@ -11,6 +12,7 @@ import type {
   LedgerPage,
   LedgerQuery,
   LedgerRelatedAccount,
+  LedgerDiscoveryQuery,
 } from "./types";
 
 export interface LedgerSqlClient {
@@ -87,7 +89,7 @@ export function projectionFingerprint(
       if (movement.evidence.getter) movement.evidence.getter.observedAt = "";
   }
   const snapshot = {
-    decoder: "exact-ledger-v15",
+    decoder: "exact-ledger-v19",
     projectionScope: projection.projectionScope,
     events: [...fingerprintEvents].sort((a, b) => a.id.localeCompare(b.id)),
     related: related
@@ -118,6 +120,8 @@ export class PostgresLedgerStore {
       );
       // This first-release schema must already be canonical; never infer old scope.
       await client.query("SELECT projection_scope FROM ledger_projection_coverage LIMIT 0");
+      await client.query("SELECT discovery_revision FROM ledger_runs LIMIT 0");
+      await client.query("SELECT generation_order,backoff_seconds,retry_after FROM ledger_perps_ranges LIMIT 0");
     } finally {
       await client.query(
         "SELECT pg_advisory_unlock(hashtextextended('tonswap:ledger:schema',0))",
@@ -217,7 +221,20 @@ export class PostgresLedgerStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await this.assertWritable(client, generation);
+      const run = await this.assertWritable(client, generation);
+      // A generation represents one physical account chain. Owner projections
+      // may group related chains later; raw membership must never mix them.
+      for (let i = 0; i < events.length; i++) {
+        const event = events[i], raw = raws[i];
+        if (event.network !== run.network || event.account !== run.account)
+          throw new Error("Ledger evidence account or network does not match generation scope");
+        const hash = canonicalLedgerHash(raw.hash);
+        const id = createHash("sha256").update(`${event.network}:${event.account}:${raw.lt}:${hash}`).digest("hex");
+        if (event.lt !== raw.lt || event.hash !== hash || event.txId !== `${raw.lt}:${hash}` ||
+          event.id !== id || event.utime !== raw.utime || event.status !== raw.status ||
+          (raw.status !== "success" && raw.status !== "failed") || raw.success !== (raw.status === "success"))
+          throw new Error("Ledger event does not match its original physical transaction");
+      }
       for (let i = 0; i < events.length; i++) {
         const e = events[i];
         await client.query(
@@ -379,10 +396,12 @@ export class PostgresLedgerStore {
       const run = await this.assertWritable(client, generation);
       if (run.network !== network || run.account !== account)
         throw new Error("Ledger publication owner or network mismatch");
+      await client.query("SELECT 1 FROM ledger_accounts WHERE network=$1 AND account=$2 FOR UPDATE", [network, account]);
       await client.query(
-        "UPDATE ledger_runs SET complete=true,source_complete=true,next_lt=NULL,next_hash=NULL,published_at=now(),verified_through=COALESCE($2::timestamptz,head_observed_at) WHERE generation=$1",
+        "UPDATE ledger_runs SET complete=true,source_complete=true,next_lt=NULL,next_hash=NULL,published_at=clock_timestamp(),verified_through=COALESCE($2::timestamptz,head_observed_at) WHERE generation=$1",
         [generation, checkedAt],
       );
+      await publishDiscoveries(client, network, account, generation);
       await client.query(
         `UPDATE ledger_accounts SET current_generation=$3,latest_generation=$3,syncing=false,error_code=NULL,synced_at=now(),checked_at=(SELECT verified_through FROM ledger_runs WHERE generation=$3)
         WHERE network=$1 AND account=$2`,
@@ -402,6 +421,11 @@ export class PostgresLedgerStore {
       "UPDATE ledger_accounts SET syncing=false,error_code=$3 WHERE network=$1 AND account=$2",
       [network, account, code],
     );
+  }
+
+  async discoveries(network: Network, account: string, query: LedgerDiscoveryQuery) {
+    return discoveryPage(this.pool, network, account, query,
+      async generation => (await this.page(network, account, { generation, limit: 1 })).coverage);
   }
 
   async page(
@@ -439,6 +463,7 @@ export class PostgresLedgerStore {
     }
     const generation =
       cursor?.generation ??
+      query.generation ??
       state?.current_generation ??
       state?.latest_generation;
     if (!generation)

@@ -17,47 +17,12 @@ export const jettonTransferPayloadParamsSchema = {
 
 export const txQuerySchema = {
   type: 'object',
+  propertyNames: { enum: ['page', 'cursor_lt', 'cursor_hash'] },
   properties: {
     page: { type: 'integer', minimum: 1 },
     cursor_lt: { type: 'string', pattern: '^\\d+$' },
     cursor_hash: { type: 'string' },
   },
-};
-
-export const tonSccpBurnProofQuerySchema = {
-  type: 'object',
-  properties: {
-    jetton_master: { type: 'string' },
-    message_id: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
-    trusted_checkpoint_seqno: { type: 'integer', minimum: 1 },
-    trusted_checkpoint_hash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
-    target_seqno: { type: 'integer', minimum: 1 },
-  },
-  required: ['jetton_master', 'message_id'],
-};
-
-export const tonSccpBurnStatusQuerySchema = {
-  type: 'object',
-  properties: {
-    jetton_master: { type: 'string', maxLength: 128 },
-    burn_initiator: { type: 'string', maxLength: 128 },
-    query_id: { type: 'string', maxLength: 20, pattern: '^(0|[1-9][0-9]*)$' },
-    sora_asset_id: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
-    dest_domain: { type: 'string', maxLength: 10, pattern: '^(0|[1-9][0-9]*)$' },
-    recipient32: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
-    amount: { type: 'string', maxLength: 39, pattern: '^(0|[1-9][0-9]*)$' },
-    after_lt: { type: 'string', maxLength: 20, pattern: '^[1-9][0-9]*$' },
-    after_hash: { type: 'string', maxLength: 64 },
-  },
-  required: [
-    'jetton_master',
-    'burn_initiator',
-    'query_id',
-    'sora_asset_id',
-    'dest_domain',
-    'recipient32',
-    'amount',
-  ],
 };
 
 export const swapQuerySchema = {
@@ -108,7 +73,7 @@ export const debugQuerySchema = {
 export const perpsSnapshotQuerySchema = {
   type: 'object',
   properties: {
-    market_ids: { type: 'string' },
+    market_ids: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 1407 },
     max_markets: { type: 'integer', minimum: 1, maximum: 128 },
   },
 };
@@ -117,7 +82,7 @@ export const volIndexSnapshotQuerySchema = {
   type: 'object',
   properties: {
     pool: { type: 'string' },
-    route_ids: { type: 'string' },
+    route_ids: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 703 },
   },
 };
 
@@ -142,12 +107,10 @@ export const farmsSnapshotQuerySchema = {
 
 export const optionsSnapshotQuerySchema = {
   type: 'object',
+  additionalProperties: false,
   properties: {
-    start_id: { type: 'integer', minimum: 0, maximum: 1000000 },
-    max_series_id: { type: 'integer', minimum: 1, maximum: 1000000 },
-    window_size: { type: 'integer', minimum: 1, maximum: 256 },
-    max_empty_windows: { type: 'integer', minimum: 1, maximum: 64 },
-    min_probe_windows: { type: 'integer', minimum: 0, maximum: 4096 },
+    after_id: { type: 'string', pattern: '^(0|[1-9][0-9]{0,19})$' },
+    limit: { type: 'integer', minimum: 1, maximum: 64 },
   },
 };
 

@@ -1,6 +1,7 @@
 import { Address, Cell, beginCell, contractAddress } from "@ton/core";
 import type { RawMessage } from "../data/dataSource";
-import { bodyCell } from "./wire";
+import { bodyCell, businessBodyCell } from "./wire";
+import { buildTonswapJettonWalletInitialData } from "../data/jettonAbi";
 export const PERPS_OPEN = 0x4f50454e,
   PERPS_MODIFY = 0x4d444946,
   PERPS_CLOSE = 0x434c4f53,
@@ -9,6 +10,10 @@ export const PERPS_OPEN = 0x4f50454e,
   PERPS_CLAIM = 0x43464e47,
   PERPS_LIQUIDATE = 0x514c4951,
   PERPS_ADL = 0x41444c54;
+export const PERPS_ORACLE_PULL = 0x50525051,
+  PERPS_ORACLE_RESULT = 0x50525043,
+  PERPS_ORACLE_FAILED = 0x50524641,
+  PERPS_EXPIRE_ORDER = 0x50524558;
 export const PERPS_USER_OPS = new Set([
   PERPS_OPEN,
   PERPS_MODIFY,
@@ -37,7 +42,6 @@ export type PerpsRequest = {
   marginRaw?: string;
   limitPriceRaw?: string;
   leverageBps?: number;
-  flags?: number;
   referrer?: string | null;
 };
 export function perpsRequest(cell: Cell): PerpsRequest | null {
@@ -69,12 +73,13 @@ export function perpsRequest(cell: Cell): PerpsRequest | null {
         v.sizeRaw = s.loadIntBig(128).toString();
         v.marginRaw = s.loadIntBig(128).toString();
         v.limitPriceRaw = s.loadCoins().toString();
-        v.flags = s.loadUint(32);
+        v.referrer = s.loadMaybeAddress()?.toRawString() ?? null;
       }
       if (opcode === PERPS_CLOSE) {
         v.operation = "close";
         v.sizeRaw = s.loadIntBig(128).toString();
         v.limitPriceRaw = s.loadCoins().toString();
+        v.referrer = s.loadMaybeAddress()?.toRawString() ?? null;
       }
       if (opcode === PERPS_ADD_MARGIN || opcode === PERPS_REMOVE_MARGIN) {
         v.operation =
@@ -97,6 +102,40 @@ export const perpsMessage = (m?: RawMessage) => {
   const c = bodyCell(m);
   return c ? perpsRequest(c) : null;
 };
+/** The current paid-order receipt stores the exact canonical NOTIFY envelope. */
+export function perpsOpenNotification(cell: Cell) {
+  try {
+    const s = cell.beginParse();
+    if (s.loadUint(32) !== 0x7362d09c) return null;
+    const fundingQueryId = s.loadUintBig(64).toString(), amountRaw = s.loadCoins().toString();
+    const owner = s.loadAddress().toRawString(), senderWallet = s.loadAddress().toRawString();
+    const forwardTonRaw = s.loadCoins().toString(), request = perpsRequest(s.loadRef());
+    if (s.remainingBits || s.remainingRefs || !request || !['open', 'modify'].includes(request.operation)) return null;
+    return { fundingQueryId, amountRaw, owner, senderWallet, forwardTonRaw, request };
+  } catch { return null; }
+}
+export function perpsOracleMessage(message?: RawMessage) {
+  try {
+    const body = bodyCell(message);
+    if (!body) return null;
+    const s = body.beginParse(), opcode = s.loadUint(32);
+    if (![PERPS_ORACLE_PULL, PERPS_ORACLE_RESULT, PERPS_ORACLE_FAILED, PERPS_EXPIRE_ORDER].includes(opcode)) return null;
+    const wireQueryId = s.loadUintBig(64).toString(), marketId = s.loadUint(32);
+    let owner: string | undefined, requestHash: string | undefined, status: number | undefined;
+    let funding: Cell | undefined;
+    if (opcode === PERPS_ORACLE_PULL || opcode === PERPS_ORACLE_RESULT) {
+      owner = s.loadAddress().toRawString();
+      requestHash = s.loadUintBig(256).toString(16).padStart(64, '0');
+    }
+    if (opcode === PERPS_ORACLE_RESULT) {
+      status = s.loadUint(8);
+      if (status === 2) funding = s.loadRef();
+      else if (status !== 3) return null;
+    }
+    if (wireQueryId === '0' || s.remainingBits || s.remainingRefs) return null;
+    return { opcode, wireQueryId, marketId, owner, requestHash, status, funding, body };
+  } catch { return null; }
+}
 export const perpsPositionKey = (owner: string, marketId: number) =>
   beginCell()
     .storeAddress(Address.parse(owner))
@@ -112,40 +151,12 @@ export const perpsTransferKey = (wallet: string) =>
     .hash()
     .toString("hex");
 export function perpsWalletAddress(code: Cell, root: string, owner: string) {
-  const data = beginCell()
-    .storeCoins(0)
-    .storeAddress(Address.parse(owner))
-    .storeAddress(Address.parse(root))
-    .storeCoins(0)
-    .storeCoins(0)
-    .storeAddress(null)
-    .storeUint(0, 32)
-    .storeUint(0, 64)
-    .storeCoins(0)
-    .storeRef(
-      beginCell()
-        .storeUint(0, 8)
-        .storeUint(0, 64)
-        .storeCoins(0)
-        .storeUint(0, 256)
-        .storeAddress(null)
-        .endCell(),
-    )
-    .storeRef(
-      beginCell()
-        .storeUint(0, 8)
-        .storeUint(0, 64)
-        .storeUint(0, 64)
-        .storeCoins(0)
-        .storeUint(0, 256)
-        .endCell(),
-    )
-    .endCell();
+  const data = buildTonswapJettonWalletInitialData(Address.parse(owner), Address.parse(root));
   return contractAddress(0, { code, data }).toRawString();
 }
 export function perpsControl(m: RawMessage | undefined, op: number) {
   try {
-    const c = bodyCell(m);
+    const c = businessBodyCell(m);
     if (!c) return null;
     const s = c.beginParse();
     if (s.loadUint(32) !== op) return null;

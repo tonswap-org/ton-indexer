@@ -1,0 +1,59 @@
+{
+  "schema": "tonswap-authentic-admission-proof-fixture-v1",
+  "source": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/trade-test/sessions/tonswap-ux-20260913-08-02/evidence/snapshot-1-17159d3b-366c-4379-8dae-8262d761b933.json",
+    "sha256": "743ba88fcb9e70c30d523b269b298a40f5d90452ba548544c560e32dd5f89d36"
+  },
+  "master": {
+    "workchain": -1,
+    "shard": "-9223372036854775808",
+    "seqno": 84748194,
+    "root_hash": "aDUS8rJWED5bbitiKeH/UhRj6ErbdRD5MpSxlEENLFw=",
+    "file_hash": "6w8J+sz5xij2OYrf9GMbn7jTA2NxJ9sxMH/WBrX/FbE="
+  },
+  "shard": {
+    "workchain": 0,
+    "shard": "-9223372036854775808",
+    "seqno": 89980765,
+    "root_hash": "HHiEqw9EeR70W3KuCVRwcWExSPzyaJ2YdZqKu6JrIsM=",
+    "file_hash": "3SZohopmscmqCwxhGeSVzyfBMhNO3ogMXmNdpuajWmc="
+  },
+  "address": "0:0816eb1798823310dffa9888ea1ff7f9168fdedbbc5b6f1f003720a6dcd169b1",
+  "hostNowForHistoricalTestOnly": 1789387015,
+  "accountHash": "f60e85f772cd4d6292ff80b6ca4d12e53a85fdbc4d7cbb860540e616bd44c232",
+  "codeHash": "ba7b83da91ae84064521a916bf6125b343ace2182dbace9f2548dfda367171db",
+  "dataHash": "40b562b5df3ccba5acf6fc2c0e86a18ae65f8bc7ebbc1a9065b75ded957e806e",
+  "files": [
+    {
+      "file": "account-state.boc",
+      "sourceField": "accounts.engine.accountBoc",
+      "sha256": "c59effdc19f53f242498b0907740c009f1039aadf6d4d42232c3e3a47719158b",
+      "bytes": 203895
+    },
+    {
+      "file": "account-proof.boc",
+      "sourceField": "accounts.engine.proof.accountProofBoc",
+      "sha256": "c2a7e96887febba55914575be04c8ac2298ed5c81b46c769ac91d247f4a531f1",
+      "bytes": 2839
+    },
+    {
+      "file": "shard-proof.boc",
+      "sourceField": "accounts.engine.proof.shardProofBoc",
+      "sha256": "2432807ddd42b1b74d7e7290fbb70ad245f5fb57e72c334addf758c22bf97ae4",
+      "bytes": 1222
+    },
+    {
+      "file": "config-state-proof.boc",
+      "sourceField": "configStateProofBoc",
+      "sha256": "3334ba664eb368859f3cc14593153b14373a8d807b85fec3493fadace5041a02",
+      "bytes": 518
+    },
+    {
+      "file": "config-proof.boc",
+      "sourceField": "configProofBoc",
+      "sha256": "5b70a7d2a29aa18b8fea9cdda3afeabe91d42f74a3e201010ce6411c268113ad",
+      "bytes": 18757
+    }
+  ],
+  "scope": "Original captured current testnet engine account/config Merkle proof bytes, exact selected fields only. Accepted master is an explicit test input; this fixture does not test consensus signatures or certify a fresh accepted root. Config getConfigAll mode0 may prune previous-block paths; do not repair/rebuild proof bytes to pass admission."
+}

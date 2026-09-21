@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { LiteClientDataSource } from '../data/liteClientSource';
 import { TonClient4DataSource } from '../data/tonClient4Source';
+import { createLogger } from '../utils/logger';
 
 const envKeys = [
   'TON_NETWORK',
@@ -33,7 +34,7 @@ async function main() {
     assert.throws(() => loadConfig(), /TON_NETWORK must be one of mainnet, testnet, localnet/);
 
     await assert.rejects(
-      () => LiteClientDataSource.create('localnet'),
+      () => LiteClientDataSource.create('localnet', undefined, createLogger('silent')),
       /LITESERVER_POOL_LOCALNET is required/
     );
     if (TonClient4DataSource.isAvailable()) {

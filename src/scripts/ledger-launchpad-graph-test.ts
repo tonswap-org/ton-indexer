@@ -13,6 +13,7 @@ import { loadOpcodes } from "../utils/opcodes";
 import { readFixedSaleState } from "../ledger/launchpadState";
 import { readBondingSaleState } from "../ledger/launchpadBondingState";
 import { readAuctionSaleState } from "../ledger/launchpadAuctionState";
+import { readCurrentJettonWalletStorage } from "../ledger/jettonWalletState";
 
 type Fixture = {
   accounts: { sale: string; owner: string; paymentRoot: string; paymentSaleWallet: string; ownerPaymentWallet: string };
@@ -38,8 +39,8 @@ const hashes: LedgerLaunchpadCodeHashes = { fixedCodeHash: codeHash(modelFixture
 const assets = new Map<string, LedgerAsset>();
 for (const [wallet, state] of current) {
   if (!state.codeBoc || !state.dataBoc || Cell.fromBase64(state.codeBoc).hash().toString("hex") !== hashes.walletCodeHash) continue;
-  const data = Cell.fromBase64(state.dataBoc).beginParse(); data.loadCoins();
-  const owner = data.loadAddress().toRawString(), master = data.loadAddress().toRawString();
+  const data = readCurrentJettonWalletStorage(Cell.fromBase64(state.dataBoc));
+  const owner = data.owner.toRawString(), master = data.root.toRawString();
   assets.set(wallet, { kind: "jetton", id: `mainnet:jetton:${master}`, owner, master, wallet, decimals: 9 });
 }
 const histories = new Map<string, RawTransaction[]>();
@@ -92,7 +93,7 @@ async function build(options: {
         ? { ...asset, owner: fixture.accounts.owner } : asset ?? null;
     },
     async account => { crawled.push(account); return !(options.incompletePaymentHistory && account === fixture.accounts.paymentSaleWallet); },
-    options.maxAccounts ?? 256, undefined, [], undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    options.maxAccounts ?? 256, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     options.hashes === null ? undefined : options.hashes ?? hashes, [fixture.accounts.sale]);
   const graph = await builder.build(fixture.accounts.owner, fixture.accounts.owner, "2026-01-01T00:00:00.000Z");
   return { graph, crawled, getters, currentReads };

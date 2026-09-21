@@ -13,6 +13,7 @@ import {
   OPTION_SHOUT_EXERCISE,
   OPTION_SPREAD_EXERCISE,
   OPTION_SHOUT_PAYOUT,
+  OPTION_SPREAD_PAYOUT,
   optionExercise,
   optionProductExercise,
   optionVaultPayout,
@@ -74,6 +75,10 @@ export type OptionLifecycleMetadata = {
     kind: "ingress" | "excess" | "aborted_buy";
     claimId?: string;
     identityHash?: string;
+    logicalIdentityHash?: string;
+    notificationCreatedLt?: string;
+    notificationBodyHash?: string;
+    sourceWallet?: string;
     queryId?: string;
     payloadHash?: string;
     scope: "individual_claim" | "position_unwind";
@@ -206,7 +211,7 @@ export async function decodeOptionExercises(
       !request ||
       !factory ||
       !owner ||
-      (owner !== input.owner && request.recipient !== input.owner)
+      owner !== input.owner
     )
       continue;
     let anchor = nodes.find(
@@ -228,10 +233,8 @@ export async function decodeOptionExercises(
       seriesId: request.seriesId,
       positionId: request.positionId,
       owner,
-      recipient: request.recipient,
+      recipient: owner,
       originalRequestBodyHash: request.bodyHash,
-      requestedPayoutRaw: request.payoutRaw,
-      requestedPremiumBurnRaw: request.premiumBurnRaw,
       outcome: "pending",
       payout: { status: "pending", amountRaw: null, evidence: [] },
       protocolAccounting: { status: "unverified" },
@@ -347,112 +350,44 @@ export async function decodeOptionExercises(
       pb.owner !== owner ||
       pb.notionalRaw !== before!.notionalRaw ||
       pb.premiumRaw !== before!.premiumRaw ||
-      pb.collateralRaw !== before!.collateralRaw ||
-      pb.buyWireId !== before!.seriesWireId ||
-      !pb.active ||
-      pb.exercised ||
-      (series.kind === 1
-        ? pb.settled || pa !== null
-        : !pb.settled ||
-          !pa?.exercised ||
-          !pa.settled ||
-          pa.owner !== pb.owner ||
-          pa.tokenId !== pb.tokenId ||
-          pa.notionalRaw !== pb.notionalRaw ||
-          pa.premiumRaw !== pb.premiumRaw ||
-          pa.collateralRaw !== pb.collateralRaw ||
-          pa.payoutRaw !== pb.payoutRaw ||
-          pa.buyWireId !== pb.buyWireId ||
-          pa.active !== pb.active)
+      (pb.settled ? pb.collateralRaw !== "0" : pb.collateralRaw !== before!.collateralRaw) ||
+      pb.buyWireId !== before!.seriesWireId || !pb.active || !pa || !pa.settled || !pa.exercised ||
+      pa.owner !== pb.owner || pa.tokenId !== pb.tokenId || pa.notionalRaw !== pb.notionalRaw ||
+      pa.premiumRaw !== pb.premiumRaw || pa.collateralRaw !== "0" || pa.buyWireId !== pb.buyWireId ||
+      pa.active !== pb.active
     ) {
       issue = "option_product_position_state_unverified";
       finish();
       continue;
     }
-    let terminal = n,
-      terminalBoundary = original,
-      payoutRaw = productRequest.payoutRaw;
-    const premiumRaw = (
-      BigInt(request.premiumBurnRaw) < BigInt(before!.premiumRaw)
-        ? BigInt(request.premiumBurnRaw)
-        : BigInt(before!.premiumRaw)
-    ).toString();
-    if (series.kind === 1) {
-      if (
-        productRequest.recipient !== request.recipient ||
-        productRequest.refundTo !== owner ||
-        productRequest.premiumBurnRaw !== request.premiumBurnRaw ||
-        productRequest.payoutRaw !== request.payoutRaw
-      ) {
-        finish();
-        continue;
-      }
-      const callbacks = productNode.raw.outMessages.flatMap((m, i) => {
-        const v = optionProductExercise(m),
-          next = receiptFor(productNode, i);
-        return addr(m.destination) === factory.address &&
-          addr(m.source) === series.address &&
-          v?.opcode === OPTION_SHOUT_PAYOUT &&
-          v.positionId === request.positionId &&
-          v.recipient === request.recipient &&
-          v.refundTo === owner &&
-          v.premiumBurnRaw === premiumRaw &&
-          next &&
-          ok(next)
-          ? [{ v, next }]
-          : [];
-      });
-      if (callbacks.length !== 1) {
-        issue = "option_factory_payout_callback_missing";
-        finish();
-        continue;
-      }
-      terminal = callbacks[0].next;
-      payoutRaw = callbacks[0].v.payoutRaw;
-      group.push(terminal);
-      const boundary = await optionBoundary(
-        input,
-        terminal,
-        q.factoryCodeHash,
-        readOptionFactoryConfig,
-      );
-      if (
-        !boundary ||
-        !factoryConfigMatches(boundary.before, factory) ||
-        !factoryConfigMatches(boundary.after, factory)
-      ) {
-        finish();
-        continue;
-      }
-      terminalBoundary = boundary;
-      const waiting = positionAt(
-        boundary.beforeBoc,
-        request.seriesId,
-        request.positionId,
-      );
-      if (
-        !waiting ||
-        !active(waiting) ||
-        !waiting.settlementReady ||
-        !samePositionIdentity(waiting, before!) ||
-        waiting.premiumRaw !== before!.premiumRaw ||
-        waiting.collateralRaw !== before!.collateralRaw ||
-        waiting.settlementPayoutRaw !== before!.settlementPayoutRaw
-      ) {
-        finish();
-        continue;
-      }
-    } else if (
-      !before!.settlementReady ||
-      request.payoutRaw !== before!.settlementPayoutRaw ||
-      payoutRaw !==
-        (BigInt(request.payoutRaw) < BigInt(before!.collateralRaw)
-          ? request.payoutRaw
-          : before!.collateralRaw) ||
-      pb.payoutRaw !== payoutRaw
-    ) {
-      finish();
-      continue;
+    const premiumRaw = "0";
+    if (series.kind === 1 && (productRequest.recipient !== owner || productRequest.refundTo !== owner ||
+      productRequest.premiumBurnRaw !== "0" || productRequest.payoutRaw !== "0")) {
+      finish(); continue;
+    }
+    const callbacks = productNode.raw.outMessages.flatMap((m, i) => {
+      const v = optionProductExercise(m), next = receiptFor(productNode, i);
+      return addr(m.destination) === factory.address && addr(m.source) === series.address && !m.bounced &&
+        v?.opcode === (series.kind === 1 ? OPTION_SHOUT_PAYOUT : OPTION_SPREAD_PAYOUT) &&
+        v.positionId === request.positionId && v.payoutRaw === pa.payoutRaw &&
+        (series.kind === 1 ? v.recipient === owner && v.refundTo === owner && v.premiumBurnRaw === "0" &&
+          pa.settlementCallbackBoc !== undefined && Cell.fromBase64(pa.settlementCallbackBoc).hash().toString("hex") === v.bodyHash
+          : v.seriesId === request.seriesId) && next && ok(next) ? [{ v, next }] : [];
+    });
+    if (callbacks.length !== 1) {
+      issue = "option_factory_payout_callback_missing"; finish(); continue;
+    }
+    const terminal = callbacks[0].next, payoutRaw = callbacks[0].v.payoutRaw;
+    group.push(terminal);
+    const terminalBoundary = await optionBoundary(input, terminal, q.factoryCodeHash, readOptionFactoryConfig);
+    if (!terminalBoundary || !factoryConfigMatches(terminalBoundary.before, factory) || !factoryConfigMatches(terminalBoundary.after, factory)) {
+      finish(); continue;
+    }
+    const waiting = positionAt(terminalBoundary.beforeBoc, request.seriesId, request.positionId);
+    if (!waiting || !active(waiting) || !waiting.settlementReady || !samePositionIdentity(waiting, before!) ||
+      waiting.premiumRaw !== before!.premiumRaw || waiting.collateralRaw !== before!.collateralRaw ||
+      waiting.settlementPayoutRaw !== before!.settlementPayoutRaw) {
+      finish(); continue;
     }
     const after = positionAt(
       terminalBoundary.afterBoc,
@@ -463,7 +398,7 @@ export async function decodeOptionExercises(
       !after ||
       !after.settled ||
       after.settlementReady ||
-      after.settlementPayoutRaw !== "0" ||
+      after.settlementPayoutRaw !== payoutRaw ||
       !samePositionIdentity(after, before!) ||
       after.collateralRaw !== "0" ||
       after.premiumRaw !==
@@ -505,7 +440,7 @@ export async function decodeOptionExercises(
           addr(m.destination) === factory.vault &&
           v?.positionId === request.positionId &&
           v.seriesId === request.seriesId &&
-          v.recipient === request.recipient &&
+          v.recipient === owner &&
           v.refundTo === owner &&
           v.payoutRaw === payoutRaw &&
           v.premiumBurnRaw === premiumRaw &&
@@ -554,7 +489,7 @@ export async function decodeOptionExercises(
             entry.requestId !== request.positionId ||
             entry.requestHash !== call.v.bodyHash ||
             entry.amountRaw !== payoutRaw ||
-            entry.recipient !== request.recipient ||
+            entry.recipient !== owner ||
             entry.lockedDeltaRaw !== payoutRaw ||
             entry.premiumDeltaRaw !== premiumRaw
           )
@@ -572,7 +507,7 @@ export async function decodeOptionExercises(
             input,
             factory,
             candidate,
-            request.recipient,
+            owner,
             entry.wireId,
             payoutRaw,
             receiptFor,
@@ -611,7 +546,7 @@ export async function decodeOptionExercises(
                 e.premiumDeltaRaw !== premiumRaw ||
                 e.finalizeReservedRaw !== "0" ||
                 e.destinationWallet !== cash.destinationWallet ||
-                e.recipient !== request.recipient,
+                e.recipient !== owner,
             ) ||
             terminalState.before.pendingFinalizeKey !== key ||
             terminalState.after.pendingFinalizeKey !== "0".repeat(64) ||
@@ -654,10 +589,11 @@ export async function decodeOptionExercises(
             const m = cash.credit.event?.movements.find(
               (m) => m.id === `${flow.id}:in`,
             );
-            if (m) {
+            if (m && m.evidence.kind !== "native_message" && m.evidence.kind !== "transaction_fee" && m.evidence.kind !== "message_forward_fee") {
+              const tokenEvidence: Omit<typeof m.evidence, "transactionStatus"> = m.evidence;
               m.purpose = "option_payout";
               m.evidence = {
-                ...m.evidence,
+                ...tokenEvidence,
                 ...terminalState.evidence,
                 kind: "option_payout",
                 transactions: cash.nodes.map(ref),

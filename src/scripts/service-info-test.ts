@@ -12,6 +12,7 @@ async function main() {
       enableWriteRpc: false
     },
     {
+      getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
         return { lastMasterSeqno: 123 };
       }
@@ -54,6 +55,7 @@ async function main() {
       enableWriteRpc: false,
     },
     {
+      getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
         return { lastMasterSeqno: 7 };
       }

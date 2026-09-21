@@ -1,0 +1,47 @@
+{
+  "description": "Original local sandbox transactions executed from the current canonical source, including mandatory mint receipt and referral notification dictionaries. Not a deployed testnet capture. Raw transaction/storage/code bytes are unmodified.",
+  "generator": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-close-funding-fix-01/workspace/tonswap_tolk/tests/perps/PerpsExecutionFunding.spec.ts",
+    "sha256": "4dd1d4df74badda21f3508b574de6f5f35c15c02dae939345e5dd41467309c23",
+    "bytes": 14037,
+    "mode": 420
+  },
+  "sourceInventory": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-close-funding-fix-01/qualified-current-source-inputs-03.json",
+    "sha256": "d3600cc6e652cd0550682b64fe159d7e8d34f0ad37e7361c50af6b8d0f865341",
+    "bytes": 295406,
+    "mode": 420
+  },
+  "qualification": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-close-funding-fix-01/canonical-funding-gas-06.log",
+    "sha256": "7f6349f300b10fbf22bbc5aa02fb4be338b840d6dd9350be0817e548a298061c",
+    "bytes": 1818,
+    "mode": 420
+  },
+  "artifacts": [
+    {
+      "relative": "current-open.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-close-funding-fix-01/workspace/tonswap_tolk/artifacts/perps-oracle-pull/execution-fixtures/current-open.json",
+      "sha256": "70468cf682912a607600cc279223c4d43d49e5bc4fb95a083ebba044f1707544"
+    },
+    {
+      "relative": "current-close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-close-funding-fix-01/workspace/tonswap_tolk/artifacts/perps-oracle-pull/execution-fixtures/current-close.json",
+      "sha256": "645efe46b23d8a1da754c9dc9b81108be76fbb442345a25e1721f4274ee6809e"
+    },
+    {
+      "relative": "current-referral-notification.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-close-funding-fix-01/workspace/tonswap_tolk/artifacts/perps-oracle-pull/execution-fixtures/current-referral-notification.json",
+      "sha256": "62bc34a968bf993a0eb52c17424418b5e054dbb8200ed86b065f2486840c8e0f"
+    },
+    {
+      "relative": "current-wallets.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-close-funding-fix-01/workspace/tonswap_tolk/artifacts/perps-oracle-pull/execution-fixtures/current-wallets.json",
+      "sha256": "03825e7e39e63cb8e4005808a223b5ad25ec53cedf752b9e0368da983e7efc75"
+    }
+  ],
+  "historicalRejectedArtifact": {
+    "relative": "../perps-range-wallet-testnet-20260914.json",
+    "sha256": "bbcb5f1154e3e949ce0d646cc5cdf5b5c8cd2b94134e9d2cf145753dbe77c6b9"
+  }
+}

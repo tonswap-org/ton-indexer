@@ -16,6 +16,7 @@ import { readLaunchpadRequests } from '../ledger/launchpadRequests';
 import { launchpadCommand } from '../ledger/launchpadWire';
 import { bodyCell, tokenWire, TRANSFER, NOTIFY } from '../ledger/wire';
 import type { LedgerLaunchpadSale } from '../ledger/launchpadModels';
+import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 type Model=LedgerLaunchpadSale['model'];
 type Trace={accounts:Record<string,string>;compiler:{entrypointFileName:string;codeHash:string}[];transactions:{phase:string;account:string;raw:RawTransaction}[];
  boundaries:{phase:string;account:string;transactionLt:string;transactionHash:string;before:LedgerStateSnapshot['state'];after:LedgerStateSnapshot['state']}[]};
@@ -45,7 +46,7 @@ function ownerAcceptance(f:Fixture){const node=f.trace.transactions.find(row=>ro
  ['contribute','bid'].includes(launchpadCommand({body:tokenWire(row.raw.inMessage)!.forward.toBoc().toString('base64')})?.kind??''));assert(node);return node;}
 function snapshot(f:Fixture,row:{account:string;raw:RawTransaction}){const state=f.states.get(key(row.account,row.raw.lt,row.raw.hash));assert(state);return state;}
 function replaceRef(cell:Cell,index:number,next:Cell){const b=beginCell().storeBits(cell.bits);cell.refs.forEach((ref,i)=>b.storeRef(i===index?next:ref));return b.endCell();}
-function alterWalletBalance(f:Fixture,account:string,tx:RawTransaction,delta:bigint){const state=snapshot(f,{account,raw:tx}),cell=Cell.fromBase64(state.state.dataBoc!),s=cell.beginParse(),balance=s.loadCoins();state.state.dataBoc=beginCell().storeCoins(balance+delta).storeSlice(s).endCell().toBoc().toString('base64');}
+function alterWalletBalance(f:Fixture,account:string,tx:RawTransaction,delta:bigint){const state=snapshot(f,{account,raw:tx}),wallet=readCurrentJettonWalletStorage(Cell.fromBase64(state.state.dataBoc!));state.state.dataBoc=writeCurrentJettonWalletStorage({...wallet,balance:wallet.balance+delta}).toBoc().toString('base64');}
 function alterParticipant(f:Fixture,field:'payment'|'tokens'|'claimed'|'beneficiary'|'fill'){
  const row=ownerAcceptance(f),state=snapshot(f,row),root=Cell.fromBase64(state.state.dataBoc!),inner=root.refs[3],entryRef=f.model==='fixed'?1:1,cell=inner.refs[entryRef],cursor=cell.beginParse();
  const entries=cursor.loadDict(Dictionary.Keys.Address(),{serialize:(value:Cell,b:any)=>b.storeSlice(value.beginParse()),parse:(s:any)=>{const value=s.asCell();s.skip(s.remainingBits);while(s.remainingRefs)s.loadRef();return value;}});
@@ -57,14 +58,13 @@ function alterParticipant(f:Fixture,field:'payment'|'tokens'|'claimed'|'benefici
  const updated=beginCell().storeDict(entries).endCell();state.state.dataBoc=replaceRef(root,3,replaceRef(inner,entryRef,updated)).toBoc().toString('base64');parsers[f.model](state.state.dataBoc);
 }
 function alterFeeJournal(f:Fixture,field:'amount'|'reserve') {
- const row=ownerAcceptance(f),state=snapshot(f,row),before=f.states.get(key(row.account,row.raw.prevTransactionLt!,row.raw.prevTransactionHash!))!,id=BigInt(parsers[f.model](before.state.dataBoc!).journal.nextSettlementId);
- const root=Cell.fromBase64(state.state.dataBoc!),inner=root.refs[3],journal=f.model==='auction'?inner.refs[2].refs[1]:inner.refs[3],j=journal.beginParse();
+ const row=ownerAcceptance(f),state=snapshot(f,row),root=Cell.fromBase64(state.state.dataBoc!),inner=root.refs[3];
+ const journalIndex=f.model==='auction'?2:3,journal=inner.refs[journalIndex],j=journal.beginParse();
  const entries=j.loadDict(Dictionary.Keys.BigUint(64),Dictionary.Values.Cell());
- if(field==='amount'){const r=entries.get(id)!.beginParse(),wire=r.loadUintBig(64),hash=r.loadUintBig(256),amount=r.loadCoins();entries.set(id,beginCell().storeUint(wire,64).storeUint(hash,256).storeCoins(amount+1n).storeSlice(r).endCell());}
- const next=j.loadUintBig(64),current=j.loadUintBig(64),currentSale=j.loadUintBig(64),tail=j.loadUintBig(64),tailSale=j.loadUintBig(64),reserve=j.loadCoins();
- const changed=beginCell().storeDict(entries).storeUint(next,64).storeUint(current,64).storeUint(currentSale,64).storeUint(tail,64).storeUint(tailSale,64).storeCoins(reserve+(field==='reserve'?1n:0n)).storeSlice(j).endCell();
- const updated=f.model==='auction'?replaceRef(inner,2,replaceRef(inner.refs[2],1,changed)):replaceRef(inner,3,changed);
- state.state.dataBoc=replaceRef(root,3,updated).toBoc().toString('base64');parsers[f.model](state.state.dataBoc);
+ const next=j.loadUintBig(64),current=j.loadUintBig(64),currentSale=j.loadUintBig(64),tail=j.loadUintBig(64),tailSale=j.loadUintBig(64),reserve=j.loadCoins(),saleReserve=j.loadCoins(),native=j.loadCoins();
+ const changed=beginCell().storeDict(entries).storeUint(next,64).storeUint(current,64).storeUint(currentSale,64).storeUint(tail,64).storeUint(tailSale,64)
+  .storeCoins(reserve+(field==='reserve'?1n:0n)).storeCoins(saleReserve).storeCoins(native+(field==='amount'?1n:0n)).storeSlice(j).endCell();
+ state.state.dataBoc=replaceRef(root,3,replaceRef(inner,journalIndex,changed)).toBoc().toString('base64');parsers[f.model](state.state.dataBoc);
 }
 const physical=(events:LedgerEvent[])=>events.flatMap(e=>e.movements).map(({purpose,...movement})=>movement).sort((a,b)=>a.id.localeCompare(b.id));
 

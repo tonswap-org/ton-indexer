@@ -123,8 +123,8 @@ Response:
   - `../tonswap_tolk/tmp_debug/module_addresses.json` (dev/testnet sync source).
   - `../tonswap_tolk/tmp_debug/dlmm.*.address` (if DLMM pools are used).
 - Opcode map loaded from `../tonswap_tolk/config/opcodes.json`:
-  - `contracts/clmm/pool.tolk` → `OP_SWAP`, `OP_ADD_LIQ`, `OP_REMOVE_LIQ`, etc.
-  - `contracts/clmm/router.tolk` → router ops and jetton notify opcode.
+  - `contracts/dlmm/pool.tolk` → `OP_SWAP`, `OP_ADD_LIQ`, `OP_REMOVE_LIQ`, etc.
+  - `contracts/dex/router.tolk` → router ops and jetton notify opcode.
 - Allow override via config for mainnet/testnet differences.
   - Note: `registry/mainnet.json` is a placeholder and must be filled with real mainnet addresses.
   - Note: `registry/testnet.json` should be refreshed after new testnet deployments.
@@ -209,7 +209,7 @@ Response:
 - [x] Add tests with sample TONSWAP txs.
 - [x] Map decoded ops to `WalletHistoryEntry.detail` fields for UI.
 - [x] Reuse `getTransactionStatus` logic from `tonswap_web` for status mapping.
-- [x] Track pool addresses (seed from registry, then expand via ClmmPoolFactory deploy events).
+- [x] Track pool addresses (seed from registry, then expand via DlmmPoolFactory deploy events).
 - [x] Aggregate successful, actual-output DLMM swaps into forward/reverse-normalized OHLCV candles.
 
 ### Phase 3 — Pagination + Backfill
@@ -232,3 +232,36 @@ Response:
 - [x] Replace client-side parsing with server-provided `WalletHistoryEntry` fields.
 - [x] Add UI handling for `history_complete=false` and `total_pages_min`.
 - [x] UX: show “History syncing…” until backfill completes.
+
+## Current T3 referral identity
+
+The first-release T3 ledger requires the mandatory invitation reference in MINT,
+REDM and collateral-deposit notes, the inline inviter in the burn application,
+and the current Hub referral state reference. Old wire/storage layouts remain
+unsupported. Historical redemption proof and owner continuation must retain the
+original inviter. Qualified mint/redemption settlement exposes that original
+`referrer` (nullable); it never infers a sponsor from current registry state.
+
+Validation: `npx tsx src/scripts/ledger-t3-test.ts`,
+`npx tsx src/scripts/ledger-t3-discovery-test.ts`, `npx tsc --noEmit` and
+`npx tsx src/scripts/openapi-test.ts`. Captured discovery bytes are immutable;
+the old Hub layout is explicitly rejected and a separately labeled synthetic
+current-layout state exercises discovery.
+
+The Hub referral-state decoder also requires the inline completed-user-mint
+dictionary and validates every archived key, finalized journal, and receipt
+identity. The current fixture producer is
+`T3_WEB_FIXTURES_DIR=../tonswap_web/tests/fixtures npx tsx src/scripts/ledger-t3-test.ts`;
+it writes only the mint/redemption fixtures and preserves frozen old receipts.
+
+### First-release native funding evidence (2026-09-18)
+
+Managed control/settlement branches use current CNFW funding contexts and CNRF
+actual native returns. Decode business data separately from complete outer wire
+identity; exact messages, original BOCs, qualified historical code/state and
+physical wallet balance transitions remain mandatory for product settlement.
+Current TVM12+ `extra_flags` is metadata even where an SDK/provider calls its
+serialized field `ihrFee`/`ihr_fee`. It must never be added to native expenses.
+The native funding and native terminal tests cover this boundary. Full current
+Perps/RiskVault journal decoder integration and new deployment qualification
+remain open until their exact sources and original state captures close.

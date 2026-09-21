@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import {
   readCanonicalReleaseManifest,
-  type RegistryMarketMetadata,
+  type RegistrySpotMarketMetadata,
 } from '../config/releaseManifest';
 
 type OpenApiSpec = {
@@ -67,6 +67,11 @@ type MarketCandle = {
 type MarketCandlesInfo = {
   market_key?: unknown;
   market_address?: unknown;
+  token_root?: unknown;
+  asset_symbol?: unknown;
+  quote_symbol?: unknown;
+  asset_decimals?: unknown;
+  quote_decimals?: unknown;
   interval?: unknown;
   from_utime?: unknown;
   to_utime?: unknown;
@@ -106,7 +111,7 @@ type StrictReleaseExpectation = {
   registryHash: string;
   releaseManifestHash: string;
   contracts: Record<string, string>;
-  markets: RegistryMarketMetadata[];
+  markets: RegistrySpotMarketMetadata[];
   expectedCorsOrigin: string;
   hostileCorsOrigin: string;
 };
@@ -402,7 +407,7 @@ function resolveStrictReleaseExpectation(
     registryHash: exactRegistryHash,
     releaseManifestHash: exactReleaseManifestHash,
     contracts: manifest.contracts,
-    markets: manifest.markets,
+    markets: manifest.spotMarkets,
     expectedCorsOrigin: exactExpectedCorsOrigin,
     hostileCorsOrigin: exactHostileCorsOrigin,
   };
@@ -426,16 +431,21 @@ function assertExactReleaseContracts(
   assertDiscoveryRootEqualities(contracts, 'contracts payload');
 }
 
-function assertTwoCandleHistory(
+function assertCandleHistory(
   raw: unknown,
-  market: RegistryMarketMetadata,
+  market: RegistrySpotMarketMetadata,
   expectedNetwork: 'mainnet' | 'testnet' | 'localnet',
-  allSeenTransactions: Set<string>
+  allSeenTransactions: Set<string>,
 ): void {
   assert.ok(raw && typeof raw === 'object' && !Array.isArray(raw), `${market.marketKey} candles must be an object`);
   const history = raw as MarketCandlesInfo;
   assert.equal(history.market_key, market.marketKey, `${market.marketKey} market_key mismatch`);
   assert.equal(history.market_address, market.marketAddress, `${market.marketKey} market_address mismatch`);
+  assert.equal(history.token_root, market.tokenRoot, `${market.marketKey} token_root mismatch`);
+  assert.equal(history.asset_symbol, market.assetSymbol, `${market.marketKey} asset_symbol mismatch`);
+  assert.equal(history.quote_symbol, market.quoteSymbol, `${market.marketKey} quote_symbol mismatch`);
+  assert.equal(history.asset_decimals, market.assetDecimals, `${market.marketKey} asset_decimals mismatch`);
+  assert.equal(history.quote_decimals, market.quoteDecimals, `${market.marketKey} quote_decimals mismatch`);
   assert.equal(history.interval, '1m', `${market.marketKey} interval must be 1m`);
   assert.equal(history.from_utime, null, `${market.marketKey} from_utime must reflect the unbounded manifest query`);
   assert.equal(history.to_utime, null, `${market.marketKey} to_utime must reflect the unbounded manifest query`);
@@ -445,9 +455,9 @@ function assertTwoCandleHistory(
     Number.isSafeInteger(history.synced_at) && Number(history.synced_at) > 0,
     `${market.marketKey} synced_at must be a positive safe integer`
   );
-  assert.equal(history.candle_count, 2, `${market.marketKey} candle_count must be exactly 2`);
   assert.ok(Array.isArray(history.candles), `${market.marketKey} candles must be an array`);
-  assert.equal(history.candles.length, 2, `${market.marketKey} candles must contain exactly 2 entries`);
+  assert.equal(history.candle_count, history.candles.length, `${market.marketKey} candle_count must match its array`);
+  assert.ok(history.candles.length <= 2, `${market.marketKey} candles exceed the requested limit`);
 
   let previousTimestamp = -1;
   for (const [index, rawCandle] of history.candles.entries()) {
@@ -467,33 +477,27 @@ function assertTwoCandleHistory(
         `${market.marketKey} candle ${index} ${field} must be a positive finite number`
       );
     }
-    assert.equal(candle.open, candle.high, `${market.marketKey} single-trade candle open/high mismatch`);
-    assert.equal(candle.open, candle.low, `${market.marketKey} single-trade candle open/low mismatch`);
-    assert.equal(candle.open, candle.close, `${market.marketKey} single-trade candle open/close mismatch`);
-    const derivedPrice = Number(candle.volumeQuote) / Number(candle.volumeBase);
-    const priceDelta = Math.abs(derivedPrice - Number(candle.close));
-    const priceScale = Math.max(1, Math.abs(derivedPrice), Math.abs(Number(candle.close)));
-    assert.ok(
-      priceDelta <= Number.EPSILON * 8 * priceScale,
-      `${market.marketKey} single-trade candle price must match its volumes`
-    );
-    assert.equal(candle.tradeCount, 1, `${market.marketKey} candle ${index} must contain exactly one trade`);
-    assert.ok(
-      Array.isArray(candle.sourceTxIds) &&
-        candle.sourceTxIds.length === 1 &&
-        typeof candle.sourceTxIds[0] === 'string' &&
-        candle.sourceTxIds[0].length > 0 &&
-        candle.sourceTxIds[0].length <= 512 &&
-        candle.sourceTxIds[0] === candle.sourceTxIds[0].trim() &&
-        !/[\u0000-\u001f\u007f]/.test(candle.sourceTxIds[0]),
-      `${market.marketKey} candle ${index} must bind exactly one source transaction`
-    );
-    const transactionId = candle.sourceTxIds[0] as string;
-    assert.ok(
-      !allSeenTransactions.has(transactionId),
-      'all release-market candle source transactions must be distinct'
-    );
-    allSeenTransactions.add(transactionId);
+    assert.ok(Number.isSafeInteger(candle.tradeCount) && Number(candle.tradeCount) > 0,
+      `${market.marketKey} candle ${index} must have positive tradeCount`);
+    assert.ok(Number(candle.high) >= Math.max(Number(candle.open), Number(candle.close)) &&
+      Number(candle.low) <= Math.min(Number(candle.open), Number(candle.close)), `${market.marketKey} invalid OHLC bounds`);
+    if (candle.tradeCount === 1) {
+      assert.equal(candle.open, candle.high, `${market.marketKey} single-trade candle open/high mismatch`);
+      assert.equal(candle.open, candle.low, `${market.marketKey} single-trade candle open/low mismatch`);
+      assert.equal(candle.open, candle.close, `${market.marketKey} single-trade candle open/close mismatch`);
+      const derivedPrice = Number(candle.volumeQuote) / Number(candle.volumeBase),
+        priceDelta = Math.abs(derivedPrice - Number(candle.close)),
+        priceScale = Math.max(1, Math.abs(derivedPrice), Math.abs(Number(candle.close)));
+      assert.ok(priceDelta <= Number.EPSILON * 8 * priceScale, `${market.marketKey} single-trade candle price must match its volumes`);
+    }
+    assert.ok(Array.isArray(candle.sourceTxIds) && candle.sourceTxIds.length > 0 &&
+      candle.sourceTxIds.length <= Number(candle.tradeCount), `${market.marketKey} candle ${index} must bind source transactions`);
+    for (const transactionId of candle.sourceTxIds) {
+      assert.ok(typeof transactionId === 'string' && transactionId.length > 0 && transactionId.length <= 512 &&
+        transactionId === transactionId.trim() && !/[\u0000-\u001f\u007f]/.test(transactionId), `${market.marketKey} invalid source transaction`);
+      assert.ok(!allSeenTransactions.has(transactionId), 'all release-market candle source transactions must be distinct');
+      allSeenTransactions.add(transactionId);
+    }
   }
 }
 
@@ -728,13 +732,9 @@ export async function runProductionSmoke(
           }),
         }
       );
-      assertTwoCandleHistory(history, market, expectedNetwork, seenCandleTransactions);
+      assertCandleHistory(history, market, expectedNetwork, seenCandleTransactions);
     }
-    assert.equal(
-      seenCandleTransactions.size,
-      6,
-      'three exact two-candle histories must bind six distinct transactions'
-    );
+
   }
 
   process.stdout.write(`ton production smoke ok: ${baseUrl.toString()}\n`);

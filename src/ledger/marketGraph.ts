@@ -65,13 +65,7 @@ export class DlmmMarketGraphBuilder {
         node.after = await stateAt(node.account, node.raw.lt, node.raw.hash);
         if (node.raw.prevTransactionLt && node.raw.prevTransactionHash) {
           node.before = await stateAt(node.account, node.raw.prevTransactionLt, node.raw.prevTransactionHash);
-          if (!node.before && node.raw.prevTransactionLt === '0' && node.after && this.source.getAccountStateAtSeqno && node.after.seqno > 0) {
-            // An earlier authenticated block with no prior transaction is a
-            // usable first-credit boundary; never interpolate an active state.
-            const seqno = node.after.seqno - 1, state = await this.source.getAccountStateAtSeqno(node.account, seqno);
-            if (state.accountState === 'uninitialized' && state.lastTxLt === '0' && state.lastTxHash && canonicalLedgerHash(state.lastTxHash) === canonicalLedgerHash(node.raw.prevTransactionHash))
-              node.before = { seqno, state };
-          }
+
         }
       } catch { issues.add('market_archive_unavailable'); }
     };

@@ -5,6 +5,7 @@ import type { Network } from '../models';
 import type { OpcodeSets } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 import type { LedgerAsset, LedgerEvent, LedgerMovement } from './types';
+import { decodeNativeFundingBody } from './nativeFunding';
 
 export const canonicalLedgerAddress = (value: string) =>
   Address.parse(value).toRawString();
@@ -53,7 +54,18 @@ export async function normalizeLedgerEvent(
   ) {
     throw new Error('Invalid ledger transaction identity or time');
   }
+  // Ledger generations contain terminal physical transactions. A missing or
+  // contradictory provider outcome is a decoding gap, never an inferred failure.
+  if ((raw.status !== 'success' && raw.status !== 'failed') ||
+      raw.success !== (raw.status === 'success')) {
+    throw new Error('Ledger transaction requires a consistent terminal outcome status');
+  }
+  const status = raw.status;
   const hash = canonicalLedgerHash(raw.hash);
+  const nativeEvidence = {
+    transactionStatus: status,
+    transactions: [{ account, lt: raw.lt, hash, utime: raw.utime }] as [import('./types').LedgerEvidenceRef],
+  };
   const tx = { ...raw, hash };
   const indexed = classifyTransaction(account, tx, opcodes);
   const id = createHash('sha256')
@@ -62,12 +74,11 @@ export async function normalizeLedgerEvent(
   const native: LedgerAsset = {
     kind: 'native',
     id: `${network}:native`,
-    symbol: 'TON',
+    symbol: 'GRAM',
     decimals: 9,
   };
   const issues = new Set<string>();
   const movements: LedgerMovement[] = [];
-  const status = raw.status ?? (raw.success ? 'success' : 'failed');
   const add = (movement: Omit<LedgerMovement, 'id'>) =>
     movements.push({ id: `${id}:${movements.length}`, ...movement });
 
@@ -99,6 +110,7 @@ export async function normalizeLedgerEvent(
           source,
           destination,
           evidence: {
+            ...nativeEvidence,
             kind: 'native_message',
             messageIndex: index,
             opcode: msg.op,
@@ -115,11 +127,16 @@ export async function normalizeLedgerEvent(
       const cells = Cell.fromBoc(Buffer.from(msg.body, 'base64'));
       if (cells.length !== 1) throw new Error('one root required');
       cell = cells[0];
+      if (msg.op !== undefined && cell.bits.length >= 32 && cell.beginParse().preloadUint(32) !== msg.op)
+        throw new Error('Message opcode contradicts original body');
     } catch {
       issues.add('message_body_invalid');
       continue;
     }
-    const body = cell.beginParse();
+    let business: Cell;
+    try { business = decodeNativeFundingBody(cell).businessBody; }
+    catch { issues.add('native_funding_invalid'); continue; }
+    const body = business.beginParse();
     if (body.remainingBits < 32) continue;
     const opcode = body.loadUint(32);
     // A transfer request/burn instruction is not a settled token movement.
@@ -181,8 +198,29 @@ export async function normalizeLedgerEvent(
       asset: native,
       amountRaw: totalFeesRaw,
       source: account,
-      evidence: { kind: 'transaction_fee' },
+      evidence: { ...nativeEvidence, kind: 'transaction_fee' },
     });
+  // Current TON (TVM12+) uses the former IHR wire slot for extra_flags.
+  // Flags are metadata, never nanotons. Only actual outgoing forwarding fees
+  // supplement totalFees; original BOCs retain the full physical message.
+  tx.outMessages.forEach((msg, index) => {
+    if (msg.value === undefined) return;
+    for (const [field, amount] of [
+      ['forward', msg.forwardFeeRaw],
+    ] as const) {
+      if (amount === undefined) {
+        issues.add(`outgoing_${field}_fee_unavailable`);
+      } else if (!atomic(amount)) {
+        issues.add(`outgoing_${field}_fee_invalid`);
+      } else if (amount !== '0') {
+        movements.push({
+          id: `${id}:${field}:${index}`,
+          direction: 'fee', asset: native, amountRaw: amount, source: account,
+          evidence: { ...nativeEvidence, kind: 'message_forward_fee', messageIndex: index },
+        });
+      }
+    }
+  });
   if (indexed.kind !== 'transfer')
     issues.add(
       indexed.kind === 'unknown'

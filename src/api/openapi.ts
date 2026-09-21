@@ -124,7 +124,7 @@ export const buildOpenApi = (config: Config) => {
           type: 'object',
           properties: {
             exit_code: { type: 'integer' },
-            gas_used: { type: 'integer' },
+            gas_used: { type: ['integer', 'null'], description: 'Measured TVM gas for verified admission; null when the source does not report gas.' },
             stack: { type: 'array', items: { type: 'array', items: {} } },
           },
           required: ['exit_code', 'gas_used', 'stack'],
@@ -141,7 +141,7 @@ export const buildOpenApi = (config: Config) => {
           properties: {
             ok: { type: 'boolean', enum: [true] },
             exit_code: { type: 'integer' },
-            gas_used: { type: 'integer' },
+            gas_used: { type: ['integer', 'null'], description: 'Measured TVM gas for verified admission; null when the source does not report gas.' },
             stack: { type: 'array', items: { type: 'array', items: {} } },
           },
           required: ['ok', 'exit_code', 'gas_used', 'stack'],
@@ -368,6 +368,7 @@ export const buildOpenApi = (config: Config) => {
                 receiveToken: { type: 'string' },
                 payAmount: { type: 'string' },
                 receiveAmount: { type: 'string' },
+                minimumReceiveAmount: { type: 'string' },
                 queryId: { type: 'string' },
                 executionType: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
                 twapSlice: { type: 'integer' },
@@ -431,9 +432,18 @@ export const buildOpenApi = (config: Config) => {
             reason: { type: 'string' },
             payToken: { type: 'string' },
             receiveToken: { type: 'string' },
-            payAmount: { type: 'string' },
+            requestedPayAmount: { type: 'string', description: 'Original requested input debit, not verified spending.' },
+            payAmount: { type: 'string', description: 'Verified consumed input after the unused-input return; absent without qualified settlement.' },
+            returnedPayAmount: { type: 'string', description: 'Verified unused input returned to the original payer.' },
             receiveAmount: { type: 'string' },
-            receiveAmountSource: { type: 'string', enum: ['actual', 'minimum'] },
+            receiveAmountSource: { type: 'string', enum: ['actual'] },
+            minimumReceiveAmount: { type: 'string', description: 'Requested minimum output; never an actual receipt.' },
+            receipt: {
+              type: 'object',
+              properties: { ledgerEventId: { type: 'string' }, generation: { type: 'string' }, assetId: { type: 'string' } },
+              required: ['ledgerEventId', 'generation', 'assetId'],
+              description: 'Exact qualified owner-ledger receipt supplying receiveAmount.',
+            },
             queryId: { type: 'string' },
             executionType: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
             twapSlice: { type: 'integer' },
@@ -485,6 +495,7 @@ export const buildOpenApi = (config: Config) => {
             receiveToken: { type: 'string' },
             payAmount: { type: 'string' },
             receiveAmount: { type: 'string' },
+            minimumReceiveAmount: { type: 'string' },
             queryId: { type: 'string' },
             querySequence: { type: 'integer' },
             queryNonce: { type: 'integer' },
@@ -564,6 +575,11 @@ export const buildOpenApi = (config: Config) => {
           properties: {
             market_key: { type: 'string' },
             market_address: { type: 'string' },
+            token_root: { type: ['string', 'null'], description: 'Canonical release token root; null for an unbound ad-hoc query.' },
+            asset_symbol: { type: 'string' },
+            quote_symbol: { type: 'string' },
+            asset_decimals: { type: ['integer', 'null'] },
+            quote_decimals: { type: ['integer', 'null'] },
             interval: { type: 'string', enum: ['1m', '5m', '15m', '1h', '4h', '1d'] },
             from_utime: { type: ['integer', 'null'] },
             to_utime: { type: ['integer', 'null'] },
@@ -576,6 +592,7 @@ export const buildOpenApi = (config: Config) => {
           required: [
             'market_key',
             'market_address',
+            'token_root', 'asset_symbol', 'quote_symbol', 'asset_decimals', 'quote_decimals',
             'interval',
             'from_utime',
             'to_utime',
@@ -601,130 +618,6 @@ export const buildOpenApi = (config: Config) => {
           },
           required: ['address', 'network'],
         },
-        TonSccpProofBlockId: {
-          type: 'object',
-          properties: {
-            seqno: { type: 'integer' },
-            workchain: { type: 'integer' },
-            shard: { type: 'string' },
-            rootHashHex: { type: 'string' },
-            fileHashHex: { type: 'string' },
-          },
-          required: ['seqno', 'workchain', 'shard', 'rootHashHex', 'fileHashHex'],
-        },
-        TonSccpProofSignature: {
-          type: 'object',
-          properties: {
-            nodeIdShortHex: { type: 'string' },
-            signatureHex: { type: 'string' },
-          },
-          required: ['nodeIdShortHex', 'signatureHex'],
-        },
-        TonSccpProofSignatureSet: {
-          type: 'object',
-          properties: {
-            scheme: { type: 'string', enum: ['ordinary', 'simplex'] },
-            validatorListHashShort: { type: 'integer' },
-            catchainSeqno: { type: 'integer' },
-            signatures: { type: 'array', items: { $ref: '#/components/schemas/TonSccpProofSignature' } },
-            sessionIdHex: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
-            slot: { type: 'integer', minimum: 0, maximum: 4294967295 },
-            candidateBase64: { type: 'string' },
-          },
-          required: ['scheme', 'validatorListHashShort', 'catchainSeqno', 'signatures'],
-        },
-        TonSccpMasterCursor: {
-          type: 'object',
-          properties: {
-            lt: { type: 'string', pattern: '^[1-9][0-9]*$' },
-            hash: { type: 'string' },
-          },
-          required: ['lt', 'hash'],
-        },
-        TonSccpBurnMasterTransaction: {
-          type: 'object',
-          properties: {
-            lt: { type: 'string', pattern: '^[1-9][0-9]*$' },
-            hash: { type: 'string' },
-            utime: { type: 'integer', minimum: 0 },
-          },
-          required: ['lt', 'hash', 'utime'],
-        },
-        TonSccpBurnRecord: {
-          type: 'object',
-          properties: {
-            messageId: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
-            nonce: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
-            destDomain: { type: 'integer', minimum: 0, maximum: 4294967295 },
-            recipient32: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
-            amount: { type: 'string', pattern: '^[1-9][0-9]*$' },
-            masterTransaction: { $ref: '#/components/schemas/TonSccpBurnMasterTransaction' },
-          },
-          required: [
-            'messageId',
-            'nonce',
-            'destDomain',
-            'recipient32',
-            'amount',
-            'masterTransaction',
-          ],
-        },
-        TonSccpBurnStatusResponse: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['pending', 'confirmed'] },
-            jettonMaster: { type: 'string' },
-            burnInitiator: { type: 'string' },
-            queryId: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
-            soraAssetId: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
-            currentMasterNonce: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
-            masterCursor: {
-              oneOf: [{ $ref: '#/components/schemas/TonSccpMasterCursor' }, { type: 'null' }],
-            },
-            burnRecord: {
-              oneOf: [{ $ref: '#/components/schemas/TonSccpBurnRecord' }, { type: 'null' }],
-            },
-          },
-          required: [
-            'status',
-            'jettonMaster',
-            'burnInitiator',
-            'queryId',
-            'soraAssetId',
-            'currentMasterNonce',
-            'masterCursor',
-            'burnRecord',
-          ],
-        },
-        TonSccpBurnProofMaterialResponse: {
-          type: 'object',
-          properties: {
-            trustedCheckpoint: { $ref: '#/components/schemas/TonSccpProofBlockId' },
-            targetMasterchain: { $ref: '#/components/schemas/TonSccpProofBlockId' },
-            targetSignatures: { $ref: '#/components/schemas/TonSccpProofSignatureSet' },
-            targetShard: { $ref: '#/components/schemas/TonSccpProofBlockId' },
-            checkpointBlockBoc: { type: 'string' },
-            checkpointStateBoc: { type: 'string' },
-            targetBlockBoc: { type: 'string' },
-            targetStateBoc: { type: 'string' },
-            shardBlockBoc: { type: 'string' },
-            shardStateBoc: { type: 'string' },
-            burnRecordPresent: { type: 'boolean' },
-          },
-          required: [
-            'trustedCheckpoint',
-            'targetMasterchain',
-            'targetSignatures',
-            'targetShard',
-            'checkpointBlockBoc',
-            'checkpointStateBoc',
-            'targetBlockBoc',
-            'targetStateBoc',
-            'shardBlockBoc',
-            'shardStateBoc',
-            'burnRecordPresent',
-          ],
-        },
         PerpsStatusResponse: {
           type: 'object',
           properties: {
@@ -733,7 +626,7 @@ export const buildOpenApi = (config: Config) => {
             feeBps: {
               type: ['string', 'null'],
               description:
-                'Base T3 trade fee in basis points from the canonical 36-field engine_config getter; null when that getter cannot be decoded exactly or the value is outside 0..10000.',
+                'Base T3 trade fee in basis points from the canonical 33-field engine_config getter; null when that getter cannot be decoded exactly or the value is outside 0..10000.',
             },
           },
           required: ['enabled', 'feeBps'],
@@ -755,6 +648,7 @@ export const buildOpenApi = (config: Config) => {
             controlAuthority: { type: ['string', 'null'] },
             controlSequence: { type: ['string', 'null'] },
             controlTimestamp: { type: ['string', 'null'] },
+            controlRequestHash: { type: ['string', 'null'] },
           },
         },
         PerpsMarketStateResponse: {
@@ -797,15 +691,6 @@ export const buildOpenApi = (config: Config) => {
             auctionClearingPrice: { type: ['string', 'null'] },
             controlWeightBps: { type: ['string', 'null'] },
             controlFeeDeltaBps: { type: ['string', 'null'] },
-            marketKind: { type: ['string', 'null'] },
-            timerVolatilityBps: { type: ['string', 'null'] },
-            timerEmaVolatilityBps: { type: ['string', 'null'] },
-            timerLastUpdateTs: { type: ['string', 'null'] },
-            timerWeightBps: { type: ['string', 'null'] },
-            correlationBps: { type: ['string', 'null'] },
-            correlationDispersionBps: { type: ['string', 'null'] },
-            correlationLastUpdateTs: { type: ['string', 'null'] },
-            correlationWeightBps: { type: ['string', 'null'] },
             lastFundingPayloadHash: { type: ['string', 'null'] },
             lastFundingPoolHash: { type: ['string', 'null'] },
           },
@@ -836,7 +721,6 @@ export const buildOpenApi = (config: Config) => {
             seriesManager: { type: ['string', 'null'] },
             oracle: { type: ['string', 'null'] },
             automation: { type: ['string', 'null'] },
-            perpsEngine: { type: ['string', 'null'] },
             coverManager: { type: ['string', 'null'] },
             minLiquidityBps: { type: ['string', 'null'] },
             staleSeconds: { type: ['string', 'null'] },
@@ -862,7 +746,6 @@ export const buildOpenApi = (config: Config) => {
           type: 'object',
           properties: {
             exists: { type: 'boolean' },
-            marketId: { type: ['string', 'null'] },
             sourcePool: { type: ['string', 'null'] },
             coverPolicyId: { type: ['string', 'null'] },
           },
@@ -1011,12 +894,14 @@ export const buildOpenApi = (config: Config) => {
             },
             series_count: { type: 'integer' },
             scanned: { type: 'integer' },
+            next_after_id: { type: ['string', 'null'] },
+            page_complete: { const: true },
             series: { type: 'array', items: { $ref: '#/components/schemas/OptionSeriesSnapshotRecordResponse' } },
             source: { type: 'string' },
             network: { type: 'string' },
             updated_at: { type: 'integer' },
           },
-          required: ['factory', 'series_count', 'scanned', 'series', 'source', 'network', 'updated_at'],
+          required: ['factory', 'series_count', 'scanned', 'next_after_id', 'page_complete', 'series', 'source', 'network', 'updated_at'],
         },
         CoverStateResponse: {
           type: 'object',
@@ -1034,6 +919,7 @@ export const buildOpenApi = (config: Config) => {
             lastProcessed: { type: ['string', 'null'] },
             lastRemaining: { type: ['string', 'null'] },
             vault: { type: ['string', 'null'] },
+            governance: { type: ['string', 'null'] },
             riskVault: { type: ['string', 'null'] },
             riskBucketId: { type: ['string', 'null'] },
           },
@@ -1047,6 +933,7 @@ export const buildOpenApi = (config: Config) => {
             lowerBound: { type: ['string', 'null'] },
             upperBound: { type: ['string', 'null'] },
             payout: { type: ['string', 'null'] },
+            coveredNotional: { type: ['string', 'null'] },
             windowSeconds: { type: ['string', 'null'] },
             requiredObservations: { type: ['string', 'null'] },
             breachStart: { type: ['string', 'null'] },
@@ -1054,6 +941,8 @@ export const buildOpenApi = (config: Config) => {
             lastObservation: { type: ['string', 'null'] },
             lastHealthyObservation: { type: ['string', 'null'] },
             breachObservations: { type: ['string', 'null'] },
+            lastVolatilityTimestamp: { type: ['string', 'null'] },
+            lastVolatilityRequestHash: { type: ['string', 'null'] },
             status: { type: ['string', 'null'] },
             riskVault: { type: ['string', 'null'] },
             riskBucketId: { type: ['string', 'null'] },
@@ -1245,7 +1134,8 @@ export const buildOpenApi = (config: Config) => {
       },
       '/api/indexer/v1/metrics': {
         get: {
-          summary: 'Metrics snapshot',
+          summary: 'Metrics snapshot (admin only)',
+          security: [{ AdminToken: [] }, { AdminBearer: [] }],
           responses: {
             200: {
               description: 'Metrics',
@@ -1256,7 +1146,8 @@ export const buildOpenApi = (config: Config) => {
       },
       '/api/indexer/v1/metrics/prometheus': {
         get: {
-          summary: 'Prometheus metrics',
+          summary: 'Prometheus metrics (admin only)',
+          security: [{ AdminToken: [] }, { AdminBearer: [] }],
           responses: {
             200: { description: 'Prometheus metrics', content: { 'text/plain': { schema: { type: 'string' } } } },
           },
@@ -1270,6 +1161,10 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Balance response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/BalanceResponse' } } },
+            },
+            503: {
+              description: 'Balance source temporarily unavailable; retry the read.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
             400: {
               description: 'Bad request',
@@ -1287,6 +1182,10 @@ export const buildOpenApi = (config: Config) => {
               description: 'Balances response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/BalancesResponse' } } },
             },
+            503: {
+              description: 'Balance source temporarily unavailable; retry the read.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
             400: {
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
@@ -1302,6 +1201,10 @@ export const buildOpenApi = (config: Config) => {
             200: {
               description: 'Balances response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/BalancesResponse' } } },
+            },
+            503: {
+              description: 'Balance source temporarily unavailable; retry the read.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
             400: {
               description: 'Bad request',
@@ -1444,111 +1347,12 @@ export const buildOpenApi = (config: Config) => {
           },
         },
       },
-      '/api/indexer/v1/sccp/ton/burn-status': {
-        get: {
-          summary: 'Resolve an authoritative TON SCCP burn identity',
-          description:
-            'Without after_lt/after_hash, validates the SCCP master configuration and returns its current transaction cursor. With that exact cursor, scans only newer linked master transactions for SccpBurnedNotification(queryId), verifies the matching get_sccp_burn_record cell, and returns the master-owned messageId and nonce. A burn that has not finalized is a successful HTTP 200 response with status pending.',
-          parameters: [
-            { name: 'jetton_master', in: 'query', required: true, schema: { type: 'string', maxLength: 128 } },
-            { name: 'burn_initiator', in: 'query', required: true, schema: { type: 'string', maxLength: 128 } },
-            {
-              name: 'query_id',
-              in: 'query',
-              required: true,
-              schema: { type: 'string', maxLength: 20, pattern: '^(0|[1-9][0-9]*)$' },
-            },
-            {
-              name: 'sora_asset_id',
-              in: 'query',
-              required: true,
-              schema: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
-            },
-            {
-              name: 'dest_domain',
-              in: 'query',
-              required: true,
-              schema: { type: 'string', maxLength: 10, pattern: '^(0|[1-9][0-9]*)$' },
-            },
-            {
-              name: 'recipient32',
-              in: 'query',
-              required: true,
-              schema: { type: 'string', maxLength: 66, pattern: '^0x[0-9a-fA-F]{64}$' },
-            },
-            {
-              name: 'amount',
-              in: 'query',
-              required: true,
-              schema: { type: 'string', maxLength: 39, pattern: '^[1-9][0-9]*$' },
-            },
-            {
-              name: 'after_lt',
-              in: 'query',
-              schema: { type: 'string', maxLength: 20, pattern: '^[1-9][0-9]*$' },
-            },
-            { name: 'after_hash', in: 'query', schema: { type: 'string', maxLength: 64 } },
-          ],
-          responses: {
-            200: {
-              description: 'Pending or authoritatively confirmed SCCP burn status',
-              content: {
-                'application/json': {
-                  schema: { $ref: '#/components/schemas/TonSccpBurnStatusResponse' },
-                },
-              },
-            },
-            400: {
-              description: 'Malformed intent, unsupported master, cursor discontinuity, or evidence mismatch',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/sccp/ton/burn-proof-material': {
-        get: {
-          summary: 'TON SCCP burn proof material',
-          description:
-            'Returns the raw TON block, state, and signature material required to assemble a client-side TON -> SORA proof bundle. If trusted_checkpoint_seqno/hash are omitted, the indexer resolves the current SORA-governed TON checkpoint automatically.',
-          parameters: [
-            { name: 'jetton_master', in: 'query', required: true, schema: { type: 'string' } },
-            { name: 'message_id', in: 'query', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' } },
-            {
-              name: 'trusted_checkpoint_seqno',
-              in: 'query',
-              required: false,
-              schema: { type: 'integer', minimum: 1 },
-            },
-            {
-              name: 'trusted_checkpoint_hash',
-              in: 'query',
-              required: false,
-              schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
-            },
-            { name: 'target_seqno', in: 'query', schema: { type: 'integer', minimum: 1 } },
-          ],
-          responses: {
-            200: {
-              description: 'TON SCCP proof material response',
-              content: {
-                'application/json': {
-                  schema: { $ref: '#/components/schemas/TonSccpBurnProofMaterialResponse' },
-                },
-              },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
       '/api/indexer/v1/perps/{engine}/snapshot': {
         get: {
           summary: 'Perps engine snapshot, including canonical engine_config base fee',
           parameters: [
             { name: 'engine', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'market_ids', in: 'query', schema: { type: 'string' } },
+            { name: 'market_ids', in: 'query', description: 'Comma-separated positive uint32 market IDs; the unique count must fit max_markets.', schema: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 1407 } },
             { name: 'max_markets', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 128 } },
           ],
           responses: {
@@ -1569,7 +1373,8 @@ export const buildOpenApi = (config: Config) => {
           parameters: [
             { name: 'volIndex', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'pool', in: 'query', schema: { type: 'string' } },
-            { name: 'route_ids', in: 'query', schema: { type: 'string' } },
+            { name: 'route_ids', in: 'query', description: 'Comma-separated positive uint32 route IDs; at most 64 entries.',
+              schema: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 703 } },
           ],
           responses: {
             200: {
@@ -1628,11 +1433,8 @@ export const buildOpenApi = (config: Config) => {
           summary: 'Options factory snapshot',
           parameters: [
             { name: 'factory', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'start_id', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 1000000 } },
-            { name: 'max_series_id', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 1000000 } },
-            { name: 'window_size', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 256 } },
-            { name: 'max_empty_windows', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
-            { name: 'min_probe_windows', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 4096 } },
+            { name: 'after_id', in: 'query', schema: { type: 'string', pattern: '^(0|[1-9][0-9]{0,19})$' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
           ],
           responses: {
             200: {

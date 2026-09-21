@@ -1,5 +1,6 @@
-import { Address, Cell, Slice } from '@ton/core';
+import { Address, Cell, Slice, beginCell } from '@ton/core';
 import type { RawMessage } from '../data/dataSource';
+import { decodeNativeFundingBody, decodeNativeFundingRefund } from './nativeFunding';
 export const TRANSFER = 0x0f8a7ea5,
   INTERNAL = 0x178d4519,
   SETTLEMENT_INTERNAL = 0x4a534954,
@@ -9,6 +10,8 @@ export const TRANSFER = 0x0f8a7ea5,
 export const SWAP = 0x53574150,
   ADD = 0x444c4144,
   REMOVE = 0x44524d56,
+  COLLECT = 0x44434c4d,
+  COLLECT_TO = 0x44434c54,
   WITHDRAW_COMPLETE = 0x4457434d;
 export const TOKEN_CONTROL_OPS = new Set([
   TRANSFER,
@@ -50,6 +53,21 @@ export function opcode(message?: RawMessage) {
     ? cell.beginParse().preloadUint(32)
     : null;
 }
+/** Business decoding is separate from bodyCell/messageKey, which bind the complete physical wire. */
+export function businessBodyCell(message?: RawMessage): Cell | null {
+  try {
+    const original = bodyCell(message);
+    return original ? decodeNativeFundingBody(original).businessBody : null;
+  } catch { return null; }
+}
+export function businessOpcode(message?: RawMessage): number | null {
+  const cell = businessBodyCell(message);
+  return cell && cell.bits.length >= 32 ? cell.beginParse().preloadUint(32) : null;
+}
+export function nativeFundingRefund(message?: RawMessage) {
+  try { const cell = bodyCell(message); return cell ? decodeNativeFundingRefund(cell) : null; }
+  catch { return null; }
+}
 const end = (s: Slice) => {
   if (s.remainingBits || s.remainingRefs) throw new Error('trailing wire data');
 };
@@ -75,7 +93,7 @@ export type TokenWire = {
 /** Current TONSWAP cell-ref ABI and standard TEP-74 are distinct wire formats.
  * Accept a format only when it consumes the complete envelope; ambiguous parses fail closed. */
 export function tokenWire(message?: RawMessage): TokenWire | null {
-  const cell = bodyCell(message);
+  const cell = businessBodyCell(message);
   if (!cell) return null;
   const parse = (canonical: boolean): TokenWire | null => {
     try {
@@ -178,6 +196,7 @@ export type ProtocolForward = {
   owner: string | null;
   binId?: number;
   minOutRaw?: string;
+  minSharesRaw?: string;
 };
 /** Known perps funding envelopes are product intents, not proof of position acceptance.
  * Decode only the family boundary here; engine rejection/refund remains unresolved. */
@@ -205,9 +224,9 @@ export function protocolForward(cell: Cell): ProtocolForward | null {
       owner = s.loadMaybeAddress()?.toRawString() ?? null;
     if (op === ADD) {
       const binId = s.loadInt(32);
-      s.loadUintBig(256);
+      const minSharesRaw = s.loadUintBig(256).toString();
       end(s);
-      return { operation: 'lp_deposit', queryId, owner, binId };
+      return { operation: 'lp_deposit', queryId, owner, binId, minSharesRaw };
     }
     const minOutRaw = s.loadCoins().toString(),
       direction = s.loadUint(8);
@@ -234,6 +253,21 @@ export function withdrawalRequest(message?: RawMessage) {
   } catch {
     return null;
   }
+}
+/** A collection's shares select a proportion of accrued fees; they are not burned.
+ * Its settlement journal uses query zero, so only the original transaction
+ * identity can correlate separate collection requests. */
+export function collectionRequest(message?: RawMessage) {
+  try {
+    const cell = bodyCell(message);
+    if (!cell || !message?.source) return null;
+    const s = cell.beginParse(), op = s.loadUint(32);
+    if (op !== COLLECT && op !== COLLECT_TO) return null;
+    const binId = s.loadInt(32), shares = s.loadUintBig(256).toString();
+    const recipient = op === COLLECT_TO ? s.loadAddress().toRawString() : Address.parse(message.source).toRawString();
+    end(s);
+    return shares === '0' ? null : { binId, shares, recipient };
+  } catch { return null; }
 }
 export function withdrawalReceipt(message?: RawMessage) {
   try {
@@ -273,4 +307,17 @@ export function messageKey(message?: RawMessage): string | null {
   } catch {
     return null;
   }
+}
+
+/** Current DLRF contribution commitment. Creation LT distinguishes repeated
+ * identical payment bodies; pool and pool wallet bind the incoming envelope.
+ * These fields must come from the independently qualified physical chain. */
+export function dlmmLiquidityNotificationCommitment(message?: RawMessage): string | null {
+  if (!messageKey(message) || opcode(message) !== NOTIFY || message?.bounced || !message?.createdLt || BigInt(message.createdLt) <= 0n) return null;
+  try {
+    return beginCell().storeUint(0x444c5246, 32)
+      .storeAddress(Address.parse(message.destination!)).storeAddress(Address.parse(message.source!))
+      .storeUint(BigInt(message.createdLt), 64).storeUint(BigInt('0x' + bodyCell(message)!.hash().toString('hex')), 256)
+      .endCell().hash().toString('hex');
+  } catch { return null; }
 }

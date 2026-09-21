@@ -15,18 +15,18 @@ import {
   A, owner, other, factory, series, ownerWallet, factoryWallet,
   factoryCode, shoutCode, spreadCode, notional, premium, collateral,
   boc, position, factoryData, factorySeries, productData, fixture, cash,
-  type FactoryStateFixture,
+  type FactoryStateFixture, acceptedIngressState,
 } from "./ledger-option-lifecycle-test";
 
 /** Actual physical funding and failed product transaction emitting the bounded
  * VM bounce. No owner abort or product cancellation request/ACK is inserted. */
 export function bounceFixture(kind: 1 | 2 = 1, paid = true) {
   const f = fixture(),
-    amount = collateral + premium + 37n,
+    amount = premium + 20n,
     key = (7n << 64n) | 3n,
     refundWire = 56n,
     p = position({
-      flags: 0n, custodyWire: 55n, excess: 17n, walletFunding: 360000000n,
+      flags: 0n, custodyWire: 55n, excess: 0n, walletFunding: 360000000n,
     }),
     productCode = kind === 1 ? shoutCode : spreadCode,
     beforeSeries = factorySeries({kind, openNotional: 0n, collateralLocked: 0n, nextTokenId: 3n}),
@@ -44,7 +44,7 @@ export function bounceFixture(kind: 1 | 2 = 1, paid = true) {
   });
   const payload = beginCell()
     .storeUint(OPTION_FACTORY_BUY, 32).storeUint(7, 64).storeAddress(A(owner))
-    .storeCoins(notional).storeCoins(premium + 20n).storeUint(10000, 32).endCell();
+    .storeCoins(notional).storeCoins(premium + 20n).storeUint(10000, 32).storeAddress(null).endCell();
   const request = f.msg(owner, ownerWallet, beginCell()
     .storeUint(TRANSFER, 32).storeUint(1234, 64).storeCoins(amount)
     .storeAddress(A(factory)).storeAddress(A(owner)).storeRef(Cell.EMPTY)
@@ -57,6 +57,7 @@ export function bounceFixture(kind: 1 | 2 = 1, paid = true) {
     .storeUint(NOTIFY, 32).storeUint(1234, 64).storeCoins(amount)
     .storeAddress(A(owner)).storeAddress(A(ownerWallet)).storeCoins(1)
     .storeRef(payload).endCell());
+  const ingressState = acceptedIngressState(notify);
   const assigned = f.msg(factory, series, beginCell()
     .storeUint(kind === 1 ? OPTION_BUY_SHOUT : OPTION_BUY_SPREAD, 32)
     .storeUint(55, 64).storeAddress(A(owner)).storeUint(3, 64)
@@ -67,7 +68,7 @@ export function bounceFixture(kind: 1 | 2 = 1, paid = true) {
   const origin = f.tx(factory, notify, [assigned], {
     code: factoryCode,
     data: factoryData(p, [], 0n, undefined, {
-      series: [allocatedSeries], seriesBuyIndex: [[55n, key]], nextBuyWireId: 56n,
+      ...ingressState, series: [allocatedSeries], seriesBuyIndex: [[55n, key]], nextBuyWireId: 56n,
     }),
   });
   const bounce = f.msg(series, factory, beginCell().storeUint(0xffffffff, 32)
@@ -82,15 +83,15 @@ export function bounceFixture(kind: 1 | 2 = 1, paid = true) {
   const recovery = f.tx(factory, bounce, [], {
     code: factoryCode,
     data: factoryData(returnPosition, [], key, undefined, {
-      series: [unwoundSeries], nextBuyWireId: 57n,
+      ...ingressState, series: [unwoundSeries], nextBuyWireId: 57n,
     }),
   });
   const payment = cash(f, factory, recovery, owner, amount, refundWire,
     factoryData({...returnPosition, flags: 8304n, walletFunding: 180000000n}, [], key, undefined, {
-      series: [unwoundSeries], nextBuyWireId: 57n,
+      ...ingressState, series: [unwoundSeries], nextBuyWireId: 57n,
     }),
     factoryData({...returnPosition, flags: 176n, walletFunding: 0n}, [], 0n, undefined, {
-      series: [unwoundSeries], nextBuyWireId: 57n,
+      ...ingressState, series: [unwoundSeries], nextBuyWireId: 57n,
     }),
   );
   if (!paid) {
@@ -106,7 +107,7 @@ export function bounceFixture(kind: 1 | 2 = 1, paid = true) {
   return {
     ...f, kind, paid, amount, key, refundWire, p, returnPosition,
     beforeSeries, allocatedSeries, unwoundSeries, initialFactory,
-    request, payload, assigned, origin, failed, bounce, recovery,
+    request, payload, assigned, origin, failed, bounce, recovery, ingressState,
     factoryPayment: paid ? payment : undefined,
     cashSource: payment.sourceTx, cashTransfer: payment.transfer,
   };
@@ -131,8 +132,8 @@ function rewriteFactory(f: BounceFixture, stage: "initial" | "origin" | "recover
   const defaults = stage === "initial"
     ? { tx: f.initialFactory, p: null, active: 0n, state: {series: [f.beforeSeries], nextBuyWireId: 55n} }
     : stage === "origin"
-      ? { tx: f.origin, p: f.p, active: 0n, state: {series: [f.allocatedSeries], seriesBuyIndex: [[55n, f.key]] as Array<[bigint, bigint]>, nextBuyWireId: 56n} }
-      : { tx: f.recovery, p: f.returnPosition, active: f.key, state: {series: [f.unwoundSeries], nextBuyWireId: 57n} };
+      ? { tx: f.origin, p: f.p, active: 0n, state: {...f.ingressState, series: [f.allocatedSeries], seriesBuyIndex: [[55n, f.key]] as Array<[bigint, bigint]>, nextBuyWireId: 56n} }
+      : { tx: f.recovery, p: f.returnPosition, active: f.key, state: {...f.ingressState, series: [f.unwoundSeries], nextBuyWireId: 57n} };
   f.states.get(`${factory}:${defaults.tx.lt}`)!.data = factoryData(
     changes.position === undefined ? defaults.p : changes.position,
     [], changes.active ?? defaults.active, undefined, {...defaults.state, ...changes.state},
@@ -182,6 +183,7 @@ function occupiedFactoryFixture(kind: 1 | 2, wire: bigint) {
       p = stage === "initial" ? null : stage === "origin" ? own : {...own, flags: 48n, settled: true},
       allocated = stage === "origin",
       data = factoryData(null, [], otherKey, undefined, {
+        ...(stage === "initial" ? {} : f.ingressState),
         series: [factorySeries({kind,
           openNotional: notional * (allocated ? 2n : 1n),
           collateralLocked: collateral * (allocated ? 2n : 1n),
@@ -229,6 +231,11 @@ async function adverseCases() {
     ["failed product retained reserved position", (f) => {f.states.get(`${series}:${f.failed.lt}`)!.data = productData(f.kind, false, 0n, owner, "reserved");}],
     ["failed transaction hash not archived hash", (f) => {f.failed.hash = Buffer.alloc(32, 7).toString("base64");}],
     ["funding was never transferred", (f) => {f.input.chains.get(ownerWallet)!.transactions.find((t) => t.inMessage === f.request)!.outMessages = [];}],
+    ["missing physical acceptance tombstone", (f) => rewriteFactory(f, "origin", {state: {physicalTombstones: []}})],
+    ["missing logical acceptance receipt", (f) => rewriteFactory(f, "origin", {state: {ingressReceipts: []}})],
+    ["preexisting accepted business cannot allocate twice", (f) => rewriteFactory(f, "initial", {state: f.ingressState})],
+    ["previously refunded business cannot allocate", (f) => rewriteFactory(f, "initial", {state: {ingressReceipts: f.ingressState.ingressReceipts!.map((r) => ({...r, accepted: false}))}})],
+    ["changed original notification created_lt", (f) => { f.origin.inMessage!.createdLt = String(BigInt(f.origin.inMessage!.createdLt!) + 1n); }],
     ["allocation missing index", (f) => rewriteFactory(f, "origin", {state: {seriesBuyIndex: []}})],
     ["allocation wrong indexed position", (f) => rewriteFactory(f, "origin", {state: {seriesBuyIndex: [[55n, f.key + 1n]]}})],
     ["allocation preexisting wire", (f) => rewriteFactory(f, "initial", {state: {seriesBuyIndex: [[55n, f.key]]}})],

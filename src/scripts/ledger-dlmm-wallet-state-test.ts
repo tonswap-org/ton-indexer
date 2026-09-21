@@ -13,8 +13,9 @@ type Fixture = {
   accounts: { pool: string; lp: string; payer: string; otherPayer: string; recipient: string; tokenT: string; tokenX: string; wallets: Record<string, string[]> };
   compiler: { entrypointFileName: string; codeHash: string }[];
   transactions: Transaction[]; boundaries: Boundary[];
+  intents: {phase:string;firstSettlementId:string;quote:{amountOut:string}}[];
 };
-const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/dlmm-market-settlements.json'), 'utf8')) as Fixture;
+const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/dlmm-referral-market-current/dlmm-market-settlements.json'), 'utf8')) as Fixture;
 const { accounts: a } = fixture;
 const read = (s: State) => { assert(s.dataBoc); return readT3RecoveryWallet(s.dataBoc); };
 const boundary = (t: Transaction) => {
@@ -45,11 +46,11 @@ test('all ten real wallet addresses derive from current unchanged code, root and
       assert.equal(state.lockedFeesRaw, '0'); assert.equal(state.borrowedFeesRaw, '0'); states++;
     }
   }
-  assert.equal(addresses, 10); assert.equal(states, 91);
+  assert.equal(addresses, 10); assert.equal(states, 115);
 });
 
-test('seven authentic JSTT starts debit exact token amounts and replace only the permitted source tuple', () => {
-  const starts = sourceEvents(0x0f8a7ea5); assert.equal(starts.length, 7);
+test('eleven authentic JSTT starts debit exact token amounts and replace only the permitted source tuple', () => {
+  const starts = sourceEvents(0x0f8a7ea5); assert.equal(starts.length, 11);
   for (const t of starts) {
     assert(t.raw.success); const b = boundary(t), before = read(b.before), after = read(b.after), m = t.raw.inMessage!;
     const s = Cell.fromBase64(m.body).beginParse(); s.loadUint(32);
@@ -65,8 +66,8 @@ test('seven authentic JSTT starts debit exact token amounts and replace only the
   }
 });
 
-test('seven actual recipient JSAC receipts advance Sent to Accepted without a second debit', () => {
-  const acks = sourceEvents(0x4a534143); assert.equal(acks.length, 7);
+test('eleven actual recipient JSAC receipts advance Sent to Accepted without a second debit', () => {
+  const acks = sourceEvents(0x4a534143); assert.equal(acks.length, 11);
   for (const t of acks) {
     const b = boundary(t), before = read(b.before), after = read(b.after), tuple = bodyTuple(t.raw.inMessage!);
     assert.equal(t.raw.inMessage!.source, before.transfer.destination); assert(t.raw.success);
@@ -78,8 +79,8 @@ test('seven actual recipient JSAC receipts advance Sent to Accepted without a se
   }
 });
 
-test('seven source finalizers retain None tombstones and never convert journal cleanup into another cash movement', () => {
-  const finalizers = sourceEvents(0x4a53464e); assert.equal(finalizers.length, 7);
+test('eleven source finalizers retain None tombstones and never convert journal cleanup into another cash movement', () => {
+  const finalizers = sourceEvents(0x4a53464e); assert.equal(finalizers.length, 11);
   for (const t of finalizers) {
     const b = boundary(t), before = read(b.before), after = read(b.after), tuple = bodyTuple(t.raw.inMessage!);
     assert.equal(t.raw.inMessage!.source, a.pool); assert.equal(before.transfer.status, 2); assert.equal(after.transfer.status, 0);
@@ -90,8 +91,8 @@ test('seven source finalizers retain None tombstones and never convert journal c
   }
 });
 
-test('seven real destination credits add their exact amounts while preserving unrelated transfer and burn state', () => {
-  const credits = fixture.transactions.filter(t => t.raw.inMessage?.op === 0x4a534954); assert.equal(credits.length, 7);
+test('eleven real destination credits add their exact amounts while preserving unrelated transfer and burn state', () => {
+  const credits = fixture.transactions.filter(t => t.raw.inMessage?.op === 0x4a534954); assert.equal(credits.length, 11);
   for (const t of credits) {
     assert(t.raw.success); const b = boundary(t), before = b.before.dataBoc ? read(b.before) : null, after = read(b.after), tuple = bodyTuple(t.raw.inMessage!);
     assert.equal(BigInt(after.balanceRaw) - BigInt(before?.balanceRaw ?? '0'), BigInt(tuple.amountRaw));
@@ -107,13 +108,13 @@ test('READY and a failed retry produce no transfer start; funded recovery consum
     assert.equal(fixture.transactions.filter(t => t.phase === phase && t.raw.inMessage?.op === 0x4a534954).length, 0);
   }
   const recoveries = sourceEvents(0x0f8a7ea5).filter(t => t.phase === 'retry-output-recovery'); assert.equal(recoveries.length, 1);
-  const state = read(boundary(recoveries[0]).after);
-  assert.equal(state.transfer.queryId, '4923278817646084101'); assert.equal(state.transfer.amountRaw, '11996'); assert.equal(state.transfer.status, 1);
+  const state = read(boundary(recoveries[0]).after), intent = fixture.intents.find(row=>row.phase==='underfunded-output')!;
+  assert(BigInt(state.transfer.queryId)>BigInt(intent.firstSettlementId), 'funded retry promotes the old never-admitted wire before dispatch'); assert.equal(state.transfer.amountRaw, '11997'); assert.equal(state.transfer.status, 1);
 });
 
 test('repeating a business request uses distinct source wires, including finalized tuple replacement', () => {
-  const first = sourceEvents(0x0f8a7ea5).find(t => t.phase === 'full-t-to-x')!;
-  const repeated = sourceEvents(0x0f8a7ea5).find(t => t.phase === 'repeat-business-query')!;
+  const first = sourceEvents(0x0f8a7ea5).find(t => t.phase === 'full-t-to-x' && t.account === a.wallets.pool[1])!;
+  const repeated = sourceEvents(0x0f8a7ea5).find(t => t.phase === 'repeat-business-query' && t.account === a.wallets.pool[1])!;
   const firstAfter = read(boundary(first).after), repeatedBefore = read(boundary(repeated).before), repeatedAfter = read(boundary(repeated).after);
   assert.equal(repeatedBefore.transfer.status, 0); assert.equal(repeatedBefore.transfer.queryId, firstAfter.transfer.queryId);
   assert.notEqual(repeatedAfter.transfer.queryId, firstAfter.transfer.queryId); assert.equal(repeatedAfter.transfer.status, 1);
@@ -124,7 +125,7 @@ const vector = (opcode: number, destination: string | null, burnStatus = 0) => b
   .storeAddress(Address.parse(a.pool)).storeAddress(Address.parse(a.tokenT)).storeCoins(4).storeCoins(5)
   .storeAddress(destination ? Address.parse(destination) : null).storeUint(opcode, 32).storeUint(77, 64).storeCoins(88)
   .storeRef(beginCell().storeUint(burnStatus, 8).storeUint(9, 64).storeCoins(10).storeUint(11, 256).storeAddress(Address.parse(a.payer)).endCell())
-  .storeRef(beginCell().storeUint(0, 8).storeUint(0, 64).storeUint(0, 64).storeCoins(0).storeUint(0, 256).endCell()).endCell();
+  .storeRef(beginCell().storeUint(0, 8).storeUint(0, 64).storeUint(0, 64).storeCoins(0).storeUint(0, 256).endCell()).storeDict(null).storeDict(null).endCell();
 for (const [name, opcode, destination, status] of [
   ['empty destination dominates opcode', 0x4a534954, null, 0],
   ['sent', 0x4a534954, a.wallets.recipient[1], 1],

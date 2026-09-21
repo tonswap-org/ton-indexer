@@ -1,5 +1,6 @@
 import { Address, Cell, Dictionary, beginCell } from "@ton/core";
-import { burnIntentHash } from "./t3Wire";
+import { burnIntentHash, referralAddress, readT3ReferralState } from "./t3Wire";
+import { readCurrentJettonWalletStorage } from "./jettonWalletState";
 const end = (s: ReturnType<Cell["beginParse"]>) => {
   if (s.remainingBits || s.remainingRefs)
     throw Error("Trailing T3 recovery storage");
@@ -78,17 +79,12 @@ export function readT3RecoveryRoot(
   };
 }
 export function readT3RecoveryWallet(boc: string) {
-  const cell = Cell.fromBase64(boc),
-    s = cell.beginParse(),
-    balanceRaw = s.loadCoins().toString(),
-    owner = s.loadAddress().toRawString(),
-    root = s.loadAddress().toRawString();
-  const lockedFeesRaw = s.loadCoins().toString(),
-    borrowedFeesRaw = s.loadCoins().toString(),
-    destination = s.loadMaybeAddress()?.toRawString() ?? null,
-    opcode = s.loadUint(32),
-    transferQueryId = s.loadUintBig(64).toString(),
-    transferAmountRaw = s.loadCoins().toString();
+  const cell = Cell.fromBase64(boc), storage = readCurrentJettonWalletStorage(cell);
+  const owner = storage.owner.toRawString(), root = storage.root.toRawString(),
+    destination = storage.feeDelegate?.toRawString() ?? null,
+    balanceRaw = storage.balance.toString(), lockedFeesRaw = storage.lockedFees.toString(),
+    borrowedFeesRaw = storage.borrowedFees.toString(), opcode = storage.lastBounceOpcode,
+    transferQueryId = storage.lastBounceQueryId.toString(), transferAmountRaw = storage.lastBounceAmount.toString();
   // Current jetton_wallet.tolk settlement_status: the root-cell tuple is
   // separate from the burn journal below. NONE may retain a finalized tuple.
   const transferStatus: 0 | 1 | 2 | 3 = destination === null
@@ -100,9 +96,17 @@ export function readT3RecoveryWallet(boc: string) {
         : opcode === 0x4a544246
           ? 3
           : 0;
-  const j = s.loadRef().beginParse();
-  s.loadRef();
-  end(s);
+  const j = storage.burnJournal.beginParse(), mint = storage.mintJournal.beginParse();
+  const readMint = (value: ReturnType<Cell["beginParse"]>) => {
+    const status = value.loadUint(8), wireId = value.loadUintBig(64), queryId = value.loadUintBig(64), amount = value.loadCoins(), requestHash = value.loadUintBig(256);
+    end(value);
+    if (status !== 0 && status !== 2 || status === 0 && (wireId !== 0n || queryId !== 0n || amount !== 0n || requestHash !== 0n)) throw Error("T3 wallet mint journal");
+    return {status, wireId, queryId, amount, requestHash};
+  };
+  readMint(mint);
+  const mintReceipts = Dictionary.loadDirect(Dictionary.Keys.BigUint(64), {serialize: () => {throw Error("Read-only mint receipt");}, parse: readMint}, storage.mintReceipts);
+  for (const [wireId, receipt] of mintReceipts) if (receipt.status !== 2 || receipt.wireId !== wireId || receipt.amount <= 0n) throw Error("T3 wallet mint receipt");
+  Dictionary.loadDirect(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell(), storage.referralNotifications);
   const status = j.loadUint(8),
     queryId = j.loadUintBig(64).toString(),
     amountRaw = j.loadCoins().toString(),
@@ -149,12 +153,10 @@ export function readT3RecoveryHub(boc: string, owner: string, queryId: string) {
   b.skip(64);
   b.loadCoins();
   b.skip(64);
-  b.loadMaybeAddress();
-  b.skip(32);
-  b.loadCoins();
-  b.skip(64);
   b.loadRef();
   const p = b.loadRef().beginParse();
+  const referral = readT3ReferralState(b.loadRef());
+  if (referral.t3Root !== null && referral.t3Root !== root) throw Error("T3 referral root mismatch");
   end(b);
   p.loadUintBig(64);
   const entries = p.loadDict(
@@ -187,6 +189,7 @@ export function readT3RecoveryHub(boc: string, owner: string, queryId: string) {
       outputToken: v.loadUint(8),
       payoutId: v.loadUintBig(64).toString(),
       consumed: v.loadUint(8),
+      referrer: referralAddress(v.loadRef()),
     };
   end(v);
   if (

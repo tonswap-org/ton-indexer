@@ -4,9 +4,7 @@ import {
   AccountStateResponse,
   MasterchainInfo,
   RawTransaction,
-  TransactionCursor,
-  TonSccpBurnProofMaterial,
-  TonSccpBurnProofMaterialRequest
+  TransactionCursor
 } from './dataSource';
 import { JettonMetadata, Network } from '../models';
 
@@ -142,20 +140,6 @@ export class ResilientTonDataSource implements TonDataSource {
     if (primary) return primary;
     const secondary = await callSafely(() => this.fallback.getJettonMetadata(master));
     return secondary ?? null;
-  }
-
-  async getTonSccpBurnProofMaterial(
-    request: TonSccpBurnProofMaterialRequest
-  ): Promise<TonSccpBurnProofMaterial> {
-    const primary = this.primary.getTonSccpBurnProofMaterial
-      ? await callSafely(() => this.primary.getTonSccpBurnProofMaterial!(request))
-      : null;
-    if (primary) return primary;
-    if (this.fallback.getTonSccpBurnProofMaterial) {
-      const secondary = await callSafely(() => this.fallback.getTonSccpBurnProofMaterial!(request));
-      if (secondary) return secondary;
-    }
-    throw new Error('TON SCCP proof material is unavailable from both data sources.');
   }
 
   async close(): Promise<void> {

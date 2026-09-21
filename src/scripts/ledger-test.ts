@@ -59,6 +59,11 @@ async function testNormalization() {
   assert.equal(event.movements[1].amountRaw, '100');
   assert.deepEqual(event.issues, []);
   assert.equal(event.movements[0].asset.id, 'testnet:native');
+  for (const movement of event.movements) {
+    assert.deepEqual(movement.asset, {
+      kind: 'native', id: 'testnet:native', symbol: 'GRAM', decimals: 9,
+    });
+  }
   assert.equal(
     classifyTransaction(account, tx(1), opcodes).totalFeesRaw,
     '100'
@@ -503,6 +508,21 @@ async function testDatabase() {
     );
     const invalidGeneration = randomUUID();
     const event2 = await normalizeLedgerEvent('testnet', other, tx(2), opcodes);
+    const rejectedBatchGeneration = randomUUID();
+    await store.begin('testnet', other, rejectedBatchGeneration, { lt: '2', hash: hash(2) });
+    for (const altered of [
+      { ...event2, account }, { ...event2, network: 'mainnet' as const },
+      { ...event2, lt: '3' }, { ...event2, hash: hash(3) }, { ...event2, utime: event2.utime + 1 },
+      { ...event2, status: 'failed' as const }, { ...event2, id: 'renamed' }, { ...event2, txId: 'renamed' },
+    ]) {
+      await assert.rejects(() => store.append(rejectedBatchGeneration, [event2, altered], [tx(2), tx(2)]),
+        /scope|original physical transaction/);
+      assert.deepEqual(await store.rawHistory(rejectedBatchGeneration), [], 'the complete inconsistent batch is rejected');
+    }
+    await assert.rejects(() => store.append(rejectedBatchGeneration, [event2], [{ ...tx(2), success: false }]),
+      /original physical transaction/);
+    assert.equal((await pool.query('SELECT 1 FROM ledger_transactions WHERE event_id=$1', [event2.id])).rows.length, 0,
+      'rejected batch must not insert even its first valid physical record');
     await assert.rejects(() =>
       store.append(invalidGeneration, [event2], [tx(2)])
     );

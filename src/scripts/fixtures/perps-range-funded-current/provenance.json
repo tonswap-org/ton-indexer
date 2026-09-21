@@ -1,0 +1,27 @@
+{
+  "source": "Unmodified current PerpsRiskAdmission.spec.ts funded OPEN/plain CLOSE, with no state mutation after explicit rangeStartLt. Initial Sandbox setup is an input boundary, not a deployment archive proof; no live testnet claim.",
+  "engineCodeHash": "672adf0e4798430a169468e52d7665024f1ed6293958334a4fcfe32358e570a7",
+  "artifacts": [
+    {
+      "relative": "open.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/captures-a-funded-round-trip-with-uninterrupted-account-history-open-880.json",
+      "sha256": "73296e0371fd90de528531ee4da3086aa23a8f97a854097b9d586b53f3c06c67"
+    },
+    {
+      "relative": "close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/captures-a-funded-round-trip-with-uninterrupted-account-history-direct-close.json",
+      "sha256": "91dd126ff57327bd4ebb9ab3a53a0ab71de80f1a489ac46ca406db3dc9e8583d"
+    },
+    {
+      "relative": "range.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/captures-a-funded-round-trip-with-uninterrupted-account-history-uninterrupted-range.json",
+      "sha256": "51c1d83e195e58f69fe66b8149eecd15b64601eb0daa3f968cef93a96e900d5f"
+    },
+    {
+      "relative": "current-wallets.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-execution-fixtures/release-current-20260920-final/current-wallets.json",
+      "sha256": "d9f9eefd78b4672cfb890ea96c162a8f0d65385a0e9efc110ffa86eda935b96d"
+    }
+  ],
+  "poolCodeHash": "583d8fdd3b13388e4bbf63def6c0e44e0da2ed15b7cf50bbe040df1d33d68b90"
+}

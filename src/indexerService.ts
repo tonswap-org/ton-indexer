@@ -1,18 +1,16 @@
+import { decodeControlMeshSnapshot } from './utils/controlMesh';
+import { decodeRiskControllerSnapshot, type RiskControllerSnapshot } from './utils/riskController';
+import { readOriginalTransactionEvidence, originalTransactionToToncenter } from './data/transactionEvidence';
+import { AdmissionExecutor } from './data/admission/nativePool';
+import { AdmissionError, AdmissionExecution, isAdmissionMethod } from './data/admission/protocol';
 import { readDlmmFarmSnapshot, type DlmmFarmSnapshot, type DlmmFarmSnapshotOptions } from './utils/dlmmFarming';
-import {
-  parseSccpBurnedNotification,
-  parseSccpBurnRecord,
-  type TonSccpBurnedNotification
-} from './utils/sccpEvidence';
-import { Address, Cell, TupleItem, beginCell, contractAddress, storeStateInit } from '@ton/core';
+import { Address, Cell, TupleItem, beginCell, contractAddress, parseTuple, serializeTuple, storeStateInit } from '@ton/core';
 import { EventEmitter } from 'node:events';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
 import {
   RawTransaction,
   TonDataSource,
-  TonSccpBurnProofMaterial,
-  TonSccpBurnProofMaterialRequest,
   transactionPageIsLinkedInclusiveSegment,
   transactionPageReachesHistoryStart
 } from './data/dataSource';
@@ -33,7 +31,6 @@ import { classifyTransaction } from './utils/txClassifier';
 import { JettonMetadata } from './models';
 import { MetricsCollector } from './metricsCollector';
 import { PoolTracker } from './poolTracker';
-import { SoraTonCheckpointResolver } from './soraCheckpoint';
 import { LRUCache } from 'lru-cache';
 import {
   buildTonswapJettonWalletInitialData,
@@ -42,12 +39,14 @@ import {
   parseCanonicalJettonWalletAddress
 } from './data/jettonAbi';
 import { resolveDlmmPoolSettlementEvidence } from './utils/dlmmSettlementEvidence';
+import { enrichSwapReceipts, type SwapLedgerReader } from './ledger/swapReceipts';
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRunResult = {
   stack: ToncenterStackEntry[];
   exit_code: number;
-  gas_used: number;
+  gas_used: number | null;
+  admission?: AdmissionExecution;
 };
 
 export type BalanceChangeEvent = {
@@ -114,9 +113,15 @@ export type AccountSwapExecution = {
   reason?: string;
   payToken?: string;
   receiveToken?: string;
+  /** Original requested wallet debit, distinct from verified consumption. */
+  requestedPayAmount?: string;
+  /** Verified input consumption after any unused-input return. */
   payAmount?: string;
+  returnedPayAmount?: string;
   receiveAmount?: string;
-  receiveAmountSource?: 'actual' | 'minimum';
+  receiveAmountSource?: 'actual';
+  minimumReceiveAmount?: string;
+  receipt?: { ledgerEventId: string; generation: string; assetId: string };
   queryId?: string;
   executionType: SwapExecutionType;
   twapSlice?: number;
@@ -156,6 +161,7 @@ export type AccountPendingLimitOrder = {
   receiveToken?: string;
   payAmount?: string;
   receiveAmount?: string;
+  minimumReceiveAmount?: string;
   queryId?: string;
   querySequence?: number;
   queryNonce?: number;
@@ -241,120 +247,6 @@ export type JettonTransferPayloadResponse = {
   state_init: string | null;
 };
 
-export type TonSccpBurnStatusRequest = {
-  jettonMaster: string;
-  burnInitiator: string;
-  queryId: string;
-  soraAssetId: string;
-  destDomain: string;
-  recipient32: string;
-  amount: string;
-  afterLt?: string;
-  afterHash?: string;
-};
-
-export type TonSccpBurnStatusResponse = {
-  status: 'pending' | 'confirmed';
-  jettonMaster: string;
-  burnInitiator: string;
-  queryId: string;
-  soraAssetId: string;
-  currentMasterNonce: string;
-  masterCursor: { lt: string; hash: string } | null;
-  burnRecord: {
-    messageId: string;
-    nonce: string;
-    destDomain: number;
-    recipient32: string;
-    amount: string;
-    masterTransaction: { lt: string; hash: string; utime: number };
-  } | null;
-};
-
-const SCCP_BURN_STATUS_PAGE_SIZE = 64;
-const SCCP_BURN_STATUS_MAX_PAGES = 8;
-const MAX_UINT32 = (1n << 32n) - 1n;
-const MAX_UINT64 = (1n << 64n) - 1n;
-const MAX_UINT128 = (1n << 128n) - 1n;
-const MAX_UINT256 = (1n << 256n) - 1n;
-
-const parseBoundedUnsignedDecimal = (
-  value: string,
-  label: string,
-  maximum: bigint,
-  allowZero = true
-) => {
-  if (
-    value.length > maximum.toString(10).length ||
-    !/^(0|[1-9][0-9]*)$/.test(value)
-  ) {
-    throw new Error(`${label} must be a canonical unsigned decimal integer.`);
-  }
-  const parsed = BigInt(value);
-  if ((!allowZero && parsed === 0n) || parsed > maximum) {
-    throw new Error(`${label} is outside its supported range.`);
-  }
-  return parsed;
-};
-
-const parseHex256Value = (value: string, label: string) => {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
-    throw new Error(`${label} must be 0x-prefixed 32-byte hex.`);
-  }
-  return BigInt(value);
-};
-
-const formatHex256 = (value: bigint) => `0x${value.toString(16).padStart(64, '0')}`;
-
-const parseExactMaybeAddressTupleItem = (
-  item: TupleItem | undefined
-): { valid: true; address: string | null } | { valid: false; address: null } => {
-  if (!item) return { valid: false, address: null };
-  if (item.type === 'null') return { valid: true, address: null };
-  if (item.type !== 'cell' && item.type !== 'slice' && item.type !== 'builder') {
-    return { valid: false, address: null };
-  }
-  try {
-    const slice = item.cell.beginParse();
-    const address = slice.loadMaybeAddress();
-    if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
-      return { valid: false, address: null };
-    }
-    return { valid: true, address: address?.toRawString() ?? null };
-  } catch {
-    return { valid: false, address: null };
-  }
-};
-
-const parseHash32Bytes = (value: string): Buffer | null => {
-  const trimmed = value.trim();
-  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed)) return null;
-  const normalized = trimmed.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
-  if (normalized.length % 4 === 1) return null;
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-  const decoded = Buffer.from(padded, 'base64');
-  if (decoded.length !== 32) return null;
-  if (decoded.toString('base64').replace(/=+$/, '') !== normalized) return null;
-  return decoded;
-};
-
-const sameTonTransactionCursor = (
-  left: { lt: string; hash: string },
-  right: { lt: string; hash: string }
-) => {
-  const leftHash = parseHash32Bytes(left.hash);
-  const rightHash = parseHash32Bytes(right.hash);
-  return left.lt === right.lt && Boolean(leftHash && rightHash && leftHash.equals(rightHash));
-};
-
-const parseCanonicalAddress = (value: string, label: string) => {
-  try {
-    return Address.parse(value).toRawString();
-  } catch {
-    throw new Error(`${label} is not a valid TON address.`);
-  }
-};
-
 const tupleItemBigInt = (item?: TupleItem): bigint | null => {
   if (!item) return null;
   if (item.type === 'int') return item.value;
@@ -399,7 +291,7 @@ const tupleItemAddress = (item?: TupleItem): string | null => {
 // `engine_config` is a canonical, fixed-width getter for the first Perps
 // release. Keep its arity and fee slot explicit so a truncated or unrelated
 // tuple can never be mistaken for a trade-fee quote.
-const PERPS_ENGINE_CONFIG_STACK_ARITY = 36;
+const PERPS_ENGINE_CONFIG_STACK_ARITY = 33;
 const PERPS_ENGINE_CONFIG_FEE_BPS_INDEX = 9;
 
 const canonicalPerpsFeeBps = (
@@ -427,6 +319,8 @@ const toBocBase64 = (cell: any): string | null => {
 };
 
 const tupleItemToTvmStackEntry = (item: TupleItem): Record<string, unknown> => {
+  if (item.type === 'null') return { '@type': 'tvm.stackEntryNull' };
+  if (item.type === 'nan') return { '@type': 'tvm.stackEntryNaN' };
   if (item.type === 'int') {
     return {
       '@type': 'tvm.stackEntryNumber',
@@ -456,9 +350,9 @@ const tupleItemToTvmStackEntry = (item: TupleItem): Record<string, unknown> => {
   }
   if (item.type === 'builder') {
     return {
-      '@type': 'tvm.stackEntryCell',
-      cell: {
-        '@type': 'tvm.cell',
+      '@type': 'tvm.stackEntryBuilder',
+      builder: {
+        '@type': 'tvm.builder',
         bytes: toBocBase64(item.cell) ?? '',
       },
     };
@@ -472,14 +366,7 @@ const tupleItemToTvmStackEntry = (item: TupleItem): Record<string, unknown> => {
       },
     };
   }
-  // TonClient does not handle stackEntryNull; use an empty tuple as a null-equivalent.
-  return {
-    '@type': 'tvm.stackEntryTuple',
-    tuple: {
-      '@type': 'tvm.tuple',
-      elements: [],
-    },
-  };
+  throw new Error('Unsupported nested TVM stack item.');
 };
 
 const tupleItemToToncenterStackEntry = (item: TupleItem): ToncenterStackEntry => {
@@ -561,32 +448,12 @@ const GOVERNANCE_MAX_SCAN_LIMIT = 64;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const GOVERNANCE_SCAN_BATCH_SIZE = 5;
-const OPTIONS_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const OPTIONS_MAX_SCAN_DEFAULT = 2_048;
-const OPTIONS_MAX_SCAN_LIMIT = 1_000_000;
-const OPTIONS_WINDOW_SIZE_DEFAULT = 24;
-const OPTIONS_WINDOW_SIZE_LIMIT = 256;
-const OPTIONS_MAX_EMPTY_WINDOWS_DEFAULT = 2;
-const OPTIONS_MAX_EMPTY_WINDOWS_LIMIT = 64;
-const OPTIONS_MIN_PROBE_WINDOWS_DEFAULT = 8;
-const OPTIONS_MIN_PROBE_WINDOWS_LIMIT = 4_096;
 const COVER_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const COVER_MAX_SCAN_DEFAULT = 20;
 const COVER_MAX_SCAN_LIMIT = 64;
 const COVER_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const COVER_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const COVER_SCAN_BATCH_SIZE = 5;
-
-const GET_METHOD_CACHE_TTL_MS = 1_000;
-const GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS = 30_000;
-const GET_METHOD_CACHE_ENTRY_MIN_TTL_MS = 60_000;
-
-// Some getters are used as liveness/confirmation signals (e.g. Jetton wallet `get_wallet_data`).
-// Caching these for 30s makes UI/automation flows flaky because balance changes are invisible
-// during the cache window. Keep these on the base (short) TTL even when they take no args.
-const GET_METHOD_CACHE_NO_ARGS_FAST_METHODS = new Set([
-  'get_wallet_data'
-]);
 
 const DEFI_SNAPSHOT_CACHE_TTL_MS = 5_000;
 const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
@@ -667,6 +534,8 @@ type OptionsSnapshotResponse = {
   status: OptionFactoryStatusSnapshot | null;
   series_count: number;
   scanned: number;
+  next_after_id: string | null;
+  page_complete: true;
   series: OptionSeriesSnapshotRecord[];
   source: 'lite' | 'http4';
   network: Network;
@@ -687,6 +556,7 @@ type CoverStateSnapshot = {
   lastProcessed: string | null;
   lastRemaining: string | null;
   vault: string | null;
+  governance: string | null;
   riskVault: string | null;
   riskBucketId: string | null;
 };
@@ -698,6 +568,7 @@ type CoverPolicySnapshot = {
   lowerBound: string | null;
   upperBound: string | null;
   payout: string | null;
+  coveredNotional: string | null;
   windowSeconds: string | null;
   requiredObservations: string | null;
   breachStart: string | null;
@@ -705,6 +576,8 @@ type CoverPolicySnapshot = {
   lastObservation: string | null;
   lastHealthyObservation: string | null;
   breachObservations: string | null;
+  lastVolatilityTimestamp: string | null;
+  lastVolatilityRequestHash: string | null;
   status: string | null;
   riskVault: string | null;
   riskBucketId: string | null;
@@ -727,7 +600,6 @@ type VolIndexConfigSnapshot = {
   seriesManager: string | null;
   oracle: string | null;
   automation: string | null;
-  perpsEngine: string | null;
   coverManager: string | null;
   minLiquidityBps: string | null;
   staleSeconds: string | null;
@@ -749,7 +621,6 @@ type VolIndexStateSnapshot = {
 
 type VolIndexRouteSnapshot = {
   exists: boolean;
-  marketId: string | null;
   sourcePool: string | null;
   coverPolicyId: string | null;
 };
@@ -802,12 +673,12 @@ type DefiSnapshotRequest = {
     dlmmRegistry?: string | null;
     t3Hub?: string | null;
     controlMesh?: string | null;
+    riskController?: string | null;
     riskVault?: string | null;
     feeRouter?: string | null;
     buybackExecutor?: string | null;
     automationRegistry?: string | null;
     anchorGuard?: string | null;
-    clusterGuard?: string | null;
     voting?: string | null;
     coverManager?: string | null;
   };
@@ -854,6 +725,30 @@ type ControlStateSnapshot = {
   pegLevel: string | null;
   pegEscalationScore: string | null;
   pegRecoveryScore: string | null;
+  gasPegSkimBps: string | null;
+  gasPegIntegral: string | null;
+  gasPerpsSkimBps: string | null;
+  gasPerpsIntegral: string | null;
+  gasOptionsSkimBps: string | null;
+  gasOptionsIntegral: string | null;
+  perpsMarket1WeightMillibps: string | null;
+  perpsMarket1FeeDeltaBps: string | null;
+  perpsMarket1FundingCapBps: string | null;
+  perpsMarket2WeightMillibps: string | null;
+  perpsMarket2FeeDeltaBps: string | null;
+  perpsMarket2FundingCapBps: string | null;
+  perpsMarket3WeightMillibps: string | null;
+  perpsMarket3FeeDeltaBps: string | null;
+  perpsMarket3FundingCapBps: string | null;
+  perpsMarket4WeightMillibps: string | null;
+  perpsMarket4FeeDeltaBps: string | null;
+  perpsMarket4FundingCapBps: string | null;
+  insuranceTonPremiumBps: string | null;
+  insuranceTonTarget: string | null;
+  insuranceTonCover: string | null;
+  insuranceBtcPremiumBps: string | null;
+  insuranceBtcTarget: string | null;
+  insuranceBtcCover: string | null;
 };
 
 type RiskStateSnapshot = {
@@ -887,33 +782,45 @@ type RiskBucketStateSnapshot = {
 };
 
 type FeeRouterStateSnapshot = {
-  balance: string | null;
-  lastSequence: string | null;
-  lastTimestamp: string | null;
-  allocationPeg: string | null;
-  allocationLiquidations: string | null;
-  allocationBuyback: string | null;
-  allocationGas: string | null;
-  allocationEmissions: string | null;
-  allocationReferrals: string | null;
-  referralDemand: string | null;
-  referralPriority: string | null;
-  referralFloor: string | null;
-  referralWeightDirectBps: string | null;
-  referralFlags: string | null;
-  referralThrottleMask: string | null;
+  balance: string;
+  lastSequence: string;
+  lastTimestamp: string;
+  lastProfitAmount: string;
 };
 
 type FeeRouterTargetsSnapshot = {
-  t3Peg: string | null;
-  t3Liquidations: string | null;
-  peg: string | null;
-  liquidations: string | null;
-  buyback: string | null;
-  gas: string | null;
-  emissions: string | null;
-  referrals: string | null;
+  t3Root: string | null;
+  t3Wallet: string | null;
+  treasuryTarget: string | null;
+  referralTarget: string | null;
   referralRegistry: string | null;
+};
+
+/** Current first-release profit route only; old allocation tuples are invalid. */
+export const decodeFeeRouterStateSnapshot = (stack: TupleItem[]): FeeRouterStateSnapshot | null => {
+  if (stack.length !== 4) return null;
+  const maxima = [(1n << 120n) - 1n, 0xffffffffn, 0x7fffffffffffffffn, (1n << 120n) - 1n];
+  const values: string[] = [];
+  for (let i = 0; i < stack.length; i++) {
+    const item = stack[i];
+    if (item.type !== 'int' || item.value < 0n || item.value > maxima[i]) return null;
+    values.push(item.value.toString());
+  }
+  return { balance: values[0], lastSequence: values[1], lastTimestamp: values[2], lastProfitAmount: values[3] };
+};
+
+export const decodeFeeRouterTargetsSnapshot = (stack: TupleItem[]): FeeRouterTargetsSnapshot | null => {
+  if (stack.length !== 5) return null;
+  try {
+    const values = stack.map(item => {
+      if (item.type !== 'slice' && item.type !== 'cell') throw new Error('Invalid FeeRouter address item.');
+      const slice = item.cell.beginParse(), address = slice.loadMaybeAddress();
+      slice.endParse();
+      return address?.toRawString() ?? null;
+    });
+    return { t3Root: values[0], t3Wallet: values[1], treasuryTarget: values[2],
+      referralTarget: values[3], referralRegistry: values[4] };
+  } catch { return null; }
 };
 
 type BuybackConfigSnapshot = {
@@ -997,15 +904,8 @@ type AnchorStateSnapshot = {
   latestTimestamp: string | null;
 };
 
-type ClusterGuardConfigSnapshot = {
-  reporter: string | null;
-  registry: string | null;
-  vestingSeconds: string | null;
-  warnThreshold: string | null;
-  slashThreshold: string | null;
-};
-
 type SystemHealthSnapshot = {
+  riskControllerState: RiskControllerSnapshot | null;
   controlState: ControlStateSnapshot | null;
   riskState: RiskStateSnapshot | null;
   feeRouterState: FeeRouterStateSnapshot | null;
@@ -1015,7 +915,6 @@ type SystemHealthSnapshot = {
   anchorGuardState: AnchorStateSnapshot | null;
   anchorGuardEnabled: boolean | null;
   anchorGuardGovernance: string | null;
-  clusterGuardConfig: ClusterGuardConfigSnapshot | null;
 };
 
 type SystemHealthDetailedSnapshot = {
@@ -1079,6 +978,9 @@ type DlmmPoolsSnapshotResponse = {
 };
 
 export class IndexerService {
+  private swapLedgerReader?: SwapLedgerReader;
+
+  setSwapLedgerReader(reader: SwapLedgerReader) { this.swapLedgerReader = reader; }
   private config: Config;
   private store: MemoryStore;
   private source: TonDataSource;
@@ -1088,15 +990,18 @@ export class IndexerService {
   private lastMasterTimestamp?: number;
   private enqueueBackfill?: (address: string) => void;
   private jettonRoots: Array<{ master: string; symbol?: string }>;
-  private jettonMetaCache = new Map<string, { meta: JettonMetadata | null; updatedAt: number }>();
+  private jettonMetaCache = new Map<string, { meta: JettonMetadata | null; updatedAt: number; revision: number }>();
+  private jettonMetaInFlight = new Map<string, Promise<void>>();
+  private jettonMetadataRevision = 0;
   private metrics?: MetricsCollector;
   private poolTracker?: PoolTracker;
   private balanceCache: LRUCache<string, { value: AccountBalance; signature: string }>;
+  private balanceInFlight = new Map<string, Promise<AccountBalance>>();
+  private nativeStateInFlight = new Map<string, Promise<AccountState>>();
   private txCache: LRUCache<string, { value: any; signature: string }>;
   private stateCache: LRUCache<string, { value: any; signature: string }>;
   private governanceSnapshotCache: LRUCache<string, GovernanceSnapshotResponse>;
   private governanceSnapshotInFlight = new Map<string, Promise<GovernanceSnapshotResponse>>();
-  private optionsSnapshotCache: LRUCache<string, OptionsSnapshotResponse>;
   private optionsSnapshotInFlight = new Map<string, Promise<OptionsSnapshotResponse>>();
   private coverSnapshotCache: LRUCache<string, CoverSnapshotResponse>;
   private coverSnapshotInFlight = new Map<string, Promise<CoverSnapshotResponse>>();
@@ -1104,14 +1009,20 @@ export class IndexerService {
   private defiSnapshotInFlight = new Map<string, Promise<DefiSnapshotResponse>>();
   private dlmmPoolsSnapshotCache: LRUCache<string, DlmmPoolsSnapshotResponse>;
   private dlmmPoolsSnapshotInFlight = new Map<string, Promise<DlmmPoolsSnapshotResponse>>();
-  private getMethodSourceCache: LRUCache<string, { exitCode: number; stack: TupleItem[] }>;
   private getMethodSourceInFlight = new Map<string, Promise<{ exitCode: number; stack: TupleItem[] } | null>>();
-  private getMethodCache: LRUCache<string, ToncenterRunResult>;
-  private getMethodInFlight = new Map<string, Promise<ToncenterRunResult>>();
   private healthCache?: { value: HealthStatus; expiresAt: number };
   private balanceEventEmitter = new EventEmitter();
   private balanceEventSeq = 0;
-  private soraTonCheckpointResolver: SoraTonCheckpointResolver;
+  private admissionExecutor?: AdmissionExecutor;
+
+  setAdmissionExecutor(executor: AdmissionExecutor): void {
+    if (this.admissionExecutor) throw new Error('Admission executor is already bound.');
+    this.admissionExecutor = executor;
+  }
+
+  getAdmissionStatus(): { configured: boolean; ready: boolean } {
+    return { configured: Boolean(this.admissionExecutor), ready: Boolean(this.admissionExecutor?.ready) };
+  }
 
   constructor(
     config: Config,
@@ -1127,10 +1038,12 @@ export class IndexerService {
     this.source = source;
     this.opcodes = opcodes;
     this.network = config.network;
-    this.jettonRoots = jettonRoots;
+    this.jettonRoots = [...new Map(jettonRoots.map((root) => {
+      const master = normalizeAddress(root.master);
+      return [master, { ...root, master }] as const;
+    })).values()].sort((left, right) => left.master.localeCompare(right.master));
     this.metrics = metrics;
     this.poolTracker = poolTracker;
-    this.soraTonCheckpointResolver = new SoraTonCheckpointResolver(config);
 
     const balanceCacheMax = Math.max(1, config.maxAddresses);
     const stateCacheMax = Math.max(1, config.maxAddresses);
@@ -1159,11 +1072,6 @@ export class IndexerService {
       ttl: GOVERNANCE_SNAPSHOT_CACHE_TTL_MS,
       allowStale: false
     });
-    this.optionsSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: OPTIONS_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
     this.coverSnapshotCache = new LRUCache({
       max: 512,
       ttl: COVER_SNAPSHOT_CACHE_TTL_MS,
@@ -1178,18 +1086,6 @@ export class IndexerService {
       max: 512,
       ttl: DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS,
       allowStale: false
-    });
-
-    this.getMethodSourceCache = new LRUCache({
-      max: 5_000,
-      ttl: Math.max(0, Math.trunc(config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS)),
-      allowStale: false,
-    });
-
-    this.getMethodCache = new LRUCache({
-      max: 5_000,
-      ttl: Math.max(0, Math.trunc(config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS)),
-      allowStale: false,
     });
   }
 
@@ -1231,43 +1127,59 @@ export class IndexerService {
 
   async getBalance(address: string): Promise<AccountBalance> {
     address = normalizeAddress(address);
+    const requestKey = `${this.store.getWorkflowGeneration()}:${address}`;
+    const existing = this.balanceInFlight.get(requestKey);
+    if (existing) return existing;
+    const pending = this.readBalance(address).finally(() => {
+      if (this.balanceInFlight.get(requestKey) === pending) {
+        this.balanceInFlight.delete(requestKey);
+      }
+    });
+    this.balanceInFlight.set(requestKey, pending);
+    return pending;
+  }
+
+  private async readBalance(address: string): Promise<AccountBalance> {
+    const metadataRevisionBeforeRead = this.jettonMetadataRevision;
     this.store.touch(address);
     const entry = this.store.get(address);
     const cached = Boolean(entry?.balance);
     this.metrics?.recordBalanceCache(cached);
 
     if (this.config.responseCacheEnabled && entry?.balance) {
-      const signature = this.getAccountSignature(entry);
+      const signature = this.getBalanceAccountSignature(entry);
       if (signature) {
         const cachedValue = this.getCached(this.balanceCache, address, signature);
         if (cachedValue) return cachedValue;
       }
     }
 
-    const refreshStatePromise = cached ? Promise.resolve() : this.refreshAccountState(address, { lite: true });
+    const nativeStatePromise = this.getNativeAccountState(address);
     const jettonPromise = Promise.all(
       this.jettonRoots.map(async (root) => {
         const balance = await this.withTimeoutOrNull(
           this.source.getJettonBalance(address, root.master),
           this.config.jettonBalanceTimeoutMs
         );
-        if (!balance) return null;
-        const meta = await this.getJettonMetadata(root.master);
-        const decimals = meta?.decimals ?? this.fallbackJettonDecimals(meta?.symbol ?? root.symbol);
-        return {
-          master: root.master,
-          wallet: balance.wallet,
-          balance: balance.balance,
-          symbol: meta?.symbol ?? root.symbol,
-          ...(decimals === null ? {} : { decimals }),
-        };
+        if (balance) this.refreshJettonMetadata(root.master);
+        return balance ? { root, balance } : null;
       })
     );
-    const [jettons] = await Promise.all([jettonPromise, refreshStatePromise]);
-    const updated = this.store.get(address)?.balance;
-    if (!updated) {
-      throw new Error(`Account state unavailable for ${address}`);
-    }
+    const [jettonBalances, nativeSnapshot] = await Promise.all([jettonPromise, nativeStatePromise]);
+    const updated = this.store.get(address)?.balance ?? nativeSnapshot;
+    const jettons = jettonBalances.map((result) => {
+      if (!result) return null;
+      const { root, balance } = result;
+      const meta = this.getCachedJettonMetadata(root.master, metadataRevisionBeforeRead);
+      const decimals = meta?.decimals;
+      return {
+        master: root.master,
+        wallet: normalizeAddress(balance.wallet),
+        balance: balance.balance,
+        symbol: meta?.symbol ?? root.symbol,
+        ...(decimals === undefined ? {} : { decimals }),
+      };
+    });
 
     const response = {
       ton: {
@@ -1280,7 +1192,10 @@ export class IndexerService {
       updated_at: Math.floor(updated.updatedAt / 1000),
       network: this.network,
     };
-    const signature = this.getAccountSignature(this.store.get(address));
+    const entryAfterRead = this.store.get(address);
+    const signature = entryAfterRead?.balance === updated
+      ? this.getBalanceAccountSignature(entryAfterRead)
+      : null;
     this.setCached(this.balanceCache, address, response, signature, this.config.balanceCacheTtlMs);
     return response;
   }
@@ -1293,7 +1208,7 @@ export class IndexerService {
     const assets = [
       {
         kind: 'native' as const,
-        symbol: 'TON',
+        symbol: 'GRAM',
         address,
         wallet: address,
         balance_raw: tonRaw,
@@ -1303,14 +1218,14 @@ export class IndexerService {
       ...snapshot.jettons.map((jetton) => {
         const decimals = typeof jetton.decimals === 'number' && Number.isFinite(jetton.decimals)
           ? Math.max(0, Math.trunc(jetton.decimals))
-          : this.fallbackJettonDecimals(jetton.symbol);
+          : undefined;
         return {
           kind: 'jetton' as const,
           symbol: jetton.symbol,
           address: jetton.master,
           wallet: jetton.wallet,
           balance_raw: jetton.balance,
-          ...(decimals === null
+          ...(decimals === undefined
             ? {}
             : {
                 balance: this.formatRawAmount(jetton.balance, decimals),
@@ -1367,24 +1282,39 @@ export class IndexerService {
     this.balanceEventEmitter.emit('balances_changed', event);
   }
 
-  private async getJettonMetadata(master: string): Promise<JettonMetadata | null> {
+  private getCachedJettonMetadata(master: string, revisionBeforeRead: number): JettonMetadata | null {
     const cached = this.jettonMetaCache.get(master);
-    const now = Date.now();
-    if (cached && now - cached.updatedAt < this.config.jettonMetadataTtlMs) {
-      return cached.meta;
-    }
-
-    const meta = await this.source.getJettonMetadata(master);
-    this.jettonMetaCache.set(master, { meta, updatedAt: now });
-    return meta;
+    return cached && (
+      cached.revision > revisionBeforeRead ||
+      Date.now() - cached.updatedAt < this.config.jettonMetadataTtlMs
+    )
+      ? cached.meta
+      : null;
   }
 
-  private fallbackJettonDecimals(symbol?: string | null): number | null {
-    const normalized = (symbol ?? '').trim().toUpperCase();
-    if (!normalized) return null;
-    if (normalized === 'USDT' || normalized === 'USDC' || normalized === 'KUSD') return 6;
-    if (normalized === 'T3' || normalized === 'TS') return 9;
-    return null;
+  private refreshJettonMetadata(master: string) {
+    const cached = this.jettonMetaCache.get(master);
+    if (cached && Date.now() - cached.updatedAt < this.config.jettonMetadataTtlMs) return;
+    if (this.jettonMetaInFlight.has(master)) return;
+
+    // Metadata enriches display amounts, but never holds up verified raw balances.
+    const pending = (async () => {
+      const meta = await this.source.getJettonMetadata(master);
+      this.jettonMetadataRevision += 1;
+      this.jettonMetaCache.set(master, { meta, updatedAt: Date.now(), revision: this.jettonMetadataRevision });
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.jettonMetaInFlight.get(master) === pending) {
+          this.jettonMetaInFlight.delete(master);
+        }
+      });
+    this.jettonMetaInFlight.set(master, pending);
+  }
+
+  private getBalanceAccountSignature(entry: Parameters<IndexerService['getAccountSignature']>[0]) {
+    const signature = this.getAccountSignature(entry);
+    return signature === null ? null : `${signature}:${this.jettonMetadataRevision}`;
   }
 
   private getAccountSignature(entry?: {
@@ -1545,314 +1475,21 @@ export class IndexerService {
   async getNativeState(address: string) {
     address = normalizeAddress(address);
     this.store.touch(address);
-    let entry = this.store.get(address);
-    if (!entry?.balance) {
-      await this.refreshAccountState(address, { lite: true });
-      entry = this.store.get(address);
-    }
+    const balance = await this.getNativeAccountState(address);
+    const entry = this.store.get(address);
     const latest = entry?.txs?.[0];
     return {
       address,
-      last_tx_lt: entry?.balance?.lastTxLt,
-      last_tx_hash: entry?.balance?.lastTxHash,
+      last_tx_lt: balance.lastTxLt,
+      last_tx_hash: balance.lastTxHash,
       last_seen_utime: latest?.utime ?? null,
       last_confirmed_seqno: this.lastMasterSeqno ?? null,
-      account_state: entry?.balance?.accountState ?? null,
-      code_boc: entry?.balance?.codeBoc ?? null,
-      data_boc: entry?.balance?.dataBoc ?? null,
-      balance_raw: entry?.balance?.balance ?? '0',
+      account_state: balance.accountState ?? null,
+      code_boc: balance.codeBoc ?? null,
+      data_boc: balance.dataBoc ?? null,
+      balance_raw: balance.balance,
       network: this.network,
     };
-  }
-
-  async getTonSccpBurnStatus(
-    request: TonSccpBurnStatusRequest
-  ): Promise<TonSccpBurnStatusResponse> {
-    const jettonMaster = parseCanonicalAddress(request.jettonMaster, 'jetton_master');
-    const burnInitiator = parseCanonicalAddress(request.burnInitiator, 'burn_initiator');
-    const queryId = parseBoundedUnsignedDecimal(request.queryId, 'query_id', MAX_UINT64);
-    const expectedSoraAssetId = parseHex256Value(request.soraAssetId, 'sora_asset_id');
-    const expectedDestDomain = parseBoundedUnsignedDecimal(
-      request.destDomain,
-      'dest_domain',
-      MAX_UINT32
-    );
-    const expectedRecipient32 = parseHex256Value(request.recipient32, 'recipient32');
-    const expectedAmount = parseBoundedUnsignedDecimal(
-      request.amount,
-      'amount',
-      MAX_UINT128,
-      false
-    );
-
-    if ((request.afterLt === undefined) !== (request.afterHash === undefined)) {
-      throw new Error('after_lt and after_hash must be provided together.');
-    }
-    const afterCursor = request.afterLt && request.afterHash
-      ? {
-          lt: parseBoundedUnsignedDecimal(
-            request.afterLt,
-            'after_lt',
-            MAX_UINT64,
-            false
-          ).toString(10),
-          hash: request.afterHash,
-        }
-      : null;
-    if (afterCursor && !parseHash32Bytes(afterCursor.hash)) {
-      throw new Error('after_hash must identify a 32-byte TON transaction hash.');
-    }
-
-    const accountState = this.source.getAccountStateLite
-      ? await this.source.getAccountStateLite(jettonMaster)
-      : await this.source.getAccountState(jettonMaster);
-    if ((accountState.lastTxLt === undefined) !== (accountState.lastTxHash === undefined)) {
-      throw new Error('SCCP master returned an incomplete transaction cursor.');
-    }
-    const masterCursor = accountState.lastTxLt && accountState.lastTxHash
-      ? {
-          lt: parseBoundedUnsignedDecimal(
-            accountState.lastTxLt,
-            'SCCP master transaction lt',
-            MAX_UINT64,
-            false
-          ).toString(10),
-          hash: accountState.lastTxHash,
-        }
-      : null;
-    if (masterCursor && !parseHash32Bytes(masterCursor.hash)) {
-      throw new Error('SCCP master returned an invalid transaction hash.');
-    }
-
-    const configResult = await this.source
-      .runGetMethod(jettonMaster, 'get_sccp_config', [])
-      .catch(() => null);
-    if (!configResult || configResult.exitCode !== 0) {
-      throw new Error('Configured jetton master does not expose get_sccp_config.');
-    }
-    const configStack = unwrapTupleStack(configResult.stack);
-    if (configStack.length !== 6) {
-      throw new Error('get_sccp_config returned a non-canonical stack shape.');
-    }
-    const governor = parseExactMaybeAddressTupleItem(configStack[0]);
-    const verifier = parseExactMaybeAddressTupleItem(configStack[1]);
-    const configuredSoraAssetId = tupleItemBigInt(configStack[2]);
-    const currentMasterNonce = tupleItemBigInt(configStack[3]);
-    const inboundPausedMask = tupleItemBigInt(configStack[4]);
-    const outboundPausedMask = tupleItemBigInt(configStack[5]);
-    if (!governor.valid || governor.address === null || !verifier.valid) {
-      throw new Error('get_sccp_config returned malformed address fields.');
-    }
-    if (
-      configuredSoraAssetId === null ||
-      configuredSoraAssetId < 0n ||
-      configuredSoraAssetId > MAX_UINT256 ||
-      currentMasterNonce === null ||
-      currentMasterNonce < 0n ||
-      currentMasterNonce > MAX_UINT64 ||
-      inboundPausedMask === null ||
-      inboundPausedMask < 0n ||
-      inboundPausedMask > MAX_UINT64 ||
-      outboundPausedMask === null ||
-      outboundPausedMask < 0n ||
-      outboundPausedMask > MAX_UINT64
-    ) {
-      throw new Error('get_sccp_config returned malformed integer fields.');
-    }
-    if (configuredSoraAssetId !== expectedSoraAssetId) {
-      throw new Error('Configured SCCP master soraAssetId does not match the requested asset.');
-    }
-
-    const responseBase = {
-      jettonMaster,
-      burnInitiator,
-      queryId: queryId.toString(10),
-      soraAssetId: formatHex256(configuredSoraAssetId),
-      currentMasterNonce: currentMasterNonce.toString(10),
-      masterCursor,
-    };
-    const pending = (): TonSccpBurnStatusResponse => ({
-      status: 'pending',
-      ...responseBase,
-      burnRecord: null,
-    });
-
-    // A cursor-free request is the pre-submit handshake. It validates that the
-    // configured address really implements this SCCP asset and gives the
-    // caller an exact account-history boundary without interpreting old burns.
-    if (!afterCursor) return pending();
-    if (!masterCursor) {
-      throw new Error('SCCP master transaction history disappeared after preflight.');
-    }
-    if (sameTonTransactionCursor(masterCursor, afterCursor)) return pending();
-    if (BigInt(masterCursor.lt) <= BigInt(afterCursor.lt)) {
-      throw new Error('after cursor is not an ancestor of the current SCCP master state.');
-    }
-
-    const matches: Array<{
-      transaction: RawTransaction;
-      notification: TonSccpBurnedNotification;
-    }> = [];
-    let scanCursor = masterCursor;
-    let reachedAfterCursor = false;
-
-    for (let pageIndex = 0; pageIndex < SCCP_BURN_STATUS_MAX_PAGES; pageIndex += 1) {
-      const page = await this.source.getTransactions(
-        jettonMaster,
-        SCCP_BURN_STATUS_PAGE_SIZE,
-        scanCursor.lt,
-        scanCursor.hash
-      );
-      if (page.length === 0) {
-        throw new Error('SCCP master transaction scan returned an empty cursor page.');
-      }
-      const oldest = page[page.length - 1];
-      if (
-        !oldest ||
-        !transactionPageIsLinkedInclusiveSegment(page, scanCursor, {
-          lt: oldest.lt,
-          hash: oldest.hash,
-        })
-      ) {
-        throw new Error('SCCP master transaction history is not a linked canonical segment.');
-      }
-
-      for (const transaction of page) {
-        if (sameTonTransactionCursor(transaction, afterCursor)) {
-          reachedAfterCursor = true;
-          break;
-        }
-        if (!transaction.success || (transaction.status && transaction.status !== 'success')) {
-          continue;
-        }
-        for (const message of transaction.outMessages) {
-          let destination: string | null = null;
-          try {
-            destination = message.destination
-              ? Address.parse(message.destination).toRawString()
-              : null;
-          } catch {
-            destination = null;
-          }
-          if (destination !== burnInitiator) continue;
-          const notification = parseSccpBurnedNotification(message.body, message.op);
-          if (!notification || notification.queryId !== queryId) continue;
-          const source = message.source
-            ? parseCanonicalAddress(message.source, 'SCCP notification source')
-            : null;
-          if (source !== jettonMaster) {
-            throw new Error('SCCP burned notification source does not match its master.');
-          }
-          if (!Number.isSafeInteger(transaction.utime) || transaction.utime < 0) {
-            throw new Error('SCCP burned notification transaction has an invalid timestamp.');
-          }
-          matches.push({ transaction, notification });
-        }
-      }
-      if (reachedAfterCursor) break;
-
-      if (!oldest.prevTransactionLt || !oldest.prevTransactionHash) {
-        throw new Error('SCCP master transaction page is missing its predecessor cursor.');
-      }
-      const predecessor = {
-        lt: oldest.prevTransactionLt,
-        hash: oldest.prevTransactionHash,
-      };
-      if (sameTonTransactionCursor(predecessor, afterCursor)) {
-        reachedAfterCursor = true;
-        break;
-      }
-      if (transactionPageReachesHistoryStart(page, scanCursor)) {
-        throw new Error('after cursor is not present in SCCP master transaction history.');
-      }
-      scanCursor = predecessor;
-    }
-
-    if (!reachedAfterCursor) {
-      throw new Error('after cursor is outside the bounded SCCP master transaction scan window.');
-    }
-    if (matches.length === 0) return pending();
-    if (matches.length !== 1) {
-      throw new Error('Multiple SCCP burned notifications matched the same query_id.');
-    }
-
-    const match = matches[0];
-    const burnRecordResult = await this.source
-      .runGetMethod(jettonMaster, 'get_sccp_burn_record', [
-        { type: 'int', value: match.notification.messageId },
-      ])
-      .catch(() => null);
-    if (!burnRecordResult || burnRecordResult.exitCode !== 0) return pending();
-    const burnRecordStack = unwrapTupleStack(burnRecordResult.stack);
-    if (burnRecordStack.length !== 1) {
-      throw new Error('get_sccp_burn_record returned a non-canonical stack shape.');
-    }
-    if (burnRecordStack[0]?.type === 'null') return pending();
-    const burnRecordCell = tupleItemCell(burnRecordStack[0]);
-    if (!burnRecordCell) {
-      throw new Error('get_sccp_burn_record returned a malformed record cell.');
-    }
-
-    const {
-      burnInitiator: actualBurnInitiator,
-      destDomain: actualDestDomain,
-      recipient32: actualRecipient32,
-      amount: actualAmount,
-      nonce: actualNonce
-    } = parseSccpBurnRecord(burnRecordCell);
-
-    if (
-      actualBurnInitiator !== burnInitiator ||
-      actualDestDomain !== expectedDestDomain ||
-      actualRecipient32 !== expectedRecipient32 ||
-      actualAmount !== expectedAmount ||
-      actualNonce !== match.notification.nonce
-    ) {
-      throw new Error('SCCP burn record does not match the submitted burn intent.');
-    }
-    if (actualNonce > currentMasterNonce) {
-      // The transaction and getter views can briefly straddle adjacent blocks.
-      // Keep this normal propagation state out of browser error telemetry.
-      return pending();
-    }
-
-    return {
-      status: 'confirmed',
-      ...responseBase,
-      burnRecord: {
-        messageId: formatHex256(match.notification.messageId),
-        nonce: actualNonce.toString(10),
-        destDomain: Number(actualDestDomain),
-        recipient32: formatHex256(actualRecipient32),
-        amount: actualAmount.toString(10),
-        masterTransaction: {
-          lt: match.transaction.lt,
-          hash: match.transaction.hash,
-          utime: match.transaction.utime,
-        },
-      },
-    };
-  }
-
-  async getTonSccpBurnProofMaterial(
-    request: TonSccpBurnProofMaterialRequest
-  ): Promise<TonSccpBurnProofMaterial> {
-    if (!this.source.getTonSccpBurnProofMaterial) {
-      throw new Error('TON SCCP proof material is unavailable on the configured data source.');
-    }
-    let trustedCheckpointSeqno = request.trustedCheckpointSeqno;
-    let trustedCheckpointHashHex = request.trustedCheckpointHashHex;
-    if (trustedCheckpointSeqno === undefined || trustedCheckpointHashHex === undefined) {
-      const resolved = await this.soraTonCheckpointResolver.resolveTonTrustedCheckpoint();
-      trustedCheckpointSeqno = resolved.mcSeqno;
-      trustedCheckpointHashHex = resolved.mcBlockHashHex;
-    }
-    return this.source.getTonSccpBurnProofMaterial({
-      ...request,
-      jettonMaster: normalizeAddress(request.jettonMaster),
-      trustedCheckpointSeqno,
-      trustedCheckpointHashHex,
-    });
   }
 
   async getJettonTransferPayload(jettonAddress: string, ownerAddress: string): Promise<JettonTransferPayloadResponse> {
@@ -1893,7 +1530,7 @@ export class IndexerService {
       return null;
     }
 
-    const result = await this.runGetMethodSourceCached(
+    const result = await this.runGetMethodSource(
       jettonMaster,
       'get_wallet_address',
       [{ type: 'slice', cell: ownerSlice }]
@@ -1914,7 +1551,7 @@ export class IndexerService {
   }
 
   private async loadJettonWalletCode(jettonMaster: string): Promise<Cell | null> {
-    const result = await this.runGetMethodSourceCached(jettonMaster, 'get_jetton_data', []);
+    const result = await this.runGetMethodSource(jettonMaster, 'get_jetton_data', []);
     if (!isSuccessfulGetterResult(result)) return null;
     return parseCanonicalJettonRootData(result.stack)?.walletCode ?? null;
   }
@@ -1952,98 +1589,59 @@ export class IndexerService {
     method: string,
     args: TupleItem[] = []
   ): Promise<ToncenterRunResult> {
-    const normalized = normalizeAddress(address);
-    const { cacheKey, cacheTtlMs } = this.getMethodCacheKey(normalized, method, args);
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.getMethodCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.getMethodInFlight.get(cacheKey);
-      if (pending) return pending;
+    if (isAdmissionMethod(method)) {
+      const admission = this.admissionExecutor;
+      if (!admission || normalizeAddress(address) !== normalizeAddress(admission.engine)) throw new AdmissionError('admission_unavailable');
+      // Explicit local verified execution. It cannot enter the generic remote
+      // source, completed cache, retry, or resilient fallback path below.
+      const result = await admission.run(method, args);
+      return { stack: result.stack.map(tupleItemToToncenterStackEntry), exit_code: result.exitCode,
+        gas_used: result.gasUsed, admission: result.execution };
     }
-
-    const request = (async () => {
-      const result = await this.runGetMethodSourceCached(normalized, method, args);
-      if (!result) {
-        throw new Error('get method call unavailable from configured data source');
-      }
-      return {
-        stack: result.stack.map(tupleItemToToncenterStackEntry),
-        exit_code: result.exitCode,
-        gas_used: 0
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.getMethodInFlight.set(cacheKey, request);
+    const result = await this.runGetMethodSource(normalizeAddress(address), method, args);
+    if (!result) {
+      throw new Error('get method call unavailable from configured data source');
     }
-
-    try {
-      const response = await request;
-      if (this.config.responseCacheEnabled) {
-        if (cacheTtlMs > 0) {
-          this.getMethodCache.set(cacheKey, response, { ttl: cacheTtlMs });
-        }
-      }
-      return response;
-    } finally {
-      this.getMethodInFlight.delete(cacheKey);
-    }
+    return {
+      stack: result.stack.map(tupleItemToToncenterStackEntry),
+      exit_code: result.exitCode,
+      gas_used: null
+    };
   }
 
-  private getMethodCacheKey(normalizedAddress: string, method: string, args: TupleItem[]) {
-    const argsSignature = args
-      .map((arg) => {
-        if (arg.type === 'null') return 'null';
-        if (arg.type === 'int') return `int:${arg.value.toString(10)}`;
-        if (arg.type === 'nan') return 'nan';
-        if (arg.type === 'cell') return `cell:${toBocBase64(arg.cell) ?? ''}`;
-        if (arg.type === 'slice') return `slice:${toBocBase64(arg.cell) ?? ''}`;
-        if (arg.type === 'builder') return `builder:${toBocBase64(arg.cell) ?? ''}`;
-        if (arg.type === 'tuple') return `tuple:[${arg.items.map((item) => item.type).join(',')}]`;
-        return 'unknown';
-      })
-      .join('|');
-    const cacheKey = [normalizedAddress, method, argsSignature].join('|');
-    const baseCacheTtlMs = Math.max(0, Math.trunc(this.config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS));
-    let cacheTtlMs = baseCacheTtlMs;
-    if (method === 'get_entry') {
-      cacheTtlMs = Math.max(baseCacheTtlMs, GET_METHOD_CACHE_ENTRY_MIN_TTL_MS);
-    } else if (args.length === 0) {
-      cacheTtlMs = GET_METHOD_CACHE_NO_ARGS_FAST_METHODS.has(method)
-        ? baseCacheTtlMs
-        : Math.max(baseCacheTtlMs, GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS);
-    }
-    return { cacheKey, cacheTtlMs };
-  }
-
-  private async runGetMethodSourceCached(
+  private async runGetMethodSource(
     normalizedAddress: string,
     method: string,
     args: TupleItem[] = []
   ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
-    const { cacheKey, cacheTtlMs } = this.getMethodCacheKey(normalizedAddress, method, args);
+    // Latest-head getters can depend on the execution block and its time even
+    // without arguments or account writes. The datasource does not expose that
+    // immutable execution identity, so completed results must never be reused.
+    // Share only concurrent identical reads at this one source boundary.
+    const encodedArgs = serializeTuple(args);
+    const key = JSON.stringify([normalizedAddress, method,
+      encodedArgs.toBoc({ idx: false, crc32: false }).toString('base64')]);
+    const pending = this.getMethodSourceInFlight.get(key);
+    if (pending) return pending;
 
-    if (this.config.responseCacheEnabled) {
-      const cached = this.getMethodSourceCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.getMethodSourceInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = this.source.runGetMethod(normalizedAddress, method, args).catch(() => null);
-    if (this.config.responseCacheEnabled) {
-      this.getMethodSourceInFlight.set(cacheKey, request);
-    }
-
+    // Decode our encoded snapshot so later caller mutation cannot change the
+    // arguments after they have been bound to the in-flight identity.
+    const sourceArgs = parseTuple(encodedArgs);
+    type Result = { exitCode: number; stack: TupleItem[] } | null;
+    let settle!: (result: Result) => void;
+    const request = new Promise<Result>((resolve) => { settle = resolve; });
+    this.getMethodSourceInFlight.set(key, request);
     try {
-      const response = await request;
-      if (this.config.responseCacheEnabled && response && cacheTtlMs > 0) {
-        this.getMethodSourceCache.set(cacheKey, response, { ttl: cacheTtlMs });
-      }
-      return response;
+      const result = await this.source.runGetMethod(normalizedAddress, method, sourceArgs);
+      settle(result);
+      return result;
+    } catch {
+      settle(null);
+      return null;
     } finally {
-      this.getMethodSourceInFlight.delete(cacheKey);
+      if (this.getMethodSourceInFlight.get(key) === request) {
+        this.getMethodSourceInFlight.delete(key);
+      }
     }
   }
 
@@ -2052,20 +1650,39 @@ export class IndexerService {
     options: { marketIds?: number[]; maxMarkets?: number } = {}
   ) {
     const normalizedEngine = normalizeAddress(engineAddress);
-    const maxMarkets = Math.max(1, Math.min(128, Math.trunc(options.maxMarkets ?? 64)));
-    const requestedMarketIds = Array.from(
-      new Set(
-        (options.marketIds ?? [])
-          .filter((value) => Number.isFinite(value) && value > 0)
-          .map((value) => Math.trunc(value))
-      )
-    ).slice(0, maxMarkets);
+    const maxMarkets = options.maxMarkets ?? 64;
+    if (!Number.isInteger(maxMarkets) || maxMarkets < 1 || maxMarkets > 128) {
+      throw new Error('max_markets must be an integer from 1 to 128');
+    }
+    if (options.marketIds?.some((value) => !Number.isInteger(value) || value < 1 || value > 0xffffffff)) {
+      throw new Error('market_ids must contain positive uint32 integers');
+    }
+    const requestedMarketIds = Array.from(new Set(options.marketIds ?? []));
+    if (requestedMarketIds.length > maxMarkets) {
+      throw new Error('market_ids exceeds max_markets');
+    }
+    const readMarkets = async (ids: number[]) => {
+      const results: Array<{ exitCode: number; stack: TupleItem[] } | null> = new Array(ids.length);
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+        while (next < ids.length) {
+          const index = next++;
+          results[index] = await this.runGetMethodSource(normalizedEngine, 'market_state', [
+            { type: 'int', value: BigInt(ids[index]) }
+          ]);
+        }
+      }));
+      return results;
+    };
+    // Explicit markets do not depend on engine metadata. Start them immediately
+    // so a slow status getter does not add another complete network round trip.
+    const requestedMarkets = requestedMarketIds.length ? readMarkets(requestedMarketIds) : null;
 
     const [governanceRes, enabledRes, configRes, automationRes] = await Promise.all([
-      this.runGetMethodSourceCached(normalizedEngine, 'engine_governance', []),
-      this.runGetMethodSourceCached(normalizedEngine, 'engine_enabled', []),
-      this.runGetMethodSourceCached(normalizedEngine, 'engine_config', []),
-      this.runGetMethodSourceCached(normalizedEngine, 'automation_state', [])
+      this.runGetMethodSource(normalizedEngine, 'engine_governance', []),
+      this.runGetMethodSource(normalizedEngine, 'engine_enabled', []),
+      this.runGetMethodSource(normalizedEngine, 'engine_config', []),
+      this.runGetMethodSource(normalizedEngine, 'automation_state', [])
     ]);
 
     if (!governanceRes && !enabledRes && !automationRes) {
@@ -2082,7 +1699,7 @@ export class IndexerService {
         : null;
 
     const automation =
-      automationRes?.exitCode === 0
+      automationRes?.exitCode === 0 && automationRes.stack.length === 15
         ? {
             fundingCursor: tupleItemBigIntString(automationRes.stack[0]),
             lastFundingTimestamp: tupleItemBigIntString(automationRes.stack[1]),
@@ -2097,7 +1714,8 @@ export class IndexerService {
             liquidationBacklog: tupleItemBigIntString(automationRes.stack[10]),
             controlAuthority: tupleItemAddress(automationRes.stack[11]),
             controlSequence: tupleItemBigIntString(automationRes.stack[12]),
-            controlTimestamp: tupleItemBigIntString(automationRes.stack[13])
+            controlTimestamp: tupleItemBigIntString(automationRes.stack[13]),
+            controlRequestHash: tupleItemBigIntString(automationRes.stack[14])
           }
         : null;
 
@@ -2115,11 +1733,10 @@ export class IndexerService {
     const markets: Record<string, any> = {};
     const marketIds: number[] = [];
 
-    for (const marketId of derivedMarketIds.slice(0, maxMarkets)) {
-      const marketRes = await this.runGetMethodSourceCached(normalizedEngine, 'market_state', [
-        { type: 'int', value: BigInt(marketId) }
-      ]);
-      if (!marketRes || marketRes.exitCode !== 0) continue;
+    const marketResults = await (requestedMarkets ?? readMarkets(derivedMarketIds));
+    for (const [index, marketId] of derivedMarketIds.entries()) {
+      const marketRes = marketResults[index];
+      if (!marketRes || marketRes.exitCode !== 0 || marketRes.stack.length !== 39) continue;
       const stack = marketRes.stack;
       markets[String(marketId)] = {
         exists: tupleItemBool(stack[0]),
@@ -2159,17 +1776,8 @@ export class IndexerService {
         auctionClearingPrice: tupleItemBigIntString(stack[34]),
         controlWeightBps: tupleItemBigIntString(stack[35]),
         controlFeeDeltaBps: tupleItemBigIntString(stack[36]),
-        marketKind: tupleItemBigIntString(stack[37]),
-        timerVolatilityBps: tupleItemBigIntString(stack[38]),
-        timerEmaVolatilityBps: tupleItemBigIntString(stack[39]),
-        timerLastUpdateTs: tupleItemBigIntString(stack[40]),
-        timerWeightBps: tupleItemBigIntString(stack[41]),
-        correlationBps: tupleItemBigIntString(stack[42]),
-        correlationDispersionBps: tupleItemBigIntString(stack[43]),
-        correlationLastUpdateTs: tupleItemBigIntString(stack[44]),
-        correlationWeightBps: tupleItemBigIntString(stack[45]),
-        lastFundingPayloadHash: tupleItemBigIntString(stack[46]),
-        lastFundingPoolHash: tupleItemBigIntString(stack[47])
+        lastFundingPayloadHash: tupleItemBigIntString(stack[37]),
+        lastFundingPoolHash: tupleItemBigIntString(stack[38])
       };
       marketIds.push(marketId);
     }
@@ -2186,7 +1794,8 @@ export class IndexerService {
     };
   }
 
-  private parseVolIndexState(stack: TupleItem[]): VolIndexStateSnapshot {
+  private parseVolIndexState(stack: TupleItem[]): VolIndexStateSnapshot | null {
+    if (stack.length !== 10) return null;
     return {
       impliedVolBps: tupleItemBigIntString(stack[0]),
       realizedVolBps: tupleItemBigIntString(stack[1]),
@@ -2207,19 +1816,18 @@ export class IndexerService {
   ): Promise<VolIndexSnapshotResponse> {
     const normalizedVolIndex = normalizeAddress(volIndexAddress);
     const normalizedPool = options.sourcePool?.trim() ? normalizeAddress(options.sourcePool) : null;
-    const routeIds = Array.from(
-      new Set(
-        (options.routeIds ?? [])
-          .filter((value) => Number.isFinite(value) && value > 0)
-          .map((value) => Math.trunc(value))
-      )
-    ).slice(0, 64);
+    const requestedRouteIds = options.routeIds ?? [];
+    if (requestedRouteIds.length > 64 || requestedRouteIds.some((value) =>
+      !Number.isInteger(value) || value < 1 || value > 0xffffffff)) {
+      throw new Error('route_ids must contain at most 64 positive uint32 integers');
+    }
+    const routeIds = Array.from(new Set(requestedRouteIds));
 
     const [configRes, stateRes, poolStateRes] = await Promise.all([
-      this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_config', []),
-      this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_state', []),
+      this.runGetMethodSource(normalizedVolIndex, 'vol_index_config', []),
+      this.runGetMethodSource(normalizedVolIndex, 'vol_index_state', []),
       normalizedPool
-        ? this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_pool_state', [
+        ? this.runGetMethodSource(normalizedVolIndex, 'vol_index_pool_state', [
             { type: 'slice', cell: beginCell().storeAddress(Address.parse(normalizedPool)).endCell() }
           ])
         : Promise.resolve(null)
@@ -2230,16 +1838,15 @@ export class IndexerService {
     }
 
     const config =
-      configRes?.exitCode === 0
+      configRes?.exitCode === 0 && configRes.stack.length === 7
         ? {
             seriesManager: tupleItemAddress(configRes.stack[0]),
             oracle: tupleItemAddress(configRes.stack[1]),
             automation: tupleItemAddress(configRes.stack[2]),
-            perpsEngine: tupleItemAddress(configRes.stack[3]),
-            coverManager: tupleItemAddress(configRes.stack[4]),
-            minLiquidityBps: tupleItemBigIntString(configRes.stack[5]),
-            staleSeconds: tupleItemBigIntString(configRes.stack[6]),
-            emaAlphaBps: tupleItemBigIntString(configRes.stack[7])
+            coverManager: tupleItemAddress(configRes.stack[3]),
+            minLiquidityBps: tupleItemBigIntString(configRes.stack[4]),
+            staleSeconds: tupleItemBigIntString(configRes.stack[5]),
+            emaAlphaBps: tupleItemBigIntString(configRes.stack[6])
           }
         : null;
 
@@ -2249,16 +1856,15 @@ export class IndexerService {
     const loadedRouteIds: number[] = [];
 
     for (const routeId of routeIds) {
-      const routeRes = await this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_route', [
+      const routeRes = await this.runGetMethodSource(normalizedVolIndex, 'vol_index_route', [
         { type: 'int', value: BigInt(routeId) }
       ]);
-      if (!routeRes || routeRes.exitCode !== 0) continue;
+      if (!routeRes || routeRes.exitCode !== 0 || routeRes.stack.length !== 3) continue;
       const stack = routeRes.stack;
       routes[String(routeId)] = {
         exists: tupleItemBool(stack[0]),
-        marketId: tupleItemBigIntString(stack[1]),
-        sourcePool: tupleItemAddress(stack[2]),
-        coverPolicyId: tupleItemBigIntString(stack[3])
+        sourcePool: tupleItemAddress(stack[1]),
+        coverPolicyId: tupleItemBigIntString(stack[2])
       };
       loadedRouteIds.push(routeId);
     }
@@ -2310,7 +1916,7 @@ export class IndexerService {
         if (!normalizedOwner) return null;
         const owner = Address.parse(normalizedOwner);
         const ownerCell = beginCell().storeAddress(owner).endCell();
-        const lockRes = await this.runGetMethodSourceCached(normalizedVoting, 'governance_lock', [
+        const lockRes = await this.runGetMethodSource(normalizedVoting, 'governance_lock', [
           { type: 'slice', cell: ownerCell }
         ]);
         lockResponded = lockRes !== null;
@@ -2333,7 +1939,7 @@ export class IndexerService {
         const batchIds = Array.from({ length: Number(endId - startId + 1n) }, (_, index) => startId + BigInt(index));
         const batch = await Promise.all(
           batchIds.map((proposalId) =>
-            this.runGetMethodSourceCached(normalizedVoting, 'governance_proposal', [
+            this.runGetMethodSource(normalizedVoting, 'governance_proposal', [
               { type: 'int', value: BigInt(proposalId) }
             ]).catch(() => null)
           )
@@ -2432,202 +2038,62 @@ export class IndexerService {
 
   async getOptionsSnapshot(
     factoryAddress: string,
-    options: {
-      startId?: number;
-      maxSeriesId?: number;
-      windowSize?: number;
-      maxEmptyWindows?: number;
-      minProbeWindows?: number;
-    } = {}
+    options: { afterId?: string; limit?: number } = {}
   ): Promise<OptionsSnapshotResponse> {
-    const normalizedFactory = normalizeAddress(factoryAddress);
-    const startId = Math.max(
-      0,
-      Math.min(OPTIONS_MAX_SCAN_LIMIT, Math.trunc(options.startId ?? 0))
-    );
-    const maxSeriesId = Math.max(
-      startId,
-      Math.min(OPTIONS_MAX_SCAN_LIMIT, Math.trunc(options.maxSeriesId ?? OPTIONS_MAX_SCAN_DEFAULT))
-    );
-    const windowSize = Math.max(
-      1,
-      Math.min(OPTIONS_WINDOW_SIZE_LIMIT, Math.trunc(options.windowSize ?? OPTIONS_WINDOW_SIZE_DEFAULT))
-    );
-    const maxEmptyWindows = Math.max(
-      1,
-      Math.min(
-        OPTIONS_MAX_EMPTY_WINDOWS_LIMIT,
-        Math.trunc(options.maxEmptyWindows ?? OPTIONS_MAX_EMPTY_WINDOWS_DEFAULT)
-      )
-    );
-    const minProbeWindows = Math.max(
-      0,
-      Math.min(
-        OPTIONS_MIN_PROBE_WINDOWS_LIMIT,
-        Math.trunc(options.minProbeWindows ?? OPTIONS_MIN_PROBE_WINDOWS_DEFAULT)
-      )
-    );
-    const cacheKey = [
-      normalizedFactory,
-      startId,
-      maxSeriesId,
-      windowSize,
-      maxEmptyWindows,
-      minProbeWindows,
-    ].join('|');
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.optionsSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.optionsSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
+    const factory = normalizeAddress(factoryAddress);
+    const afterId = BigInt(options.afterId ?? '0');
+    const limit = options.limit ?? 32;
+    if (afterId < 0n || afterId >= 1n << 64n || !Number.isInteger(limit) || limit < 1 || limit > 64) {
+      throw new Error('Invalid options catalog page.');
     }
-
-    const request = (async () => {
-      const [governanceRes, enabledRes] = await Promise.all([
-        this.runGetMethodSourceCached(normalizedFactory, 'governance', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedFactory, 'registry_enabled', []).catch(() => null),
-      ]);
-
-      const status =
-        governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
-          ? {
-              governance: tupleItemAddress(governanceRes.stack[0]),
-              enabled: tupleItemBool(enabledRes.stack[0]),
-            }
-          : null;
-
-      const series: OptionSeriesSnapshotRecord[] = [];
-      let scanned = 0;
-      let getterFailures = 0;
-      let emptyWindows = 0;
-      let windowsScanned = 0;
-      let seriesResponded = false;
-
-      for (let cursor = startId; cursor <= maxSeriesId; cursor += windowSize) {
-        const end = Math.min(maxSeriesId, cursor + windowSize - 1);
-        const ids = Array.from({ length: end - cursor + 1 }, (_, index) => cursor + index);
-        const batch = await Promise.all(
-          ids.map((seriesId) =>
-            this.runGetMethodSourceCached(normalizedFactory, 'series_info', [
-              { type: 'int', value: BigInt(seriesId) },
-            ]).catch(() => null)
-          )
-        );
-
-        let windowGetterFailures = 0;
-        const windowEntries: OptionSeriesSnapshotRecord[] = [];
-        for (let index = 0; index < batch.length; index += 1) {
-          scanned += 1;
-          const res = batch[index];
-          if (res) {
-            seriesResponded = true;
-          }
-          if (!res || res.exitCode !== 0) {
-            getterFailures += 1;
-            windowGetterFailures += 1;
-            continue;
-          }
-          const stack = res.stack;
-          const exists = tupleItemBool(stack[0]);
-          if (!exists) continue;
-
-          const seriesId = ids[index];
-          const expiryBigInt = tupleItemBigInt(stack[4]);
-          const statusBigInt = tupleItemBigInt(stack[9]);
-          const maxNotionalBigInt = tupleItemBigInt(stack[5]);
-          const openNotionalBigInt = tupleItemBigInt(stack[8]) ?? 0n;
-          const remainingNotional =
-            maxNotionalBigInt !== null
-              ? (() => {
-                  const remaining = maxNotionalBigInt - openNotionalBigInt;
-                  return (remaining > 0n ? remaining : 0n).toString(10);
-                })()
-              : null;
-          let isActive = statusBigInt === null || statusBigInt === 0n;
-          if (isActive && expiryBigInt !== null && expiryBigInt > 0n) {
-            const expiryMs = Number(expiryBigInt) * 1000;
-            if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
-              isActive = false;
-            }
-          }
-
-          windowEntries.push({
-            seriesId: String(seriesId),
-            templateId: tupleItemBigIntString(stack[1]),
-            optionKind: tupleItemBigIntString(stack[2]),
-            optionAddress: tupleItemAddress(stack[3]),
-            expiry: tupleItemBigIntString(stack[4]),
-            maxNotional: tupleItemBigIntString(stack[5]),
-            premiumBps: tupleItemBigIntString(stack[6]),
-            collateralMultiplierBps: tupleItemBigIntString(stack[7]),
-            openNotional: tupleItemBigIntString(stack[8]),
-            status: tupleItemBigIntString(stack[9]),
-            settlementTimestamp: tupleItemBigIntString(stack[10]),
-            underlyingPool: tupleItemAddress(stack[11]),
-            quotePool: tupleItemAddress(stack[12]),
-            collateralLocked: tupleItemBigIntString(stack[13]),
-            correlationScaleBps: tupleItemBigIntString(stack[14]),
-            correlationBps: tupleItemBigIntString(stack[15]),
-            correlationDispersionBps: tupleItemBigIntString(stack[16]),
-            correlationTimestamp: tupleItemBigIntString(stack[17]),
-            isActive,
-            remainingNotional,
-          });
-        }
-
-        windowsScanned += 1;
-        if (windowEntries.length === 0) {
-          if (series.length === 0 && windowGetterFailures > 0 && status === null) {
-            throw new Error('Options snapshot is unavailable from the configured data source.');
-          }
-          emptyWindows += 1;
-          if (windowsScanned >= minProbeWindows && emptyWindows >= maxEmptyWindows) {
-            break;
-          }
-          continue;
-        }
-        emptyWindows = 0;
-        series.push(...windowEntries);
-      }
-
-      if (!seriesResponded && !governanceRes && !enabledRes) {
-        throw new Error('Options snapshot is unavailable from the configured data source.');
-      }
-
-      series.sort((left, right) => {
-        const leftId = BigInt(left.seriesId);
-        const rightId = BigInt(right.seriesId);
-        if (leftId === rightId) return 0;
-        return leftId > rightId ? 1 : -1;
-      });
-
-      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-      return {
-        factory: normalizedFactory,
-        status,
-        series_count: series.length,
-        scanned,
-        series,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000),
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.optionsSnapshotInFlight.set(cacheKey, request);
+    const page = await this.source.runGetMethod(factory, 'series_catalog', [
+      { type: 'int', value: afterId }, { type: 'int', value: BigInt(limit) },
+    ]);
+    if (!page || page.exitCode !== 0) throw new Error('Current options catalog unavailable.');
+    let node = tupleItemCell(page.stack[0]);
+    const cursor = tupleItemBigInt(page.stack[1]), more = tupleItemBigInt(page.stack[2]);
+    if (!node || cursor === null || (more !== 0n && more !== 1n)) throw new Error('Invalid options catalog response.');
+    const ids: bigint[] = [];
+    while (node.bits.length > 0 || node.refs.length > 0) {
+      if (node.isExotic || node.bits.length !== 64 || node.refs.length !== 1 || ids.length >= limit) throw new Error('Incomplete options catalog page.');
+      const slice = node.beginParse();
+      ids.push(slice.loadUintBig(64));
+      node = slice.loadRef();
     }
-
-    try {
-      const result = await request;
-      if (this.config.responseCacheEnabled) {
-        this.optionsSnapshotCache.set(cacheKey, result);
-      }
-      return result;
-    } finally {
-      this.optionsSnapshotInFlight.delete(cacheKey);
+    ids.reverse();
+    if (ids.some((id, index) => id <= (index === 0 ? afterId : ids[index - 1]!)) ||
+      cursor !== (ids.at(-1) ?? afterId) || (more === 1n && ids.length !== limit)) throw new Error('Invalid options catalog continuation.');
+    const [governance, enabled] = await Promise.all([
+      this.source.runGetMethod(factory, 'governance', []),
+      this.source.runGetMethod(factory, 'registry_enabled', []),
+    ]);
+    const status = governance?.exitCode === 0 && enabled?.exitCode === 0
+      ? { governance: tupleItemAddress(governance.stack[0]), enabled: tupleItemBool(enabled.stack[0]) } : null;
+    const series: OptionSeriesSnapshotRecord[] = [];
+    for (let offset = 0; offset < ids.length; offset += 4) {
+      const batch = await Promise.all(ids.slice(offset, offset + 4).map(async seriesId => {
+        const result = await this.source.runGetMethod(factory, 'series_info', [{ type: 'int', value: seriesId }]);
+        if (!result || result.exitCode !== 0 || !tupleItemBool(result.stack[0])) throw new Error('Options catalog details unavailable.');
+        const stack = result.stack, expiry = tupleItemBigInt(stack[4]), state = tupleItemBigInt(stack[9]),
+          max = tupleItemBigInt(stack[5]), open = tupleItemBigInt(stack[8]), address = tupleItemAddress(stack[3]);
+        const remaining = max !== null && open !== null && max >= 0n && open >= 0n ? (max > open ? max - open : 0n) : null;
+        return {
+          seriesId: seriesId.toString(), templateId: tupleItemBigIntString(stack[1]), optionKind: tupleItemBigIntString(stack[2]),
+          optionAddress: address, expiry: tupleItemBigIntString(stack[4]), maxNotional: tupleItemBigIntString(stack[5]),
+          premiumBps: tupleItemBigIntString(stack[6]), collateralMultiplierBps: tupleItemBigIntString(stack[7]),
+          openNotional: tupleItemBigIntString(stack[8]), status: tupleItemBigIntString(stack[9]),
+          settlementTimestamp: tupleItemBigIntString(stack[10]), underlyingPool: tupleItemAddress(stack[11]), quotePool: tupleItemAddress(stack[12]),
+          collateralLocked: tupleItemBigIntString(stack[13]), correlationScaleBps: tupleItemBigIntString(stack[14]),
+          correlationBps: tupleItemBigIntString(stack[15]), correlationDispersionBps: tupleItemBigIntString(stack[16]),
+          correlationTimestamp: tupleItemBigIntString(stack[17]), remainingNotional: remaining?.toString() ?? null,
+          isActive: Boolean(address && state === 0n && expiry !== null && expiry > BigInt(Math.floor(Date.now() / 1000))),
+        };
+      }));
+      series.push(...batch);
     }
+    return { factory, status, series_count: series.length, scanned: ids.length,
+      next_after_id: more === 1n ? cursor.toString() : null, page_complete: true, series,
+      source: this.config.dataSource === 'lite' ? 'lite' : 'http4', network: this.network, updated_at: Math.floor(Date.now() / 1000) };
   }
 
   async getCoverSnapshot(
@@ -2655,12 +2121,12 @@ export class IndexerService {
 
     const request = (async () => {
       const [stateRes, enabledRes] = await Promise.all([
-        this.runGetMethodSourceCached(normalizedManager, 'get_state', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedManager, 'registry_enabled', []).catch(() => null)
+        this.runGetMethodSource(normalizedManager, 'get_state', []).catch(() => null),
+        this.runGetMethodSource(normalizedManager, 'registry_enabled', []).catch(() => null)
       ]);
 
       const state =
-        stateRes?.exitCode === 0
+        stateRes?.exitCode === 0 && stateRes.stack.length === 16
           ? {
               totalPolicies: tupleItemBigIntString(stateRes.stack[0]),
               activePolicies: tupleItemBigIntString(stateRes.stack[1]),
@@ -2675,12 +2141,14 @@ export class IndexerService {
               lastProcessed: tupleItemBigIntString(stateRes.stack[10]),
               lastRemaining: tupleItemBigIntString(stateRes.stack[11]),
               vault: tupleItemAddress(stateRes.stack[12]),
+              governance: tupleItemAddress(stateRes.stack[13]),
               riskVault: tupleItemAddress(stateRes.stack[14]),
               riskBucketId: tupleItemBigIntString(stateRes.stack[15])
             }
           : null;
       const enabled = enabledRes?.exitCode === 0 ? tupleItemBool(enabledRes.stack[0]) : null;
-      const totalPoliciesRaw = stateRes?.exitCode === 0 ? tupleItemBigInt(stateRes.stack[0]) : null;
+      const totalPoliciesRaw = stateRes?.exitCode === 0 && stateRes.stack.length === 16
+        ? tupleItemBigInt(stateRes.stack[0]) : null;
       if (totalPoliciesRaw !== null && totalPoliciesRaw <= 0n) {
         const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
         return {
@@ -2696,25 +2164,28 @@ export class IndexerService {
           updated_at: Math.floor(Date.now() / 1000)
         };
       }
-      const totalPolicies =
-        totalPoliciesRaw && totalPoliciesRaw > 0n && Number.isFinite(Number(totalPoliciesRaw))
-          ? Math.max(0, Math.trunc(Number(totalPoliciesRaw)))
-          : 0;
-      const scanCount = totalPolicies > 0 ? Math.min(maxScan, totalPolicies) : maxScan;
-      const startPolicyId = totalPolicies > 0 ? totalPolicies : maxScan;
-      const scanFloor = Math.max(1, startPolicyId - scanCount + 1);
+      const totalPolicies = totalPoliciesRaw && totalPoliciesRaw > 0n ? totalPoliciesRaw : 0n;
+      const scanCount = totalPolicies > 0n
+        ? Number(totalPolicies < BigInt(maxScan) ? totalPolicies : BigInt(maxScan))
+        : maxScan;
+      const startPolicyId = totalPolicies > 0n ? totalPolicies : BigInt(maxScan);
+      const scanFloor = startPolicyId - BigInt(scanCount) + 1n;
 
       const policies: CoverPolicySnapshot[] = [];
       let scanned = 0;
       let misses = 0;
       let policyResponded = false;
 
-      outer: for (let startId = startPolicyId; startId >= scanFloor; startId -= COVER_SCAN_BATCH_SIZE) {
-        const endId = Math.max(scanFloor, startId - COVER_SCAN_BATCH_SIZE + 1);
-        const batchIds = Array.from({ length: startId - endId + 1 }, (_, index) => startId - index);
+      outer: for (let startId = startPolicyId; startId >= scanFloor; startId -= BigInt(COVER_SCAN_BATCH_SIZE)) {
+        const candidateEnd = startId - BigInt(COVER_SCAN_BATCH_SIZE) + 1n;
+        const endId = candidateEnd > scanFloor ? candidateEnd : scanFloor;
+        const batchIds = Array.from(
+          { length: Number(startId - endId + 1n) },
+          (_, index) => startId - BigInt(index),
+        );
           const batch = await Promise.all(
             batchIds.map((policyId) =>
-              this.runGetMethodSourceCached(normalizedManager, 'get_policy', [{ type: 'int', value: BigInt(policyId) }]).catch(
+              this.runGetMethodSource(normalizedManager, 'get_policy', [{ type: 'int', value: policyId }]).catch(
                 () => null
               )
             )
@@ -2724,7 +2195,7 @@ export class IndexerService {
           scanned += 1;
           const res = batch[index];
           if (res) policyResponded = true;
-          if (!res || res.exitCode !== 0) {
+          if (!res || res.exitCode !== 0 || res.stack.length !== 19) {
             misses += 1;
             if (misses >= maxConsecutiveMisses) break outer;
             continue;
@@ -2748,16 +2219,19 @@ export class IndexerService {
             lowerBound: tupleItemBigIntString(stack[3]),
             upperBound: tupleItemBigIntString(stack[4]),
             payout: tupleItemBigIntString(stack[5]),
-            windowSeconds: tupleItemBigIntString(stack[6]),
-            requiredObservations: tupleItemBigIntString(stack[7]),
-            breachStart: tupleItemBigIntString(stack[8]),
-            breachSeconds: tupleItemBigIntString(stack[9]),
-            lastObservation: tupleItemBigIntString(stack[10]),
-            lastHealthyObservation: tupleItemBigIntString(stack[11]),
-            breachObservations: tupleItemBigIntString(stack[12]),
-            status: tupleItemBigIntString(stack[13]),
-            riskVault: tupleItemAddress(stack[14]),
-            riskBucketId: tupleItemBigIntString(stack[15])
+            coveredNotional: tupleItemBigIntString(stack[6]),
+            windowSeconds: tupleItemBigIntString(stack[7]),
+            requiredObservations: tupleItemBigIntString(stack[8]),
+            breachStart: tupleItemBigIntString(stack[9]),
+            breachSeconds: tupleItemBigIntString(stack[10]),
+            lastObservation: tupleItemBigIntString(stack[11]),
+            lastHealthyObservation: tupleItemBigIntString(stack[12]),
+            breachObservations: tupleItemBigIntString(stack[13]),
+            lastVolatilityTimestamp: tupleItemBigIntString(stack[14]),
+            lastVolatilityRequestHash: tupleItemBigIntString(stack[15]),
+            status: tupleItemBigIntString(stack[16]),
+            riskVault: tupleItemAddress(stack[17]),
+            riskBucketId: tupleItemBigIntString(stack[18])
           });
         }
       }
@@ -2902,7 +2376,7 @@ export class IndexerService {
 	              return;
 	            }
 	            try {
-	              const res = await this.runGetMethodSourceCached(activationGate, 'activation_status', []);
+	              const res = await this.runGetMethodSource(activationGate, 'activation_status', []);
 	              if (!res || res.exitCode !== 0) {
 	                throw new Error('Activation status unavailable.');
 	              }
@@ -2930,7 +2404,7 @@ export class IndexerService {
 	              return;
 	            }
 	            try {
-	              const res = await this.runGetMethodSourceCached(registry, 'registry_meta', []);
+	              const res = await this.runGetMethodSource(registry, 'registry_meta', []);
 	              if (!res || res.exitCode !== 0) {
 	                throw new Error('DLMM registry meta unavailable.');
 	              }
@@ -2957,7 +2431,7 @@ export class IndexerService {
 	              return;
 	            }
 	            try {
-	              const res = await this.runGetMethodSourceCached(hub, 'pool_balances', []);
+	              const res = await this.runGetMethodSource(hub, 'pool_balances', []);
 	              if (!res || res.exitCode !== 0) {
 	                throw new Error('Reserve balances unavailable.');
 	              }
@@ -2978,14 +2452,15 @@ export class IndexerService {
 	        tasks.push(
 	          (async () => {
 	            const controlMesh = normalizedContracts.controlMesh;
+                const riskController = normalizedContracts.riskController;
 	            const riskVault = normalizedContracts.riskVault;
 	            const feeRouter = normalizedContracts.feeRouter;
 	            const buybackExecutor = normalizedContracts.buybackExecutor;
 	            const anchorGuard = normalizedContracts.anchorGuard;
-	            const clusterGuard = normalizedContracts.clusterGuard;
 	            try {
 	              const [
 	                controlRes,
+	                riskControllerRes,
 	                riskRes,
 	                feeStateRes,
 	                feeTargetsRes,
@@ -2993,23 +2468,22 @@ export class IndexerService {
 	                anchorConfigRes,
 	                anchorStateRes,
 	                anchorEnabledRes,
-	                anchorGovRes,
-	                clusterConfigRes
+	                anchorGovRes
 	              ] = await Promise.all([
-	                controlMesh ? this.runGetMethodSourceCached(controlMesh, 'get_control_state', []) : Promise.resolve(null),
-	                riskVault ? this.runGetMethodSourceCached(riskVault, 'risk_state', []) : Promise.resolve(null),
-	                feeRouter ? this.runGetMethodSourceCached(feeRouter, 'get_router_state', []) : Promise.resolve(null),
-	                feeRouter ? this.runGetMethodSourceCached(feeRouter, 'router_targets', []) : Promise.resolve(null),
-	                buybackExecutor ? this.runGetMethodSourceCached(buybackExecutor, 'buyback_config', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'anchor_config', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'anchor_state', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'enabled', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'governance', []) : Promise.resolve(null),
-	                clusterGuard ? this.runGetMethodSourceCached(clusterGuard, 'cluster_guard_config', []) : Promise.resolve(null)
+	                controlMesh ? this.runGetMethodSource(controlMesh, 'get_control_state', []) : Promise.resolve(null),
+                    riskController ? this.runGetMethodSource(riskController, 'get_risk_controller_state', []) : Promise.resolve(null),
+	                riskVault ? this.runGetMethodSource(riskVault, 'risk_state', []) : Promise.resolve(null),
+	                feeRouter ? this.runGetMethodSource(feeRouter, 'get_router_state', []) : Promise.resolve(null),
+	                feeRouter ? this.runGetMethodSource(feeRouter, 'router_targets', []) : Promise.resolve(null),
+	                buybackExecutor ? this.runGetMethodSource(buybackExecutor, 'buyback_config', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSource(anchorGuard, 'anchor_config', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSource(anchorGuard, 'anchor_state', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSource(anchorGuard, 'enabled', []) : Promise.resolve(null),
+	                anchorGuard ? this.runGetMethodSource(anchorGuard, 'governance', []) : Promise.resolve(null)
 	              ]);
 
 	              const responded = Boolean(
-	                controlRes ||
+	                controlRes || riskControllerRes ||
 	                  riskRes ||
 	                  feeStateRes ||
 	                  feeTargetsRes ||
@@ -3017,31 +2491,14 @@ export class IndexerService {
 	                  anchorConfigRes ||
 	                  anchorStateRes ||
 	                  anchorEnabledRes ||
-	                  anchorGovRes ||
-	                  clusterConfigRes
+	                  anchorGovRes
 	              );
 	              if (!responded) {
 	                throw new Error('System health snapshot unavailable.');
 	              }
 
 	              const controlState: ControlStateSnapshot | null =
-	                controlRes?.exitCode === 0
-	                  ? {
-	                      governance: tupleItemAddress(controlRes.stack[0]),
-	                      enabled: tupleItemBool(controlRes.stack[1]),
-	                      withdrawalsOnly: tupleItemBool(controlRes.stack[2]),
-	                      sequence: tupleItemBigIntString(controlRes.stack[3]),
-	                      lastHeartbeatTs: tupleItemBigIntString(controlRes.stack[4]),
-	                      pegMintFeeBps: tupleItemBigIntString(controlRes.stack[5]),
-	                      pegRedeemFeeBps: tupleItemBigIntString(controlRes.stack[6]),
-	                      pegQuotaBps: tupleItemBigIntString(controlRes.stack[7]),
-	                      pegThrottleBps: tupleItemBigIntString(controlRes.stack[8]),
-	                      pegHaircutBps: tupleItemBigIntString(controlRes.stack[9]),
-	                      pegLevel: tupleItemBigIntString(controlRes.stack[10]),
-	                      pegEscalationScore: tupleItemBigIntString(controlRes.stack[11]),
-	                      pegRecoveryScore: tupleItemBigIntString(controlRes.stack[12])
-	                    }
-	                  : null;
+	                controlRes?.exitCode === 0 ? decodeControlMeshSnapshot(controlRes.stack) : null;
 
 	              const riskState: RiskStateSnapshot | null =
 	                riskRes?.exitCode === 0
@@ -3055,41 +2512,10 @@ export class IndexerService {
 	                    }
 	                  : null;
 
-	              const feeRouterState: FeeRouterStateSnapshot | null =
-	                feeStateRes?.exitCode === 0
-	                  ? {
-	                      balance: tupleItemBigIntString(feeStateRes.stack[0]),
-	                      lastSequence: tupleItemBigIntString(feeStateRes.stack[1]),
-	                      lastTimestamp: tupleItemBigIntString(feeStateRes.stack[2]),
-	                      allocationPeg: tupleItemBigIntString(feeStateRes.stack[3]),
-	                      allocationLiquidations: tupleItemBigIntString(feeStateRes.stack[4]),
-	                      allocationBuyback: tupleItemBigIntString(feeStateRes.stack[5]),
-	                      allocationGas: tupleItemBigIntString(feeStateRes.stack[6]),
-	                      allocationEmissions: tupleItemBigIntString(feeStateRes.stack[7]),
-	                      allocationReferrals: tupleItemBigIntString(feeStateRes.stack[8]),
-	                      referralDemand: tupleItemBigIntString(feeStateRes.stack[9]),
-	                      referralPriority: tupleItemBigIntString(feeStateRes.stack[10]),
-	                      referralFloor: tupleItemBigIntString(feeStateRes.stack[11]),
-	                      referralWeightDirectBps: tupleItemBigIntString(feeStateRes.stack[12]),
-	                      referralFlags: tupleItemBigIntString(feeStateRes.stack[13]),
-	                      referralThrottleMask: tupleItemBigIntString(feeStateRes.stack[14])
-	                    }
-	                  : null;
-
-	              const feeRouterTargets: FeeRouterTargetsSnapshot | null =
-	                feeTargetsRes?.exitCode === 0
-	                  ? {
-	                      t3Peg: tupleItemAddress(feeTargetsRes.stack[0]),
-	                      t3Liquidations: tupleItemAddress(feeTargetsRes.stack[1]),
-	                      peg: tupleItemAddress(feeTargetsRes.stack[2]),
-	                      liquidations: tupleItemAddress(feeTargetsRes.stack[3]),
-	                      buyback: tupleItemAddress(feeTargetsRes.stack[4]),
-	                      gas: tupleItemAddress(feeTargetsRes.stack[5]),
-	                      emissions: tupleItemAddress(feeTargetsRes.stack[6]),
-	                      referrals: tupleItemAddress(feeTargetsRes.stack[7]),
-	                      referralRegistry: tupleItemAddress(feeTargetsRes.stack[8])
-	                    }
-	                  : null;
+	              const feeRouterState = feeStateRes?.exitCode === 0
+	                ? decodeFeeRouterStateSnapshot(feeStateRes.stack) : null;
+	              const feeRouterTargets = feeTargetsRes?.exitCode === 0
+	                ? decodeFeeRouterTargetsSnapshot(feeTargetsRes.stack) : null;
 
 	              const buybackConfig: BuybackConfigSnapshot | null =
 	                buybackRes?.exitCode === 0
@@ -3124,22 +2550,9 @@ export class IndexerService {
 	              const anchorGuardEnabled = anchorEnabledRes?.exitCode === 0 ? tupleItemBool(anchorEnabledRes.stack[0]) : null;
 	              const anchorGuardGovernance = anchorGovRes?.exitCode === 0 ? tupleItemAddress(anchorGovRes.stack[0]) : null;
 
-	              const clusterGuardConfig: ClusterGuardConfigSnapshot | null =
-	                clusterConfigRes?.exitCode === 0
-	                  ? (() => {
-	                      const stack = unwrapTupleStack(clusterConfigRes.stack);
-	                      return {
-	                        reporter: tupleItemAddress(stack[0]),
-	                        registry: tupleItemAddress(stack[1]),
-	                        vestingSeconds: tupleItemBigIntString(stack[2]),
-	                        warnThreshold: tupleItemBigIntString(stack[3]),
-	                        slashThreshold: tupleItemBigIntString(stack[4])
-	                      };
-	                    })()
-	                  : null;
-
 	              sections.systemHealth = ok({
 	                controlState,
+                    riskControllerState: riskControllerRes?.exitCode === 0 ? decodeRiskControllerSnapshot(riskControllerRes.stack) : null,
 	                riskState,
 	                feeRouterState,
 	                feeRouterTargets,
@@ -3147,8 +2560,7 @@ export class IndexerService {
 	                anchorGuardConfig,
 	                anchorGuardState,
 	                anchorGuardEnabled,
-	                anchorGuardGovernance,
-	                clusterGuardConfig
+	                anchorGuardGovernance
 	              });
 	            } catch (error) {
 	              sections.systemHealth = err(error);
@@ -3172,7 +2584,7 @@ export class IndexerService {
 	              if (riskVault) {
 	                const bucketResults = await Promise.all(
 	                  bucketIds.map((id) =>
-	                    this.runGetMethodSourceCached(riskVault, 'bucket_state', [{ type: 'int', value: BigInt(id) }]).catch(
+	                    this.runGetMethodSource(riskVault, 'bucket_state', [{ type: 'int', value: BigInt(id) }]).catch(
 	                      () => null
 	                    )
 	                  )
@@ -3232,7 +2644,7 @@ export class IndexerService {
 
 	              let queueAddress: string | null = null;
 	              if (automationRegistry) {
-	                const configRes = await this.runGetMethodSourceCached(automationRegistry, 'config', []).catch(() => null);
+	                const configRes = await this.runGetMethodSource(automationRegistry, 'config', []).catch(() => null);
 	                if (configRes?.exitCode === 0) {
 	                  responded = true;
 	                  queueAddress = tupleItemAddress(configRes.stack[0]);
@@ -3243,7 +2655,7 @@ export class IndexerService {
 	              }
 
 	              if (queueAddress) {
-	                const jobConfigRes = await this.runGetMethodSourceCached(queueAddress, 'job_config', []).catch(() => null);
+	                const jobConfigRes = await this.runGetMethodSource(queueAddress, 'job_config', []).catch(() => null);
 	                if (jobConfigRes?.exitCode === 0) {
 	                  responded = true;
 	                  jobQueueConfig = {
@@ -3258,7 +2670,7 @@ export class IndexerService {
 	              if (automationRegistry && moduleIds.length) {
 	                const telemetryRes = await Promise.all(
 	                  moduleIds.map((id) =>
-	                    this.runGetMethodSourceCached(automationRegistry, 'module', [{ type: 'int', value: BigInt(id) }]).catch(
+	                    this.runGetMethodSource(automationRegistry, 'module', [{ type: 'int', value: BigInt(id) }]).catch(
 	                      () => null
 	                    )
 	                  )
@@ -3286,7 +2698,7 @@ export class IndexerService {
 	              if (queueAddress && moduleIds.length) {
 	                const jobRes = await Promise.all(
 	                  moduleIds.map((id) =>
-	                    this.runGetMethodSourceCached(queueAddress, 'job', [{ type: 'int', value: BigInt(id) }]).catch(
+	                    this.runGetMethodSource(queueAddress, 'job', [{ type: 'int', value: BigInt(id) }]).catch(
 	                      () => null
 	                    )
 	                  )
@@ -3355,9 +2767,9 @@ export class IndexerService {
 	                    const enabledGetter = module.enabledGetter?.trim() || 'registry_enabled';
 	                    const governanceGetter = includeModuleGovernance ? module.governanceGetter : null;
 	                    const [enabledRes, governanceRes] = await Promise.all([
-	                      this.runGetMethodSourceCached(module.address!, enabledGetter, []).catch(() => null),
+	                      this.runGetMethodSource(module.address!, enabledGetter, []).catch(() => null),
 	                      governanceGetter
-	                        ? this.runGetMethodSourceCached(module.address!, governanceGetter.trim(), []).catch(() => null)
+	                        ? this.runGetMethodSource(module.address!, governanceGetter.trim(), []).catch(() => null)
 	                        : Promise.resolve(null)
 	                    ]);
 	                    if (!enabledRes || enabledRes.exitCode !== 0) {
@@ -3509,13 +2921,13 @@ export class IndexerService {
         tokens.map(async (token) => {
           const [registryRes, factoryRes] = await Promise.all([
             registry
-              ? this.runGetMethodSourceCached(registry, 'pool_for', [
+              ? this.runGetMethodSource(registry, 'pool_for', [
                   { type: 'slice', cell: buildSliceCell(t3Root) },
                   { type: 'slice', cell: buildSliceCell(token) }
                 ]).catch(() => null)
               : Promise.resolve(null),
             factory
-              ? this.runGetMethodSourceCached(factory, 'pool_record', [
+              ? this.runGetMethodSource(factory, 'pool_record', [
                   { type: 'slice', cell: buildSliceCell(t3Root) },
                   { type: 'slice', cell: buildSliceCell(token) }
                 ]).catch(() => null)
@@ -3544,7 +2956,7 @@ export class IndexerService {
           let binReserves: DlmmPoolBinReserves | null = null;
 
           if (resolvedPool) {
-            const activeRes = await this.runGetMethodSourceCached(resolvedPool, 'active_price_q64', []).catch(() => null);
+            const activeRes = await this.runGetMethodSource(resolvedPool, 'active_price_q64', []).catch(() => null);
             if (!activeRes || activeRes.exitCode !== 0) {
               // Pool address can be deterministic but not actually deployed. Hide it.
               resolvedPool = null;
@@ -3556,7 +2968,7 @@ export class IndexerService {
                 activeBinId = Number.isFinite(asNumber) ? Math.trunc(asNumber) : null;
               }
               if (activeBinId !== null) {
-                const binRes = await this.runGetMethodSourceCached(resolvedPool, 'bin_state', [
+                const binRes = await this.runGetMethodSource(resolvedPool, 'bin_state', [
                   { type: 'int', value: BigInt(activeBinId) }
                 ]).catch(() => null);
                 if (binRes && binRes.exitCode === 0) {
@@ -3567,7 +2979,7 @@ export class IndexerService {
                   };
                 }
               }
-              const walletCodeHashRes = await this.runGetMethodSourceCached(
+              const walletCodeHashRes = await this.runGetMethodSource(
                 resolvedPool,
                 'wallet_code_hash',
                 []
@@ -3616,6 +3028,16 @@ export class IndexerService {
     } finally {
       this.dlmmPoolsSnapshotInFlight.delete(cacheKey);
     }
+  }
+
+  async getTransactionEvidence(address: string, limit: number, lt?: string, hash?: string) {
+    if (Boolean(lt) !== Boolean(hash)) throw new Error('Transaction evidence requires both cursor fields.');
+    const page = await this.withInitialHistoryTimeout(
+      readOriginalTransactionEvidence(this.source, address, limit, lt && hash ? { lt, hash } : undefined,
+        Date.now() + Math.max(1, this.config.initialHistoryTimeoutMs)),
+      this.config.initialHistoryTimeoutMs,
+    );
+    return page.map(originalTransactionToToncenter);
   }
 
   async getTransactions(address: string, page: number) {
@@ -3853,6 +3275,13 @@ export class IndexerService {
     for (const tx of entry.txs) {
       const swap = this.toSwapExecution(tx);
       if (!swap) continue;
+      // Decoded actions (including imported snapshots) are not receipt proofs.
+      // Only the qualified owner-ledger reader below may publish actual output.
+      swap.requestedPayAmount = swap.payAmount;
+      swap.payAmount = undefined;
+      swap.returnedPayAmount = undefined;
+      swap.receiveAmount = undefined;
+      swap.receiveAmountSource = undefined;
       if (fromUtime !== null && swap.utime < fromUtime) continue;
       if (toUtime !== null && swap.utime > toUtime) continue;
       if (status && swap.status !== status) continue;
@@ -3873,8 +3302,9 @@ export class IndexerService {
             status: swap.status,
             payToken: swap.payToken,
             receiveToken: swap.receiveToken,
-            payAmount: swap.payAmount,
+            payAmount: swap.requestedPayAmount,
             receiveAmount: swap.receiveAmount,
+            minimumReceiveAmount: swap.minimumReceiveAmount,
             queryId: swap.queryId,
             querySequence: swap.querySequence,
             queryNonce: swap.queryNonce,
@@ -3915,6 +3345,8 @@ export class IndexerService {
     }
 
     summary.twap_run_count = twapRuns.size;
+
+    if (this.swapLedgerReader) await enrichSwapReceipts(this.network, address, swaps, entry.txs, this.swapLedgerReader);
 
     const twapRunSummaries: AccountTwapRunSummary[] = [...twapRuns.values()]
       .sort((left, right) => right.lastUtime - left.lastUtime)
@@ -4146,6 +3578,41 @@ export class IndexerService {
     );
   }
 
+  private async getNativeAccountState(address: string): Promise<AccountState> {
+    const cached = this.store.get(address)?.balance;
+    if (cached) return cached;
+    const generation = this.store.getWorkflowGeneration();
+    const requestKey = `${generation}:${address}`;
+    const existing = this.nativeStateInFlight.get(requestKey);
+    if (existing) return existing;
+
+    const pending = (async () => {
+      const state = this.source.getAccountStateLite
+        ? await this.source.getAccountStateLite(address)
+        : await this.source.getAccountState(address);
+      const balance: AccountState = { ...state, address, updatedAt: Date.now() };
+      // History may hold the address lock while fetching remote pages. Read-only
+      // balance responses need not wait for it; publish later without replacing
+      // state that another workflow has already observed or restored. Keep the
+      // resolved read shared until publication so follow-up requests also reuse it.
+      void this.store.withAddressLock(address, () => {
+        if (!this.store.get(address)?.balance) this.storeAccountState(address, balance);
+      }, generation).finally(() => {
+        if (this.nativeStateInFlight.get(requestKey) === pending) {
+          this.nativeStateInFlight.delete(requestKey);
+        }
+      }).catch(() => undefined);
+      return this.store.get(address)?.balance ?? balance;
+    })().catch((error) => {
+      if (this.nativeStateInFlight.get(requestKey) === pending) {
+        this.nativeStateInFlight.delete(requestKey);
+      }
+      throw error;
+    });
+    this.nativeStateInFlight.set(requestKey, pending);
+    return pending;
+  }
+
   /** Caller must already hold MemoryStore's lock for this normalized address. */
   async refreshAccountStateWithinAddressLock(
     address: string,
@@ -4157,7 +3624,6 @@ export class IndexerService {
 
   private async refreshAccountStateUnlocked(address: string, options: { lite?: boolean } = {}) {
     const previous = this.store.get(address)?.balance;
-    const previousSignature = balanceStateSignature(previous);
     const state =
       options.lite && this.source.getAccountStateLite
         ? await this.source.getAccountStateLite(address)
@@ -4172,6 +3638,12 @@ export class IndexerService {
       dataBoc: state.dataBoc ?? previous?.dataBoc ?? null,
       updatedAt: Date.now(),
     };
+    this.storeAccountState(address, accountState);
+  }
+
+  /** Caller must hold MemoryStore's lock for this normalized address. */
+  private storeAccountState(address: string, accountState: AccountState) {
+    const previousSignature = balanceStateSignature(this.store.get(address)?.balance);
     this.store.setBalance(address, accountState);
     const retainedHead = this.store.get(address)?.txs[0];
     const hasHeadLt = typeof accountState.lastTxLt === 'string' && accountState.lastTxLt.length > 0;
@@ -4386,21 +3858,20 @@ export class IndexerService {
       swapAction?.tokenIn?.kind === 'jetton'
         ? swapAction.tokenIn.symbol
         : swapAction?.tokenIn?.kind === 'ton'
-          ? 'TON'
+          ? 'GRAM'
           : undefined;
     const actionReceiveToken =
       swapAction?.tokenOut?.kind === 'jetton'
         ? swapAction.tokenOut.symbol
         : swapAction?.tokenOut?.kind === 'ton'
-          ? 'TON'
+          ? 'GRAM'
           : undefined;
     const executionType = detail?.executionType ?? swapAction?.executionType ?? 'unknown';
     const querySequence = detail?.querySequence ?? swapAction?.querySequence;
     const queryNonce = detail?.queryNonce ?? swapAction?.queryNonce;
     const twapRunId = executionType === 'twap' && querySequence !== undefined ? `seq:${querySequence}` : undefined;
 
-    const actualReceiveAmount = swapAction?.amountOut;
-    const fallbackReceiveAmount = detail?.receiveAmount ?? swapAction?.minOut;
+    const actualReceiveAmount = tx.ui.status === 'success' ? swapAction?.amountOut : undefined;
 
     return {
       txId: tx.ui.txId,
@@ -4412,13 +3883,9 @@ export class IndexerService {
       payToken: detail?.payToken ?? actionPayToken,
       receiveToken: detail?.receiveToken ?? actionReceiveToken,
       payAmount: detail?.payAmount ?? swapAction?.amountIn,
-      receiveAmount: actualReceiveAmount ?? fallbackReceiveAmount,
-      receiveAmountSource:
-        actualReceiveAmount !== undefined
-          ? 'actual'
-          : fallbackReceiveAmount !== undefined
-            ? 'minimum'
-            : undefined,
+      receiveAmount: actualReceiveAmount,
+      receiveAmountSource: actualReceiveAmount !== undefined ? 'actual' : undefined,
+      minimumReceiveAmount: swapAction?.minOut,
       queryId: detail?.queryId ?? swapAction?.queryId,
       executionType,
       twapSlice: detail?.twapSlice ?? swapAction?.twapSlice,

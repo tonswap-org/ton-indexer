@@ -113,7 +113,8 @@ const releaseMarkets = () => {
   return (['fixed', 'bonding', 'dutch'] as const).map((saleModel, index) => ({
     saleModel,
     key:`market-${index+1}`,optionTemplateId:index+1,optionExpiry:'1900000000',configuration:'ready',lifecycle:'not-run',
-    contractRoles:{tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
+    codeHashes:{perpsPool:'b'.repeat(64)},
+    contractRoles:{perpsPool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}PerpsPool`,tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
     oracle:{status:'pending',reason:'history-incomplete-or-stale',observationTimestamp:'0',windows:['300','1800','7200'].map(seconds=>({seconds,available:false,elapsed:'0',priceQ64:'0'}))},
     symbol: ['FIX', 'BOND', 'DUTCH'][index],
     tokenRoot: address(nextAddress++),
@@ -121,6 +122,7 @@ const releaseMarkets = () => {
     lpVault: address(nextAddress++),
     coverSource:address(nextAddress),
     pool: address(nextAddress++),
+    perpsPool: address(300+index),
     optionAddress: address(nextAddress++),
     perpsMarketId: index + 1,
     optionSeriesId: String(index + 1),
@@ -146,6 +148,7 @@ const releaseContracts = (markets: ReturnType<typeof releaseMarkets>) => {
     contracts[`Launchpad${model}Sale`] = market.sale;
     contracts[`Launchpad${model}LpVault`] = market.lpVault;
     contracts[`Launchpad${model}Pool`] = market.pool;
+    contracts[`Launchpad${model}PerpsPool`] = market.perpsPool;
     contracts[`Launchpad${model}Option`] = market.optionAddress;
   }
   let filler = 1;
@@ -162,7 +165,8 @@ const writeReleaseManifest = (
   root: string,
   name: string,
   contracts: Record<string, string>,
-  markets: ReturnType<typeof releaseMarkets>
+  markets: ReturnType<typeof releaseMarkets>,
+  spots = markets,
 ) => {
   const unsigned = {
     schema: 'tonswap-first-release-manifest-v1',
@@ -176,6 +180,11 @@ const writeReleaseManifest = (
     registryHash: hashRegistry(contracts),
     contracts,
     markets,
+    spotMarkets: spots.map(market => ({key: market.key, symbol: market.symbol, pool: market.pool, tokenRoot: market.tokenRoot,
+      decimals: market.decimals, quoteDecimals: 9, configuration: 'ready', lifecycle: 'not-run', oracle: market.oracle,
+      codeHashes: {tokenRoot: 'b'.repeat(64), pool: 'b'.repeat(64)},
+      contractRoles: {tokenRoot: market.contractRoles.tokenRoot, pool: market.contractRoles.pool}})),
+    approvedComparisons: [],
   };
   const manifest = { ...unsigned, manifestHash: hashReleaseManifest(unsigned) };
   const manifestPath = join(root, name);
@@ -183,14 +192,15 @@ const writeReleaseManifest = (
   return { manifest, manifestPath };
 };
 
-const strictFixture = (root: string) => {
+const strictFixture = (root: string, comparisonOnly = false) => {
   const markets = releaseMarkets();
   const contracts = releaseContracts(markets);
   const { manifest, manifestPath } = writeReleaseManifest(
     root,
-    'release-manifest.json',
+    comparisonOnly ? 'paired-release-manifest.json' : 'release-manifest.json',
     contracts,
-    markets
+    comparisonOnly ? markets.slice(0, 1) : markets,
+    comparisonOnly ? markets.slice(0, 2) : markets,
   );
   const parsed = readCanonicalReleaseManifest(manifestPath, 'testnet');
   const routes: Routes = {
@@ -232,7 +242,7 @@ const strictFixture = (root: string) => {
     },
     '/api/indexer/v1/openapi.json': { body: openApi() },
   };
-  for (const [index, market] of parsed.markets.entries()) {
+  for (const [index, market] of parsed.spotMarkets.entries()) {
     const routePath = `/api/indexer/v1/markets/${encodeURIComponent(market.marketKey)}/candles`;
     routes[routePath] = {
       expectedSearchParams: {
@@ -247,6 +257,8 @@ const strictFixture = (root: string) => {
       body: {
         market_key: market.marketKey,
         market_address: market.marketAddress,
+        token_root: market.tokenRoot, asset_symbol: market.assetSymbol, quote_symbol: market.quoteSymbol,
+        asset_decimals: market.assetDecimals, quote_decimals: market.quoteDecimals,
         interval: '1m',
         from_utime: null,
         to_utime: null,
@@ -453,6 +465,19 @@ const main = async () => {
       });
     });
 
+    const paired = strictFixture(root, true);
+    assert.equal(paired.manifest.markets.length, 1);
+    assert.equal(paired.manifest.spotMarkets.length, 2);
+    await withServer(paired.routes, async baseUrl => runProductionSmoke(baseUrl, paired.options), {corsOrigins: [expectedCorsOrigin]});
+    const emptyComparison = cloneRoutes(paired.routes), secondSpot = readCanonicalReleaseManifest(paired.manifestPath, 'testnet').spotMarkets[1],
+      comparisonPath = `/api/indexer/v1/markets/${encodeURIComponent(secondSpot.marketKey)}/candles`;
+    Object.assign(emptyComparison[comparisonPath].body as object, {candle_count: 0, candles: []});
+    await withServer(emptyComparison, async baseUrl => runProductionSmoke(baseUrl, paired.options), {corsOrigins: [expectedCorsOrigin]});
+    for (const [field, value] of [['history_complete', false], ['token_root', address(900)], ['asset_symbol', 'FALSE'], ['quote_symbol', 'USDC'], ['asset_decimals', 18], ['quote_decimals', 6]] as const) {
+      const corrupted = cloneRoutes(emptyComparison);
+      (corrupted[comparisonPath].body as Record<string, unknown>)[field] = value;
+      await assertSmokeRejects(corrupted, /history_complete must be true|mismatch/, paired.options, {corsOrigins: [expectedCorsOrigin]});
+    }
     const strict = strictFixture(root);
     await withServer(
       strict.routes,
@@ -643,10 +668,9 @@ const main = async () => {
       `/api/indexer/v1/markets/${encodeURIComponent(firstMarket.marketKey)}/candles`
     ].body as { candle_count: number; candles: unknown[] };
     history.candle_count = 1;
-    history.candles.pop();
     await assertSmokeRejects(
       shortHistory,
-      /candle_count must be exactly 2/,
+      /candle_count must match its array/,
       strict.options,
       { corsOrigins: [expectedCorsOrigin] }
     );

@@ -8,7 +8,7 @@ import {
 } from '../data/dataSource';
 import { OpcodeSets } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
-import { Logger } from '../utils/logger';
+import { errorDiagnostic, Logger } from '../utils/logger';
 import { IndexerService } from '../indexerService';
 import { PoolTracker } from '../poolTracker';
 
@@ -97,7 +97,7 @@ export class BlockFollower {
             this.refreshAddress(entry.address, master.seqno, workflowGeneration).catch((error) => {
               this.logger.warn('watchlist refresh failed', {
                 address: entry.address,
-                error: (error as Error).message,
+                error: errorDiagnostic(error),
               });
             })
           )
@@ -106,7 +106,7 @@ export class BlockFollower {
 
       this.store.purgeStale();
     } catch (error) {
-      this.logger.error('block follower error', { error: (error as Error).message });
+      this.logger.error('block follower error', { error: errorDiagnostic(error) });
     } finally {
       this.inFlight = false;
     }

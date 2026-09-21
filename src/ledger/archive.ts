@@ -1,4 +1,3 @@
-import { Address, Cell, Dictionary, beginCell } from '@ton/core';
 import type {
   AccountStateResponse,
   TonDataSource,
@@ -15,22 +14,48 @@ export type LedgerStateSnapshot = {
 export async function findTransactionState(
   source: TonDataSource,
   account: string,
-  cursor: TransactionCursor
+  cursor: TransactionCursor,
+  headSeqno?: number,
 ): Promise<LedgerStateSnapshot | null> {
-  if (!source.getAccountStateAtSeqno || !/^[1-9][0-9]*$/.test(cursor.lt))
+  if (!source.getAccountStateAtSeqno || !/^(0|[1-9][0-9]*)$/.test(cursor.lt))
     return null;
   try {
-    let low = 0;
-    let high = (await source.getMasterchainInfo()).seqno;
-    if (!Number.isSafeInteger(high) || high < 0) return null;
-    let candidate: LedgerStateSnapshot | null = null;
-    while (low <= high) {
+    const head = headSeqno ?? (await source.getMasterchainInfo()).seqno;
+    if (!Number.isSafeInteger(head) || head < 0) return null;
+    if (cursor.lt === '0') {
+      let low = 0, high = head;
+      let candidate: LedgerStateSnapshot | null = null;
+      // Explicit authenticated absence before the first transaction, shared by
+      // owner and market projections. No active state is interpolated to zero.
+      if (Buffer.from(canonicalLedgerHash(cursor.hash), 'base64').some(byte => byte !== 0)) return null;
+      while (low <= high) {
+        const seqno = Math.floor((low + high) / 2), state = await source.getAccountStateAtSeqno(account, seqno);
+        if (state.lastTxLt === '0') { candidate = {seqno, state}; low = seqno + 1; }
+        else high = seqno - 1;
+      }
+      return candidate?.state.accountState === 'uninitialized' && !candidate.state.codeBoc && !candidate.state.dataBoc &&
+        candidate.state.lastTxHash && canonicalLedgerHash(candidate.state.lastTxHash) === canonicalLedgerHash(cursor.hash) ? candidate : null;
+    }
+    const target = BigInt(cursor.lt);
+    // Bracket from the recent head. A recent transaction must not require an
+    // unrelated ancient archive merely because the chain is many years old.
+    let high = head, low = 0;
+    let candidate: LedgerStateSnapshot | null = { seqno: head, state: await source.getAccountStateAtSeqno(account, head) };
+    if (BigInt(candidate.state.lastTxLt ?? '0') < target) return null;
+    for (let distance = 1; high > 0; distance *= 2) {
+      const seqno = Math.max(0, head - distance);
+      const state = await source.getAccountStateAtSeqno(account, seqno);
+      if (BigInt(state.lastTxLt ?? '0') < target) { low = seqno + 1; break; }
+      candidate = { seqno, state };
+      high = seqno;
+      if (seqno === 0) break;
+    }
+    while (low < high) {
       const seqno = Math.floor((low + high) / 2);
       const state = await source.getAccountStateAtSeqno(account, seqno);
-      const lt = state.lastTxLt == null ? 0n : BigInt(state.lastTxLt);
-      if (lt >= BigInt(cursor.lt)) {
+      if (BigInt(state.lastTxLt ?? '0') >= target) {
         candidate = { seqno, state };
-        high = seqno - 1;
+        high = seqno;
       } else low = seqno + 1;
     }
     if (candidate && BigInt(candidate.state.lastTxLt ?? '0') > BigInt(cursor.lt) &&
@@ -51,109 +76,4 @@ export async function findTransactionState(
   } catch {
     return null;
   }
-}
-
-export function readDlmmPositionState(
-  dataBoc: string,
-  owner: string,
-  binId: number
-) {
-  const cell = Cell.fromBase64(dataBoc);
-  const root = cell.beginParse();
-  const tokenT = root.loadAddress().toRawString();
-  const tokenX = root.loadAddress().toRawString();
-  root.loadAddress();
-  if (root.remainingRefs !== 4)
-    throw new Error('Unrecognized DLMM state layout');
-  const meta = cell.refs[3];
-  if (meta.refs.length < 2) throw new Error('DLMM position dictionary missing');
-  const positionContainer = meta.refs[1];
-  if (positionContainer.bits.length !== 0 || positionContainer.refs.length < 2)
-    throw new Error('Unrecognized DLMM position layout');
-  const positionsCell = positionContainer.refs[0];
-  const key = BigInt(
-    `0x${beginCell().storeAddress(Address.parse(owner)).storeInt(binId, 32).endCell().hash().toString('hex')}`
-  );
-  const positions = positionsCell
-    .beginParse()
-    .loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.BigUint(256));
-  return {
-    tokenT,
-    tokenX,
-    shares: positions.get(key) ?? 0n,
-    dataHash: cell.hash().toString('hex'),
-  };
-}
-
-/** Terminal withdrawal state binds the business query to the exact two wallet
- * settlement nonces. Equal amounts or close timestamps are insufficient. */
-export function readDlmmWithdrawalState(dataBoc: string, queryId: string) {
-  const data = Cell.fromBase64(dataBoc),
-    container = data.refs[3]?.refs[1];
-  if (!container || container.bits.length !== 0 || container.refs.length !== 4)
-    throw new Error('Withdrawal journal missing');
-  const s = container.refs[2].beginParse();
-  s.loadUintBig(64);
-  const dict = s.loadDict(
-    Dictionary.Keys.BigUint(64),
-    Dictionary.Values.Cell()
-  );
-  if (s.remainingBits || s.remainingRefs)
-    throw new Error('Trailing withdrawal journal');
-  const value = dict.get(BigInt(queryId));
-  if (!value) return null;
-  const r = value.beginParse();
-  if (
-    r.remainingBits !== 516 ||
-    r.remainingRefs !== 4 ||
-    r.loadUint(32) !== 0x44575231
-  )
-    throw new Error('Unrecognized withdrawal record');
-  const recordQueryId = r.loadUintBig(64).toString(),
-    binId = r.loadInt(32),
-    shares = r.loadUintBig(256).toString(),
-    legT = r.loadUint(2),
-    legX = r.loadUint(2),
-    settlementTId = r.loadUintBig(64).toString(),
-    settlementXId = r.loadUintBig(64).toString();
-  const actors = r.loadRef().beginParse(),
-    amounts = r.loadRef().beginParse(),
-    sources = r.loadRef().beginParse(),
-    destinations = r.loadRef().beginParse();
-  const owner = actors.loadAddress().toRawString(),
-    recipient = actors.loadAddress().toRawString(),
-    totalT = amounts.loadCoins().toString(),
-    totalX = amounts.loadCoins().toString();
-  amounts.loadCoins();
-  const poolWalletT = sources.loadMaybeAddress()?.toRawString() ?? null,
-    poolWalletX = sources.loadMaybeAddress()?.toRawString() ?? null,
-    recipientWalletT = destinations.loadMaybeAddress()?.toRawString() ?? null,
-    recipientWalletX = destinations.loadMaybeAddress()?.toRawString() ?? null;
-  if (
-    [r, actors, amounts, sources, destinations].some(
-      (slice) => slice.remainingBits || slice.remainingRefs
-    ) ||
-    recordQueryId !== queryId ||
-    legT > 2 ||
-    legX > 2
-  )
-    throw new Error('Invalid withdrawal record');
-  return {
-    queryId,
-    binId,
-    shares,
-    legT,
-    legX,
-    settlementTId,
-    settlementXId,
-    owner,
-    recipient,
-    totalT,
-    totalX,
-    poolWalletT,
-    poolWalletX,
-    recipientWalletT,
-    recipientWalletX,
-    dataHash: data.hash().toString('hex'),
-  };
 }

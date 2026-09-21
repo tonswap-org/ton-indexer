@@ -12,12 +12,15 @@ export type RawMessage = {
   createdLt?: string;
   bounced?: boolean;
   forwardFeeRaw?: string;
-  ihrFeeRaw?: string;
+  /** TVM12+ message extra_flags (the SDK calls this ihrFee); never a coin amount. */
+  extraFlagsRaw?: string;
 };
 
 export type RawTransactionStatus = 'success' | 'failed' | 'pending';
 
 export type RawTransaction = {
+  /** Original provider transaction Cell BOC, never reconstructed from summaries. Required for evidence reads. */
+  rawBoc?: string;
   lt: string;
   hash: string;
   prevTransactionLt?: string;
@@ -180,6 +183,7 @@ export type AccountStateResponse = {
 
 export type MasterchainInfo = {
   seqno: number;
+  /** Canonical masterblock creation time, never provider/server wall clock. */
   timestamp?: number;
 };
 
@@ -189,54 +193,6 @@ export type TonBlockIdExt = {
   shard: string;
   rootHashHex: string;
   fileHashHex: string;
-};
-
-export type TonSccpProofSignature = {
-  nodeIdShortHex: string;
-  signatureHex: string;
-};
-
-export type TonSccpProofOrdinarySignatureSet = {
-  scheme?: 'ordinary';
-  validatorListHashShort: number;
-  catchainSeqno: number;
-  signatures: TonSccpProofSignature[];
-};
-
-export type TonSccpProofSimplexSignatureSet = {
-  scheme: 'simplex';
-  validatorListHashShort: number;
-  catchainSeqno: number;
-  signatures: TonSccpProofSignature[];
-  sessionIdHex: string;
-  slot: number;
-  candidateBase64: string;
-};
-
-export type TonSccpProofSignatureSet =
-  | TonSccpProofOrdinarySignatureSet
-  | TonSccpProofSimplexSignatureSet;
-
-export type TonSccpBurnProofMaterialRequest = {
-  jettonMaster: string;
-  messageIdHex: string;
-  trustedCheckpointSeqno?: number;
-  trustedCheckpointHashHex?: string;
-  targetSeqno?: number;
-};
-
-export type TonSccpBurnProofMaterial = {
-  trustedCheckpoint: TonBlockIdExt;
-  targetMasterchain: TonBlockIdExt;
-  targetSignatures: TonSccpProofSignatureSet;
-  targetShard: TonBlockIdExt;
-  checkpointBlockBoc: string;
-  checkpointStateBoc: string;
-  targetBlockBoc: string;
-  targetStateBoc: string;
-  shardBlockBoc: string;
-  shardStateBoc: string;
-  burnRecordPresent: boolean;
 };
 
 export interface TonDataSource {
@@ -254,7 +210,6 @@ export interface TonDataSource {
     method: string,
     args?: TupleItem[]
   ): Promise<{ exitCode: number; stack: TupleItem[] } | null>;
-  getTonSccpBurnProofMaterial?(request: TonSccpBurnProofMaterialRequest): Promise<TonSccpBurnProofMaterial>;
   // Canonical TEP-74 only. Implementations return null unless the root and
   // wallet getters have exact canonical shapes and the wallet owner/root/code
   // identities can be verified against active account code.

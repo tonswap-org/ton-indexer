@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS ledger_runs (
   next_hash text,
   source_complete boolean NOT NULL DEFAULT false,
   projected boolean NOT NULL DEFAULT false,
+  discovery_revision numeric(30,0),
   FOREIGN KEY (network, account) REFERENCES ledger_accounts(network, account)
 );
 CREATE TABLE IF NOT EXISTS ledger_transactions (
@@ -71,6 +72,30 @@ CREATE TABLE IF NOT EXISTS ledger_projection_coverage (
   related_accounts jsonb NOT NULL,
   issues jsonb NOT NULL
 );
+-- Owner-specific publication order is allocated under one transactional row
+-- lock. It never relies on a global sequence whose commits can arrive out of order.
+CREATE TABLE IF NOT EXISTS ledger_discovery_heads (
+  network text NOT NULL,
+  account text NOT NULL,
+  revision numeric(30,0) NOT NULL DEFAULT 0 CHECK(revision >= 0),
+  generation uuid NOT NULL REFERENCES ledger_runs(generation),
+  PRIMARY KEY(network,account),
+  FOREIGN KEY(network,account) REFERENCES ledger_accounts(network,account)
+);
+CREATE TABLE IF NOT EXISTS ledger_discovery_events (
+  network text NOT NULL,
+  account text NOT NULL,
+  revision numeric(30,0) NOT NULL CHECK(revision > 0),
+  generation uuid NOT NULL REFERENCES ledger_runs(generation),
+  event_id text NOT NULL,
+  fingerprint text NOT NULL CHECK(fingerprint ~ '^[a-f0-9]{64}$'),
+  discovered_at timestamptz NOT NULL,
+  evidence_utime bigint NOT NULL CHECK(evidence_utime >= 0),
+  event jsonb NOT NULL,
+  PRIMARY KEY(network,account,revision),
+  FOREIGN KEY(network,account) REFERENCES ledger_discovery_heads(network,account)
+);
+CREATE INDEX IF NOT EXISTS ledger_discovery_latest ON ledger_discovery_events(network,account,event_id,revision DESC);
 CREATE TABLE IF NOT EXISTS ledger_account_states (
   network text NOT NULL,
   account text NOT NULL,
@@ -135,3 +160,33 @@ CREATE TABLE IF NOT EXISTS market_root_archive_states (
   observed_at timestamptz NOT NULL,
   PRIMARY KEY(network,root,seqno)
 );
+
+-- Scoped perps proofs are independent of all-history cursors. A completed row is
+-- immutable; its physical chains share one masterchain boundary. Only this
+-- current first-release schema is supported.
+CREATE TABLE IF NOT EXISTS ledger_perps_ranges (
+  generation uuid PRIMARY KEY,
+  generation_order bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+  network text NOT NULL CHECK (network IN ('mainnet','testnet','localnet')),
+  account text NOT NULL,
+  from_utime bigint NOT NULL CHECK (from_utime >= 0),
+  to_utime bigint NOT NULL CHECK (to_utime > from_utime),
+  binding text NOT NULL,
+  status text NOT NULL CHECK (status IN ('pending','running','complete','failed')),
+  backoff_seconds integer NOT NULL DEFAULT 5 CHECK (backoff_seconds BETWEEN 5 AND 300),
+  retry_after timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  attempted_at timestamptz,
+  published_at timestamptz,
+  snapshot jsonb,
+  error_code text,
+  CHECK ((status = 'complete' AND snapshot IS NOT NULL AND published_at IS NOT NULL) OR
+         (status <> 'complete' AND snapshot IS NULL AND published_at IS NULL))
+);
+CREATE INDEX IF NOT EXISTS ledger_perps_ranges_lookup
+  ON ledger_perps_ranges(network,account,from_utime,to_utime,binding,generation_order DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS ledger_perps_ranges_active
+  ON ledger_perps_ranges(network,account,from_utime,to_utime,binding)
+  WHERE status IN ('pending','running');
+CREATE INDEX IF NOT EXISTS ledger_perps_ranges_pending
+  ON ledger_perps_ranges(network,created_at,generation_order) WHERE status IN ('pending','running');

@@ -142,7 +142,7 @@ export async function decodeOptionAborts(
       const transferred =
           (BigInt(before.buyStateRaw) & BUY.CUSTODY_PROVEN) !== 0n,
         vaultAmount = transferred
-          ? BigInt(position.premiumRaw) + BigInt(position.collateralRaw)
+          ? BigInt(position.premiumRaw)
           : 0n,
         factoryAmount = BigInt(flow.wire.amountRaw) - vaultAmount;
       if (

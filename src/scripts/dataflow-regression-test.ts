@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
-import { Address, beginCell, serializeTuple } from '@ton/core';
+import { Address, Cell, beginCell, loadTransaction, serializeTuple } from '@ton/core';
 import { RawTransaction, TonDataSource } from '../data/dataSource';
-import { evaluateTransactionStatus, LiteClientDataSource } from '../data/liteClientSource';
+import { LiteClientDataSource } from '../data/liteClientSource';
+import { evaluateTransactionStatus } from '../data/transactionEvidence';
 import { ResilientTonDataSource } from '../data/resilientSource';
 import {
   createTonClient4CompatibilityAdapter,
@@ -303,54 +306,29 @@ const testPartialActiveStateUsesFallbackCells = async () => {
 };
 
 const testTonClient4HashRoundTrip = async () => {
-  const cursorBytes = Buffer.alloc(32, 0x11);
-  const transactionBytes = Buffer.alloc(32, 0x22);
-  const predecessorBytes = Buffer.alloc(32, 0x33);
+  // Original sandbox transaction cells also exercise the SDK's raw-cell ABI.
+  const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/dlmm-market-precision.json'), 'utf8'));
+  const saved = fixture.transactions.find((row: any) => {
+    const tx = loadTransaction(Cell.fromBase64(row.transactionBoc).beginParse());
+    return tx.prevTransactionLt > 0n && tx.outMessages.size > 0;
+  });
+  const tx = loadTransaction(Cell.fromBase64(saved.transactionBoc).beginParse());
   const requestedHashes: Buffer[] = [];
+  const address = Address.parse(saved.account);
   const fakeClient = {
-    async getAccountTransactionsParsed(_address: Address, _lt: bigint, hash: Buffer) {
+    async getAccountTransactions(_address: Address, _lt: bigint, hash: Buffer) {
       requestedHashes.push(Buffer.from(hash));
-      return {
-        transactions: [
-          {
-            lt: '100',
-            hash: transactionBytes.toString('base64'),
-            prevTransaction: { lt: '99', hash: predecessorBytes.toString('hex') },
-            time: 1,
-            parsed: { status: 'success' },
-            fees: '9007199254740993123',
-            inMessage: null,
-            outMessages: [{body:beginCell().endCell().toBoc().toString('base64'),info:{type:'internal',src:account.toRawString(),dest:account.toRawString(),value:'9007199254740993125',createdLt:'9007199254740993126',bounced:false,fwdFee:'9007199254740993127',ihrFee:'0'}}],
-          },
-        ],
-      };
+      return [{ tx, block: { workchain: address.workChain } }];
     },
   };
-  type TestConstructor = new (
-    network: 'testnet',
-    client: typeof fakeClient,
-    endpoints: string[]
-  ) => TonClient4DataSource;
-  const TestableTonClient4DataSource = TonClient4DataSource as unknown as TestConstructor;
-  const source = new TestableTonClient4DataSource('testnet', fakeClient, ['test']);
-
-  const page = await source.getTransactions(account.toRawString(), 1, '100', cursorBytes.toString('hex'));
-  assert.ok(requestedHashes[0]?.equals(cursorBytes));
-  assert.equal(page[0]?.hash, transactionBytes.toString('base64'));
-  assert.equal(page[0]?.prevTransactionHash, predecessorBytes.toString('base64'));
-  assert.equal(page[0]?.totalFeesRaw, '9007199254740993123');
-  assert.equal(page[0]?.outMessages[0]?.createdLt,'9007199254740993126');
-  assert.equal(page[0]?.outMessages[0]?.forwardFeeRaw,'9007199254740993127');
-  assert.equal(page[0]?.outMessages[0]?.ihrFeeRaw,'0');
-  assert.equal(page[0]?.outMessages[0]?.bounced,false);
-
-  await source.getTransactions(
-    account.toRawString(),
-    1,
-    page[0]?.prevTransactionLt,
-    page[0]?.prevTransactionHash
-  );
-  assert.ok(requestedHashes[1]?.equals(predecessorBytes));
+  const source = new (TonClient4DataSource as any)('testnet', fakeClient, ['test']) as TonClient4DataSource;
+  const page = await source.getTransactions(address.toRawString(), 1, tx.lt.toString(), tx.hash().toString('hex'));
+  assert.ok(requestedHashes[0]?.equals(tx.hash()));
+  assert.equal(page[0]?.hash, tx.hash().toString('base64'));
+  assert.equal(page[0]?.prevTransactionHash, Buffer.from(tx.prevTransactionHash.toString(16).padStart(64, '0'), 'hex').toString('base64'));
+  assert.equal(page[0]?.totalFeesRaw, tx.totalFees.coins.toString());
+  assert.equal(page[0]?.rawBoc, tx.raw.toBoc().toString('base64'));
+  await assert.rejects(source.getTransactions(address.toRawString(), 1, tx.lt.toString(), Buffer.alloc(32, 7).toString('base64')), /exact cursor-inclusive linked/);
 };
 
 const testTonClient4StorageStatCompatibility = async () => {
@@ -419,81 +397,6 @@ const testFinalizedStorageStatus = () => {
   });
 };
 
-const testSccpBurnGetterUsesHistoricalTarget = async () => {
-  const block = (seqno: number, byte: number) => ({
-    seqno,
-    workchain: -1,
-    shard: '-9223372036854775808',
-    rootHash: Buffer.alloc(32, byte),
-    fileHash: Buffer.alloc(32, byte + 1),
-  });
-  const trusted = block(10, 0x10);
-  const target = block(20, 0x20);
-  const latest = block(30, 0x30);
-  const tupleBoc = (items: Parameters<typeof serializeTuple>[0]) =>
-    serializeTuple(items).toBoc({ idx: false, crc32: false }).toString('base64');
-  const runCase = async (getterResult: string, present: boolean) => {
-    const getterBlocks: typeof target[] = [];
-    let latestHeadCalls = 0;
-    let accountStateCalls = 0;
-    const fakeClient = {
-      async lookupBlockByID(request: { seqno: number }) {
-        return { id: request.seqno === trusted.seqno ? trusted : target };
-      },
-      async getMasterchainInfo() {
-        latestHeadCalls += 1;
-        return { last: latest };
-      },
-      async runMethod(
-        _address: Address,
-        _method: string,
-        _params: Buffer,
-        requestedBlock: typeof target
-      ) {
-        getterBlocks.push(requestedBlock);
-        return {
-          exitCode: 0,
-          result: getterResult,
-          block: requestedBlock,
-          shardBlock: requestedBlock,
-        };
-      },
-      async getAccountStateRaw() {
-        accountStateCalls += 1;
-        // Stop after the getter assertion point without constructing full SCCP proofs.
-        return { block: latest };
-      },
-    };
-    type TestConstructor = new (
-      network: 'testnet',
-      client: typeof fakeClient
-    ) => LiteClientDataSource;
-    const TestableLiteClientDataSource = LiteClientDataSource as unknown as TestConstructor;
-    const source = new TestableLiteClientDataSource('testnet', fakeClient);
-    const proofPromise = source.getTonSccpBurnProofMaterial({
-      jettonMaster: account.toRawString(),
-      messageIdHex: `0x${'ab'.repeat(32)}`,
-      trustedCheckpointSeqno: trusted.seqno,
-      trustedCheckpointHashHex: `0x${trusted.rootHash.toString('hex')}`,
-      targetSeqno: target.seqno,
-    });
-
-    await assert.rejects(
-      proofPromise,
-      present ? /SCCP account-state masterchain block/ : /Burn record is not available/
-    );
-    assert.equal(latestHeadCalls, 0);
-    assert.equal(getterBlocks.length, 1);
-    assert.equal(getterBlocks[0], target);
-    assert.equal(accountStateCalls, present ? 1 : 0);
-  };
-
-  await runCase(tupleBoc([{ type: 'cell', cell: beginCell().storeUint(1, 1).endCell() }]), true);
-  await runCase(tupleBoc([{ type: 'null' }]), false);
-  await runCase(tupleBoc([]), false);
-  await runCase(tupleBoc([{ type: 'int', value: 1n }]), false);
-};
-
 const run = async () => {
   testDlmmForwardLayout();
   testCanonicalTransferDirection();
@@ -504,7 +407,6 @@ const run = async () => {
   await testTonClient4HashRoundTrip();
   await testTonClient4StorageStatCompatibility();
   testFinalizedStorageStatus();
-  await testSccpBurnGetterUsesHistoricalTarget();
 };
 
 run()

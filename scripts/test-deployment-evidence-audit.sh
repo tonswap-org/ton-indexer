@@ -123,9 +123,8 @@ write_placeholder_mainnet_registry() {
   local file="$1"
   cat >"$file" <<'JSON'
 {
-  "ClmmRouter": "REPLACE_WITH_MAINNET_CLMM_ROUTER",
-  "ClmmPoolFactory": "REPLACE_WITH_MAINNET_CLMM_POOL_FACTORY",
-  "ClmmSeedingExecutor": "REPLACE_WITH_MAINNET_CLMM_SEEDING_EXECUTOR",
+  "DexRouter": "REPLACE_WITH_MAINNET_DEX_ROUTER",
+  "DlmmSeedingExecutor": "REPLACE_WITH_MAINNET_DLMM_SEEDING_EXECUTOR",
   "FeeRouter": "REPLACE_WITH_MAINNET_FEE_ROUTER",
   "Treasury": "REPLACE_WITH_MAINNET_TREASURY",
   "ReferralRegistry": "REPLACE_WITH_MAINNET_REFERRAL_REGISTRY",
@@ -144,9 +143,8 @@ write_valid_mainnet_registry() {
   local file="$1"
   cat >"$file" <<'JSON'
 {
-  "ClmmRouter": "0:1111111111111111111111111111111111111111111111111111111111111111",
-  "ClmmPoolFactory": "0:2222222222222222222222222222222222222222222222222222222222222222",
-  "ClmmSeedingExecutor": "0:3333333333333333333333333333333333333333333333333333333333333333",
+  "DexRouter": "0:1111111111111111111111111111111111111111111111111111111111111111",
+  "DlmmSeedingExecutor": "0:3333333333333333333333333333333333333333333333333333333333333333",
   "FeeRouter": "0:4444444444444444444444444444444444444444444444444444444444444444",
   "Treasury": "0:5555555555555555555555555555555555555555555555555555555555555555",
   "ReferralRegistry": "0:6666666666666666666666666666666666666666666666666666666666666666",
@@ -205,6 +203,17 @@ write_valid_mainnet_registry "$valid_registry"
 
 run_audit "$blocked" --mainnet-registry "$placeholder_registry" >/dev/null
 run_audit "$ready" --mainnet-registry "$valid_registry" --require-ready >/dev/null
+
+unsupported_registry="$tmp_dir/mainnet-unsupported.json"
+cp "$valid_registry" "$unsupported_registry"
+node - "$unsupported_registry" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const registry = JSON.parse(fs.readFileSync(file, 'utf8'));
+registry.ClmmRouter = registry.DexRouter;
+fs.writeFileSync(file, `${JSON.stringify(registry, null, 2)}\n`);
+NODE
+expect_failure "CLMM registry role" "mainnet registry contains unsupported first-release role: ClmmRouter" run_audit "$ready" --mainnet-registry "$unsupported_registry" --require-ready
 
 expect_failure "missing deployment evidence manifest" "production deployment evidence manifest missing" run_audit "$tmp_dir/missing.json" --mainnet-registry "$placeholder_registry"
 

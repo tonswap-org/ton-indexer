@@ -33,7 +33,7 @@ assert.ok(spec.paths['/api/indexer/v1/cover/{manager}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/openapi.json']);
 assert.equal('security' in spec.paths['/api/indexer/v1/runGetMethod'].post, false);
 assert.equal('security' in spec.paths['/api/indexer/v1/runGetMethods'].post, false);
-assert.equal('security' in spec.paths['/api/indexer/v1/metrics'].get, false);
+assert.deepEqual(spec.paths['/api/indexer/v1/metrics'].get.security, [{ AdminToken: [] }, { AdminBearer: [] }]);
 assert.ok(spec.components?.securitySchemes?.AdminToken);
 assert.ok(spec.components?.securitySchemes?.AdminBearer);
 assert.deepEqual(spec.paths['/api/indexer/v1/snapshot/save'].post.security, [
@@ -87,6 +87,26 @@ const perpsStatusProps =
   ({} as Record<string, unknown>);
 assert.ok('feeBps' in perpsStatusProps);
 assert.ok(spec.components?.schemas?.PerpsStatusResponse?.required?.includes('feeBps'));
+assert.match(perpsStatusProps.feeBps.description, /33-field/);
+const perpsAutomationProps = spec.components?.schemas?.PerpsAutomationResponse?.properties ?? {};
+assert.ok('controlRequestHash' in perpsAutomationProps);
+const perpsMarketProps = spec.components?.schemas?.PerpsMarketStateResponse?.properties ?? {};
+for (const retired of [
+  'marketKind', 'kindConfig', 'timerVolatilityBps', 'timerEmaVolatilityBps', 'timerLastUpdateTs',
+  'timerWeightBps', 'correlationBps', 'correlationDispersionBps', 'correlationLastUpdateTs',
+  'correlationWeightBps', 'lastVolatilityTimestamp', 'lastVolatilityRequestHash', 'crossMargin', 'flags',
+]) {
+  assert.equal(retired in perpsMarketProps, false, `${retired} must remain outside current Perps market state`);
+}
+const coverStateProps = spec.components?.schemas?.CoverStateResponse?.properties ?? {};
+assert.ok('governance' in coverStateProps);
+const coverPolicyProps = spec.components?.schemas?.CoverPolicyResponse?.properties ?? {};
+for (const field of ['coveredNotional', 'lastVolatilityTimestamp', 'lastVolatilityRequestHash']) {
+  assert.ok(field in coverPolicyProps);
+}
+for (const retired of ['clmmFactory', 'clmmPoolHashHigh', 'clmmPoolHashLow', 'marketKind', 'kindConfig']) {
+  assert.equal(JSON.stringify(spec).includes(retired), false, `${retired} must remain outside the first-release OpenAPI surface`);
+}
 const serviceInfoProps =
   spec.components?.schemas?.ServiceInfoResponse?.properties ??
   ({} as Record<string, { enum?: string[] }>);

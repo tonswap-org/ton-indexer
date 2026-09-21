@@ -7,6 +7,7 @@ RUN npm ci
 
 FROM deps AS build
 COPY tsconfig.json ./
+COPY scripts/clean-dist.cjs ./scripts/clean-dist.cjs
 COPY src ./src
 COPY registry ./registry
 RUN npm run build

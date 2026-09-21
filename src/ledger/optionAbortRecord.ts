@@ -96,7 +96,7 @@ export function createOptionAbortRecord(
   const { flow, factory: f, payload, buy, position, series } = original,
     q = f.qualification!, state = { evidence: stateEvidence },
     transferred = (BigInt(before.buyStateRaw) & BUY.CUSTODY_PROVEN) !== 0n,
-    vaultAmount = transferred ? BigInt(position.premiumRaw) + BigInt(position.collateralRaw) : 0n,
+    vaultAmount = transferred ? BigInt(position.premiumRaw) : 0n,
     factoryAmount = BigInt(flow.wire.amountRaw) - vaultAmount,
     usedFlows = new Set<string>([flow.id]);
   const anchor = flow.source,
@@ -208,10 +208,11 @@ export function createOptionAbortRecord(
         cash.credit.event?.movements.find(
           (m) => m.id === `${physical.id}:in`,
         );
-    if (!physical || !physical.confirmed || !movement) return false;
+    if (!physical || !physical.confirmed || !movement || (movement.evidence.kind === "native_message" || movement.evidence.kind === "transaction_fee" || movement.evidence.kind === "message_forward_fee")) return false;
+    const tokenEvidence: Omit<typeof movement.evidence, "transactionStatus"> = movement.evidence;
     movement.purpose = "option_refund";
     movement.evidence = {
-      ...movement.evidence,
+      ...tokenEvidence,
       ...cash.terminalState.evidence,
       kind: "option_refund",
       transactions: cash.nodes.map(ref),

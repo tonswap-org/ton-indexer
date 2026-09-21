@@ -1,0 +1,112 @@
+{
+  "poolCodeHash": "cce255be276c271bac5218fac83099da6186adb40e8f411cf994e689388e0760",
+  "sourceDirectory": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final",
+  "scope": "Actual current source execution. Original raw transactions, message cells and before/after boundaries. Earlier captures remain unchanged.",
+  "files": [
+    {
+      "file": "dlmm-liquidity-settlements.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/liquidity/dlmm-liquidity-settlements.json",
+      "sha256": "d3323ae4b474bef5263d029b3c90e20d2042b4ae38638e2e69db6b80482925b1",
+      "transactions": 141,
+      "compressed": false
+    },
+    {
+      "file": "dlmm-zero-payout-settlements.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/zero-payout/dlmm-zero-payout-settlements.json",
+      "sha256": "bf26ce80cd743609974cb1a7e589f2ba14b68628ae5418446f75ec2723a0813c",
+      "transactions": 87,
+      "compressed": false
+    },
+    {
+      "file": "dlmm-liquidity-reused-query.json.gz",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/reused-query/dlmm-liquidity-settlements.json",
+      "sha256": "57c07658a82139c6a11b64c85479fa3b7c358fab02df12dcaa9ed8e71afdca0c",
+      "transactions": 141,
+      "compressed": true
+    },
+    {
+      "file": "refunds/refund-destination-pending.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-destination-pending.json",
+      "sha256": "2234f009a50c1d60bcea758791de572174767f0c0eb18c37cc0f76ad17618282",
+      "transactions": 45,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-destination-recovered.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-destination-recovered.json",
+      "sha256": "cd79a5ef5b8a1fa7ee130c7fdddab016e6ec801265a25d7eeccc3725b24f0441",
+      "transactions": 55,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-duplicate-side.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-duplicate-side.json",
+      "sha256": "3d3fc3734919c8306052cabfe3bbeedadb719bd1e3834f7f10cc4754267d7dc4",
+      "transactions": 58,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-final-receipt-pending.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-final-receipt-pending.json",
+      "sha256": "c3746d3e78a025f74180f9bb80064fc794d9df261218d70b4c7cfb73cd0087a8",
+      "transactions": 46,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-final-receipt-recovered.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-final-receipt-recovered.json",
+      "sha256": "2d0dd0cbb5e616087f5d007abfc2803ca8f930ee7ba8ac0873c6f402ef521186",
+      "transactions": 51,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-finalized.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-finalized.json",
+      "sha256": "a38cbab965fbb70ac8e0e4a91a95b8f733173adfbab5f0cb6c814006ce2e2b30",
+      "transactions": 46,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-finalizer-pending.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-finalizer-pending.json",
+      "sha256": "5a9d90a156a56ef1450e65f7fbc43b437cc8417c5b55bac42f1270b01dce1b54",
+      "transactions": 46,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-finalizer-recovered.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-finalizer-recovered.json",
+      "sha256": "e6bb09c8c72160833dc750ce590cca78c7e54ce73b1975f3f7871fed20c79507",
+      "transactions": 51,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-outcome-pending.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-outcome-pending.json",
+      "sha256": "84c4b2f6d99968cd8663cd7b7a49721df697c652aadd9250946b34abe76a9588",
+      "transactions": 44,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-outcome-recovered.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-outcome-recovered.json",
+      "sha256": "6562a16d0e4d94e1a6298c5f82d6a2ebf883ec43b911cee409fe56dd044a74cb",
+      "transactions": 51,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-source-pending.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-source-pending.json",
+      "sha256": "be074186d296fbe53a7f73b4442d0af4e4e3078905840f9ab807a4a0e95f302f",
+      "transactions": 41,
+      "compressed": false
+    },
+    {
+      "file": "refunds/refund-source-recovered.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/refunds/refund-source-recovered.json",
+      "sha256": "91998c00024afbc1b79d2135225601af4b26f40ce0da7b63a7be65ee407086a3",
+      "transactions": 51,
+      "compressed": false
+    }
+  ]
+}

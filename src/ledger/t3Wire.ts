@@ -1,4 +1,4 @@
-import { Address, Cell, beginCell, contractAddress } from '@ton/core';
+import { Address, Cell, Dictionary, beginCell, contractAddress } from '@ton/core';
 import type { RawMessage } from '../data/dataSource';
 import { bodyCell, BURN, BURN_NOTIFY } from './wire';
 export const T3_MINT = 0x4d494e54,
@@ -72,18 +72,66 @@ export const basket = (s: ReturnType<Cell['beginParse']>) => [
   coins(s),
   coins(s),
 ];
+export function referralAddress(c: Cell): string | null {
+  const s = c.beginParse(), referrer = s.loadMaybeAddress()?.toRawString() ?? null;
+  end(s);
+  return referrer;
+}
+
+export function readT3ReferralState(c: Cell) {
+  const s = c.beginParse();
+  const moduleKey = s.loadUint(32), reservedNative = coins(s), nextFundingWire = u64(s),
+    activeMint = u64(s), activeFunding = u64(s), config = s.loadRef(), outbox = s.loadRef();
+  // Completed user mints remain replayable after a referral reserve mint uses
+  // the active mint slot. The inline HashmapE is part of the first-release ABI.
+  const completedMints = s.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+  end(s);
+  for (const [key, value] of completedMints) {
+    const journal = value.beginParse(), status = journal.loadUint(8), businessQuery = journal.loadUintBig(64),
+      rootQuery = journal.loadUintBig(64), amount = journal.loadCoins(), recipient = journal.loadAddress(),
+      destination = journal.loadAddress(), requestHash = journal.loadUintBig(256), receipt = journal.loadRef().beginParse();
+    end(journal);
+    const expectedKey = BigInt(`0x${beginCell().storeUint(0x54334d52, 32).storeAddress(destination).storeUint(businessQuery, 64).endCell().hash().toString('hex')}`);
+    if (key !== expectedKey || status !== 4 || rootQuery === 0n || amount === 0n || requestHash === 0n ||
+      receipt.loadUint(32) !== T3_MINT_RECEIPT || receipt.loadUintBig(64) !== businessQuery ||
+      !receipt.loadAddress().equals(recipient) || receipt.loadCoins() !== amount) throw Error('T3 archived mint identity');
+    basket(receipt); receipt.loadMaybeRef(); end(receipt);
+  }
+  let registry: string | null = null, feeRouter: string | null = null, t3Root: string | null = null;
+  if (moduleKey > 0) {
+    const cfg = config.beginParse();
+    registry = address(cfg); feeRouter = address(cfg); t3Root = address(cfg);
+    cfg.loadRef(); end(cfg);
+  } else if (config.bits.length || config.refs.length) throw Error('Unconfigured T3 referral config');
+  const box = outbox.beginParse();
+  const nonce = u64(box), cursor = u64(box);
+  // Both persistent dictionaries are mandatory even when empty.
+  box.loadMaybeRef(); box.loadMaybeRef(); end(box);
+  if (BigInt(cursor) > BigInt(nonce) || BigInt(activeMint) > BigInt(nonce) || BigInt(activeFunding) > BigInt(nonce))
+    throw Error('T3 referral journal identity');
+  return { moduleKey, reservedNative, nextFundingWire, activeMint, activeFunding, registry, feeRouter, t3Root };
+}
+
+export function readT3AutomationReferral(c: Cell) {
+  const b = c.beginParse();
+  // Current AutomationControlBounce: target, opcode:uint32, jobId:uint32,
+  // value:coins, timestamp:int64. No reporter tuple precedes the three refs.
+  b.loadMaybeAddress(); b.skip(64); coins(b); b.skip(64);
+  b.loadRef(); b.loadRef();
+  const referral = readT3ReferralState(b.loadRef());
+  end(b);
+  return referral;
+}
+
 export function depositNote(c: Cell) {
   try {
     const s = c.beginParse();
     if (s.loadUint(32) !== DEPOSIT_NOTE || s.loadUint(8) !== 1) return null;
-    const flags = s.remainingBits >= 8 ? s.loadUint(8) : 0,
-      slippage = s.remainingBits >= 16 ? s.loadUint(16) : 10000,
-      recipient =
-        s.remainingBits >= 2
-          ? (s.loadMaybeAddress()?.toRawString() ?? null)
-          : null;
+    const flags = s.loadUint(8), slippage = s.loadUint(16),
+      recipient = s.loadMaybeAddress()?.toRawString() ?? null,
+      referrer = referralAddress(s.loadRef());
     end(s);
-    return { flags, slippage, recipient };
+    return { flags, slippage, recipient, referrer };
   } catch {
     return null;
   }
@@ -95,7 +143,8 @@ export const mintRequest = (m?: RawMessage) =>
       slippage = s.loadUint(16),
       basketRaw = basket(s);
     s.loadMaybeRef();
-    return { queryId, recipient, slippage, basketRaw };
+    const referrer = referralAddress(s.loadRef());
+    return { queryId, recipient, slippage, basketRaw, referrer };
   });
 export const mintReceipt = (m?: RawMessage) =>
   parse(m, T3_MINT_RECEIPT, (s) => {
@@ -127,6 +176,7 @@ export const redeemRequest = (m?: RawMessage) =>
       mode = s.loadUint(8),
       outputToken = s.loadUint(8);
     s.loadMaybeRef();
+    const referrer = referralAddress(s.loadRef());
     if (mode > 1 || outputToken > 2 || slippage > 10000)
       throw Error('Redeem constraints');
     return {
@@ -137,6 +187,7 @@ export const redeemRequest = (m?: RawMessage) =>
       amountRaw,
       mode,
       outputToken,
+      referrer,
     };
   });
 export const mintStart = (m?: RawMessage) =>
@@ -221,10 +272,11 @@ export function burnPayload(c: Cell) {
     const recipient = address(s),
       slippage = s.loadUint(16),
       mode = s.loadUint(8),
-      outputToken = s.loadUint(8);
+      outputToken = s.loadUint(8),
+      referrer = s.loadMaybeAddress()?.toRawString() ?? null;
     end(s);
     if (slippage > 10000 || mode > 1 || outputToken > 2) return null;
-    return { recipient, slippage, mode, outputToken };
+    return { recipient, slippage, mode, outputToken, referrer };
   } catch {
     return null;
   }
@@ -367,10 +419,14 @@ export function t3State(dataBoc: string) {
     governance = address(s),
     root = address(s);
   s.loadUint(8);
-  s.loadRef();
+  const referral = readT3AutomationReferral(s.loadRef());
+  if (referral.t3Root !== null && referral.t3Root !== root) throw Error('T3 referral root mismatch');
   end(s);
-  const r = runtime.beginParse(),
-    peg = r.loadRef().beginParse();
+  const r = runtime.beginParse();
+  if (r.remainingBits || r.remainingRefs !== 4) throw Error('T3 peg runtime layout');
+  r.loadRef(); // Activation acknowledgement journal.
+  r.loadRef(); // Authenticated relative-peg observations.
+  const peg = r.loadRef().beginParse();
   r.loadRef();
   end(r);
   const level = peg.loadUint(8);
@@ -401,6 +457,7 @@ export function t3State(dataBoc: string) {
     mintFeeBps,
     redeemFeeBps,
     haircuts,
+    referral,
     dataHash: wrapper.hash().toString('hex'),
   };
 }

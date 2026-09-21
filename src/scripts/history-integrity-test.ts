@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { Address, beginCell } from '@ton/core';
+import { Address } from '@ton/core';
 import { loadConfig } from '../config';
 import { RawTransaction, TonDataSource } from '../data/dataSource';
 import { IndexerService } from '../indexerService';
@@ -797,62 +797,22 @@ const testPoolTrackerNormalizesAndFiltersFactoryMessages = () => {
   assert.equal(tracker.getFactoryCount(), 1);
   assert.equal(tracker.getPoolCount(), 2);
 
-  const clmmFactory = `0:${'a'.repeat(64)}`;
-  const clmmPool = `0:${'b'.repeat(64)}`;
-  const collection = `0:${'c'.repeat(64)}`;
-  const queue = `0:${'d'.repeat(64)}`;
-  const token0 = `0:${'e'.repeat(64)}`;
-  const token1 = `0:${'f'.repeat(64)}`;
-  const wallet0 = `0:${'1'.repeat(64)}`;
-  const wallet1 = `0:${'2'.repeat(64)}`;
-  const addressRef = (value: string) => beginCell().storeAddress(Address.parse(value)).endCell();
-  const ackPrimary = beginCell()
-    .storeRef(addressRef(clmmPool))
-    .storeRef(addressRef(collection))
-    .storeRef(addressRef(queue))
-    .endCell();
-  const ackTokens = beginCell()
-    .storeRef(addressRef(token0))
-    .storeRef(addressRef(token1))
-    .endCell();
-  const ackWallets = beginCell()
-    .storeRef(addressRef(wallet0))
-    .storeRef(addressRef(wallet1))
-    .endCell();
-  const deployedAck = beginCell()
-    .storeUint(0x50444c59, 32)
-    .storeUint(11n, 64)
-    .storeUint(3n, 64)
-    .storeRef(ackPrimary)
-    .storeRef(ackTokens)
-    .storeRef(ackWallets)
-    .storeUint(4, 8)
-    .endCell()
-    .toBoc({ idx: false })
-    .toString('base64');
-  const clmmTracker = new PoolTracker({ ClmmPoolFactory: clmmFactory });
-  const clmmDeployments = [
-    { destination: clmmPool },
-    { destination: collection },
-    { destination: queue },
-  ];
-
-  clmmTracker.observeTransactions([{
+  // Unknown deployment opcodes and ambiguous direct deployments cannot
+  // expand the current DLMM pool inventory.
+  tracker.observeTransactions([{
     ...linkedTx(2),
-    inMessage: { destination: clmmFactory, op: 0x44504f4c },
-    outMessages: clmmDeployments,
-  }]);
-  assert.equal(clmmTracker.getPoolCount(), 0);
-
-  clmmTracker.observeTransactions([{
+    inMessage: { destination: factory, op: 0x44504f4c },
+    outMessages: [{ destination: `0:${'a'.repeat(64)}` }],
+  }, {
     ...linkedTx(3),
-    inMessage: { destination: clmmFactory, op: 0x44504f4c },
+    inMessage: { destination: factory, op: 0x444c4350 },
     outMessages: [
-      ...clmmDeployments,
-      { destination: `0:${'3'.repeat(64)}`, op: 0x50444c59, body: deployedAck },
+      { destination: `0:${'b'.repeat(64)}` },
+      { destination: `0:${'c'.repeat(64)}` },
     ],
   }]);
-  assert.equal(clmmTracker.getPoolCount(), 1);
+  assert.equal(tracker.getPoolCount(), 2);
+  assert.equal(new PoolTracker({ UnrelatedPoolFactory: factory }).getFactoryCount(), 0);
 };
 
 const run = async () => {

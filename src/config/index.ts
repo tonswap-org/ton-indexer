@@ -1,10 +1,10 @@
 import {parseLedgerT3RedemptionBinding, type LedgerT3RedemptionBinding} from './ledgerT3';
 import {parseLedgerPerpsCodeHash} from './ledgerPerps';
+import {parseAdmissionArtifacts, type AdmissionArtifactConfig} from './admission';
 import {parseLedgerOptionsCodeHashes, type LedgerOptionsCodeHashes} from './ledgerOptions';
 import {parseLedgerLaunchpadCodeHashes, type LedgerLaunchpadCodeHashes} from './ledgerLaunchpad';
 import { parseLedgerMarketBindings } from './ledgerMarkets';
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
-import { parseLedgerSccpBindings, type LedgerSccpBinding } from './ledgerBridge';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { readDatabaseUrl } from './database';
@@ -31,8 +31,8 @@ export type Config = {
   corsMaxAge: number;
   snapshotPath?: string;
   databaseUrl?: string;
-  ledgerSccpAssets: LedgerSccpBinding[];
   ledgerPerpsEngineCodeHash?: string;
+  perpsAdmissionArtifacts?: AdmissionArtifactConfig;
   ledgerOptionsCodeHashes?: LedgerOptionsCodeHashes;
   ledgerLaunchpadCodeHashes?: LedgerLaunchpadCodeHashes;
   ledgerMarketBindings: DlmmMarketBinding[];
@@ -75,11 +75,6 @@ export type Config = {
   rpcProxyRetryAttempts: number;
   rpcProxyRetryDelayMs: number;
   liteserverPool?: string;
-  soraRpcEndpoint?: string;
-  soraRpcTimeoutMs: number;
-  soraCheckpointCacheTtlMs: number;
-  soraTonTrustedCheckpointSeqno?: number;
-  soraTonTrustedCheckpointHash?: string;
   logLevel: string;
   adminToken?: string;
   registryPath: string;
@@ -276,8 +271,8 @@ export const loadConfig = (): Config => {
     corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600, { min: 0, integer: true }),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
     databaseUrl: readDatabaseUrl(),
-    ledgerSccpAssets: parseLedgerSccpBindings(process.env.LEDGER_SCCP_ASSETS_JSON, network),
     ledgerPerpsEngineCodeHash: parseLedgerPerpsCodeHash(process.env.LEDGER_PERPS_ENGINE_CODE_HASH),
+    perpsAdmissionArtifacts: parseAdmissionArtifacts(process.env),
     ledgerOptionsCodeHashes: parseLedgerOptionsCodeHashes(process.env.LEDGER_OPTIONS_CODE_HASHES_JSON),
     ledgerLaunchpadCodeHashes: parseLedgerLaunchpadCodeHashes(process.env.LEDGER_LAUNCHPAD_CODE_HASHES_JSON),
     ledgerMarketBindings: parseLedgerMarketBindings(process.env.LEDGER_MARKET_BINDINGS_JSON, network),
@@ -338,22 +333,6 @@ export const loadConfig = (): Config => {
           ? 'LITESERVER_POOL_TESTNET'
           : 'LITESERVER_POOL_LOCALNET'
     ),
-    soraRpcEndpoint:
-      stringFromEnv('SORA_RPC_HTTP_ENDPOINT') ||
-      stringFromEnv('SORA_HTTP_ENDPOINT') ||
-      stringFromEnv('SORA_RPC_ENDPOINT'),
-    soraRpcTimeoutMs: numberFromEnv('SORA_RPC_TIMEOUT_MS', 10_000, { min: 1, integer: true }),
-    soraCheckpointCacheTtlMs: numberFromEnv('SORA_TON_TRUSTED_CHECKPOINT_CACHE_TTL_MS', 10_000, {
-      min: 1,
-      integer: true
-    }),
-    soraTonTrustedCheckpointSeqno: (() => {
-      const raw = stringFromEnv('SORA_TON_TRUSTED_CHECKPOINT_SEQNO');
-      if (!raw) return undefined;
-      const parsed = Number(raw);
-      return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
-    })(),
-    soraTonTrustedCheckpointHash: stringFromEnv('SORA_TON_TRUSTED_CHECKPOINT_HASH'),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
     adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN') || stringFromEnv('INDEXER_ADMIN_API_KEY'),
     registryPath,

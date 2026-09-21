@@ -38,13 +38,15 @@ const marketAddresses = Array.from(
 const releaseMarkets = (['fixed', 'bonding', 'dutch'] as const).map((saleModel, index) => ({
   saleModel,
   key:`market-${index+1}`,optionTemplateId:index+1,optionExpiry:'1900000000',configuration:'ready',lifecycle:'not-run',quoteDecimals:9,
-  contractRoles:{tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
+  codeHashes:{perpsPool:'b'.repeat(64)},
+  contractRoles:{perpsPool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}PerpsPool`,tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
   oracle:{status:'pending',reason:'history-incomplete-or-stale',observationTimestamp:'0',windows:['300','1800','7200'].map(seconds=>({seconds,available:false,elapsed:'0',priceQ64:'0'}))},
   symbol: `R${index + 1}`,
   tokenRoot: marketAddresses[index * 5],
   sale: marketAddresses[index * 5 + 1],
   lpVault: marketAddresses[index * 5 + 2],
   pool: marketAddresses[index * 5 + 3],
+  perpsPool: `0:${(index + 200).toString(16).padStart(64, '0')}`,
   coverSource:marketAddresses[index * 5 + 3],
   optionAddress: marketAddresses[index * 5 + 4],
   perpsMarketId: index + 1,
@@ -52,6 +54,10 @@ const releaseMarkets = (['fixed', 'bonding', 'dutch'] as const).map((saleModel, 
   coverPolicyId: `cover-${index + 1}`,
   decimals: index + 6,
 }));
+const releaseSpots = releaseMarkets.map(market => ({key: market.key, symbol: market.symbol, pool: market.pool,
+  tokenRoot: market.tokenRoot, decimals: market.decimals, quoteDecimals: 9, configuration: 'ready', lifecycle: 'not-run', oracle: market.oracle,
+  codeHashes: {tokenRoot: 'b'.repeat(64), pool: 'b'.repeat(64)},
+  contractRoles: {tokenRoot: market.contractRoles.tokenRoot, pool: market.contractRoles.pool}}));
 const contracts = {
   DlmmPoolFactory: addressA,
   T3Root: addressB,
@@ -65,16 +71,19 @@ const contracts = {
   LaunchpadFixedSale: releaseMarkets[0].sale,
   LaunchpadFixedLpVault: releaseMarkets[0].lpVault,
   LaunchpadFixedPool: releaseMarkets[0].pool,
+  LaunchpadFixedPerpsPool: releaseMarkets[0].perpsPool,
   LaunchpadFixedOption: releaseMarkets[0].optionAddress,
   LaunchpadBondingTokenRoot: releaseMarkets[1].tokenRoot,
   LaunchpadBondingSale: releaseMarkets[1].sale,
   LaunchpadBondingLpVault: releaseMarkets[1].lpVault,
   LaunchpadBondingPool: releaseMarkets[1].pool,
+  LaunchpadBondingPerpsPool: releaseMarkets[1].perpsPool,
   LaunchpadBondingOption: releaseMarkets[1].optionAddress,
   LaunchpadDutchTokenRoot: releaseMarkets[2].tokenRoot,
   LaunchpadDutchSale: releaseMarkets[2].sale,
   LaunchpadDutchLpVault: releaseMarkets[2].lpVault,
   LaunchpadDutchPool: releaseMarkets[2].pool,
+  LaunchpadDutchPerpsPool: releaseMarkets[2].perpsPool,
   LaunchpadDutchOption: releaseMarkets[2].optionAddress,
 };
 
@@ -92,6 +101,8 @@ const writeManifest = (name: string, overrides: Record<string, unknown> = {}) =>
     contracts,
     registryHash: hashRegistry(contracts),
     markets: releaseMarkets,
+    spotMarkets: releaseSpots,
+    approvedComparisons: [],
     ...overrides,
   };
   const serializable = JSON.parse(JSON.stringify(unsigned));
@@ -109,9 +120,12 @@ try {
   assert.equal(parsed.registryHash, hashRegistry(contracts));
   assert.deepEqual(parsed.contracts, contracts);
   for (const field of ['contracts', 'codeHashes', 'artifactCodeHashes', 'webAddresses']) {
-    const retired = writeManifest(`retired-farm-${field}.json`, { [field]: { ...contracts, FarmFactory: addressA } });
-    assert.throws(() => readCanonicalReleaseManifest(retired, 'localnet'), /retired CLMM farming/);
+    for (const role of ['ClmmRouter', 'ClmmPoolFactory', 'ClmmPool', 'clmmRouter', 'FarmFactory', 'farmFactory', 'BootstrapFactory', 'BootstrapPool', 'BootstrapEscrow', 'DlmmMigrator', 'SigmammPool', 'PositionNft', 'PositionCollection']) {
+      const retired = writeManifest(`retired-${field}-${role}.json`, { [field]: { ...contracts, [role]: addressA } });
+      assert.throws(() => readCanonicalReleaseManifest(retired, 'localnet'), /Unsupported first-release contract roles/);
+    }
   }
+  assert.throws(() => buildRegistryBundle({ ...contracts, ClmmPoolFactory: addressA }, 'localnet'), /Unsupported first-release contract roles/);
   for (const [rootLabel, discoveryLabel, address] of reserveRootDiscoveryPairs) {
     assert.equal(parsed.contracts[rootLabel], address);
     assert.equal(parsed.contracts[discoveryLabel], address);
@@ -136,6 +150,22 @@ try {
     markets: releaseMarkets,
   });
   const parsedMarkets = readCanonicalReleaseManifest(marketPath, 'localnet').markets;
+  assert.equal(parsedMarkets[0].perpsPool, releaseMarkets[0].perpsPool);
+  assert.notEqual(parsedMarkets[0].perpsPool, parsedMarkets[0].marketAddress);
+  assert.equal(parsedMarkets[0].perpsCandleMarketKey, 'perps-oracle:1');
+  assert.equal(parsedMarkets[0].perpsPoolCodeHash, 'b'.repeat(64));
+  for (const [name, replacement, error] of [
+    ['missing-perps-pool', { perpsPool: undefined }, /perpsPool contract binding/],
+    ['foreign-perps-pool', { perpsPool: releaseMarkets[0].pool }, /perpsPool contract binding/],
+    ['missing-perps-role', { contractRoles: { ...releaseMarkets[0].contractRoles, perpsPool: undefined } }, /perpsPool contract binding/],
+    ['missing-perps-code', { codeHashes: {} }, /perpsPool code binding/],
+    ['foreign-perps-code', { codeHashes: { perpsPool: 'f'.repeat(64) } }, /perpsPool code binding/],
+    ['oversized-perps-market', { perpsMarketId: 0x100000000 }, /perpsMarketId/],
+  ] as const) {
+    assert.throws(() => readCanonicalReleaseManifest(writeManifest(`${name}.json`, {
+      markets: releaseMarkets.map((market, index) => index === 0 ? { ...market, ...replacement } : market),
+    }), 'localnet'), error);
+  }
   assert.deepEqual(
     parsedMarkets.map((market) => ({
       marketKey: market.marketKey,
@@ -221,6 +251,40 @@ try {
       ),
     /pool contract binding/
   );
+
+  // One derivative instrument and a comparison-only spot pool remain distinct inventories.
+  const paired = {markets: [releaseMarkets[0]], spotMarkets: releaseSpots.slice(0, 2),
+    approvedComparisons: [{templateId: 10, baseSymbol: releaseSpots[0].symbol, comparisonSymbol: releaseSpots[1].symbol,
+      basePool: releaseSpots[0].pool, comparisonPool: releaseSpots[1].pool}]};
+  const pairedRead = readCanonicalReleaseManifest(writeManifest('paired-spot.json', paired), 'localnet');
+  assert.equal(pairedRead.markets.length, 1);
+  assert.equal(pairedRead.spotMarkets.length, 2);
+  assert.deepEqual(pairedRead.approvedComparisons, paired.approvedComparisons);
+  assert.equal(pairedRead.spotMarkets[1].poolCodeHash, 'b'.repeat(64));
+  assert(!('perpsMarketId' in pairedRead.spotMarkets[1]), 'comparison spot cannot invent a derivative');
+  const pairedBundle = buildRegistryBundle(contracts, 'localnet', writeManifest('paired-bundle.json', paired));
+  assert.deepEqual(pairedBundle.metadata.spotMarkets, pairedRead.spotMarkets);
+  assert.deepEqual(pairedBundle.metadata.approvedComparisons, pairedRead.approvedComparisons);
+  const firstSpot = paired.spotMarkets[0], comparison = paired.approvedComparisons[0];
+  for (const [label, change] of [
+    ['missing spots', {spotMarkets: undefined}], ['empty spots', {spotMarkets: []}],
+    ['missing comparisons', {approvedComparisons: undefined}],
+    ['duplicate spot pool', {spotMarkets: [firstSpot, {...paired.spotMarkets[1], pool: firstSpot.pool}]}],
+    ['missing pool code', {spotMarkets: [{...firstSpot, codeHashes: {tokenRoot: 'b'.repeat(64)}}]}],
+    ['wrong token code', {spotMarkets: [{...firstSpot, codeHashes: {...firstSpot.codeHashes, tokenRoot: 'f'.repeat(64)}}]}],
+    ['wrong pool code', {spotMarkets: [{...firstSpot, codeHashes: {...firstSpot.codeHashes, pool: 'f'.repeat(64)}}]}],
+    ['wrong pool role', {spotMarkets: [{...firstSpot, contractRoles: {...firstSpot.contractRoles, pool: 'T3Root'}}]}],
+    ['wrong quote precision', {spotMarkets: [{...firstSpot, quoteDecimals: 6}]}],
+    ['missing underlying spot', {spotMarkets: [paired.spotMarkets[1]]}],
+    ['invented spot derivative', {spotMarkets: [{...firstSpot, perpsMarketId: 2}]}],
+    ['self comparison', {approvedComparisons: [{...comparison, comparisonPool: comparison.basePool, comparisonSymbol: comparison.baseSymbol}]}],
+    ['foreign comparison pool', {approvedComparisons: [{...comparison, comparisonPool: addressA}]}],
+    ['wrong comparison symbol', {approvedComparisons: [{...comparison, comparisonSymbol: 'IMPOSTOR'}]}],
+    ['duplicate comparison', {approvedComparisons: [comparison, {...comparison}]}],
+    ['duplicate pair', {approvedComparisons: [comparison, {...comparison, templateId: 11}]}],
+    ['invalid comparison template', {approvedComparisons: [{...comparison, templateId: 0}]}],
+    ['Shout template collision', {approvedComparisons: [{...comparison, templateId: releaseMarkets[0].optionTemplateId}]}],
+  ] as const) assert.throws(() => readCanonicalReleaseManifest(writeManifest(`paired-bad-${label}.json`, {...paired, ...change}), 'localnet'), /Release manifest/, label);
 
   const objectAddressPath = writeManifest('object-address.json', {
     network: 'ton:localnet',

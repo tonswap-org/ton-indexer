@@ -27,10 +27,12 @@ import {
   optionSettlementKey,
   optionPositionClaimIdentity,
   optionIngressClaimIdentity,
+  optionIngressLogicalIdentity,
   OPTION_EXERCISE,
   OPTION_SHOUT_EXERCISE,
   OPTION_SPREAD_EXERCISE,
   OPTION_SHOUT_PAYOUT,
+  OPTION_SPREAD_PAYOUT,
   OPTION_VAULT_PAYOUT,
   OPTION_CLAIM_RECEIPT,
 } from "../ledger/optionLifecycleWire";
@@ -146,7 +148,7 @@ const factorySeries = (
   templateId: 1,
   kind: 1,
   expiry: 1900000000n,
-  maxNotional: notional * 10n,
+  maxNotional: collateral * 10n,
   premiumBps: 100,
   collateralMultiplierBps: 10000,
   strikeBps: 10000,
@@ -175,6 +177,9 @@ const factorySeries = (
   ...overrides,
 });
 export type FactoryStateFixture = {
+  ingressReceipts?: Array<{logical: string; accepted: boolean; refunds: bigint[]}>;
+  ingressClaimAttempts?: Array<[bigint, bigint]>;
+  physicalTombstones?: string[];
   series?: FactorySeriesFixture[];
   seriesBuyIndex?: Array<[bigint, bigint]>;
   nextBuyWireId?: bigint;
@@ -191,7 +196,8 @@ function factoryData(
       Dictionary.Keys.BigUint(64),
       Dictionary.Values.BigUint(128),
     );
-  for (const s of state.series ?? [])
+  const currentSeries = state.series ?? (p ? [factorySeries({ openNotional: p.settled ? 0n : notional, collateralLocked: p.settled ? 0n : collateral })] : []);
+  for (const s of currentSeries)
     seriesEntries.set(
       s.seriesId,
       beginCell()
@@ -224,6 +230,9 @@ function factoryData(
             .storeUint(BigInt("0x" + s.activationRequestHash), 256)
             .storeUint(BigInt("0x" + s.configHash), 256),
         )
+        .storeRef(beginCell().storeAddress(A(other)).storeUint(1, 64).storeUint(3, 8)
+          .storeCoins(s.maxNotional).storeCoins(s.maxNotional).storeUint(1, 64).storeUint(1, 64)
+          .storeRef(beginCell().storeCoins(0)))
         .endCell(),
     );
   for (const [wire, key] of state.seriesBuyIndex ?? []) buyIndex.set(wire, key);
@@ -290,6 +299,7 @@ function factoryData(
         .storeUint(c.id, 64)
         .storeUint(BigInt("0x" + c.identity), 256)
         .storeUint(c.kind, 8)
+        .storeUint(0, 64)
         .storeCoins(c.amount)
         .storeUint(c.wire, 64)
         .storeUint(c.finalWire, 64)
@@ -303,6 +313,18 @@ function factoryData(
     ci.set(BigInt("0x" + c.identity), c.id);
   }
   if (tombstone) ci.set(BigInt("0x" + tombstone), 0n);
+  for (const identity of state.physicalTombstones ?? []) ci.set(BigInt("0x" + identity), 0n);
+  const ingressReceipts = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell()),
+    ingressClaimAttempts = Dictionary.empty(Dictionary.Keys.BigUint(64), Dictionary.Values.BigUint(256));
+  for (const receipt of state.ingressReceipts ?? []) {
+    const logical = BigInt("0x" + receipt.logical), refunds = Dictionary.empty(Dictionary.Keys.BigUint(64), Dictionary.Values.Bool());
+    for (const id of receipt.refunds) { refunds.set(id, true); ingressClaimAttempts.set(id, logical); }
+    ingressReceipts.set(logical, beginCell().storeBit(receipt.accepted).storeDict(refunds).endCell());
+  }
+  if (state.ingressClaimAttempts) {
+    for (const [id] of ingressClaimAttempts) ingressClaimAttempts.delete(id);
+    for (const [id, logical] of state.ingressClaimAttempts) ingressClaimAttempts.set(id, logical);
+  }
   const config = beginCell()
     .storeAddress(A(other))
     .storeAddress(A(vault))
@@ -320,6 +342,9 @@ function factoryData(
             .storeRef(beginCell().storeDict(ci)),
         )
         .storeRef(Cell.EMPTY)
+        .storeRef(beginCell().storeCoins(currentSeries.reduce((sum, entry) => sum + entry.maxNotional, 0n))
+          .storeCoins(currentSeries.reduce((sum, entry) => sum + entry.collateralLocked, 0n)).storeDict(null)
+          .storeDict(ingressReceipts).storeDict(ingressClaimAttempts))
         .storeUint(20, 16)
         .storeUint(0, 8)
         .storeUint(state.nextBuyWireId ?? 91n, 64)
@@ -339,6 +364,19 @@ function factoryData(
     .storeRef(beginCell().storeDict(positions))
     .endCell();
 }
+
+export function acceptedIngressState(notification: RawMessage): FactoryStateFixture {
+  const body = Cell.fromBase64(notification.body!), slice = body.beginParse();
+  slice.loadUint(32);
+  const query = slice.loadUintBig(64).toString(), amount = slice.loadCoins().toString(), owner = slice.loadAddress().toRawString();
+  slice.loadAddress(); slice.loadCoins();
+  const forward = slice.loadRef();
+  return {
+    physicalTombstones: [optionIngressClaimIdentity(factoryWallet, notification.createdLt!, body.hash().toString("hex"))],
+    ingressReceipts: [{logical: optionIngressLogicalIdentity(owner, query, amount, forward.hash().toString("hex")), accepted: true, refunds: []}],
+  };
+}
+
 function productData(
   kind: 1 | 2,
   after: boolean,
@@ -380,7 +418,7 @@ function productData(
       .storeInt(1, 64)
       .storeUint(0, 8);
   const positions = Dictionary.empty(Dictionary.Keys.BigUint(64), inline);
-  if (stage !== "absent" && (kind === 2 || !after)) {
+  if (stage !== "absent") {
     const p = beginCell()
       .storeAddress(A(ownerOverride))
       .storeUint(3, 64)
@@ -389,15 +427,18 @@ function productData(
     if (kind === 1)
       p.storeCoins(0)
         .storeInt(0, 64)
-        .storeBit(false)
-        .storeBit(false)
-        .storeCoins(collateral);
+        .storeBit(after)
+        .storeBit(after)
+        .storeCoins(after ? 0n : collateral);
     else
-      p.storeCoins(collateral)
-        .storeCoins(amount)
-        .storeBit(stage === "active")
+      p.storeCoins(after ? 0n : collateral)
+        .storeCoins(after ? amount : 0n)
+        .storeBit(stage === "active" && after)
         .storeBit(stage === "active" && after);
     p.storeBit(stage === "active").storeUint(55, 64);
+    if (kind === 1) p.storeRef(after ? beginCell().storeCoins(30000000).storeRef(beginCell()
+      .storeUint(OPTION_SHOUT_PAYOUT, 32).storeUint(3, 64).storeAddress(A(ownerOverride)).storeCoins(amount)
+      .storeCoins(0).storeAddress(A(ownerOverride))).endCell() : Cell.EMPTY);
     positions.set(3n, p.endCell());
   }
   const runtime = beginCell()
@@ -407,7 +448,12 @@ function productData(
     .storeUint(7, 64)
     .storeUint(1, 64)
     .storeUint(0, 256)
-    .storeUint(0, 256);
+    .storeUint(0, 256)
+    .storeRef(beginCell().storeUint(1, 64).storeUint(0, 64).storeUint(0, 64).storeAddress(null)
+      .storeUint(0, 256).storeInt(0, 64).storeInt(0, 64).storeUint(0, 8).storeUint(0, 8)
+      .storeRef(Cell.EMPTY).storeRef(Cell.EMPTY)
+      .storeRef(beginCell().storeInt(0, 128).storeInt(0, 128).storeInt(0, 128).storeInt(0, 128).storeInt(0, 64).storeInt(0, 64))
+      .storeRef(Cell.EMPTY));
   return beginCell()
     .storeUint(kind === 1 ? 0x5348 : 0x4f50, 16)
     .storeRef(Cell.EMPTY)
@@ -438,7 +484,7 @@ const entry = (overrides: Partial<Entry> = {}): Entry => ({
   requestHash: zero,
   risk: 0n,
   accounting: 1,
-  premium: 500n,
+  premium: 0n,
   ...overrides,
 });
 function vaultData(
@@ -446,6 +492,7 @@ function vaultData(
   final = false,
   overrides: {
     depositReceipt?: bigint;
+    writerReserve?: Cell;
     tracked?: bigint;
     bucketLocked?: bigint;
     bucketPremium?: bigint;
@@ -541,6 +588,8 @@ function vaultData(
         )
         .endCell(),
     );
+  const writers = Dictionary.empty(Dictionary.Keys.BigUint(64), inline);
+  if (overrides.writerReserve) writers.set(7n, overrides.writerReserve);
   const journal = beginCell()
     .storeDict(dict)
     .storeDict(null)
@@ -554,7 +603,7 @@ function vaultData(
   return beginCell()
     .storeRef(Cell.EMPTY)
     .storeRef(config)
-    .storeRef(beginCell().storeDict(buckets))
+    .storeRef(beginCell().storeDict(buckets).storeDict(writers).storeCoins(0))
     .storeRef(journal)
     .storeCoins(
       (overrides.tracked ?? collateral * 2n) - (final ? e!.amount : 0n),
@@ -649,7 +698,7 @@ function fixture() {
     createdLt: String(nextLt++),
     value: "100",
     forwardFeeRaw: "3",
-    ihrFeeRaw: "0",
+    extraFlagsRaw: "0",
     bounced: false,
   });
   const tx = (
@@ -759,15 +808,8 @@ function exercise(
 ) {
   const f = fixture();
   f.input.optionFactories!.get(factory)!.series.get("7")!.kind = kind;
-  const before = position({
-      ready: kind === 2,
-      payout: kind === 2 ? amount : 0n,
-    }),
-    after = position({
-      premium: premium - 500n,
-      collateral: 0n,
-      settled: true,
-    });
+  const before = position(),
+    after = position({ collateral: 0n, settled: true, payout: amount });
   f.tx(factory, undefined, [], {
     code: factoryCode,
     data: factoryData(before),
@@ -777,68 +819,24 @@ function exercise(
     data: productData(kind, false, amount),
   });
   f.tx(vault, undefined, [], { code: vaultCode, data: vaultData(null) });
-  const original = f.msg(
-    owner,
-    factory,
-    beginCell()
-      .storeUint(OPTION_EXERCISE, 32)
-      .storeUint(7, 64)
-      .storeUint(3, 64)
-      .storeAddress(A(recipient))
-      .storeCoins(amount)
-      .storeCoins(500)
-      .endCell(),
-  );
-  const productBody = beginCell()
-    .storeUint(kind === 1 ? OPTION_SHOUT_EXERCISE : OPTION_SPREAD_EXERCISE, 32)
-    .storeUint(3, 64)
-    .storeCoins(amount);
-  if (kind === 1)
-    productBody
-      .storeAddress(A(recipient))
-      .storeCoins(500)
-      .storeAddress(A(owner));
+  const original = f.msg(owner, factory, beginCell().storeUint(OPTION_EXERCISE, 32)
+    .storeUint(7, 64).storeUint(3, 64).endCell());
+  const productBody = beginCell().storeUint(kind === 1 ? OPTION_SHOUT_EXERCISE : OPTION_SPREAD_EXERCISE, 32).storeUint(3, 64);
+  if (kind === 1) productBody.storeCoins(0).storeAddress(A(owner)).storeCoins(0).storeAddress(A(owner));
   const request = f.msg(factory, series, productBody.endCell());
   f.tx(owner, undefined, [original]);
   const start = f.tx(factory, original, [request], {
     code: factoryCode,
-    data: factoryData(kind === 1 ? position({ ready: true }) : after),
+    data: factoryData(position({ ready: true })),
   });
-  const spyt = f.msg(
-    factory,
-    vault,
-    beginCell()
-      .storeUint(OPTION_VAULT_PAYOUT, 32)
-      .storeUint(3, 64)
-      .storeUint(7, 64)
-      .storeAddress(A(recipient))
-      .storeCoins(amount)
-      .storeCoins(500)
-      .storeAddress(A(owner))
-      .endCell(),
-  );
-  const callback = f.msg(
-    series,
-    factory,
-    beginCell()
-      .storeUint(OPTION_SHOUT_PAYOUT, 32)
-      .storeUint(3, 64)
-      .storeAddress(A(recipient))
-      .storeCoins(amount)
-      .storeCoins(500)
-      .storeAddress(A(owner))
-      .endCell(),
-  );
-  f.tx(series, request, kind === 1 ? [callback] : [], {
-    code: kind === 1 ? shoutCode : spreadCode,
-    data: productData(kind, true, amount),
-  });
-  if (kind === 1)
-    f.tx(factory, callback, [spyt], {
-      code: factoryCode,
-      data: factoryData(after),
-    });
-  else start.outMessages.push(spyt);
+  const spyt = f.msg(factory, vault, beginCell().storeUint(OPTION_VAULT_PAYOUT, 32).storeUint(3, 64)
+    .storeUint(7, 64).storeAddress(A(recipient)).storeCoins(amount).storeCoins(0).storeAddress(A(owner)).endCell());
+  const callbackBody = kind === 1
+    ? beginCell().storeUint(OPTION_SHOUT_PAYOUT, 32).storeUint(3, 64).storeAddress(A(recipient)).storeCoins(amount).storeCoins(0).storeAddress(A(owner))
+    : beginCell().storeUint(OPTION_SPREAD_PAYOUT, 32).storeUint(7, 64).storeUint(3, 64).storeCoins(amount);
+  const callback = f.msg(series, factory, callbackBody.endCell());
+  f.tx(series, request, [callback], { code: kind === 1 ? shoutCode : spreadCode, data: productData(kind, true, amount) });
+  f.tx(factory, callback, amount ? [spyt] : [], { code: factoryCode, data: factoryData(after) });
   const e = entry({
     amount,
     recipient,
@@ -864,41 +862,21 @@ function exercise(
       : undefined;
   return { ...f, original, start, spyt, entry: e, dispatch, payment };
 }
-function refund(kind: 1 | 3 = 3, paid = true) {
+function refund(kind: 1 | 3 = 3, paid = true, count = 1, accepted = false) {
   const f = fixture(),
     amount = payout,
     wire = 91n,
     query = 9007199254741017n,
     payload = beginCell().storeUint(0x46425559, 32).endCell();
-  const identity =
-    kind === 1
-      ? optionIngressClaimIdentity(
-          owner,
-          query.toString(),
-          amount.toString(),
-          payload.hash().toString("hex"),
-        )
-      : optionPositionClaimIdentity(
-          3,
-          "7",
-          "3",
-          owner,
-          owner,
-          amount.toString(),
-        );
-  const claim: Claim = {
-      id: 88n,
-      identity,
-      kind,
-      amount,
-      wire,
-      finalWire: 0n,
-      status: 2,
-      owner,
-      recipient: owner,
-    },
-    p = kind === 3 ? position({ excess: amount }) : null;
-  f.tx(factory, undefined, [], { code: factoryCode, data: factoryData(p) });
+  const logical = optionIngressLogicalIdentity(owner, query.toString(), amount.toString(), payload.hash().toString("hex")),
+    p = kind === 3 ? position({ excess: amount }) : null,
+    physicalTombstones: string[] = [],
+    receiptState = (pending: bigint[] = []): FactoryStateFixture => kind === 1 ? {
+      physicalTombstones: [...physicalTombstones], ingressReceipts: [{logical, accepted, refunds: pending}],
+    } : {};
+  f.tx(factory, undefined, [], { code: factoryCode, data: factoryData(p, [], 0n, undefined, accepted ? receiptState() : {}) });
+  const append = (index: number) => {
+  const claimId = 88n + BigInt(index), currentWire = wire + BigInt(index);
   let incoming: RawMessage;
   if (kind === 1) {
     const transfer = f.msg(
@@ -948,24 +926,31 @@ function refund(kind: 1 | 3 = 3, paid = true) {
     incoming = f.msg(
       other,
       factory,
-      beginCell().storeUint(0x4f435259, 32).storeUint(claim.id, 64).endCell(),
+      beginCell().storeUint(0x4f435259, 32).storeUint(claimId, 64).endCell(),
     );
     f.tx(other, undefined, [incoming]);
   }
+  const identity = kind === 1
+    ? optionIngressClaimIdentity(factoryWallet, incoming.createdLt!, Cell.fromBase64(incoming.body!).hash().toString("hex"))
+    : optionPositionClaimIdentity(3, "7", "3", owner, owner, amount.toString());
+  const claim: Claim = {id: claimId, identity, kind, amount, wire: currentWire, finalWire: 0n, status: 2, owner, recipient: owner};
+  const pendingState = receiptState([claimId]);
   const receiptBody = beginCell()
     .storeUint(OPTION_CLAIM_RECEIPT, 32)
     .storeUint(claim.id, 64)
     .storeUint(kind, 8)
-    .storeUint(wire, 64)
+    .storeUint(currentWire, 64)
     .storeCoins(amount)
     .storeUint(BigInt("0x" + identity), 256)
     .endCell();
   const early = f.msg(factory, owner, receiptBody),
     dispatch = f.tx(factory, incoming, [early], {
       code: factoryCode,
-      data: factoryData(p, [claim], claim.id),
+      data: factoryData(p, [claim], claim.id, undefined, pendingState),
     });
   f.tx(owner, early);
+  physicalTombstones.push(identity);
+  const terminalState = receiptState();
   const payment = paid
     ? cash(
         f,
@@ -973,13 +958,58 @@ function refund(kind: 1 | 3 = 3, paid = true) {
         dispatch,
         owner,
         amount,
-        wire,
-        factoryData(p, [{ ...claim, status: 3, finalWire: wire }], claim.id),
-        factoryData(p, [], 0n, identity),
+        currentWire,
+        factoryData(p, [{ ...claim, status: 3, finalWire: currentWire }], claim.id, undefined, pendingState),
+        factoryData(p, [], 0n, identity, terminalState),
         receiptBody,
       )
     : undefined;
-  return { ...f, claim, p, incoming, dispatch, payment };
+  return { claim, p, incoming, dispatch, payment, pendingState, terminalState };
+  };
+  const refunds = Array.from({length: count}, (_, index) => append(index));
+  return { ...f, ...refunds.at(-1)!, refunds, logical, payload };
+}
+async function testPhysicalIngressRefunds() {
+  for (const accepted of [false, true]) {
+    const f = refund(1, true, 2, accepted), events = (await projectOwnerLedger(f.input)).events,
+      returns = events.filter((e) => e.kind === "option_refund");
+    assert.equal(returns.length, 2, "same logical query paid twice has two independent physical refunds");
+    assert.equal(new Set(returns.map((e) => e.settlement?.optionLifecycle?.refund?.identityHash)).size, 2);
+    assert.equal(new Set(returns.map((e) => e.settlement?.optionLifecycle?.refund?.logicalIdentityHash)).size, 1);
+    for (const [index, payment] of f.refunds.entries()) {
+      const event = returns.find((e) => e.settlement?.optionLifecycle?.refund?.identityHash === payment.claim.identity)!;
+      assert.equal(event.settlement?.optionLifecycle?.refund?.notificationCreatedLt, payment.incoming.createdLt);
+      assert.equal(event.settlement?.optionLifecycle?.refund?.notificationBodyHash, Cell.fromBase64(payment.incoming.body!).hash().toString("hex"));
+      assert.equal(event.settlement?.optionLifecycle?.refund?.sourceWallet, factoryWallet);
+      assert.equal(event.settlement?.status, "confirmed", `physical payment ${index}`);
+      assert.equal(event.movements.filter((m) => m.purpose === "option_refund").length, 1);
+    }
+    const state = readOptionFactoryConfig(boc(f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data));
+    assert.equal(state.ingressReceipts.get(f.logical)?.accepted, accepted);
+    assert.equal(state.ingressReceipts.get(f.logical)?.refunds.size, 0);
+    assert.equal(state.ingressClaimAttempts.size, 0);
+    for (const r of f.refunds) assert.equal(state.claimIndex.get(BigInt("0x" + r.claim.identity)), 0n);
+  }
+  const cases: Array<[string, (f: ReturnType<typeof refund>) => void]> = [
+    ["missing notification created_lt", (f) => { f.incoming.createdLt = undefined; }],
+    ["changed physical created_lt", (f) => { f.incoming.createdLt = (BigInt(f.incoming.createdLt!) + 1n).toString(); }],
+    ["noncanonical source wallet", (f) => { f.incoming.source = ownerWallet; }],
+    ["changed full body", (f) => { f.incoming.body = boc(beginCell().storeSlice(Cell.fromBase64(f.incoming.body!).beginParse()).storeBit(true).endCell()); }],
+    ["claim logical mapping absent", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id); }],
+    ["claim logical mapping forged", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id, undefined, {...f.pendingState, ingressClaimAttempts: [[f.claim.id, 1n]]}); }],
+    ["accepted flag falsely changed by refund", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id, undefined, {...f.pendingState, ingressReceipts: [{logical: f.logical, accepted: true, refunds: [f.claim.id]}]}); }],
+    ["terminal logical receipt omitted", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity); }],
+    ["terminal pending claim retained", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity, f.pendingState); }],
+    ["terminal accepted flag mutated", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity, {...f.terminalState, ingressReceipts: [{logical: f.logical, accepted: true, refunds: []}]}); }],
+    ["business hash substituted for physical identity", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [{...f.claim, identity: f.logical}], f.claim.id, undefined, f.pendingState); }],
+  ];
+  for (const [label, mutate] of cases) {
+    const f = refund(1); mutate(f);
+    const events = (await projectOwnerLedger(f.input)).events;
+    assert(!events.some((e) => e.kind === "option_refund"), label);
+    assert(!events.flatMap((e) => e.movements).some((m) => m.purpose === "option_refund"), label);
+  }
+  console.log(`4 same-query physical refunds and ${cases.length} physical/journal forgery cases passed`);
 }
 const exerciseEvent = async (f: ReturnType<typeof exercise>) =>
   (await projectOwnerLedger(f.input)).events.find(
@@ -1244,7 +1274,10 @@ export function testFactoryState() {
   assert.equal(read.seriesBuyIndex.get(55n), (7n << 64n) | 3n);
   assert.equal(read.seriesBuyIndex.get(wire), key);
   assert.equal(read.seriesBuyIndex.get(wire + 1n), undefined);
-  const { stateHash, ...fields } = parsed;
+  const { stateHash, writer, ...fields } = parsed;
+  assert.equal(writer.creator, other);
+  assert.equal(writer.fundingStatus, 3);
+  assert.equal(writer.requiredReserveRaw, value.maxNotional.toString());
   assert.deepEqual(fields, {
     templateId: 4294967295,
     kind: 2,
@@ -1344,14 +1377,21 @@ export function testFactoryState() {
     ["buy index dictionary", [0, 3, 3, 2]],
   ] as Array<[string, number[]]>)
     negatives.push([`trailing ${label} reference`, replace(source, path, appendRef)]);
+  for (const mapCount of [0, 1]) negatives.push([`missing mandatory ingress map ${mapCount}`, replace(source, [0, 1, 3, 3], (c) => {
+    const old = c.beginParse(), funded = old.loadCoins(), committed = old.loadCoins(),
+      ownerIndex = old.loadDict(Dictionary.Keys.Address(), Dictionary.Values.Cell()),
+      result = beginCell().storeCoins(funded).storeCoins(committed).storeDict(ownerIndex);
+    if (mapCount) result.storeDict(null);
+    return result.endCell();
+  })]);
   const alterSeries = (mutate: (c: Cell) => Cell) => replace(source, [1, 2], (cell) => {
     const entries = cell.beginParse().loadDict(Dictionary.Keys.BigUint(64), inline);
     entries.set(seriesId, mutate(entries.get(seriesId)!));
     return beginCell().storeDict(entries).endCell();
   });
   negatives.push(["trailing persisted series bits", alterSeries(appendBit)]);
-  negatives.push(["trailing persisted series reference", alterSeries(appendRef)]);
-  for (const [label, ref] of [["correlation", 0], ["addresses", 1], ["activation", 2]] as const) {
+  assert.throws(() => alterSeries(appendRef), "canonical series consumes all four references");
+  for (const [label, ref] of [["correlation", 0], ["addresses", 1], ["activation", 2], ["writer", 3]] as const) {
     negatives.push([`missing ${label} fields`, alterSeries((c) => replace(c, [ref], () => Cell.EMPTY))]);
     negatives.push([`trailing ${label} bits`, alterSeries((c) => replace(c, [ref], appendBit))]);
     negatives.push([`trailing ${label} reference`, alterSeries((c) => replace(c, [ref], appendRef))]);
@@ -1398,6 +1438,22 @@ export function testFactoryState() {
   console.log(`factory current-state parsing, exact capacity allocation/unwind, ${negatives.length} factory corruption and 8 product-pruning cases passed`);
 }
 async function main() {
+  const writerReserve = (pendingQueryId?: bigint) => {
+    const builder = beginCell().storeAddress(A(owner)).storeUint(71, 64)
+      .storeCoins(150).storeCoins(145).storeCoins(5).storeInt(1700000000, 64).storeCoins(0);
+    if (pendingQueryId !== undefined) builder.storeUint(pendingQueryId, 64);
+    return builder.endCell();
+  };
+  for (const pending of [0n, 77n]) {
+    const restored = readOptionVaultState(boc(vaultData(null, false, { writerReserve: writerReserve(pending) })));
+    assert.equal(restored.writers.get('7')?.pendingClaimQueryId, pending.toString());
+  }
+  assert.throws(() => readOptionVaultState(boc(vaultData(null, false, { writerReserve: writerReserve() }))),
+    'obsolete writer reserve without the mandatory pending claim identity is rejected');
+  assert.throws(() => readOptionVaultState(boc(vaultData(null, false, {
+    writerReserve: beginCell().storeSlice(writerReserve(77n).beginParse()).storeBit(true).endCell(),
+  }))), 'extra writer reserve fields are rejected');
+
   testFactoryState();
   for (const kind of [1, 2] as const) {
     const f = exercise(kind),
@@ -1436,7 +1492,7 @@ async function main() {
     );
     assert.equal(
       event.settlement.optionLifecycle?.premiumAccountingReleasedRaw,
-      "500",
+      "0",
     );
     assert.equal(
       event.movements.filter((m) => m.asset.kind === "jetton").length,
@@ -1479,36 +1535,10 @@ async function main() {
     "zero payout retires only a right; ReleaseCollateral is not cash",
   );
   const computed = exercise();
-  computed.original.body = boc(
-    beginCell()
-      .storeUint(OPTION_EXERCISE, 32)
-      .storeUint(7, 64)
-      .storeUint(3, 64)
-      .storeAddress(A(owner))
-      .storeCoins(1)
-      .storeCoins(500)
-      .endCell(),
-  );
-  computed.start.outMessages[0].body = boc(
-    beginCell()
-      .storeUint(OPTION_SHOUT_EXERCISE, 32)
-      .storeUint(3, 64)
-      .storeCoins(1)
-      .storeAddress(A(owner))
-      .storeCoins(500)
-      .storeAddress(A(owner))
-      .endCell(),
-  );
-  const computedEvent = await exerciseEvent(computed);
-  assert.equal(
-    computedEvent.settlement?.optionLifecycle?.requestedPayoutRaw,
-    "1",
-  );
-  assert.equal(
-    computedEvent.settlement?.optionLifecycle?.payout.amountRaw,
-    payout.toString(),
-    "Shout actual payout comes from the qualified product callback, never the caller hint",
-  );
+  computed.original.body = boc(beginCell().storeUint(OPTION_EXERCISE, 32).storeUint(7, 64).storeUint(3, 64)
+    .storeAddress(A(owner)).storeCoins(1).storeCoins(500).endCell());
+  const computedEvents = (await projectOwnerLedger(computed.input)).events;
+  assert(!computedEvents.some(event => event.settlement?.optionLifecycle?.outcome === "exercised"), "obsolete caller-selected payout body is unsupported");
   const ready = await exerciseEvent(exercise(1, payout, false));
   assert.equal(
     ready.settlement?.status,
@@ -1518,28 +1548,9 @@ async function main() {
   assert.equal(ready.settlement?.optionLifecycle?.payout.status, "pending");
   assert(ready.issues.includes("option_payout_settlement_pending"));
   assert(!ready.movements.some((m) => m.purpose === "option_payout"));
-  const recipient = exercise(1, payout, true, other),
-    holderEvent = await exerciseEvent(recipient);
-  assert.equal(
-    holderEvent.settlement?.optionLifecycle?.payout.status,
-    "completed",
-  );
-  assert(
-    !holderEvent.movements.some((m) => m.asset.kind === "jetton"),
-    "third-party payout is not the holder credit",
-  );
-  recipient.input.owner = other;
-  const recipientEvent = await exerciseEvent(recipient);
-  assert.equal(recipientEvent.settlement?.optionLifecycle?.owner, owner);
-  assert.equal(
-    recipientEvent.movements.filter((m) => m.purpose === "option_payout")
-      .length,
-    1,
-  );
-  assert(
-    !recipientEvent.movements.some((m) => m.purpose === "option_right_retired"),
-    "recipient never inherits the holder right",
-  );
+  const recipient = exercise(1, payout, true, other);
+  const holderEvent = await exerciseEvent(recipient);
+  assert.equal(holderEvent.settlement?.status, "incomplete", "a callback cannot redirect a holder payout");
   for (const mutate of [
     (f: ReturnType<typeof exercise>) => {
       f.input.stateAt = async () => null;
@@ -1792,7 +1803,7 @@ async function main() {
   replay.tx(factory, again, [], {
     code: factoryCode,
     data: factoryData(
-      position({ premium: premium - 500n, collateral: 0n, settled: true }),
+      position({ premium, collateral: 0n, settled: true, payout }),
     ),
   });
   const replayed = (await projectOwnerLedger(replay.input)).events;
@@ -1812,6 +1823,7 @@ async function main() {
       .filter((m) => m.purpose === "option_payout"),
     "replayed request does not attribute the prior payout again",
   );
+  await testPhysicalIngressRefunds();
   await durableLifecycle();
   console.log(
     "option lifecycle historical right retirement and actual payout tests passed",

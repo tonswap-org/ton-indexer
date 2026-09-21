@@ -24,12 +24,6 @@ import {
 import { decodeT3, type LedgerT3Hub, type T3LedgerOperation } from "./t3";
 import { T3_OPS, DEPOSIT_NOTE, RECEIVER_PAYOUT } from "./t3Wire";
 import {
-  decodeSccp,
-  type LedgerSccpMaster,
-  type SccpLedgerOperation,
-} from "./sccp";
-import { SCCP_BURN, SCCP_BURN_NOTIFY, SCCP_BURNED } from "./sccpWire";
-import {
   decodeOptionPurchases,
   type LedgerOptionFactory,
   type OptionLedgerOperation,
@@ -39,7 +33,8 @@ import { Cell } from "@ton/core";
 import type { RawTransaction } from "../data/dataSource";
 import type { Network } from "../models";
 import { classifyTransaction } from "../utils/txClassifier";
-import { resolveDlmmPoolSettlementEvidence } from "../utils/dlmmSettlementEvidence";
+import { createDlmmProofGraph } from "./dlmmProof";
+import { verifyDlmmSwapExecution } from "./dlmmSwapProof";
 import type { OpcodeSets } from "../utils/opcodes";
 import {
   canonicalLedgerAddress,
@@ -56,31 +51,43 @@ import type {
   LedgerRelatedAccount,
 } from "./types";
 import type { LedgerStateSnapshot } from "./archive";
-import { readDlmmPositionState, readDlmmWithdrawalState } from "./archive";
+import { dlmmPendingLiquidityKey, readDlmmLiquidityState } from "./dlmmLiquidityState";
+import { projectDlmmLiquidity, verifyDlmmDeposit } from "./dlmmLiquidity";
+import type { MarketNode } from "./marketTypes";
 import { matchPhysicalJettonFlow } from "./jettonFlow";
 import {
   INTERNAL,
   NOTIFY,
   REMOVE,
+  COLLECT,
+  COLLECT_TO,
   TOKEN_CONTROL_OPS,
   TRANSFER,
   WITHDRAW_COMPLETE,
   bodyCell,
+  businessOpcode,
+  nativeFundingRefund,
+  dlmmLiquidityNotificationCommitment,
   messageKey,
   opcode,
   protocolForward,
   unresolvedPerpsForward,
   unresolvedLaunchpadForward,
   tokenWire,
-  withdrawalReceipt,
-  withdrawalRequest,
   type TokenWire,
 } from "./wire";
 
 export type LedgerChain = LedgerRelatedAccount & {
   transactions: RawTransaction[];
   checkedAt?: string | null;
+  /** Complete linked interval at one pinned masterchain boundary, not older history. */
+  verifiedRange?: { fromUtime: number; toUtime: number };
+
 };
+export function chainCoversTransaction(chain: LedgerChain | undefined, tx: RawTransaction): boolean {
+  return Boolean(chain && (chain.historyComplete || (chain.verifiedRange &&
+    tx.utime >= chain.verifiedRange.fromUtime && tx.utime < chain.verifiedRange.toUtime)));
+}
 export type LedgerPool = {
   address: string;
   tokenT: string;
@@ -94,7 +101,6 @@ export type ProjectionInput = {
   launchpadSales?: Map<string, LedgerLaunchpadSale>;
   launchpadControllers?: string[];
   t3Hubs?: Map<string, LedgerT3Hub>;
-  sccpMasters?: Map<string, LedgerSccpMaster>;
   chains: Map<string, LedgerChain>;
   wallets: Map<string, LedgerAsset>;
   pools: Map<string, LedgerPool>;
@@ -230,43 +236,7 @@ export async function projectOwnerLedger(
               owned.has(m.destination)
             ),
         );
-        for (const m of node.event.movements)
-          m.evidence.transactions = [ref(node)];
-        // Outbound forwarding fees are separate from transaction.totalFees in TON.
-        raw.outMessages.forEach((msg, index) => {
-          if (msg.value === undefined) return;
-          for (const [field, amount] of [
-            ["forward", msg.forwardFeeRaw],
-            ["ihr", msg.ihrFeeRaw],
-          ] as const) {
-            if (amount === undefined) {
-              mark(node, `outgoing_${field}_fee_unavailable`);
-              continue;
-            }
-            if (!/^(0|[1-9][0-9]*)$/.test(amount)) {
-              mark(node, `outgoing_${field}_fee_invalid`);
-              continue;
-            }
-            if (amount !== "0")
-              node.event!.movements.push({
-                id: `${node.event!.id}:${field}:${index}`,
-                direction: "fee",
-                asset: {
-                  kind: "native",
-                  id: `${network}:native`,
-                  symbol: "TON",
-                  decimals: 9,
-                },
-                amountRaw: amount,
-                source: chain.account,
-                evidence: {
-                  kind: "message_forward_fee",
-                  messageIndex: index,
-                  transactions: [ref(node)],
-                },
-              });
-          }
-        });
+
       }
       nodes.push(node);
       parents.set(node.id, node.id);
@@ -331,8 +301,8 @@ export async function projectOwnerLedger(
         continue;
       }
       const confirmed = Boolean(
-        chains.get(source.account)?.historyComplete &&
-          chains.get(recipient.account)?.historyComplete,
+        chainCoversTransaction(chains.get(source.account), source.raw) &&
+          chainCoversTransaction(chains.get(recipient.account), recipient.raw),
       );
       const flow: Flow = {
         id,
@@ -388,7 +358,7 @@ export async function projectOwnerLedger(
     }
   }
   // A source-root mint is accepted only by a verified canonical recipient wallet;
-  // its economic purpose remains unresolved for rewards, derivatives and bridge mints.
+  // its economic purpose remains unresolved for rewards and derivatives.
   for (const node of nodes)
     if (node.event && wallets.get(node.account)?.owner === owner) {
       const asset = wallets.get(node.account)!;
@@ -418,9 +388,10 @@ export async function projectOwnerLedger(
     }
   type Operation = {
     anchor: Node;
-    kind: "swap" | "lp_deposit" | "lp_withdraw";
+    kind: "swap" | "lp_deposit" | "lp_withdraw" | "lp_fee_collect";
+    settlement?: LedgerEvent["settlement"];
     pool: string;
-    queryId: string;
+    queryId?: string;
     confirmed: boolean;
     evidence: LedgerEvidenceRef[];
     issue?: string;
@@ -429,7 +400,6 @@ export async function projectOwnerLedger(
     | Operation
     | OptionLedgerOperation
     | OptionLifecycleOperation
-    | SccpLedgerOperation
     | T3LedgerOperation
     | PerpsLedgerOperation
     | LaunchpadRefundOperation
@@ -462,42 +432,26 @@ export async function projectOwnerLedger(
     );
     return matches.length === 1 ? matches[0] : null;
   };
-  const positionDelta = async (pool: LedgerPool, node: Node, binId: number) => {
-    const previousLt = node.raw.prevTransactionLt,
-      previousHash = node.raw.prevTransactionHash;
-    if (!previousLt || !previousHash || previousLt === "0") return null;
-    const [before, after] = await Promise.all([
-      input.stateAt(pool.address, previousLt, previousHash),
-      input.stateAt(pool.address, node.raw.lt, node.raw.hash),
-    ]);
+  const depositState = (pool: LedgerPool, group: Array<{node: Node; flow: Flow}>, proofNodes: MarketNode[]) => {
     try {
-      if (
-        !before?.state.dataBoc ||
-        !after?.state.dataBoc ||
-        !before.state.codeBoc ||
-        !after.state.codeBoc
-      )
-        return null;
-      if (
-        Cell.fromBase64(before.state.codeBoc).hash().toString("hex") !==
-          pool.codeHash ||
-        Cell.fromBase64(after.state.codeBoc).hash().toString("hex") !==
-          pool.codeHash
-      )
-        return null;
-      const a = readDlmmPositionState(before.state.dataBoc, owner, binId),
-        b = readDlmmPositionState(after.state.dataBoc, owner, binId);
-      if (
-        a.tokenT !== pool.tokenT ||
-        a.tokenX !== pool.tokenX ||
-        b.tokenT !== pool.tokenT ||
-        b.tokenX !== pool.tokenX
-      )
-        return null;
-      return { delta: b.shares - a.shares, before, after, a, b };
-    } catch {
-      return null;
-    }
+      const first = proofNodes.find(node => nodeId(node.account, node.raw) === group[0].node.id)!;
+      const identity = readDlmmLiquidityState(first.before!.state.dataBoc!).market;
+      const verified = verifyDlmmDeposit({network, pool: pool.address, poolCodeHash: pool.codeHash, walletCodeHash: identity.walletCodeHash,
+        tokenT: pool.tokenT, tokenX: pool.tokenX}, proofNodes, owner, group.map(item => ref(item.node)));
+      const contributions = verified.metadata.contributions.map(contribution => {
+        const matched = group.filter(item => item.flow.source.account === contribution.sourceWallet &&
+          item.flow.source.raw.lt === contribution.debit.lt && canonicalLedgerHash(item.flow.source.raw.hash) === contribution.debit.hash);
+        if (matched.length !== 1) throw new Error('dlmm_deposit_movement_identity_unresolved');
+        const movementId = `${matched[0].flow.id}:out`;
+        const movement = matched[0].flow.source.event?.movements.find(value => value.id === movementId);
+        if (!movement || movement.direction !== 'out' || movement.asset.id !== contribution.assetId || movement.amountRaw !== contribution.amountRaw ||
+          movement.source !== owner || movement.destination !== pool.address) throw new Error('dlmm_deposit_movement_unverified');
+        return {...contribution, movementId};
+      });
+      return {delta: BigInt(verified.amounts.mintedSharesRaw), before: verified.before, after: verified.after,
+        a: {dataHash: verified.beforeDataHash}, b: {dataHash: verified.afterDataHash}, evidence: verified.evidence,
+        metadata: {...verified.metadata, contributions}};
+    } catch { return null; }
   };
   const addPosition = (
     anchor: Node,
@@ -528,16 +482,20 @@ export async function projectOwnerLedger(
     });
   for (const pool of pools.values()) {
     const poolNodes = nodes.filter((n) => n.account === pool.address);
-    const settlements = resolveDlmmPoolSettlementEvidence(
-      pool.address,
-      poolNodes.map((n) =>
-        classifyTransaction(
-          n.account,
-          { ...n.raw, hash: canonicalLedgerHash(n.raw.hash) },
-          opcodes,
-        ),
-      ),
-    );
+    let swapProof: ReturnType<typeof createDlmmProofGraph> | null = null;
+    const swapGraph = async () => {
+      if (swapProof) return swapProof;
+      const proofNodes: MarketNode[] = await Promise.all(nodes.map(async node => {
+        const get = async (lt?: string, hash?: string) => { try { return lt && hash ? await input.stateAt(node.account, lt, hash) : null; } catch { return null; } };
+        const [before, after] = await Promise.all([get(node.raw.prevTransactionLt, node.raw.prevTransactionHash), get(node.raw.lt, node.raw.hash)]);
+        return {account: node.account, raw: node.raw, before, after};
+      }));
+      const poolState = proofNodes.find(node => node.account === pool.address && node.before?.state.dataBoc);
+      if (!poolState) throw Error('swap_archive_missing');
+      const walletCodeHash = readDlmmLiquidityState(poolState.before!.state.dataBoc!).market.walletCodeHash;
+      return swapProof = createDlmmProofGraph({network, pool: pool.address, poolCodeHash: pool.codeHash, walletCodeHash,
+        tokenT: pool.tokenT, tokenX: pool.tokenX}, proofNodes);
+    };
     const deposits = new Map<
       string,
       Array<{ node: Node; flow: Flow; binId: number; queryId: string }>
@@ -568,71 +526,96 @@ export async function projectOwnerLedger(
         continue;
       }
       if (forward.owner !== owner) continue;
-      const outputAmount = settlements.get(
-        `${node.raw.lt}:${canonicalLedgerHash(node.raw.hash)}`,
-      )?.amountOutRaw;
-      const candidates = flows.filter(
-        (flow) =>
-          flow.sourceAsset.owner === pool.address &&
-          flow.recipientAsset.owner === owner &&
-          flow.wire.amountRaw === outputAmount &&
-          node.raw.outMessages.some(
-            (_, index) => receiptFor(node, index)?.id === flow.source.id,
-          ),
-      );
-      const output = candidates.length === 1 ? candidates[0] : null;
-      const pair = new Set([
-        inputFlow.sourceAsset.master,
-        output?.recipientAsset.master,
-      ]);
-      const confirmed = Boolean(
-        outputAmount &&
-          output &&
-          output.confirmed &&
-          inputFlow.confirmed &&
-          pair.has(pool.tokenT) &&
-          pair.has(pool.tokenX) &&
-          relatedReady([
-            node,
-            inputFlow.source,
-            inputFlow.recipient,
-            output.source,
-            output.recipient,
-          ]),
-      );
-      if (output) attach(inputFlow.source, output.recipient);
+      let qualified: LedgerEvent['settlement'];
+      let swapEvidence = uniqueRefs([ref(node), ref(inputFlow.source), ref(inputFlow.recipient)]);
+      try {
+        const graph = await swapGraph();
+        const acceptance = graph.nodes.find(candidate => nodeId(candidate.account, candidate.raw) === node.id)!;
+        const proof = verifyDlmmSwapExecution({network, pool: pool.address, poolCodeHash: pool.codeHash,
+          walletCodeHash: readDlmmLiquidityState(acceptance.before!.state.dataBoc!).market.walletCodeHash,
+          tokenT: pool.tokenT, tokenX: pool.tokenX}, graph, acceptance);
+        const matched = proof.settlements.map(settlement => {
+          const candidates = flows.filter(flow => flow.source.account === settlement.debit.account && flow.source.raw.lt === settlement.debit.lt &&
+            canonicalLedgerHash(flow.source.raw.hash) === canonicalLedgerHash(settlement.debit.hash) &&
+            flow.recipient.account === settlement.credit.account && flow.recipient.raw.lt === settlement.credit.lt &&
+            canonicalLedgerHash(flow.recipient.raw.hash) === canonicalLedgerHash(settlement.credit.hash) && flow.wire.amountRaw === settlement.amountRaw);
+          if (candidates.length !== 1 || !candidates[0].confirmed) throw Error('swap_physical_flow_unresolved');
+          return {settlement, flow: candidates[0]};
+        });
+        const evidence = uniqueRefs([ref(node), ref(inputFlow.source), ref(inputFlow.recipient),
+          ...proof.settlements.flatMap(value => [value.request, value.debit, value.credit, value.acknowledged, value.walletFinalized, value.poolFinalized])]
+          .map(value => ({...value, hash: canonicalLedgerHash(value.hash)})));
+        if (!inputFlow.confirmed || proof.notice.owner !== owner || proof.forward.recipient !== owner ||
+          proof.paid.toString() !== inputFlow.wire.amountRaw || !evidence.every(value => chains.get(value.account)?.historyComplete)) throw Error('swap_history_incomplete');
+        for (const {flow} of matched) { attach(inputFlow.source, flow.recipient); usedFlows.add(flow.id); }
+        const output = matched.find(value => value.settlement.kind === 'swap_output');
+        const refund = matched.find(value => value.settlement.kind === 'unused_input_refund');
+        swapEvidence = evidence;
+        qualified = {status: 'confirmed', protocol: 'dlmm', operation: 'swap', pool: pool.address, queryId: forward.queryId, evidence,
+          dlmmSwap: {poolCodeHash: pool.codeHash, paidInputRaw: proof.paid.toString(), consumedInputRaw: proof.consumed.toString(), returnedInputRaw: proof.returned.toString(), outputRaw: proof.output.toString(),
+            inputMovementId: `${inputFlow.id}:out`, outputMovementId: output ? `${output.flow.id}:in` : null, refundMovementId: refund ? `${refund.flow.id}:in` : null,
+            acceptance: ref(node), finalizations: proof.settlements.map(value => ({...value.poolFinalized, hash: canonicalLedgerHash(value.poolFinalized.hash)}))}};
+      } catch { /* Missing archive or any unmatched cash leg keeps the original swap unresolved. */ }
       usedFlows.add(inputFlow.id);
-      if (output) usedFlows.add(output.id);
-      operations.push({
-        anchor: inputFlow.source,
-        kind: "swap",
-        pool: pool.address,
-        queryId: forward.queryId,
-        confirmed,
-        evidence: uniqueRefs([
-          ref(node),
-          ref(inputFlow.source),
-          ref(inputFlow.recipient),
-          ...(output ? [ref(output.source), ref(output.recipient)] : []),
-        ]),
-        issue: confirmed ? undefined : "swap_settlement_unconfirmed",
-      });
+      operations.push({anchor: inputFlow.source, kind: 'swap', pool: pool.address, queryId: forward.queryId,
+        confirmed: !!qualified, settlement: qualified, evidence: swapEvidence, issue: qualified ? undefined : 'swap_settlement_unconfirmed'});
+
     }
-    for (const group of deposits.values()) {
-      group.sort((a, b) =>
-        BigInt(a.node.raw.lt) < BigInt(b.node.raw.lt) ? -1 : 1,
-      );
-      const first = group[0],
-        last = group[group.length - 1];
+    const depositContributions = [...deposits.values()].flat();
+    const selectedDeposits = new Set(depositContributions.flatMap(item => [item.node.id, item.flow.source.id, item.flow.recipient.id]));
+    const depositProofNodes: MarketNode[] = depositContributions.length ? await Promise.all(nodes.map(async node => {
+      const value: MarketNode = {account: node.account, raw: node.raw};
+      if (selectedDeposits.has(node.id)) {
+        const get = async (lt?: string, hash?: string) => {
+          try { return lt && hash ? await input.stateAt(node.account, lt, hash) : null; } catch { return null; }
+        };
+        [value.before, value.after] = await Promise.all([
+          get(node.raw.prevTransactionLt, node.raw.prevTransactionHash), get(node.raw.lt, node.raw.hash)]);
+      }
+      return value;
+    })) : [];
+    const depositArchives = new Map(depositProofNodes.map(node => [nodeId(node.account, node.raw), node]));
+    type DepositGroup = {group: typeof depositContributions; delta: ReturnType<typeof depositState>};
+    const depositOperations: DepositGroup[] = [];
+    for (const bucket of deposits.values()) {
+      bucket.sort((a, b) => BigInt(a.node.raw.lt) < BigInt(b.node.raw.lt) ? -1 : 1);
+      const byCommitment = new Map<string, typeof bucket>();
+      for (const item of bucket) {
+        const commitment = dlmmLiquidityNotificationCommitment(item.node.raw.inMessage);
+        if (commitment) byCommitment.set(commitment, [...(byCommitment.get(commitment) ?? []), item]);
+      }
+      const assigned = new Set<string>();
+      for (const last of bucket) {
+        if (assigned.has(last.node.id)) continue;
+        try {
+          // A business query is a reusable pending-journal slot, not an operation
+          // identity. The applying transaction commits to its exact earlier leg.
+          const before = readDlmmLiquidityState(depositArchives.get(last.node.id)!.before!.state.dataBoc!);
+          const pending = before.pending.get(dlmmPendingLiquidityKey(owner, last.binId, last.queryId));
+          if (!pending) continue;
+          const lastT = last.flow.sourceAsset.master === pool.tokenT;
+          if (!lastT && last.flow.sourceAsset.master !== pool.tokenX) continue;
+          const matches = (byCommitment.get(lastT ? pending.notificationHashX : pending.notificationHashT) ?? [])
+            .filter(first => first.flow.sourceAsset.master === (lastT ? pool.tokenX : pool.tokenT) &&
+              BigInt(first.node.raw.lt) < BigInt(last.node.raw.lt) && !assigned.has(first.node.id));
+          if (matches.length !== 1) continue;
+          const group = [matches[0], last], delta = depositState(pool, group, depositProofNodes);
+          // Never join debits on a guessed pair when archives or original
+          // contributions are missing. Each remains an unresolved contribution.
+          if (!delta || delta.delta <= 0n) continue;
+          for (const item of group) assigned.add(item.node.id);
+          depositOperations.push({group, delta});
+        } catch { /* Unavailable current-layout evidence remains unresolved. */ }
+      }
+      for (const item of bucket) if (!assigned.has(item.node.id)) depositOperations.push({group: [item], delta: null});
+    }
+    depositOperations.sort((a, b) => BigInt(a.group[0].node.raw.lt) < BigInt(b.group[0].node.raw.lt) ? -1 : 1);
+    for (const {group, delta} of depositOperations) {
+      const first = group[0], last = group[group.length - 1];
       for (const item of group) {
         attach(first.flow.source, item.flow.source);
         usedFlows.add(item.flow.id);
       }
-      const roots = new Set(group.map((item) => item.flow.sourceAsset.master));
-      const delta =
-        group.length === 2 && roots.has(pool.tokenT) && roots.has(pool.tokenX)
-          ? await positionDelta(pool, last.node, first.binId)
-          : null;
       const confirmed = Boolean(
         delta &&
           delta.delta > 0n &&
@@ -659,6 +642,7 @@ export async function projectOwnerLedger(
             beforeSeqno: delta.before.seqno,
             afterSeqno: delta.after.seqno,
             transactions: [ref(last.node)],
+            dlmmDeposit: delta.metadata,
           },
         );
       operations.push({
@@ -667,7 +651,7 @@ export async function projectOwnerLedger(
         pool: pool.address,
         queryId: first.queryId,
         confirmed,
-        evidence: uniqueRefs(
+        evidence: delta ? delta.evidence : uniqueRefs(
           group.flatMap((item) => [
             ref(item.node),
             ref(item.flow.source),
@@ -681,191 +665,71 @@ export async function projectOwnerLedger(
             : "lp_mint_state_unavailable",
       });
     }
-    const withdrawals = new Map<string, Node[]>();
-    for (const node of poolNodes) {
-      const request = withdrawalRequest(node.raw.inMessage);
-      if (
-        request &&
-        success(node.raw) &&
-        address(node.raw.inMessage?.source) === owner &&
-        request.recipient === owner
-      )
-        withdrawals.set(request.queryId, [
-          ...(withdrawals.get(request.queryId) ?? []),
-          node,
-        ]);
-    }
-    for (const attempts of withdrawals.values()) {
-      attempts.sort((a, b) => (BigInt(a.raw.lt) < BigInt(b.raw.lt) ? -1 : 1));
-      const start = attempts[0],
-        request = withdrawalRequest(start.raw.inMessage)!;
-      const anchors = nodes.filter(
-        (n) =>
-          n.event &&
-          n.account === owner &&
-          n.raw.outMessages.some((_, index) =>
-            attempts.some((attempt) => receiptFor(n, index)?.id === attempt.id),
-          ),
-      );
-      if (!anchors.length) continue;
-      const anchor = anchors[0];
-      for (const n of anchors) attach(anchor, n);
-      const receipts = poolNodes
-        .flatMap((n) =>
-          n.raw.outMessages.map((msg, index) => ({
-            node: n,
-            index,
-            receipt: withdrawalReceipt(msg),
-          })),
-        )
-        .filter(
-          (item) =>
-            success(item.node.raw) &&
-            item.receipt?.queryId === request.queryId &&
-            item.receipt.owner === owner &&
-            item.receipt.recipient === owner &&
-            item.receipt.binId === request.binId &&
-            item.receipt.shares === request.shares,
-        );
-      const receipt = receipts[0];
-      const delivered = receipt
-        ? receiptFor(receipt.node, receipt.index)
-        : null;
-      if (delivered?.event) attach(anchor, delivered);
-      const uniqueReceipt =
-        receipt &&
-        receipts.every(
-          (item) =>
-            JSON.stringify(item.receipt) === JSON.stringify(receipt.receipt),
-        );
-      let terminal: ReturnType<typeof readDlmmWithdrawalState> = null;
-      if (receipt) {
-        try {
-          const snapshot = await input.stateAt(
-            pool.address,
-            receipt.node.raw.lt,
-            receipt.node.raw.hash,
-          );
-          if (
-            snapshot?.state.dataBoc &&
-            snapshot.state.codeBoc &&
-            Cell.fromBase64(snapshot.state.codeBoc).hash().toString("hex") ===
-              pool.codeHash
-          )
-            terminal = readDlmmWithdrawalState(
-              snapshot.state.dataBoc,
-              request.queryId,
-            );
-        } catch {
-          /* An unavailable exact terminal state never becomes amount-only correlation. */
+    const requests = poolNodes.filter(node => address(node.raw.inMessage?.source) === owner &&
+      [REMOVE, COLLECT, COLLECT_TO].includes(opcode(node.raw.inMessage) ?? node.raw.inMessage?.op ?? -1));
+    if (requests.length) {
+      // Hydrate exact pool and wallet boundaries. Durable stateAt caches these;
+      // owner native transactions remain message-origin evidence only.
+      const earliest = requests.reduce((lt, node) => BigInt(node.raw.lt) < lt ? BigInt(node.raw.lt) : lt, BigInt(requests[0].raw.lt));
+      const proofNodes: MarketNode[] = await Promise.all(nodes.map(async node => {
+        const value: MarketNode = {account: node.account, raw: node.raw};
+        if (BigInt(node.raw.lt) >= earliest && (node.account === pool.address || wallets.has(node.account))) {
+          const get = async (lt?: string, hash?: string) => {
+            try { return lt && hash ? await input.stateAt(node.account, lt, hash) : null; } catch { return null; }
+          };
+          [value.before, value.after] = await Promise.all([get(node.raw.prevTransactionLt, node.raw.prevTransactionHash), get(node.raw.lt, node.raw.hash)]);
         }
+        return value;
+      }));
+      let walletCodeHash = '0'.repeat(64);
+      for (const node of proofNodes.filter(node => requests.some(request => request.id === nodeId(node.account, node.raw)))) {
+        try {
+          if (node.before?.state.codeBoc && Cell.fromBase64(node.before.state.codeBoc).hash().toString('hex') === pool.codeHash)
+            walletCodeHash = readDlmmLiquidityState(node.before.state.dataBoc!).market.walletCodeHash;
+          if (walletCodeHash !== '0'.repeat(64)) break;
+        } catch { /* Missing historical identity remains unresolved below. */ }
       }
-      const exactRecord =
-        terminal &&
-        terminal.owner === owner &&
-        terminal.recipient === owner &&
-        terminal.binId === request.binId &&
-        terminal.shares === request.shares &&
-        terminal.legT === 1 &&
-        terminal.legX === 1 &&
-        terminal.totalT === receipt?.receipt?.amountT &&
-        terminal.totalX === receipt?.receipt?.amountX;
-      const candidates = receipt
-        ? flows.filter(
-            (flow) =>
-              flow.sourceAsset.owner === pool.address &&
-              flow.recipientAsset.owner === owner &&
-              BigInt(flow.source.raw.lt) > BigInt(start.raw.lt) &&
-              BigInt(flow.recipient.raw.lt) <= BigInt(receipt.node.raw.lt) &&
-              !usedFlows.has(flow.id),
-          )
-        : [];
-      const leg = (
-        root: string,
-        value?: string,
-        queryId?: string,
-        sourceWallet?: string | null,
-        recipientWallet?: string | null,
-      ) =>
-        value === "0"
-          ? []
-          : candidates.filter(
-              (flow) =>
-                flow.recipientAsset.master === root &&
-                flow.wire.amountRaw === value &&
-                flow.wire.queryId === queryId &&
-                flow.source.account === sourceWallet &&
-                flow.recipient.account === recipientWallet,
-            );
-      const t = leg(
-          pool.tokenT,
-          terminal?.totalT,
-          terminal?.settlementTId,
-          terminal?.poolWalletT,
-          terminal?.recipientWalletT,
-        ),
-        x = leg(
-          pool.tokenX,
-          terminal?.totalX,
-          terminal?.settlementXId,
-          terminal?.poolWalletX,
-          terminal?.recipientWalletX,
-        );
-      const exact = Boolean(
-        exactRecord &&
-          uniqueReceipt &&
-          receipt &&
-          ((receipt.receipt!.amountT === "0" && t.length === 0) ||
-            t.length === 1) &&
-          ((receipt.receipt!.amountX === "0" && x.length === 0) ||
-            x.length === 1),
-      );
-      const outputs = exact ? [...t, ...x] : [];
-      for (const flow of outputs) {
-        attach(anchor, flow.recipient);
-        usedFlows.add(flow.id);
+      const decoded = projectDlmmLiquidity({network, pool: pool.address, poolCodeHash: pool.codeHash, walletCodeHash, tokenT: pool.tokenT, tokenX: pool.tokenX}, proofNodes, owner);
+      const matchesRef = (node: Node, evidence: LedgerEvidenceRef) => node.account === evidence.account && node.raw.lt === evidence.lt && canonicalLedgerHash(node.raw.hash) === canonicalLedgerHash(evidence.hash);
+      for (const candidate of decoded) {
+        const start = nodes.find(node => matchesRef(node, candidate.acceptance))!;
+        const anchor = candidate.origin ? nodes.find(node => matchesRef(node, candidate.origin!) && node.event) :
+          nodes.find(node => node.event && node.account === owner && node.raw.outMessages.some((_, index) => receiptFor(node, index)?.id === start.id));
+        if (!anchor?.event) continue;
+        for (const evidence of candidate.evidence) {
+          const node = nodes.find(node => matchesRef(node, evidence));
+          if (node?.event) attach(anchor, node);
+        }
+        attach(anchor, anchor);
+        const metadata = candidate.metadata;
+        if (metadata) {
+          if (candidate.kind === 'lp_withdraw') addPosition(anchor, pool, metadata.binId, metadata.request.sharesRaw, 'out', {
+            kind: 'lp_position_delta', stateBeforeHash: metadata.stateBefore.dataHash, stateAfterHash: metadata.stateAfter.dataHash,
+            beforeSeqno: metadata.stateBefore.seqno, afterSeqno: metadata.stateAfter.seqno, transactions: [candidate.acceptance]});
+          for (const payout of metadata.payouts) {
+            if (payout.status !== 'delivered' || !payout.delivery || payout.destinationOwner !== owner) continue;
+            const matching = flows.filter(flow => matchesRef(flow.recipient, payout.delivery!) &&
+              matchesRef(flow.source, payout.deliveryEvidence!.debit) && flow.source.account === payout.sourceWallet &&
+              flow.recipient.account === payout.destinationWallet && flow.recipientAsset.owner === owner &&
+              flow.recipientAsset.master === payout.master && flow.wire.amountRaw === payout.totalRaw && flow.wire.queryId === payout.settlementId);
+            const flow = matching.length === 1 ? matching[0] : null;
+            const movement = flow?.recipient.event?.movements.find(value => value.id === `${flow.id}:in` && value.asset.id === payout.assetId && value.amountRaw === payout.totalRaw);
+            if (!flow || !movement || usedFlows.has(flow.id)) { candidate.issues.push('dlmm_liquidity_owned_receipt_unresolved'); continue; }
+            payout.movementId = movement.id;
+            movement.evidence.dlmmReceipt = {pool: pool.address, owner, recipient: metadata.recipient, binId: metadata.binId,
+              settlementId: payout.settlementId!, principalRaw: payout.principalRaw, earnedFeeRaw: payout.earnedFeeRaw, delivery: payout.delivery};
+            attach(anchor, flow.recipient); usedFlows.add(flow.id);
+            if (!flow.confirmed) candidate.issues.push('related_account_history_incomplete');
+          }
+        }
+        if (!candidate.evidence.every(value => chains.get(value.account)?.historyComplete)) candidate.issues.push('related_account_history_incomplete');
+        for (const issue of candidate.issues) mark(anchor, issue);
+        const confirmed = Boolean(metadata && !candidate.issues.length);
+        operations.push({anchor, kind: candidate.kind, pool: pool.address, queryId: candidate.queryId ?? undefined, confirmed, evidence: candidate.evidence,
+          settlement: {status: confirmed ? 'confirmed' : 'incomplete', protocol: 'dlmm', operation: candidate.kind, pool: pool.address,
+            ...(candidate.queryId ? {queryId: candidate.queryId} : {}), evidence: candidate.evidence, ...(metadata ? {dlmmLiquidity: metadata} : {})},
+          issue: confirmed ? undefined : 'dlmm_liquidity_evidence_incomplete'});
       }
-      const delta = await positionDelta(pool, start, request.binId);
-      const confirmed = Boolean(
-        exact &&
-          delivered &&
-          success(delivered.raw) &&
-          delta?.delta === -BigInt(request.shares) &&
-          outputs.every((flow) => flow.confirmed) &&
-          relatedReady([
-            start,
-            ...outputs.flatMap((flow) => [flow.source, flow.recipient]),
-            ...(receipt ? [receipt.node] : []),
-          ]),
-      );
-      if (delta?.delta === -BigInt(request.shares))
-        addPosition(anchor, pool, request.binId, request.shares, "out", {
-          kind: "lp_position_delta",
-          stateBeforeHash: delta.a.dataHash,
-          stateAfterHash: delta.b.dataHash,
-          beforeSeqno: delta.before.seqno,
-          afterSeqno: delta.after.seqno,
-          transactions: [ref(start)],
-        });
-      operations.push({
-        anchor,
-        kind: "lp_withdraw",
-        pool: pool.address,
-        queryId: request.queryId,
-        confirmed,
-        evidence: uniqueRefs([
-          ref(start),
-          ...(receipt ? [ref(receipt.node)] : []),
-          ...outputs.flatMap((flow) => [ref(flow.source), ref(flow.recipient)]),
-        ]),
-        issue: confirmed
-          ? undefined
-          : !delta
-            ? "lp_burn_state_unavailable"
-            : !terminal
-              ? "lp_terminal_state_unavailable"
-              : "lp_withdrawal_settlement_unconfirmed",
-      });
     }
   }
   const optionResults = await decodeOptionPurchases(
@@ -911,7 +775,6 @@ export async function projectOwnerLedger(
       operations.splice(i, 1);
   operations.push(...optionAborts.operations);
   for (const id of optionAborts.usedFlows) usedFlows.add(id);
-  operations.push(...decodeSccp(input, nodes, receiptFor, attach));
   const t3Results = await decodeT3(input, nodes, flows, receiptFor, attach);
   operations.push(...t3Results.operations);
   for (const id of t3Results.usedFlows) usedFlows.add(id);
@@ -940,7 +803,6 @@ export async function projectOwnerLedger(
         n.event.movements.some(
           (m) =>
             m.id.endsWith(":mint-credit") ||
-            m.evidence.kind === "sccp_mint" ||
             m.evidence.kind === "t3_mint",
         );
       const emittedByCoveredWallet = nodes.some(
@@ -956,7 +818,7 @@ export async function projectOwnerLedger(
         n.event.movements.push(
           ...(pendingTokenEvidence.get(n.id) ?? []).map((m) => ({
             ...m,
-            evidence: { ...m.evidence, transactions: [ref(n)] },
+            evidence: { ...m.evidence, transactions: [ref(n)] as [LedgerEvidenceRef] },
           })),
         );
     }
@@ -986,7 +848,8 @@ export async function projectOwnerLedger(
           !msg.destination ||
           msg.value === undefined ||
           [null, 0].includes(opcode(msg)) ||
-          TOKEN_CONTROL_OPS.has(opcode(msg)!) ||
+          TOKEN_CONTROL_OPS.has(businessOpcode(msg)!) ||
+          nativeFundingRefund(msg) !== null ||
           (groupOps.some((op) => op.kind === "launchpad_refund") && opcode(msg) === 0x434c414d) ||
           (groupOps.some((op) => op.kind === "perps_operation") &&
             PERPS_USER_OPS.has(opcode(msg)!)) ||
@@ -995,13 +858,7 @@ export async function projectOwnerLedger(
           ) &&
             T3_OPS.has(opcode(msg)!)) ||
           (groupOps.length > 0 &&
-            [REMOVE, WITHDRAW_COMPLETE].includes(opcode(msg)!)) ||
-          (groupOps.some(
-            (op) => op.kind === "bridge_burn" || op.kind === "bridge_mint",
-          ) &&
-            [SCCP_BURN, SCCP_BURN_NOTIFY, SCCP_BURNED].includes(
-              opcode(msg)!,
-            )) ||
+            [REMOVE, COLLECT, COLLECT_TO, WITHDRAW_COMPLETE].includes(opcode(msg)!)) ||
           (groupOps.some((op) =>
             ["option_buy", "option_exercise", "option_refund"].includes(
               op.kind,
@@ -1107,16 +964,16 @@ export async function projectOwnerLedger(
       const op = groupOps[0];
       merged.kind = op.kind;
       merged.settlement =
-        "settlement" in op
+        "settlement" in op && op.settlement
           ? op.settlement
-          : {
+          : "pool" in op && "queryId" in op ? {
               status: op.confirmed ? "confirmed" : "incomplete",
               protocol: "dlmm",
               operation: op.kind,
               pool: op.pool,
               queryId: op.queryId,
               evidence: op.evidence,
-            };
+            } : undefined;
       if (op.issue) issues.add(op.issue);
     } else if (groupOps.length > 1)
       issues.add("multiple_protocol_operations_grouped");
@@ -1140,7 +997,8 @@ export async function projectOwnerLedger(
         (n) =>
           n.event!.kind === "swap" ||
           n.event!.kind === "lp_deposit" ||
-          n.event!.kind === "lp_withdraw",
+          n.event!.kind === "lp_withdraw" ||
+          [n.raw.inMessage, ...n.raw.outMessages].some(msg => [COLLECT, COLLECT_TO].includes(opcode(msg)!)),
       )
     )
       issues.add("settlement_not_decoded");

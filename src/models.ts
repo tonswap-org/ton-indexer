@@ -80,16 +80,19 @@ export type MessageSummary = {
   createdLt?: string;
   bounced?: boolean;
   forwardFeeRaw?: string;
-  ihrFeeRaw?: string;
+  /** TVM12+ message flags, not a monetary fee. */
+  extraFlagsRaw?: string;
 };
 
 export type UiDetail =
+  | { kind: 'contract_call'; contract?: string; op?: number }
   | {
       kind: 'swap';
       payToken?: string;
       receiveToken?: string;
       payAmount?: string;
       receiveAmount?: string;
+      minimumReceiveAmount?: string;
       queryId?: string;
       executionType?: SwapExecutionType;
       twapSlice?: number;
@@ -168,7 +171,7 @@ export type AccountAssetBalance =
       kind: 'jetton';
       /** Formatted amount; omitted when the asset's decimal precision is unknown. */
       balance?: string;
-      /** Decimal precision; omitted when it cannot be read or inferred safely. */
+      /** Explicit on-chain decimal precision; omitted when it cannot be read. */
       decimals?: number;
     });
 

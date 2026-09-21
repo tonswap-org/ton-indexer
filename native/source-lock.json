@@ -1,0 +1,372 @@
+{
+  "schema": "tonswap-native-admission-source-lock-v1",
+  "upstream": {
+    "repository": "https://github.com/ton-blockchain/ton.git",
+    "commit": "3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+    "submodules": [
+      {
+        "path": "third-party/abseil-cpp",
+        "commit": "d38452e1ee03523a208362186fd42248ff2609f6",
+        "initialized": false
+      },
+      {
+        "path": "third-party/blst",
+        "commit": "6d960cd05d6fe2b5bc9ba161edf0c1a131b87c4c",
+        "initialized": true
+      },
+      {
+        "path": "third-party/crc32c",
+        "commit": "02e65f4fd3065d27b2e29324800ca6d04df16126",
+        "initialized": true
+      },
+      {
+        "path": "third-party/crc32c/third_party/benchmark",
+        "commit": "e991355c02b93fe17713efe04cbc2e278e00fdbd",
+        "initialized": false
+      },
+      {
+        "path": "third-party/crc32c/third_party/glog",
+        "commit": "56523194b3ce1212414c93d55f31832e94677f55",
+        "initialized": false
+      },
+      {
+        "path": "third-party/crc32c/third_party/googletest",
+        "commit": "3b49be074d5c1340eeb447e6a8e78427051e675a",
+        "initialized": false
+      },
+      {
+        "path": "third-party/libbacktrace",
+        "commit": "b9e40069c0b47a722286b94eb5231f7f05c08713",
+        "initialized": true
+      },
+      {
+        "path": "third-party/libmicrohttpd",
+        "commit": "6962c1bd1fa462dbd1b312546d464f92897a1295",
+        "initialized": true
+      },
+      {
+        "path": "third-party/libraptorq",
+        "commit": "14baff5994b6faf7739a5f058481797365b57fb1",
+        "initialized": false
+      },
+      {
+        "path": "third-party/lz4",
+        "commit": "5ff839680134437dbf4678f3d0c7b371d84f4964",
+        "initialized": true
+      },
+      {
+        "path": "third-party/ngtcp2",
+        "commit": "2a441e8540d192b0707989b146ce80efcae5f0d6",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl",
+        "commit": "5e41f2ff021436ddb57b7c9b1313940551d2eb6d",
+        "initialized": true
+      },
+      {
+        "path": "third-party/openssl/cloudflare-quiche",
+        "commit": "7ab6a55cfe471267d61e4d28ba43d41defcd87e0",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/fuzz/corpora",
+        "commit": "ce771805c094d098c25a218bc8e9f7344eccbc5a",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/gost-engine",
+        "commit": "74b1f4fddbc2d6de969815b1992ddc1ae7c643fe",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/krb5",
+        "commit": "784c38f50e70a739400cdd3f2620bac2e2788e6c",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/oqs-provider",
+        "commit": "7bc597c04b534ddea9b6654481deb31ded8e1bbc",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/pkcs11-provider",
+        "commit": "663dea335c80bec7fd96d544ff875af08d6461a9",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/pyca-cryptography",
+        "commit": "7e33b0e7739d633c77b8c478620167f693ed13f4",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/python-ecdsa",
+        "commit": "4096fa01715929e08b97e73f3173aee9d57f2a3f",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/tlsfuzzer",
+        "commit": "61f45d9701294fd87ef92d2a7e3dfb076653a562",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/tlslite-ng",
+        "commit": "77ef321dde1a9e6bcf94d73c80f8789a770d8031",
+        "initialized": false
+      },
+      {
+        "path": "third-party/openssl/wycheproof",
+        "commit": "2196000605e45d91097147c9c71f26b72af58003",
+        "initialized": false
+      },
+      {
+        "path": "third-party/rocksdb",
+        "commit": "4595a5e95ae8525c42e172a054435782b3479c57",
+        "initialized": false
+      },
+      {
+        "path": "third-party/secp256k1",
+        "commit": "acf5c55ae6a94e5ca847e07def40427547876101",
+        "initialized": true
+      },
+      {
+        "path": "third-party/sodium",
+        "commit": "d24faf56214469b354b01c8ba36257e04737101e",
+        "initialized": true
+      },
+      {
+        "path": "third-party/tl-parser",
+        "commit": "f50db8ea016ebaf1654b995f8f02e54b673fbae2",
+        "initialized": true
+      },
+      {
+        "path": "third-party/zlib",
+        "commit": "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf",
+        "initialized": true
+      }
+    ]
+  },
+  "patch": {
+    "path": "patches/verified-admission.patch",
+    "sha256": "a91b5f0522e23a860aed60f02c35ee5f521fcd93c1e63aa3d0a5e4b2ff361d86",
+    "bytes": 11973
+  },
+  "files": [
+    {
+      "path": "tl/generate/scheme/tonlib_api.tl",
+      "operation": "patch",
+      "sha256": "d02f659389bad591fc4a92e0b72197a8f7af4c32f012b5757175778e0eab3b4f",
+      "bytes": 21004,
+      "mode": 420,
+      "beforeSha256": "d2a56b4e02bcf4a773a9e11d76afdf2ffa20eaafbbff2124f8750ebb8aa375b7"
+    },
+    {
+      "path": "tonlib/CMakeLists.txt",
+      "operation": "patch",
+      "sha256": "e36b7f74148bacb00a38e4b50cd6a1e58e4e7b2443d573d7427f0cb26ac1eed3",
+      "bytes": 7791,
+      "mode": 420,
+      "beforeSha256": "98e9ac87e336011d2fc60dcd60458b270b4de75f284e09820f257abbdeeb467a"
+    },
+    {
+      "path": "tonlib/tonlib/TonlibClient.cpp",
+      "operation": "patch",
+      "sha256": "c79a98330a382c4ac5a7d67208974198f4520d1d29a11fecce6bd86698b7d296",
+      "bytes": 312941,
+      "mode": 420,
+      "beforeSha256": "a647f32f94b5e60fc6de5016ff14f963b41a66d094dd7ce461db2b3ca692f312"
+    },
+    {
+      "path": "tonlib/tonlib/TonlibClient.h",
+      "operation": "patch",
+      "sha256": "02dcba760c4726fba799b5f0a8b45e7fd7450b0a76c02b8d1f0cc5fd817e6f44",
+      "bytes": 23082,
+      "mode": 420,
+      "beforeSha256": "f05e008f584689df7750ef684cd5c559b199b599b84d27ad4f7aba72e0b0583c"
+    },
+    {
+      "path": "tonlib/ADMISSION.md",
+      "operation": "add",
+      "sha256": "6f115ad2a1602806590301120bbf2161be0fdb4c7380dbec5a5f063a34c7d324",
+      "bytes": 3941,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/account_proof.boc",
+      "operation": "add",
+      "sha256": "c51ed44629048759a14f321073a3b97ef02a0deb46dce9ad31a7fab95e321ddd",
+      "bytes": 2767,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/account_state.boc",
+      "operation": "add",
+      "sha256": "f093fd43fc1e74a112fddc13c5745246ad782cae714bff5a6d6216840a1c03d6",
+      "bytes": 203891,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/arguments.boc",
+      "operation": "add",
+      "sha256": "599282f5a2a4d1277927290d7cb71dbfc403dba8280037677e7f4672022da948",
+      "bytes": 315,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/config_proof.boc",
+      "operation": "add",
+      "sha256": "dabdae743b840814fd6a604e90cfabcc8647c1b8da3e9eb27d5a35da9beafb4b",
+      "bytes": 30170,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/config_state_proof.boc",
+      "operation": "add",
+      "sha256": "4ae59de3ab549306605c3b4c58682578380b4b47229ab64cb7cb2694f52cce51",
+      "bytes": 518,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/context.boc",
+      "operation": "add",
+      "sha256": "f4df251a11088e7ec8cd93ae01ea942ea4f822cff69538731e481dc4d7d9d860",
+      "bytes": 217286,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/provenance.json",
+      "operation": "add",
+      "sha256": "5f9d0ecc8e42bc31f03b9a833673e716825d59cb09925691de70eb5f7b7bff76",
+      "bytes": 3446,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-execution/shard_proof.boc",
+      "operation": "add",
+      "sha256": "fdce1c172c9f26bd7224379a3fc51aca1ca24fe431f86373ec051135531a54ec",
+      "bytes": 1222,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-proof/account-proof.boc",
+      "operation": "add",
+      "sha256": "c2a7e96887febba55914575be04c8ac2298ed5c81b46c769ac91d247f4a531f1",
+      "bytes": 2839,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-proof/account-state.boc",
+      "operation": "add",
+      "sha256": "c59effdc19f53f242498b0907740c009f1039aadf6d4d42232c3e3a47719158b",
+      "bytes": 203895,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-proof/config-proof.boc",
+      "operation": "add",
+      "sha256": "5b70a7d2a29aa18b8fea9cdda3afeabe91d42f74a3e201010ce6411c268113ad",
+      "bytes": 18757,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-proof/config-state-proof.boc",
+      "operation": "add",
+      "sha256": "3334ba664eb368859f3cc14593153b14373a8d807b85fec3493fadace5041a02",
+      "bytes": 518,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-proof/provenance.json",
+      "operation": "add",
+      "sha256": "fedba0c173ccf57d51a1ce6148fda4bef717d4199c85c15ac3be15b7e82015ef",
+      "bytes": 2596,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/fixtures/admission-proof/shard-proof.boc",
+      "operation": "add",
+      "sha256": "2432807ddd42b1b74d7e7290fbb70ad245f5fb57e72c334addf758c22bf97ae4",
+      "bytes": 1222,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/verified-admission-open.cpp",
+      "operation": "add",
+      "sha256": "4c868e24fd8dc11f358923bbbb9563733ac4eb09907d320c7f6f73f3299af3c5",
+      "bytes": 10236,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/verified-admission-proof.cpp",
+      "operation": "add",
+      "sha256": "9e218bdaad439f9780eafa9b2c46b0cd1794164f2c1fbe026d7a1501b36cd58a",
+      "bytes": 8848,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/test/verified-admission-vm.cpp",
+      "operation": "add",
+      "sha256": "24373c7de062afc95e500492344710467fcc7358cbf3412d1ee83f71314ad751",
+      "bytes": 9987,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/tonlib/VerifiedAdmissionProof.cpp",
+      "operation": "add",
+      "sha256": "a89a2dbe82898f8d194cd9d6097eb46fac95824e4c5c02a72f0ce6c76a82e3fc",
+      "bytes": 5695,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/tonlib/VerifiedAdmissionProof.h",
+      "operation": "add",
+      "sha256": "6269ee20947d4e09a1d5c21cf3abf07c63bc0e1c8e802850028c6f1cfcdeeb66",
+      "bytes": 1593,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/tonlib/VerifiedAdmissionVm.cpp",
+      "operation": "add",
+      "sha256": "d96c729ca1777419769d03301a1c19d482ef1de8c1de5e165ebdf5c780522a42",
+      "bytes": 11810,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/tonlib/VerifiedAdmissionVm.h",
+      "operation": "add",
+      "sha256": "0d5f4c558d88b846eee4aedfe6a4a77d56c26d4be904d24940938f0f9b0e0a0e",
+      "bytes": 1370,
+      "mode": 420
+    },
+    {
+      "path": "tonlib/tonlib/admission-worker.cpp",
+      "operation": "add",
+      "sha256": "45e6e329a7125ceac77e31c23e9f3d72f61f7cb440fa1eb625e136e20dca3ddf",
+      "bytes": 12002,
+      "mode": 420
+    }
+  ],
+  "build": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "minMacOS": "13.0",
+    "cmake": "3.31.10",
+    "ninja": "1.13.0",
+    "definitions": [
+      "CMAKE_BUILD_TYPE=Release",
+      "TON_ONLY_TONLIB=ON",
+      "TONLIBJSON_STATIC=ON",
+      "USE_QUIC=OFF",
+      "USE_LIBRAPTORQ=OFF",
+      "TON_USE_ROCKSDB=OFF",
+      "TON_USE_ABSEIL=OFF",
+      "TON_USE_JEMALLOC=OFF",
+      "CMAKE_OSX_ARCHITECTURES=arm64",
+      "CMAKE_OSX_DEPLOYMENT_TARGET=13.0"
+    ],
+    "targets": [
+      "ton-admission-worker",
+      "test-verified-admission"
+    ]
+  }
+}

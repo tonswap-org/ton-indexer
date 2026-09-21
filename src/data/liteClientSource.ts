@@ -1,3 +1,4 @@
+import { decodeOriginalTransaction, assertOriginalTransactionPage } from './transactionEvidence';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -15,18 +16,15 @@ import {
   parseTuple,
   serializeTuple,
 } from '@ton/core';
-import { LiteClient, LiteRoundRobinEngine, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
-import { Codecs, Functions } from 'ton-lite-client/dist/schema';
+import { LiteClient, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
+import { BoundedLiteEngine } from './boundedLiteEngine';
+import { errorDiagnostic, type Logger } from '../utils/logger';
+import { Functions } from 'ton-lite-client/dist/schema';
 import { Network } from '../models';
 import {
   AccountStateResponse,
   MasterchainInfo,
-  RawMessage,
   RawTransaction,
-  RawTransactionStatus,
-  TonBlockIdExt,
-  TonSccpBurnProofMaterial,
-  TonSccpBurnProofMaterialRequest,
   TonDataSource,
   TransactionCursor,
 } from './dataSource';
@@ -147,32 +145,7 @@ const cellToBase64 = (cell: Cell | null | undefined): string | undefined => {
   return cell.toBoc({ idx: false }).toString('base64');
 };
 
-const bytesToBase64 = (value: Buffer | Uint8Array) => Buffer.from(value).toString('base64');
-const bytesToHex = (value: Buffer | Uint8Array) => `0x${Buffer.from(value).toString('hex')}`;
 
-const isHex256 = (value: string) => /^0x[0-9a-fA-F]{64}$/.test(value.trim());
-
-const parseHex256 = (value: string, label: string) => {
-  const trimmed = value.trim();
-  if (!isHex256(trimmed)) {
-    throw new Error(`${label} must be 0x-prefixed 32-byte hex`);
-  }
-  return Buffer.from(trimmed.slice(2), 'hex');
-};
-
-const blockIdToResponse = (id: {
-  seqno: number;
-  workchain: number;
-  shard: string;
-  rootHash: Buffer;
-  fileHash: Buffer;
-}): TonBlockIdExt => ({
-  seqno: id.seqno,
-  workchain: id.workchain,
-  shard: id.shard,
-  rootHashHex: bytesToHex(id.rootHash),
-  fileHashHex: bytesToHex(id.fileHash),
-});
 
 type LiteBlockId = {
   seqno: number;
@@ -362,55 +335,6 @@ const graftAccountIntoShardState = (
   return expanded;
 };
 
-const decodeOp = (cell: Cell | null | undefined): number | undefined => {
-  if (!cell) return undefined;
-  try {
-    const slice = cell.beginParse();
-    if (slice.remainingBits < 32) return undefined;
-    return Number(slice.loadUint(32));
-  } catch {
-    return undefined;
-  }
-};
-
-const toFriendlyAddress = (addr?: Address | null): string | undefined => {
-  if (!addr) return undefined;
-  return addr.toString({ urlSafe: true, bounceable: true });
-};
-
-const mapMessage = (message: any): RawMessage | undefined => {
-  if (!message) return undefined;
-  const info = message.info;
-  let source: string | undefined;
-  let destination: string | undefined;
-  let value: string | undefined;
-
-  if (info?.type === 'internal') {
-    source = toFriendlyAddress(info.src);
-    destination = toFriendlyAddress(info.dest);
-    value = info.value?.coins?.toString();
-  } else if (info?.type === 'external-in') {
-    destination = toFriendlyAddress(info.dest);
-  } else if (info?.type === 'external-out') {
-    source = toFriendlyAddress(info.src);
-  }
-
-  const body = cellToBase64(message.body);
-  const op = decodeOp(message.body);
-
-  return {
-    source,
-    destination,
-    value,
-    op,
-    body,
-    createdLt: info?.type === 'internal' ? info.createdLt?.toString() : undefined,
-    bounced: info?.type === 'internal' ? info.bounced : undefined,
-    forwardFeeRaw: info?.type === 'internal' ? info.forwardFee?.toString() : undefined,
-    ihrFeeRaw: info?.type === 'internal' ? info.ihrFee?.toString() : undefined,
-  };
-};
-
 const bigintToBuffer = (value: bigint, bytes = 32) => {
   let hex = value.toString(16);
   if (hex.length % 2) hex = `0${hex}`;
@@ -420,280 +344,8 @@ const bigintToBuffer = (value: bigint, bytes = 32) => {
   return Buffer.concat([Buffer.alloc(bytes - buf.length, 0), buf]);
 };
 
-const formatComputeSkipReason = (reason?: string) => {
-  if (!reason) return 'Compute phase skipped.';
-  return `Compute phase skipped: ${reason}.`;
-};
-
-export const evaluateTransactionStatus = (
-  tx: any
-): { status: RawTransactionStatus; reason?: string; success: boolean } => {
-  const description = tx.description;
-  if (!description) return { status: 'pending', success: false };
-  if (description.aborted === true) {
-    const computeExit = description.computePhase?.exitCode;
-    const reason =
-      typeof computeExit === 'number'
-        ? `Transaction aborted (VM exit code ${computeExit}).`
-        : 'Transaction aborted by contract.';
-    return { status: 'failed', reason, success: false };
-  }
-  if (description.type === 'split-install' && description.installed === false) {
-    return { status: 'failed', reason: 'Split installation failed.', success: false };
-  }
-
-  const compute = description.computePhase;
-  if (compute?.type === 'skipped') {
-    return { status: 'failed', reason: formatComputeSkipReason(compute.reason), success: false };
-  }
-  if (compute?.type === 'vm' && compute.success === false) {
-    const reason =
-      typeof compute.exitCode === 'number'
-        ? `VM execution failed (exit code ${compute.exitCode}).`
-        : 'VM execution failed.';
-    return { status: 'failed', reason, success: false };
-  }
-
-  const action = description.actionPhase;
-  if (
-    action &&
-    (action.valid === false ||
-      action.success === false ||
-      (typeof action.resultCode === 'number' && action.resultCode !== 0))
-  ) {
-    const reason =
-      typeof action.resultCode === 'number' && action.resultCode !== 0
-        ? `Action phase failed (result code ${action.resultCode}).`
-        : 'Action phase failed.';
-    return { status: 'failed', reason, success: false };
-  }
-
-  const computeOk = compute?.type === 'vm' && compute.success === true;
-  const actionOk = action?.success === true || action?.resultCode === 0;
-  if (computeOk || actionOk) {
-    return { status: 'success', success: true };
-  }
-
-  // Lite servers only return transactions already included in a block. Some
-  // valid finalized descriptions (notably storage-only transactions) have no
-  // compute or action phase, so absence of those phases is not "pending".
-  return { status: 'success', success: true };
-};
-
-const decodeTransactions = (payload: Buffer): any[] => {
-  const cells = Cell.fromBoc(payload);
-  const parsed: any[] = [];
-
-  for (const cell of cells) {
-    try {
-      parsed.push(loadTransaction(cell.beginParse()));
-    } catch (error) {
-      const suffix = error instanceof Error && error.message ? `: ${error.message}` : '';
-      throw new Error(`Failed to decode complete transaction page${suffix}`);
-    }
-  }
-
-  return parsed;
-};
-
-const RETRY_ATTEMPTS = 3;
-const RETRY_BASE_DELAY_MS = 200;
 const MASTERCHAIN_INFO_TTL_MS = 1_000;
 type LiteMasterchainRef = Awaited<ReturnType<LiteClient['getMasterchainInfo']>>;
-
-// ton-lite-client 3.1.1 predates TON's boxed Simplex signature-set arm. Keep
-// the compatibility decoder release-owned and scoped to getBlockProof so an
-// unrelated response can never be reinterpreted through a global codec patch.
-const PARTIAL_BLOCK_PROOF_TL_ID = -1898917183;
-const BLOCK_LINK_BACK_TL_ID = -276947985;
-const BLOCK_LINK_FORWARD_TL_ID = 1376767516;
-const ORDINARY_SIGNATURE_SET_TL_ID = -163272986;
-const SIMPLEX_SIGNATURE_SET_TL_ID = -1406887936;
-const CANDIDATE_HASH_DATA_ORDINARY_TL_ID = -386286372;
-const CANDIDATE_HASH_DATA_EMPTY_TL_ID = 1924454707;
-const CANDIDATE_ID_TL_ID = -1231958721;
-const CANDIDATE_PARENT_TL_ID = 441162481;
-const CANDIDATE_WITHOUT_PARENTS_TL_ID = 583781545;
-const MAX_BLOCK_PROOF_STEPS = 16;
-const MAX_BLOCK_SIGNATURES = 1024;
-
-type BlockProofDecoder = Parameters<typeof Functions.liteServer_getBlockProof.decodeResponse>[0];
-
-const decodeBoundedVector = <T>(
-  decoder: BlockProofDecoder,
-  max: number,
-  label: string,
-  decode: (decoder: BlockProofDecoder) => T
-) => {
-  const count = decoder.readUInt32();
-  if (count > max) {
-    throw new Error(`${label} exceeds ${max} entries.`);
-  }
-  const values: T[] = [];
-  for (let index = 0; index < count; index += 1) {
-    values.push(decode(decoder));
-  }
-  return values;
-};
-
-const decodeOwnedSignature = (decoder: BlockProofDecoder) => {
-  const nodeIdShort = decoder.readInt256();
-  const signature = decoder.readBuffer();
-  if (nodeIdShort.length !== 32 || signature.length !== 64) {
-    throw new Error('TON block-proof signature has an invalid width.');
-  }
-  return {
-    kind: 'liteServer.signature' as const,
-    nodeIdShort,
-    signature,
-  };
-};
-
-const decodeOwnedSignatureSet = (decoder: BlockProofDecoder) => {
-  const constructor = decoder.readInt32();
-  if (constructor === ORDINARY_SIGNATURE_SET_TL_ID) {
-    const validatorSetHash = decoder.readInt32();
-    const catchainSeqno = decoder.readInt32();
-    const signatures = decodeBoundedVector(
-      decoder,
-      MAX_BLOCK_SIGNATURES,
-      'TON block-proof signature set',
-      decodeOwnedSignature
-    );
-    return {
-      kind: 'liteServer.signatureSet' as const,
-      validatorSetHash,
-      catchainSeqno,
-      signatures,
-    };
-  }
-  if (constructor === SIMPLEX_SIGNATURE_SET_TL_ID) {
-    const ccSeqno = decoder.readInt32();
-    const validatorSetHash = decoder.readInt32();
-    const signatures = decodeBoundedVector(
-      decoder,
-      MAX_BLOCK_SIGNATURES,
-      'TON Simplex block-proof signature set',
-      decodeOwnedSignature
-    );
-    const sessionId = decoder.readInt256();
-    const slot = decoder.readInt32() >>> 0;
-    const candidate = decoder.readBuffer();
-    return {
-      kind: 'liteServer.signatureSet.simplex' as const,
-      ccSeqno,
-      validatorSetHash,
-      signatures,
-      sessionId,
-      slot,
-      candidate,
-    };
-  }
-  throw new Error(`Unknown TON block-proof signature-set constructor: ${constructor}`);
-};
-
-const decodeOwnedBlockLink = (decoder: BlockProofDecoder) => {
-  const constructor = decoder.readInt32();
-  if (constructor === BLOCK_LINK_BACK_TL_ID) {
-    return Codecs.liteServer_blockLinkBack.decode(decoder);
-  }
-  if (constructor === BLOCK_LINK_FORWARD_TL_ID) {
-    const toKeyBlock = decoder.readBool();
-    const from = Codecs.tonNode_blockIdExt.decode(decoder);
-    const to = Codecs.tonNode_blockIdExt.decode(decoder);
-    const destProof = decoder.readBuffer();
-    const configProof = decoder.readBuffer();
-    const signatures = decodeOwnedSignatureSet(decoder);
-    return {
-      kind: 'liteServer.blockLinkForward' as const,
-      toKeyBlock,
-      from,
-      to,
-      destProof,
-      configProof,
-      signatures,
-    };
-  }
-  throw new Error(`Unknown TON block-proof link constructor: ${constructor}`);
-};
-
-const ownedGetBlockProofFunction = {
-  encodeRequest: Functions.liteServer_getBlockProof.encodeRequest,
-  decodeResponse: (decoder: BlockProofDecoder) => {
-    const constructor = decoder.readInt32();
-    if (constructor !== PARTIAL_BLOCK_PROOF_TL_ID) {
-      throw new Error(`Unexpected TON partial-block-proof constructor: ${constructor}`);
-    }
-    const complete = decoder.readBool();
-    const from = Codecs.tonNode_blockIdExt.decode(decoder);
-    const to = Codecs.tonNode_blockIdExt.decode(decoder);
-    const steps = decodeBoundedVector(
-      decoder,
-      MAX_BLOCK_PROOF_STEPS,
-      'TON partial block-proof chain',
-      decodeOwnedBlockLink
-    );
-    return {
-      kind: 'liteServer.partialBlockProof' as const,
-      complete,
-      from,
-      to,
-      steps,
-    };
-  },
-};
-
-const assertSimplexCandidateBindsTarget = (candidate: Buffer, target: LiteBlockId) => {
-  let offset = 0;
-  const take = (length: number) => {
-    if (!Number.isSafeInteger(length) || length < 0 || offset + length > candidate.length) {
-      throw new Error('Simplex candidate is truncated.');
-    }
-    const value = candidate.subarray(offset, offset + length);
-    offset += length;
-    return value;
-  };
-  const readInt32 = () => take(4).readInt32LE(0);
-  const readInt64 = () => take(8).readBigInt64LE(0).toString();
-  const readHash = () => Buffer.from(take(32));
-
-  const constructor = readInt32();
-  if (
-    constructor !== CANDIDATE_HASH_DATA_ORDINARY_TL_ID &&
-    constructor !== CANDIDATE_HASH_DATA_EMPTY_TL_ID
-  ) {
-    throw new Error('Simplex candidate has an unsupported constructor.');
-  }
-  const block: LiteBlockId = {
-    workchain: readInt32(),
-    shard: readInt64(),
-    seqno: readInt32(),
-    rootHash: readHash(),
-    fileHash: readHash(),
-  };
-  assertBlockId(block, target, 'Simplex candidate block');
-
-  if (constructor === CANDIDATE_HASH_DATA_ORDINARY_TL_ID) {
-    readHash();
-    const parentConstructor = readInt32();
-    if (parentConstructor === CANDIDATE_PARENT_TL_ID) {
-      if (readInt32() !== CANDIDATE_ID_TL_ID) {
-        throw new Error('Simplex candidate parent has an invalid candidate-id constructor.');
-      }
-      readInt32();
-      readHash();
-    } else if (parentConstructor !== CANDIDATE_WITHOUT_PARENTS_TL_ID) {
-      throw new Error('Simplex candidate has an invalid parent constructor.');
-    }
-  } else {
-    readInt32();
-    readHash();
-  }
-
-  if (offset !== candidate.length) {
-    throw new Error('Simplex candidate contains trailing data.');
-  }
-};
 
 export class LiteClientDataSource implements TonDataSource {
   network: Network;
@@ -702,12 +354,12 @@ export class LiteClientDataSource implements TonDataSource {
   private masterchainRefExpiresAt = 0;
   private masterchainRefPending: Promise<LiteMasterchainRef> | null = null;
 
-  private constructor(network: Network, client: LiteClient) {
+  private constructor(network: Network, client: LiteClient, private readonly logger: Logger) {
     this.network = network;
     this.client = client;
   }
 
-  static async create(network: Network, pool?: string) {
+  static async create(network: Network, pool: string | undefined, logger: Logger) {
     const servers = await resolveLiteServers(network, pool);
     if (servers.length === 0) {
       throw new Error('No liteserver endpoints resolved');
@@ -719,24 +371,15 @@ export class LiteClientDataSource implements TonDataSource {
           publicKey: server.publicKey,
         })
     );
-    const engine = new LiteRoundRobinEngine(engines);
+    const engine = new BoundedLiteEngine(engines);
     const client = new LiteClient({ engine });
-    return new LiteClientDataSource(network, client);
+    return new LiteClientDataSource(network, client, logger);
   }
 
   private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt += 1) {
-      try {
-        return await fn(this.client);
-      } catch (error) {
-        lastError = error;
-        if (attempt < RETRY_ATTEMPTS - 1) {
-          await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_DELAY_MS * (attempt + 1)));
-        }
-      }
-    }
-    throw lastError;
+    // Failover belongs to the wire-query engine. Retrying a compound client
+    // operation here multiplies latency and can repeat already completed reads.
+    return fn(this.client);
   }
 
   private async getMasterchainRef(force = false): Promise<LiteMasterchainRef> {
@@ -819,235 +462,11 @@ export class LiteClientDataSource implements TonDataSource {
     );
   }
 
-  private async getBlockProof(
-    knownBlock: {
-      seqno: number;
-      workchain: number;
-      shard: string;
-      rootHash: Buffer;
-      fileHash: Buffer;
-    },
-    targetBlock: {
-      seqno: number;
-      workchain: number;
-      shard: string;
-      rootHash: Buffer;
-      fileHash: Buffer;
-    }
-  ) {
-    return this.queryLite(() =>
-      this.client.engine.query(ownedGetBlockProofFunction, {
-        kind: 'liteServer.getBlockProof',
-        // Bit 0 is mandatory when targetBlock is supplied. Without it the
-        // liteserver silently proves its moving latest head instead.
-        mode: 1,
-        knownBlock: {
-          kind: 'tonNode.blockIdExt',
-          seqno: knownBlock.seqno,
-          shard: knownBlock.shard,
-          workchain: knownBlock.workchain,
-          rootHash: knownBlock.rootHash,
-          fileHash: knownBlock.fileHash,
-        },
-        targetBlock: {
-          kind: 'tonNode.blockIdExt',
-          seqno: targetBlock.seqno,
-          shard: targetBlock.shard,
-          workchain: targetBlock.workchain,
-          rootHash: targetBlock.rootHash,
-          fileHash: targetBlock.fileHash,
-        },
-      })
-    );
-  }
-
-  private extractForwardSignatureSet(
-    proof: any,
-    target: {
-      seqno: number;
-      workchain: number;
-      shard: string;
-      rootHash: Buffer;
-      fileHash: Buffer;
-    }
-  ) {
-    const steps = Array.isArray(proof?.steps) ? proof.steps : [];
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      const step = steps[index];
-      if (!step || step.kind !== 'liteServer.blockLinkForward') continue;
-      const to = step.to;
-      if (
-        to?.seqno !== target.seqno ||
-        to?.workchain !== target.workchain ||
-        to?.shard !== target.shard ||
-        !Buffer.isBuffer(to?.rootHash) ||
-        !Buffer.isBuffer(to?.fileHash)
-      ) {
-        continue;
-      }
-      if (!to.rootHash.equals(target.rootHash) || !to.fileHash.equals(target.fileHash)) {
-        continue;
-      }
-      const signatures = Array.isArray(step.signatures?.signatures) ? step.signatures.signatures : [];
-      if (signatures.length === 0) {
-        throw new Error('Target masterchain block proof does not contain validator signatures.');
-      }
-      const mappedSignatures = signatures.map((signature: any) => ({
-        nodeIdShortHex: bytesToHex(signature.nodeIdShort),
-        signatureHex: bytesToHex(signature.signature),
-      }));
-      if (step.signatures?.kind === 'liteServer.signatureSet.simplex') {
-        const sessionId = step.signatures.sessionId;
-        const candidate = step.signatures.candidate;
-        const slot = Number(step.signatures.slot);
-        if (!Buffer.isBuffer(sessionId) || sessionId.length !== 32) {
-          throw new Error('Simplex signature set has an invalid session id.');
-        }
-        if (!Buffer.isBuffer(candidate) || candidate.length === 0) {
-          throw new Error('Simplex signature set has an empty candidate.');
-        }
-        if (!Number.isInteger(slot) || slot < 0 || slot > 0xffffffff) {
-          throw new Error('Simplex signature set has an invalid slot.');
-        }
-        assertSimplexCandidateBindsTarget(candidate, target);
-        return {
-          scheme: 'simplex' as const,
-          // TL decodes these uint32 protocol fields through signed int32 values.
-          validatorListHashShort: Number(step.signatures.validatorSetHash) >>> 0,
-          catchainSeqno: Number(step.signatures.ccSeqno) >>> 0,
-          signatures: mappedSignatures,
-          sessionIdHex: bytesToHex(sessionId),
-          slot,
-          candidateBase64: bytesToBase64(candidate),
-        };
-      }
-      if (step.signatures?.kind !== 'liteServer.signatureSet') {
-        throw new Error('Target masterchain block proof has an unsupported signature-set kind.');
-      }
-      return {
-        scheme: 'ordinary' as const,
-        // TL decodes these uint32 protocol fields through signed int32 values.
-        validatorListHashShort: Number(step.signatures.validatorSetHash) >>> 0,
-        catchainSeqno: Number(step.signatures.catchainSeqno) >>> 0,
-        signatures: mappedSignatures,
-      };
-    }
-    throw new Error('Failed to locate a forward block-proof step for the target masterchain block.');
-  }
-
   async getMasterchainInfo(): Promise<MasterchainInfo> {
     const master = await this.call((client) => client.getMasterchainInfoExt());
     return {
       seqno: master.last.seqno,
-      timestamp: master.now ?? undefined,
-    };
-  }
-
-  async getTonSccpBurnProofMaterial(
-    request: TonSccpBurnProofMaterialRequest
-  ): Promise<TonSccpBurnProofMaterial> {
-    if (request.trustedCheckpointSeqno === undefined || request.trustedCheckpointHashHex === undefined) {
-      throw new Error('trusted checkpoint must be resolved before querying TON proof material.');
-    }
-    const jettonMaster = Address.parse(request.jettonMaster);
-    const trustedCheckpointHash = parseHex256(request.trustedCheckpointHashHex, 'trustedCheckpointHashHex');
-    const trustedCheckpoint = await this.lookupMasterchainBlock(request.trustedCheckpointSeqno);
-    if (!trustedCheckpoint.id.rootHash.equals(trustedCheckpointHash)) {
-      throw new Error('Trusted checkpoint hash does not match the resolved masterchain block.');
-    }
-
-    const targetBlockId =
-      request.targetSeqno !== undefined
-        ? (await this.lookupMasterchainBlock(request.targetSeqno)).id
-        : (await this.getMasterchainRef()).last;
-    if (targetBlockId.seqno < trustedCheckpoint.id.seqno) {
-      throw new Error('Target masterchain block precedes the trusted checkpoint.');
-    }
-
-    const burnRecord = await this.runGetMethodAtBlock(
-      jettonMaster,
-      'get_sccp_burn_record',
-      [{ type: 'int', value: BigInt(request.messageIdHex) }],
-      targetBlockId
-    ).catch(() => null);
-    const burnRecordPresent = Boolean(
-      burnRecord &&
-        burnRecord.exitCode === 0 &&
-        Array.isArray(burnRecord.stack) &&
-        burnRecord.stack.length === 1 &&
-        burnRecord.stack[0]?.type === 'cell'
-    );
-    if (!burnRecordPresent) {
-      throw new Error('Burn record is not available on the jetton master yet.');
-    }
-
-    const accountState = await this.call((client) => client.getAccountStateRaw(jettonMaster, targetBlockId));
-    assertBlockId(accountState.block, targetBlockId, 'SCCP account-state masterchain block');
-
-    const shardBlockId = accountState.shardBlock;
-    const [checkpointBlockData, checkpointConfig, targetBlockData, targetProof, shardBlockData] =
-      await Promise.all([
-        this.getBlockData(trustedCheckpoint.id),
-        this.getMasterchainConfigProof(trustedCheckpoint.id),
-        this.getBlockData(targetBlockId),
-        this.getBlockProof(trustedCheckpoint.id, targetBlockId),
-        this.getBlockData(shardBlockId),
-      ]);
-    assertBlockId(checkpointBlockData.id, trustedCheckpoint.id, 'Trusted-checkpoint block response');
-    assertBlockId(checkpointConfig.id, trustedCheckpoint.id, 'Trusted-checkpoint config response');
-    assertBlockId(targetBlockData.id, targetBlockId, 'Target masterchain block response');
-    assertBlockId(shardBlockData.id, shardBlockId, 'Target shard block response');
-    if (!targetProof.complete) {
-      throw new Error('TON block proof is incomplete for the requested target masterchain block.');
-    }
-    assertBlockId(targetProof.from, trustedCheckpoint.id, 'TON block-proof checkpoint');
-    assertBlockId(targetProof.to, targetBlockId, 'TON block-proof target');
-
-    const checkpointBlockProof = parseMerkleProofRoots(
-      checkpointConfig.stateProof,
-      1,
-      'trusted-checkpoint block proof'
-    )[0];
-    assertBlockProofRoot(checkpointBlockProof, trustedCheckpoint.id, 'Trusted-checkpoint block proof');
-    const checkpointState = parseMerkleProofRoots(
-      checkpointConfig.configProof,
-      1,
-      'trusted-checkpoint config proof'
-    )[0].refs[0];
-    assertShardStateIdentity(checkpointState, trustedCheckpoint.id, 'Trusted-checkpoint config proof');
-
-    const targetProofRoots = parseMerkleProofRoots(
-      accountState.shardProof,
-      2,
-      'target masterchain shard proof'
-    );
-    assertBlockProofRoot(targetProofRoots[0], targetBlockId, 'Target masterchain block proof');
-    const targetState = targetProofRoots[1].refs[0];
-    assertShardStateIdentity(targetState, targetBlockId, 'Target masterchain shard proof');
-
-    const accountProofRoots = parseMerkleProofRoots(
-      accountState.proof,
-      2,
-      'jetton-master account proof'
-    );
-    assertBlockProofRoot(accountProofRoots[0], shardBlockId, 'Target shard block proof');
-    const partialShardState = accountProofRoots[1].refs[0];
-    assertShardStateIdentity(partialShardState, shardBlockId, 'Jetton-master account proof');
-    const accountRoot = parseBoundAccountRoot(accountState.raw, jettonMaster);
-    const shardState = graftAccountIntoShardState(partialShardState, accountRoot, jettonMaster);
-
-    return {
-      trustedCheckpoint: blockIdToResponse(trustedCheckpoint.id),
-      targetMasterchain: blockIdToResponse(targetBlockId),
-      targetSignatures: this.extractForwardSignatureSet(targetProof, targetBlockId),
-      targetShard: blockIdToResponse(shardBlockId),
-      checkpointBlockBoc: bytesToBase64(checkpointBlockData.data),
-      checkpointStateBoc: bytesToBase64(checkpointState.toBoc({ idx: false })),
-      targetBlockBoc: bytesToBase64(targetBlockData.data),
-      targetStateBoc: bytesToBase64(targetState.toBoc({ idx: false })),
-      shardBlockBoc: bytesToBase64(shardBlockData.data),
-      shardStateBoc: bytesToBase64(shardState.toBoc({ idx: false })),
-      burnRecordPresent,
+      timestamp: Number.isSafeInteger(master.lastUtime) && master.lastUtime >= 0 ? master.lastUtime : undefined,
     };
   }
 
@@ -1171,24 +590,13 @@ export class LiteClientDataSource implements TonDataSource {
       client.getAccountTransactions(parsed, cursorLt, Buffer.from(cursorHash, 'base64'), limit)
     );
 
-    const parsedTxs = decodeTransactions(txs.transactions);
-
-    return parsedTxs.map((tx) => {
-      const statusInfo = evaluateTransactionStatus(tx);
-      return {
-        lt: tx.lt.toString(),
-        hash: tx.hash().toString('base64'),
-        prevTransactionLt: tx.prevTransactionLt.toString(),
-        prevTransactionHash: bigintToBuffer(tx.prevTransactionHash).toString('base64'),
-        utime: tx.now,
-        success: statusInfo.success,
-        status: statusInfo.status,
-        reason: statusInfo.reason,
-        totalFeesRaw: tx.totalFees.coins.toString(),
-        inMessage: mapMessage(tx.inMessage ? tx.inMessage : undefined),
-        outMessages: Array.from(tx.outMessages.values()).map(mapMessage).filter(Boolean) as RawMessage[],
-      };
-    });
+    const cells = Cell.fromBoc(txs.transactions);
+    if (txs.ids.length !== cells.length || txs.ids.some((block) => block.workchain !== parsed.workChain)) {
+      throw new Error('Transaction evidence block identities do not match the requested account workchain.');
+    }
+    const page = cells.map((cell) => decodeOriginalTransaction(cell, parsed));
+    if (page.length === 0) return [];
+    return assertOriginalTransactionPage(page, parsed, { lt: BigInt(cursorLt).toString(), hash: Buffer.from(cursorHash, 'base64').toString('base64') });
   }
 
   async runGetMethod(
@@ -1200,7 +608,8 @@ export class LiteClientDataSource implements TonDataSource {
       const target = Address.parse(address);
       const master = await this.getMasterchainRef();
       return await this.runGetMethodAtBlock(target, method, args, master.last);
-    } catch {
+    } catch (error) {
+      this.logger.warn('liteserver getter unavailable', { address, method, error: errorDiagnostic(error) });
       return null;
     }
   }

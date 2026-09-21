@@ -88,7 +88,7 @@ async function main() {
     assert.equal(await findTransactionState(source, address.toRawString(), cursor), null);
   });
 
-  await check('actual SHORT original becomes confirmed through existing Perps projection; missing exact state remains unresolved', async () => {
+  await check('authentic archived SHORT replay does not enable an obsolete perps business layout', async () => {
     const owner = '0:b660f251bcd8c741ca425f67a280daf6e52637d2c92010a6d7135c8be33c07c1';
     const ownerWallet = '0:de989331aa3c8ebac0ed568d93348e5e2f32ca7225e3dcb40ba17c666a0d66b9';
     const engineWallet = '0:90a99554534afc8953d2bdba123421612491e56ad665c924c5e2d9b943f9db14';
@@ -101,12 +101,14 @@ async function main() {
         role: row.account === owner ? 'owner' : row.account === ownerWallet ? 'owned_jetton_wallet' : 'counterparty', transactions: [] }; chains.set(row.account, chain); }
       chain.transactions.push(row.raw);
     }
-    const decoded = readPerpsState(beforeState.dataBoc!);
+    assert.throws(() => readPerpsState(beforeState.dataBoc!, active.state.code!.hash().toString('hex')));
+    // Public identities captured from this immutable archive before retiring its decoder.
+    const decoded = { root: '0:0158b4cf7b5ec1669943ab79d3e521b396883cede549fe1789a7716eb47ad06b', walletCodeHash: '5f84fc5075c0553ce1ed92fed04cc23ffa903acda5c697ecefd36cd05f0e075e' };
     const asset = (wallet: string, owner: string) => ({ kind: 'jetton' as const, id: `localnet:jetton:${decoded.root}`, master: decoded.root, wallet, owner, decimals: 9 });
     const projection: ProjectionInput = { network: 'localnet', owner, chains, opcodes: loadOpcodes(), pools: new Map(),
       wallets: new Map([[ownerWallet, asset(ownerWallet, owner)], [engineWallet, asset(engineWallet, engine)]]),
       perpsEngines: new Map([[engine, { address: engine, root: decoded.root, codeHash: active.state.code!.hash().toString('hex'),
-        walletCodeHash: decoded.walletCode.hash().toString('hex'), ownerWallet, engineWallet }]]),
+        walletCodeHash: decoded.walletCodeHash, ownerWallet, engineWallet }]]),
       stateAt: async (a, lt, hash) => {
         const state = snapshots.get(lt);
         const h = /^[0-9a-f]{64}$/i.test(hash) ? Buffer.from(hash, 'hex') : Buffer.from(hash, 'base64');
@@ -118,13 +120,14 @@ async function main() {
     const unresolved = target((await projectOwnerLedger({ ...projection, stateAt: async () => null })).events);
     assert.ok(unresolved?.issues.includes('perps_exact_state_unavailable'));
     const event = target((await projectOwnerLedger(projection)).events);
-    assert.equal(event?.settlement?.status, 'confirmed', JSON.stringify(event?.issues));
-    assert.equal(event?.settlement?.perps?.outcome, 'accepted');
+    assert.notEqual(event?.settlement?.status, 'confirmed');
+    assert.equal(event?.settlement?.perps?.outcome, 'unresolved');
+    assert.equal(event?.settlement?.perps?.economics, undefined);
     assert.equal(event?.settlement?.perps?.request.sizeRaw, '-4000000000');
     assert.equal(event?.settlement?.perps?.request.marginRaw, '800000000');
     assert.equal(event?.settlement?.perps?.request.leverageBps, 5000);
     assert.equal(event?.settlement?.perps?.depositRaw, '812420000');
-    assert.ok(!event?.issues.some(issue => issue.startsWith('perps_')));
+    assert.ok(event?.issues.includes('perps_exact_state_unavailable'));
   });
   console.log(`Historical replay checks passed: ${checks}`);
 }

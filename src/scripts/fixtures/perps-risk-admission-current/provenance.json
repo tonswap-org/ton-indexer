@@ -1,0 +1,52 @@
+{
+  "source": "tonswap_tolk/tests/perps/PerpsRiskAdmission.spec.ts Sandbox raw transactions and exact storage boundaries",
+  "engineCodeHash": "672adf0e4798430a169468e52d7665024f1ed6293958334a4fcfe32358e570a7",
+  "capturedOn": "2026-09-20",
+  "cases": {
+    "open-accepted": "reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880",
+    "vault-rejected": "refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880",
+    "policy-rejected": "releases-an-accepted-reservation-and-refunds-when-the-policy-budget-is-insufficient-open-880",
+    "modify-accepted": "reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify",
+    "profitable-close": "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close",
+    "gap-close": "caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close",
+    "failed-close": "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close"
+  },
+  "poolCodeHash": "583d8fdd3b13388e4bbf63def6c0e44e0da2ed15b7cf50bbe040df1d33d68b90",
+  "artifacts": [
+    {
+      "relative": "open-accepted.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880.json",
+      "sha256": "73296e0371fd90de528531ee4da3086aa23a8f97a854097b9d586b53f3c06c67"
+    },
+    {
+      "relative": "vault-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880.json",
+      "sha256": "acb5d6cde6da0e84e3defad6a0d3fdf3ba5860e3cf5528394d99ed9435159a04"
+    },
+    {
+      "relative": "policy-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/releases-an-accepted-reservation-and-refunds-when-the-policy-budget-is-insufficient-open-880.json",
+      "sha256": "0051c99c309c0a7985234b79f3a888abc7578e179fa8458c8d9c1b352a678aff"
+    },
+    {
+      "relative": "modify-accepted.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify.json",
+      "sha256": "6cec337ecfda4a3e39ddf8477bcca27d2d2a95941d00696b650603ded3f76a6b"
+    },
+    {
+      "relative": "profitable-close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close.json",
+      "sha256": "bb48c908230996d19b05ef8b89cd58b9715886f1750ca873c15b33da2675f824"
+    },
+    {
+      "relative": "gap-close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close.json",
+      "sha256": "6f4c9c27e28670b440d8a561987a640ee0543044dbbe5e43b486131c3482fbeb"
+    },
+    {
+      "relative": "failed-close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close.json",
+      "sha256": "3439a08cecad4a4f6b79ad450cf3dc3b4803dcbd48297b35c90ce740f69d90ee"
+    }
+  ]
+}

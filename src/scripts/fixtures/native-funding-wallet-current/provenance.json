@@ -1,0 +1,17 @@
+{
+  "scope": "Original actual compiled Sandbox capture only; no live chain or archived-state qualification claim. Fixture bytes are copied unchanged.",
+  "testSource": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/tests/shared/JettonNativeFunding.spec.ts",
+  "testSourceSha256": "7c05d541adcbb7544ae1c43041a56fbace7f58bba6d7605271a81dd35cfce846",
+  "fixtures": [
+    {
+      "file": "transfer.json",
+      "sha256": "257cb695348774d725ae608bd7cd88bc8d16db626e377d4b2558e18cea2288a3",
+      "originalSource": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/preparation/native-wallet-ledger-current.json"
+    },
+    {
+      "file": "bounce.json",
+      "sha256": "27b1bd3d314ab68c337bccd299429d933fcc9047b29b2fba8a04c35dd927e39e",
+      "originalSource": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/preparation/native-wallet-ledger-current.json.bounce.json"
+    }
+  ]
+}

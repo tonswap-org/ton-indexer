@@ -1,0 +1,46 @@
+{
+  "full-partial": {
+    "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release/dlmm-receipt-current/full-partial/dlmm-market-settlements.json",
+    "sha256": "7ffb424ccc869129dc214a34fad38dce3129c3d5eb8611818b1e3bd7f49e3e1a",
+    "format": "Byte-identical gzip of current production Sandbox execution; original transaction cells and permanent getter cells",
+    "compiler": [
+      {
+        "entrypoint": "contracts/shared/jetton/jetton_root.tolk",
+        "codeHash": "9179b93f680689eec338989cf23966ac485a327452f2da61984e22f11e6b5cf8",
+        "tolkVersion": "1.4.2"
+      },
+      {
+        "entrypoint": "contracts/shared/jetton/jetton_wallet.tolk",
+        "codeHash": "502baf5750f575615645dd5d7899971dd15f4d78dc37978396d19148c16b8732",
+        "tolkVersion": "1.4.2"
+      },
+      {
+        "entrypoint": "contracts/dlmm/pool.tolk",
+        "codeHash": "cce255be276c271bac5218fac83099da6186adb40e8f411cf994e689388e0760",
+        "tolkVersion": "1.4.2"
+      }
+    ]
+  },
+  "first-refund": {
+    "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release/dlmm-receipt-current/first-refund/dlmm-market-settlements.json",
+    "sha256": "5347ba9897fbb9668526adcd83868a1a9cd26a91a76e1da47d5bee0b0981a554",
+    "format": "Byte-identical gzip of current production Sandbox execution; original transaction cells and permanent getter cells",
+    "compiler": [
+      {
+        "entrypoint": "contracts/shared/jetton/jetton_root.tolk",
+        "codeHash": "9179b93f680689eec338989cf23966ac485a327452f2da61984e22f11e6b5cf8",
+        "tolkVersion": "1.4.2"
+      },
+      {
+        "entrypoint": "contracts/shared/jetton/jetton_wallet.tolk",
+        "codeHash": "502baf5750f575615645dd5d7899971dd15f4d78dc37978396d19148c16b8732",
+        "tolkVersion": "1.4.2"
+      },
+      {
+        "entrypoint": "contracts/dlmm/pool.tolk",
+        "codeHash": "cce255be276c271bac5218fac83099da6186adb40e8f411cf994e689388e0760",
+        "tolkVersion": "1.4.2"
+      }
+    ]
+  }
+}

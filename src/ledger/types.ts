@@ -32,6 +32,50 @@ export type LedgerEvidenceRef = {
   hash: string;
   utime: number;
 };
+/** Verified original provision to an internal DLMM position. This proves
+ * physical funding and shares, not beneficial ownership, a legal tax date,
+ * contractual-right value or token precision. */
+export type DlmmDepositMetadata = {
+  network: Network; pool: string; poolCodeHash: string; walletCodeHash: string;
+  owner: string; binId: number; queryId: string;
+  sharesBeforeRaw: string; sharesAfterRaw: string; mintedSharesRaw: string; minSharesRaw: string;
+  stateBefore: { seqno: number; dataHash: string; transaction: LedgerEvidenceRef };
+  stateAfter: { seqno: number; dataHash: string; transaction: LedgerEvidenceRef };
+  contributions: {
+    tokenSide: 0 | 1; assetId: string; master: string; amountRaw: string;
+    movementId: string; sourceWallet: string; destinationWallet: string;
+    transferQueryId: string; minSharesRaw: string; forwardTonRaw: string;
+    requestBodyHash: string; notificationBodyHash: string;
+    origin: LedgerEvidenceRef; debit: LedgerEvidenceRef; credit: LedgerEvidenceRef; acceptance: LedgerEvidenceRef;
+    boundaries: import('./marketTypes').MarketBoundaryEvidence[];
+  }[];
+};
+/** Protocol amounts are components of one physical payout, never extra cash
+ * movements or an automatic country income classification. */
+export type DlmmLiquidityReceipt = {
+  pool: string; owner: string; recipient: string; binId: number;
+  settlementId: string; principalRaw: string; earnedFeeRaw: string;
+  delivery: LedgerEvidenceRef;
+};
+export type DlmmLiquidityMetadata = {
+  pool: string; poolCodeHash: string; walletCodeHash: string;
+  owner: string; recipient: string; binId: number;
+  request: { opcode: number; sharesRaw: string; bodyHash: string; transaction: LedgerEvidenceRef };
+  stateBefore: { seqno: number; dataHash: string; transaction: LedgerEvidenceRef };
+  stateAfter: { seqno: number; dataHash: string; transaction: LedgerEvidenceRef };
+  sharesBeforeRaw: string; sharesAfterRaw: string;
+  economics: { principalTRaw: string; principalXRaw: string; earnedFeeTRaw: string; earnedFeeXRaw: string; totalTRaw: string; totalXRaw: string };
+  payouts: {
+    tokenSide: 0 | 1; assetId: string; master: string; sourceWallet: string;
+    destinationOwner: string; destinationWallet: string; settlementId: string | null;
+    totalRaw: string; principalRaw: string; earnedFeeRaw: string;
+    movementId: string | null; delivery: LedgerEvidenceRef | null;
+    status: "none" | "delivered" | "unresolved";
+    finalization: "none" | "confirmed" | "unresolved";
+    deliveryEvidence?: import("./dlmmProof").DlmmDeliveryEvidence;
+    settlementEvidence?: import("./dlmmProof").DlmmSettlementEvidence;
+  }[];
+};
 export type LedgerRelatedAccount = {
   account: string;
   generation: string | null;
@@ -62,6 +106,7 @@ export type LedgerMovement = {
     | "perps_collateral"
     | "perps_funding"
     | "perps_payout"
+    | "perps_counterparty_profit"
     | "launchpad_refund"
     | "launchpad_participation";
   asset: LedgerAsset;
@@ -69,6 +114,8 @@ export type LedgerMovement = {
   source?: string;
   destination?: string;
   evidence: {
+    dlmmDeposit?: DlmmDepositMetadata;
+    dlmmReceipt?: DlmmLiquidityReceipt;
     optionPosition?: {
       factory: string;
       factoryCodeHash: string;
@@ -88,7 +135,7 @@ export type LedgerMovement = {
     };
     getter?: {
       account: string;
-      method: "get_sccp_burn_record" | "redemption_identity";
+      method: "redemption_identity";
       args: string[];
       result: string[];
       observedAt: string;
@@ -103,10 +150,14 @@ export type LedgerMovement = {
     stateAfterHash?: string;
     beforeSeqno?: number;
     afterSeqno?: number;
+  } & ({
+    /** Terminal result of exactly this physical transaction, not the event anchor. */
+    kind: "native_message" | "transaction_fee" | "message_forward_fee";
+    transactionStatus: "success" | "failed";
+    transactions: [LedgerEvidenceRef];
+  } | {
+    transactionStatus?: never;
     kind:
-      | "native_message"
-      | "transaction_fee"
-      | "message_forward_fee"
       | "jetton_notification"
       | "jetton_internal_transfer"
       | "jetton_transfer"
@@ -115,14 +166,12 @@ export type LedgerMovement = {
       | "option_position_delta"
       | "option_payout"
       | "option_refund"
-      | "sccp_burn_record"
-      | "sccp_mint"
       | "t3_mint"
       | "t3_burn"
       | "t3_payout"
       | "perps_account_delta"
       | "perps_payout";
-  };
+  });
 };
 
 /** Account-level chain evidence. Actions are decoding hints, never a tax classification or proof of order settlement. */
@@ -137,11 +186,10 @@ export type LedgerEvent = {
   status: "success" | "failed" | "pending";
   kind:
     | TxKind
+    | "lp_fee_collect"
     | "option_buy"
     | "option_exercise"
     | "option_refund"
-    | "bridge_burn"
-    | "bridge_mint"
     | "t3_mint"
     | "t3_redeem"
     | "perps_operation"
@@ -154,22 +202,28 @@ export type LedgerEvent = {
   launchpadRequests?: import("./launchpadRequests").LaunchpadRequestIdentity[];
   settlement?: {
     status: "confirmed" | "incomplete";
-    protocol: "dlmm" | "jetton" | "options" | "sccp" | "t3" | "perps" | "launchpad";
+    protocol: "dlmm" | "jetton" | "options" | "t3" | "perps" | "launchpad";
     operation:
       | "swap"
       | "lp_deposit"
       | "lp_withdraw"
+      | "lp_fee_collect"
       | "transfer"
       | "option_buy"
       | "option_exercise"
       | "option_refund"
-      | "bridge_burn"
-      | "bridge_mint"
       | "t3_mint"
       | "t3_redeem"
       | "perps_operation"
       | "launchpad_refund"
       | "launchpad_participation";
+    dlmmSwap?: {
+      poolCodeHash: string;
+      paidInputRaw: string; consumedInputRaw: string; returnedInputRaw: string; outputRaw: string;
+      inputMovementId: string; outputMovementId: string | null; refundMovementId: string | null;
+      acceptance: LedgerEvidenceRef; finalizations: LedgerEvidenceRef[];
+    };
+    dlmmLiquidity?: DlmmLiquidityMetadata;
     launchpad?: import("./launchpad").LaunchpadRefundMetadata;
     launchpadParticipation?: import("./launchpadContributions").LaunchpadParticipationMetadata;
     optionLifecycle?: import("./optionLifecycle").OptionLifecycleMetadata;
@@ -187,6 +241,27 @@ export type LedgerEvent = {
       request: import("./perpsWire").PerpsRequest;
       outcome: "accepted" | "rejected" | "retry" | "unresolved";
       depositRaw: string;
+      execution?: { status: "failed"; transaction: LedgerEvidenceRef };
+      oracleExecution?: {
+        status: "pending" | "accepted" | "rejected";
+        wireQueryId: string;
+        requestHash: string;
+        nativeBudgetRaw: string;
+        requestedPool: string;
+        reason: number;
+        queued: LedgerEvidenceRef;
+        pool: LedgerEvidenceRef | null;
+        completed: LedgerEvidenceRef | null;
+        admission?: { version: 'perps-funded-admission-v1'; vault: string; controller: string;
+          reservation: LedgerEvidenceRef; vaultResponse: LedgerEvidenceRef;
+          policyRequest: LedgerEvidenceRef | null; policyResponse: LedgerEvidenceRef | null };
+        intakeEvidence: LedgerMovement["evidence"];
+        intake: {
+          account: import("./perpsState").PerpsAccount;
+          position: import("./perpsState").PerpsPosition | null;
+          pending: import("./perpsState").PerpsPending | null;
+        };
+      };
       before?: {
         account: import("./perpsState").PerpsAccount;
         position: import("./perpsState").PerpsPosition | null;
@@ -199,6 +274,7 @@ export type LedgerEvent = {
       };
       economics?: import("./perpsEconomics").PerpsEconomics;
       stateEvidence?: LedgerMovement["evidence"];
+      counterpartyPayout: import("./perpsCounterparty").PerpsCounterpartyPayout;
       payout: {
         status: "none" | "pending" | "completed" | "aggregate_unresolved";
         amountRaw: string;
@@ -219,6 +295,7 @@ export type LedgerEvent = {
       queryId: string;
       amountRaw: string | null;
       mintedRaw?: string;
+      referrer?: string | null;
       stage: "minted" | "redeemed" | "unresolved";
       rootQueryId?: string;
       wireId?: string;
@@ -239,28 +316,6 @@ export type LedgerEvent = {
         includedInOwnerFeeMovements: boolean;
       }[];
     };
-    bridge?: {
-      messageId: string | null;
-      sourceDomain: number;
-      destinationDomain: number;
-      soraAssetId: string | null;
-      recipient32: string;
-      nonce: string | null;
-      amountRaw: string;
-      tonMaster: string;
-      tonWallet: string;
-      tonOwner: string;
-      verifier?: string;
-      masterCodeHash: string | null;
-      verifierCodeHash?: string;
-      localStage: "burned" | "minted" | "unresolved";
-      counterpartyStatus: "unverified";
-      localNetworkFees: {
-        transaction: LedgerEvidenceRef;
-        amountRaw: string | null;
-        includedInOwnerFeeMovements: boolean;
-      }[];
-    };
     pool?: string;
     factory?: string;
     series?: string;
@@ -269,6 +324,7 @@ export type LedgerEvent = {
     wireId?: string;
     positionHash?: string;
     notionalRaw?: string;
+    referrer?: string | null;
     premiumRaw?: string;
     collateralRaw?: string;
     protocolFeeRaw?: string;
@@ -289,7 +345,16 @@ export type LedgerProjection = {
   projectionScope: LedgerProjectionScope;
 };
 
+export type LedgerRangeCoverage = {
+  scope: "perps";
+  fromUtime: number;
+  toUtime: number;
+  complete: boolean;
+  status: "pending" | "running" | "complete" | "failed";
+  retryAfter: string | null;
+};
 export type LedgerCoverage = {
+  range?: LedgerRangeCoverage;
   projectionScope: LedgerProjectionScope | null;
   generation: string | null;
   publishedAt: string | null;
@@ -316,8 +381,23 @@ export type LedgerPage = {
 };
 
 export type LedgerQuery = {
+  /** Internal immutable generation selection; never accepted from public query parameters. */
+  generation?: string;
+  scope?: "perps";
   fromUtime?: number;
   toUtime?: number;
   limit?: number;
   cursor?: string;
+};
+
+/** Publication discovery is separate from chain execution and notification eligibility. */
+export type LedgerDiscoveryQuery = { since: string; afterRevision?: string; cursor?: string; limit?: number };
+export type LedgerDiscoveryPage = {
+  network: Network;
+  account: string;
+  since: string;
+  throughRevision: string;
+  revisions: Array<{ revision: string; generation: string; discoveredAt: string; evidenceUtime: number; event: LedgerEvent }>;
+  nextCursor: string | null;
+  coverage: LedgerCoverage;
 };

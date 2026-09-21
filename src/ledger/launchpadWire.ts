@@ -29,13 +29,15 @@ export function launchpadCommand(message?: RawMessage) {
     const cell = bodyCell(message); if (!cell) return null;
     const s = cell.beginParse(), opcode = s.loadUint(32), queryId = s.loadUintBig(64).toString(), bodyHash = cell.hash().toString('hex');
     if (opcode === LAUNCHPAD_CONTRIBUTE) {
-      const rewardWallet = maybeAddress(s), refundWallet = maybeAddress(s); end(s);
-      return { opcode, kind: 'contribute' as const, queryId, rewardWallet, refundWallet, bodyHash };
+      const rewardWallet = maybeAddress(s), refundWallet = maybeAddress(s), referral = s.loadRef().beginParse();
+      const referrer = maybeAddress(referral); end(referral); end(s);
+      return { opcode, kind: 'contribute' as const, queryId, rewardWallet, refundWallet, referrer, bodyHash };
     }
     if (opcode === LAUNCHPAD_BID) {
       const maxPriceRaw = s.loadCoins().toString(), quantityRaw = s.loadCoins().toString();
-      const rewardWallet = maybeAddress(s), refundWallet = maybeAddress(s); end(s);
-      return { opcode, kind: 'bid' as const, queryId, maxPriceRaw, quantityRaw, rewardWallet, refundWallet, bodyHash };
+      const rewardWallet = maybeAddress(s), refundWallet = maybeAddress(s), referral = s.loadRef().beginParse();
+      const referrer = maybeAddress(referral); end(referral); end(s);
+      return { opcode, kind: 'bid' as const, queryId, maxPriceRaw, quantityRaw, rewardWallet, refundWallet, referrer, bodyHash };
     }
     if (opcode === LAUNCHPAD_CLAIM) { const beneficiary = maybeAddress(s); end(s); return { opcode, kind: 'claim' as const, queryId, beneficiary, bodyHash }; }
     if (opcode === LAUNCHPAD_FINALIZE) { end(s); return { opcode, kind: 'finalize-sale' as const, queryId, bodyHash }; }

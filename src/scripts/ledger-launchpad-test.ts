@@ -59,7 +59,7 @@ const refund = async (f: Fixture) => {
   return {projection,event:projection.events.find(e=>e.kind==='launchpad_refund')};
 };
 function saleTransaction(f:Fixture,kind:'claim'|'succeeded'|'finalized') {
-  const tx=f.input.chains.get(f.accounts.sale)!.transactions.find(t=>kind==='claim' ? launchpadCommand(t.inMessage)?.kind==='claim' : launchpadSettlementTuple(t.inMessage)?.kind===kind && launchpadSettlementTuple(t.inMessage)?.queryId==='3');
+  const tx=f.input.chains.get(f.accounts.sale)!.transactions.find(t=>kind==='claim' ? launchpadCommand(t.inMessage)?.kind==='claim' : launchpadSettlementTuple(t.inMessage)?.kind===kind && launchpadSettlementTuple(t.inMessage)?.queryId===f.trace.facts.refundWireId);
   assert(tx); return tx;
 }
 const afterState=(f:Fixture,account:string,tx:RawTransaction)=>f.states.get(stateKey(account,tx.lt,tx.hash))!;
@@ -79,9 +79,9 @@ function dropFrom(f:Fixture,account:string,lt:string) {
 function changeJournal(f:Fixture,tx:RawTransaction,changes:{status?:number;reservedPayment?:bigint;currentPayment?:bigint;tailPayment?:bigint;nextSettlement?:bigint}) {
   const snapshot=afterState(f,f.accounts.sale,tx),root=Cell.fromBase64(snapshot.state.dataBoc!),state=root.refs[3],journal=state.refs[3],j=journal.beginParse();
   const entries=j.loadDict(Dictionary.Keys.BigUint(64),Dictionary.Values.Cell()),next=j.loadUintBig(64),current=j.loadUintBig(64),currentSale=j.loadUintBig(64),tail=j.loadUintBig(64),tailSale=j.loadUintBig(64),reserve=j.loadCoins(),reserveSale=j.loadCoins();
-  if(changes.status!==undefined){const record=entries.get(3n)!;const r=record.beginParse();const id=r.loadUintBig(64),request=r.loadUintBig(256),amount=r.loadCoins(),forward=r.loadCoins(),route=r.loadUint(8),kind=r.loadUint(8);r.loadUint(8);
-    entries.set(3n,beginCell().storeUint(id,64).storeUint(request,256).storeCoins(amount).storeCoins(forward).storeUint(route,8).storeUint(kind,8).storeUint(changes.status,8).storeSlice(r).endCell());}
-  const updated=beginCell().storeDict(entries).storeUint(changes.nextSettlement??next,64).storeUint(changes.currentPayment??current,64).storeUint(currentSale,64).storeUint(changes.tailPayment??tail,64).storeUint(tailSale,64).storeCoins(changes.reservedPayment??reserve).storeCoins(reserveSale).endCell();
+  if(changes.status!==undefined){const record=entries.get(BigInt(f.trace.facts.refundWireId))!;const r=record.beginParse();const referral=r.loadUintBig(64),accounting=r.loadUint(8),successor=r.loadUintBig(64),id=r.loadUintBig(64),request=r.loadUintBig(256),amount=r.loadCoins(),forward=r.loadCoins(),route=r.loadUint(8),kind=r.loadUint(8);r.loadUint(8);
+    entries.set(BigInt(f.trace.facts.refundWireId),beginCell().storeUint(referral,64).storeUint(accounting,8).storeUint(successor,64).storeUint(id,64).storeUint(request,256).storeCoins(amount).storeCoins(forward).storeUint(route,8).storeUint(kind,8).storeUint(changes.status,8).storeSlice(r).endCell());}
+  const updated=beginCell().storeDict(entries).storeUint(changes.nextSettlement??next,64).storeUint(changes.currentPayment??current,64).storeUint(currentSale,64).storeUint(changes.tailPayment??tail,64).storeUint(tailSale,64).storeCoins(changes.reservedPayment??reserve).storeCoins(reserveSale).storeSlice(j).endCell();
   const newState=beginCell().storeBits(state.bits);for(let i=0;i<4;i++)newState.storeRef(i===3?updated:state.refs[i]);
   const newRoot=beginCell().storeBits(root.bits);for(let i=0;i<4;i++)newRoot.storeRef(i===3?newState.endCell():root.refs[i]);
   snapshot.state.dataBoc=newRoot.endCell().toBoc().toString('base64');readFixedSaleState(snapshot.state.dataBoc);
@@ -89,7 +89,7 @@ function changeJournal(f:Fixture,tx:RawTransaction,changes:{status?:number;reser
 
 async function guardedTransfers() {
   const a=(n:number)=>`0:${n.toString(16).padStart(64,'0')}`,owner=a(1),ownerWallet=a(2),sale=a(3),saleWallet=a(4),master=a(5);
-  const msg=(source:string,destination:string,body:Cell,createdLt:string):RawMessage=>({source,destination,body:body.toBoc().toString('base64'),op:body.beginParse().preloadUint(32),value:'200',createdLt,forwardFeeRaw:'3',ihrFeeRaw:'0',bounced:false});
+  const msg=(source:string,destination:string,body:Cell,createdLt:string):RawMessage=>({source,destination,body:body.toBoc().toString('base64'),op:body.beginParse().preloadUint(32),value:'200',createdLt,forwardFeeRaw:'3',extraFlagsRaw:'0',bounced:false});
   const tx=(lt:string,inMessage:RawMessage|undefined,outMessages:RawMessage[],fee:string):RawTransaction=>({lt,hash:hash(lt),utime:1750000000+Number(lt),success:true,status:'success',totalFeesRaw:fee,inMessage,outMessages});
   const asset=(wallet:string,holder:string):LedgerAsset=>({kind:'jetton',id:`testnet:jetton:${master}`,master,wallet,owner:holder,decimals:9});
   const payloads=[['CNTR',beginCell().storeUint(0x434e5452,32).storeUint(7,64).storeAddress(Address.parse(owner)).storeAddress(Address.parse(owner)).endCell(),true],
@@ -119,13 +119,13 @@ export async function testLaunchpadRefunds() {
   const f=launchpadFixture(),positive=await refund(f),e=positive.event;
   assert(e,'Authentic failed fixed-sale CLAM must create a refund operation');
   assert.equal(e.settlement?.status,'confirmed',JSON.stringify(e.issues));
-  assert.equal(e.settlement?.launchpad?.settlementId,'3');assert.equal(e.settlement?.launchpad?.amountRaw,'4000000000');
+  assert.equal(e.settlement?.launchpad?.settlementId,f.trace.facts.refundWireId);assert.equal(e.settlement?.launchpad?.amountRaw,'4000000000');
   assert.equal(e.settlement?.launchpad?.factory,f.accounts.creator);assert.equal(e.settlement?.launchpad?.claimQueryId,'9');
   const cash=e.movements.filter(m=>m.asset.kind==='jetton');assert.equal(cash.length,1);assert.equal(cash[0].direction,'in');assert.equal(cash[0].amountRaw,'4000000000');
-  assert.equal(cash[0].purpose,'launchpad_refund');assert.equal(cash[0].evidence.kind,'jetton_transfer');assert.equal(cash[0].evidence.queryId,'3');
+  assert.equal(cash[0].purpose,'launchpad_refund');assert.equal(cash[0].evidence.kind,'jetton_transfer');assert.equal(cash[0].evidence.queryId,f.trace.facts.refundWireId);
   assert(e.settlement!.launchpad!.stateEvidence.every(v=>v.transaction.hash===canonicalLedgerHash(v.transaction.hash)));
   assert.deepEqual(e.settlement!.launchpad!.stateEvidence.map(v=>v.purpose).sort(),['contribution','delivery','finalization','refund-enqueue']);
-  assert(!cash.some(m=>m.amountRaw==='960000000'),'Creator escrow is never participant refund');
+  assert(!cash.some(m=>m.amountRaw===f.trace.facts.creatorEscrowRaw),'Creator escrow is never participant refund');
   const original=positive.projection.events.find(x=>x.movements.some(m=>m.direction==='out'&&m.asset.kind==='jetton'&&m.amountRaw==='4000000000'))!;
   assert(original && original.id!==e.id);assert(original.utime<e.utime);assert.equal(original.kind,'launchpad_participation');assert.equal(original.settlement?.status,'confirmed');
 
@@ -133,7 +133,7 @@ export async function testLaunchpadRefunds() {
     'wrong-original-source-wallet-code':f=>{const b=f.trace.boundaries.find(b=>b.phase==='contribution'&&b.account===f.accounts.ownerPaymentWallet)!;f.states.get(stateKey(b.account,b.transactionLt,b.transactionHash))!.state.codeBoc=Cell.EMPTY.toBoc().toString('base64');},
     'wrong-original-credit-wallet-code':f=>{const b=f.trace.boundaries.find(b=>b.phase==='contribution'&&b.account===f.accounts.paymentSaleWallet)!;f.states.get(stateKey(b.account,b.transactionLt,b.transactionHash))!.state.codeBoc=Cell.EMPTY.toBoc().toString('base64');},
     'missing-original-owner-request':f=>{const c=f.input.chains.get(f.accounts.owner)!;c.transactions=c.transactions.filter(t=>!t.outMessages.some(m=>m.destination===f.accounts.ownerPaymentWallet && m.op===TRANSFER));},
-    'missing-original-payment':f=>{const c=f.input.chains.get(f.accounts.ownerPaymentWallet)!;c.transactions=c.transactions.filter(t=>t.inMessage?.op!==TRANSFER||launchpadSettlementTransfer(t.inMessage)?.queryId==='3'||!t.outMessages.some(m=>m.destination===f.accounts.paymentSaleWallet));},
+    'missing-original-payment':f=>{const c=f.input.chains.get(f.accounts.ownerPaymentWallet)!;c.transactions=c.transactions.filter(t=>t.inMessage?.op!==TRANSFER||launchpadSettlementTransfer(t.inMessage)?.queryId===f.trace.facts.refundWireId||!t.outMessages.some(m=>m.destination===f.accounts.paymentSaleWallet));},
     'missing-sale-history':f=>{f.input.chains.get(f.accounts.sale)!.historyComplete=false;},
     'missing-owner-history':f=>{f.input.chains.get(f.accounts.owner)!.historyComplete=false;},
     'missing-wallet-history':f=>{f.input.chains.get(f.accounts.ownerPaymentWallet)!.historyComplete=false;},
@@ -143,14 +143,14 @@ export async function testLaunchpadRefunds() {
     'missing-claim-before':f=>{const tx=saleTransaction(f,'claim');f.states.delete(stateKey(f.accounts.sale,tx.prevTransactionLt!,tx.prevTransactionHash!));},
     'missing-final-state':f=>{const tx=saleTransaction(f,'finalized');f.states.delete(stateKey(f.accounts.sale,tx.lt,tx.hash));},
     'foreign-wallet-owner':f=>{f.input.wallets.get(f.accounts.ownerPaymentWallet)!.owner=f.accounts.creator;},
-    'wrong-dispatch-amount':f=>{const m={...saleTransaction(f,'claim').outMessages.find(m=>m.destination===f.accounts.paymentSaleWallet&&m.op===TRANSFER)!};const wire=launchpadSettlementTransfer(m)!;const body=beginCell().storeUint(TRANSFER,32).storeUint(3,64).storeCoins(3999999999n).storeAddress(Address.parse(wire.recipientOwner)).storeAddress(Address.parse(wire.responseOwner)).storeRef(beginCell().storeUint(0x4a535454,32).endCell()).storeCoins(0).storeRef(Cell.EMPTY).endCell();changeMessage(f,m,body);},
-    'wrong-actual-recipient-code':f=>{const tx=f.input.chains.get(f.accounts.ownerPaymentWallet)!.transactions.find(t=>launchpadInternalSettlementTransfer(t.inMessage)?.queryId==='3')!;afterState(f,f.accounts.ownerPaymentWallet,tx).state.codeBoc=Cell.EMPTY.toBoc().toString('base64');},
-    'wrong-callback-amount':f=>{const m={...saleTransaction(f,'succeeded').inMessage!};changeMessage(f,m,tuple(0x4a535543,'3','3999999999',f.accounts.ownerPaymentWallet));},
+    'wrong-dispatch-amount':f=>{const m={...saleTransaction(f,'claim').outMessages.find(m=>m.destination===f.accounts.paymentSaleWallet&&m.op===TRANSFER)!};const wire=launchpadSettlementTransfer(m)!;const body=beginCell().storeUint(TRANSFER,32).storeUint(BigInt(f.trace.facts.refundWireId),64).storeCoins(3999999999n).storeAddress(Address.parse(wire.recipientOwner)).storeAddress(Address.parse(wire.responseOwner)).storeRef(beginCell().storeUint(0x4a535454,32).endCell()).storeCoins(0).storeRef(Cell.EMPTY).endCell();changeMessage(f,m,body);},
+    'wrong-actual-recipient-code':f=>{const tx=f.input.chains.get(f.accounts.ownerPaymentWallet)!.transactions.find(t=>launchpadInternalSettlementTransfer(t.inMessage)?.queryId===f.trace.facts.refundWireId)!;afterState(f,f.accounts.ownerPaymentWallet,tx).state.codeBoc=Cell.EMPTY.toBoc().toString('base64');},
+    'wrong-callback-amount':f=>{const m={...saleTransaction(f,'succeeded').inMessage!};changeMessage(f,m,tuple(0x4a535543,f.trace.facts.refundWireId,'3999999999',f.accounts.ownerPaymentWallet));},
     'wrong-callback-query':f=>{const m={...saleTransaction(f,'succeeded').inMessage!};changeMessage(f,m,tuple(0x4a535543,'4','4000000000',f.accounts.ownerPaymentWallet));},
-    'foreign-callback-wallet':f=>{const m={...saleTransaction(f,'succeeded').inMessage!};changeMessage(f,m,tuple(0x4a535543,'3','4000000000',f.accounts.ownerPaymentWallet),f.accounts.creatorPaymentWallet);},
-    'truncated-callback':f=>{const m={...saleTransaction(f,'succeeded').inMessage!};changeMessage(f,m,beginCell().storeUint(0x4a535543,32).storeUint(3,64).endCell());},
+    'foreign-callback-wallet':f=>{const m={...saleTransaction(f,'succeeded').inMessage!};changeMessage(f,m,tuple(0x4a535543,f.trace.facts.refundWireId,'4000000000',f.accounts.ownerPaymentWallet),f.accounts.creatorPaymentWallet);},
+    'truncated-callback':f=>{const m={...saleTransaction(f,'succeeded').inMessage!};changeMessage(f,m,beginCell().storeUint(0x4a535543,32).storeUint(BigInt(f.trace.facts.refundWireId),64).endCell());},
     'duplicate-callback':f=>{const tx=saleTransaction(f,'succeeded');f.input.chains.get(f.accounts.sale)!.transactions.push({...tx,lt:(BigInt(tx.lt)+1n).toString(),hash:hash('duplicate-callback')});},
-    'replay-is-not-finalized':f=>{const m={...saleTransaction(f,'finalized').inMessage!};changeMessage(f,m,tuple(0x4a535250,'3','4000000000',f.accounts.ownerPaymentWallet));},
+    'replay-is-not-finalized':f=>{const m={...saleTransaction(f,'finalized').inMessage!};changeMessage(f,m,tuple(0x4a535250,f.trace.facts.refundWireId,'4000000000',f.accounts.ownerPaymentWallet));},
     'delivered-without-finalization':f=>{const tx=saleTransaction(f,'finalized');dropFrom(f,f.accounts.sale,tx.lt);},
     'null-factory-does-not-prove-finalized-sale':f=>{f.input.launchpadSales!.get(f.accounts.sale)!.factory=null;},
     'terminal-status-without-reserve-release':f=>{const tx=saleTransaction(f,'finalized');changeJournal(f,tx,{reservedPayment:4960000000n});},
@@ -160,7 +160,7 @@ export async function testLaunchpadRefunds() {
     'terminal-over-releases-reserve':f=>{const tx=saleTransaction(f,'finalized');changeJournal(f,tx,{reservedPayment:0n});},
     'terminal-changes-next-wire':f=>{const tx=saleTransaction(f,'finalized');changeJournal(f,tx,{nextSettlement:6n});},
     'terminal-wrong-snapshot-hash':f=>{const tx=saleTransaction(f,'finalized');afterState(f,f.accounts.sale,tx).state.lastTxHash=hash('foreign-state');},
-    'failed-credit':f=>{const tx=f.input.chains.get(f.accounts.ownerPaymentWallet)!.transactions.find(t=>launchpadInternalSettlementTransfer(t.inMessage)?.queryId==='3')!;tx.success=false;tx.status='failed';},
+    'failed-credit':f=>{const tx=f.input.chains.get(f.accounts.ownerPaymentWallet)!.transactions.find(t=>launchpadInternalSettlementTransfer(t.inMessage)?.queryId===f.trace.facts.refundWireId)!;tx.success=false;tx.status='failed';},
   };
   for(const[name,mutate]of Object.entries(cases)){const fixture=launchpadFixture();mutate(fixture);const result=await refund(fixture);assert.notEqual(result.event?.settlement?.status,'confirmed',name);assert(!result.projection.events.some(e=>e.settlement?.status==='confirmed'&&e.movements.some(m=>m.purpose==='launchpad_refund')),name);}
   const unqualified=launchpadFixture();unqualified.input.launchpadSales=new Map();
@@ -173,7 +173,7 @@ export async function testLaunchpadRefunds() {
   const pending=launchpadFixture(),terminal=saleTransaction(pending,'finalized');dropFrom(pending,pending.accounts.sale,terminal.lt);
   const partial=await refund(pending);assert(partial.event);assert.equal(partial.event.id,e.id,'Late missing callback preserves original claim identity');assert.equal(partial.event.settlement?.status,'incomplete');
   assert.equal(partial.event.movements.filter(m=>m.asset.kind==='jetton'&&m.direction==='in').reduce((s,m)=>s+BigInt(m.amountRaw),0n),4000000000n,'Actual observed credit retained once despite missing later finalizer');
-  const noCredit=launchpadFixture();const creditTx=noCredit.input.chains.get(noCredit.accounts.ownerPaymentWallet)!.transactions.find(t=>launchpadInternalSettlementTransfer(t.inMessage)?.queryId==='3')!;
+  const noCredit=launchpadFixture();const creditTx=noCredit.input.chains.get(noCredit.accounts.ownerPaymentWallet)!.transactions.find(t=>launchpadInternalSettlementTransfer(t.inMessage)?.queryId===f.trace.facts.refundWireId)!;
   for(const chain of noCredit.input.chains.values())chain.transactions=chain.transactions.filter(t=>BigInt(t.lt)<BigInt(creditTx.lt));
   const waiting=await refund(noCredit);assert.equal(waiting.event?.id,e.id);assert.equal(waiting.event?.settlement?.status,'incomplete');
   assert.equal(waiting.event?.movements.filter(m=>m.asset.kind==='jetton').length,0,'Dispatched request cannot fabricate an unobserved refund credit');

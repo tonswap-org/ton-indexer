@@ -8,7 +8,6 @@ import { readOptionFactoryConfig } from "./optionLifecycleState";
 import { readOptionPositionState } from "./optionState";
 import {
   optionClaimReceipt,
-  optionIngressClaimIdentity,
   optionPositionClaimIdentity,
 } from "./optionLifecycleWire";
 import {
@@ -17,7 +16,9 @@ import {
   optionUnique as unique,
   proveOptionCash,
 } from "./optionCash";
-import { NOTIFY, tokenWire, bodyCell } from "./wire";
+import { bodyCell } from "./wire";
+import { perpsWalletAddress } from "./perpsWire";
+import { optionPhysicalIngress } from "./optionIngress";
 export async function decodeOptionRefunds(
   input: ProjectionInput,
   nodes: Node[],
@@ -63,7 +64,8 @@ export async function decodeOptionRefunds(
         positionId: string | undefined,
         queryId: string | undefined,
         payloadHash: string | undefined,
-        originalRequestBodyHash: string | undefined;
+        originalRequestBodyHash: string | undefined,
+        ingress: NonNullable<ReturnType<typeof optionPhysicalIngress>> | undefined;
       const group: Node[] = [n],
         fundingIds: string[] = [];
       if (claim.kind === 3) {
@@ -95,26 +97,21 @@ export async function decodeOptionRefunds(
         }
         if (!seriesId || !positionId) continue;
       } else {
-        const originals = nodes.filter((o) => {
-          const wire = tokenWire(o.raw.inMessage);
-          return (
-            o.account === factory.address &&
-            ok(o) &&
-            BigInt(o.raw.lt) <= BigInt(n.raw.lt) &&
-            wire?.op === NOTIFY &&
-            wire.owner === claim.owner &&
-            wire.amountRaw === claim.amountRaw &&
-            optionIngressClaimIdentity(
-              claim.owner,
-              wire.queryId,
-              claim.amountRaw,
-              wire.forward.hash().toString("hex"),
-            ) === claim.identityHash
-          );
+        const factoryWallet = perpsWalletAddress(factory.walletCode, factory.collateralRoot, factory.address);
+        const originals = nodes.flatMap((o) => {
+          const physical = optionPhysicalIngress(o.raw.inMessage, factoryWallet, factory.address);
+          return o.account === factory.address && ok(o) && BigInt(o.raw.lt) <= BigInt(n.raw.lt) &&
+            physical && BigInt(physical.notificationCreatedLt) < BigInt(o.raw.lt) &&
+            physical.wire.owner === claim.owner && physical.wire.amountRaw === claim.amountRaw &&
+            physical.physicalIdentity === claim.identityHash ? [{ original: o, physical }] : [];
         });
         if (originals.length !== 1) continue;
-        const original = originals[0],
-          wire = tokenWire(original.raw.inMessage)!;
+        const { original, physical } = originals[0], wire = physical.wire;
+        ingress = physical;
+        const logical = BigInt("0x" + physical.logicalIdentity), claimId = BigInt(claim.claimId);
+        if (boundary.after.ingressClaimAttempts.get(claimId) !== logical ||
+            boundary.after.ingressReceipts.get(physical.logicalIdentity)?.refunds.get(claimId) !== true ||
+            boundary.after.claimIndex.get(BigInt("0x" + claim.identityHash)) !== claimId) continue;
         const funding = flows.filter(
           (f) =>
             f.sourceAsset.owner === claim.owner &&
@@ -125,10 +122,19 @@ export async function decodeOptionRefunds(
             f.wire.amountRaw === claim.amountRaw &&
             f.wire.forward.hash().equals(wire.forward.hash()) &&
             f.recipient.raw.outMessages.some(
-              (_, i) => receiptFor(f.recipient, i)?.id === original.id,
+              (m, i) => receiptFor(f.recipient, i)?.id === original.id &&
+                optionPhysicalIngress(m, factoryWallet, factory.address)?.physicalIdentity === physical.physicalIdentity,
             ),
         );
         if (funding.length !== 1) continue;
+        const acceptedAt = await optionBoundary(input, original, q.factoryCodeHash, readOptionFactoryConfig);
+        if (!acceptedAt || acceptedAt.before.claimIndex.has(BigInt("0x" + physical.physicalIdentity)) ||
+            acceptedAt.after.claimIndex.get(BigInt("0x" + physical.physicalIdentity)) !== claimId ||
+            acceptedAt.before.ingressReceipts.get(physical.logicalIdentity)?.refunds.has(claimId) ||
+            acceptedAt.after.ingressReceipts.get(physical.logicalIdentity)?.refunds.get(claimId) !== true ||
+            acceptedAt.after.ingressClaimAttempts.get(claimId) !== logical ||
+            (acceptedAt.before.ingressReceipts.get(physical.logicalIdentity)?.accepted ?? false) !==
+              acceptedAt.after.ingressReceipts.get(physical.logicalIdentity)?.accepted) continue;
         queryId = wire.queryId;
         payloadHash = wire.forward.hash().toString("hex");
         originalRequestBodyHash = bodyCell(funding[0].source.raw.inMessage)
@@ -178,6 +184,15 @@ export async function decodeOptionRefunds(
         terminal.after.claimIndex.get(BigInt("0x" + claim.identityHash)) !== 0n
       )
         continue;
+      if (ingress) {
+        const id = BigInt(claim.claimId), logical = BigInt("0x" + ingress.logicalIdentity),
+          beforeReceipt = terminal.before.ingressReceipts.get(ingress.logicalIdentity),
+          afterReceipt = terminal.after.ingressReceipts.get(ingress.logicalIdentity);
+        if (terminal.before.ingressClaimAttempts.get(id) !== logical ||
+            beforeReceipt?.refunds.get(id) !== true || !afterReceipt ||
+            beforeReceipt.accepted !== afterReceipt.accepted || afterReceipt.refunds.has(id) ||
+            terminal.after.ingressClaimAttempts.has(id)) continue;
+      }
       const receipts = cash.terminal.raw.outMessages.flatMap((m, i) => {
         const r = optionClaimReceipt(m),
           delivered = receiptFor(cash.terminal, i);
@@ -205,13 +220,14 @@ export async function decodeOptionRefunds(
         anchor = cash.credit;
       const credit =
         flow && anchor.event?.movements.find((m) => m.id === `${flow.id}:in`);
-      if (!flow || !credit || !anchor.event) continue;
+      if (!flow || !credit || !anchor.event || (credit.evidence.kind === "native_message" || credit.evidence.kind === "transaction_fee" || credit.evidence.kind === "message_forward_fee")) continue;
       seen.add(businessKey);
       usedFlows.add(flow.id);
       fundingIds.forEach((id) => usedFlows.add(id));
+      const tokenEvidence: Omit<typeof credit.evidence, "transactionStatus"> = credit.evidence;
       credit.purpose = "option_refund";
       credit.evidence = {
-        ...credit.evidence,
+        ...tokenEvidence,
         ...terminal.evidence,
         kind: "option_refund",
         transactions: unique(group).map(ref),
@@ -243,6 +259,7 @@ export async function decodeOptionRefunds(
           scope: "individual_claim",
           claimId: claim.claimId,
           identityHash: claim.identityHash,
+          ...(ingress ? { logicalIdentityHash: ingress.logicalIdentity, notificationCreatedLt: ingress.notificationCreatedLt, notificationBodyHash: ingress.notificationBodyHash, sourceWallet: ingress.sourceWallet } : {}),
           queryId,
           payloadHash,
           beforeClaim: before,

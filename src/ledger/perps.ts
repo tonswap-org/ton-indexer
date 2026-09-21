@@ -1,9 +1,10 @@
+import { chainCoversTransaction } from "./project";
 import { Cell } from "@ton/core";
 import { createHash } from "node:crypto";
 import type { Flow, Node, ProjectionInput } from "./project";
 import type { LedgerEvent, LedgerEvidenceRef, LedgerMovement } from "./types";
 import { canonicalLedgerAddress, canonicalLedgerHash } from "./normalize";
-import { NOTIFY, SETTLEMENT_INTERNAL, tokenWire } from "./wire";
+import { NOTIFY, SETTLEMENT_INTERNAL, tokenWire, opcode } from "./wire";
 import {
   perpsControl,
   perpsMessage,
@@ -17,7 +18,9 @@ import {
   perpsPosition,
   readPerpsState,
 } from "./perpsState";
+import { provePerpsCounterpartyPayment } from "./perpsCounterparty";
 import { perpsEconomics } from "./perpsEconomics";
+import { readPerpsOracleExecution } from './perpsOracle';
 export type LedgerPerpsEngine = {
   address: string;
   root: string;
@@ -64,7 +67,7 @@ export async function decodePerps(
     usedFlows = new Set<string>(),
     consumedRetries = new Set<string>();
   const complete = (ns: Node[]) =>
-    unique(ns).every((n) => input.chains.get(n.account)?.historyComplete);
+    unique(ns).every((n) => chainCoversTransaction(input.chains.get(n.account), n.raw));
   const readBoundary = async (engine: LedgerPerpsEngine, n: Node) => {
     try {
       if (!n.raw.prevTransactionLt || !n.raw.prevTransactionHash) return null;
@@ -87,8 +90,8 @@ export async function decodePerps(
         )
       )
         return null;
-      const before = readPerpsState(b.state.dataBoc),
-        after = readPerpsState(a.state.dataBoc);
+      const before = readPerpsState(b.state.dataBoc, engine.codeHash),
+        after = readPerpsState(a.state.dataBoc, engine.codeHash);
       if (
         [before, after].some(
           (s) =>
@@ -236,9 +239,14 @@ export async function decodePerps(
           outcome: "unresolved",
           depositRaw: deposit?.wire.amountRaw ?? "0",
           payout: { status: "none", amountRaw: "0", evidence: [] },
+          counterpartyPayout: { status: "none", amountRaw: "0", evidence: [] },
           localNetworkFees: [],
         };
-      const states = ok(n) ? await boundary(engine, n) : null;
+      const failedClose = request.operation === "close" && !fundingRequest &&
+        n.raw.success === false && n.raw.status === "failed" && !n.raw.inMessage?.bounced;
+      const intakeStates = ok(n) || failedClose ? await boundary(engine, n) : null;
+      let states = intakeStates;
+      let execution = n;
       let issue = !ok(n)
         ? "perps_execution_failed"
         : !states
@@ -254,8 +262,40 @@ export async function decodePerps(
           (request.owner
             ? ["liquidation", "adl"].includes(request.operation)
             : addr(n.raw.inMessage?.source) === input.owner);
-      const economics =
-        states && authenticated
+      let oracle: Awaited<ReturnType<typeof readPerpsOracleExecution>> = null;
+      const usesOracleContinuation = intakeStates !== null && intakeStates.before.markets.has(request.marketId) &&
+        (['open', 'close'].includes(request.operation) || request.operation === 'modify' &&
+          intakeStates.after.oracleRefreshes.get(request.marketId)?.get(input.owner)?.queryId === request.queryId);
+      if (authenticated && intakeStates && ok(n) && usesOracleContinuation) {
+        oracle = await readPerpsOracleExecution({ owner: input.owner, ownerWallet: engine.ownerWallet, engine: engine.address,
+          request, original: n, intake: intakeStates, engineNodes, boundary: node => boundary(engine, node), receiptFor });
+        if (oracle) {
+          group.push(...oracle.nodes);
+          const receipt = oracle.receipt;
+          meta.oracleExecution = { status: receipt.order!.outcome === 1 ? 'pending' : receipt.order!.outcome === 2 ? 'accepted' : 'rejected',
+            wireQueryId: receipt.wireQueryId, requestHash: receipt.requestHash, nativeBudgetRaw: receipt.order!.nativeBudgetRaw,
+            requestedPool: receipt.order!.pool,
+            reason: receipt.order!.reason, queued: ref(n), pool: oracle.pool ? ref(oracle.pool) : null,
+            completed: oracle.execution ? ref(oracle.execution) : null, intakeEvidence: intakeStates.evidence,
+            intake: { account: perpsAccount(intakeStates.before, input.owner),
+              position: perpsPosition(intakeStates.before, input.owner, request.marketId),
+              pending: perpsPending(intakeStates.before, engine.ownerWallet) } };
+          const vault = intakeStates.after.riskVault, controller = intakeStates.after.markets.get(request.marketId)?.riskPolicy?.controller;
+          const reservation = oracle.nodes.find(node => node.account === vault && opcode(node.raw.inMessage) === 0x52564c54);
+          const vaultResponse = oracle.nodes.find(node => node.account === engine.address && [0x5256414b, 0x52564e4b].includes(opcode(node.raw.inMessage) ?? 0));
+          if (vault && controller && reservation && vaultResponse) {
+            const policyRequest = oracle.nodes.find(node => node.account === controller && opcode(node.raw.inMessage) === 0x52505251);
+            const policyResponse = oracle.nodes.find(node => node.account === engine.address && opcode(node.raw.inMessage) === 0x52505253);
+            meta.oracleExecution.admission = { version: 'perps-funded-admission-v1', vault, controller,
+              reservation: ref(reservation), vaultResponse: ref(vaultResponse),
+              policyRequest: policyRequest ? ref(policyRequest) : null, policyResponse: policyResponse ? ref(policyResponse) : null };
+          }
+          states = oracle.states;
+          if (oracle.execution) execution = oracle.execution;
+        }
+      }
+      let economics =
+        states && authenticated && ok(n)
           ? perpsEconomics(
               states.before,
               states.after,
@@ -265,6 +305,13 @@ export async function decodePerps(
               meta.depositRaw,
             )
           : null;
+      if (usesOracleContinuation && economics) {
+        // Linear OPEN/CLOS admission happens only at the authenticated oracle
+        // continuation. An ingress refund is still a provable rejection.
+        if ((economics.outcome === 'accepted' && !oracle?.execution) ||
+            (oracle && (oracle.receipt.order!.outcome === 1 ||
+              economics.outcome !== (oracle.receipt.order!.outcome === 2 ? 'accepted' : 'rejected')))) economics = null;
+      }
       if (states) {
         meta.before = {
           account: perpsAccount(states.before, input.owner),
@@ -278,23 +325,38 @@ export async function decodePerps(
         };
         meta.stateEvidence = states.evidence;
       }
+      // A direct CLOSE carries no collateral. A failed VM execution can only
+      // terminally reject it when the exact qualified state is unchanged and a
+      // successful owner transaction delivered the original request.
+      const rejectedClose = Boolean(failedClose && authenticated && states &&
+        states.before.dataHash === states.after.dataHash &&
+        group.some(member => member.account === input.owner && ok(member) &&
+          member.raw.outMessages.some((_, index) => receiptFor(member, index)?.id === n.id)));
       if (!authenticated) issue = "perps_request_identity_unverified";
-      else if (states && !economics)
+      else if (oracle && !oracle.execution) issue = 'perps_oracle_execution_pending';
+      else if (states && !economics && !rejectedClose)
         issue = "perps_economic_conservation_unverified";
+      const needsCustodyHistory = BigInt(meta.depositRaw) > 0n || BigInt(economics?.payoutContributionRaw ?? '0') > 0n;
       const verified = Boolean(
-        economics &&
+        (economics || rejectedClose) &&
           complete(group) &&
-          input.chains.get(engine.ownerWallet)?.historyComplete &&
-          input.chains.get(engine.engineWallet)?.historyComplete,
+          (!needsCustodyHistory ||
+            (input.chains.get(engine.ownerWallet)?.historyComplete || input.chains.get(engine.ownerWallet)?.verifiedRange) &&
+            (input.chains.get(engine.engineWallet)?.historyComplete || input.chains.get(engine.engineWallet)?.verifiedRange)),
       );
-      if (economics && !verified) issue = "perps_related_history_incomplete";
+      if ((economics || rejectedClose) && !verified) issue = "perps_related_history_incomplete";
+      if (verified && rejectedClose) {
+        meta.outcome = "rejected";
+        meta.execution = { status: "failed", transaction: ref(n) };
+        issue = undefined;
+      }
       if (verified && states && economics) {
         meta.outcome = economics.outcome;
         meta.economics = economics;
         if (deposit) usedFlows.add(deposit.id);
         const amount = BigInt(economics.payoutContributionRaw);
         let pending = meta.after!.pending,
-          dispatch = n;
+          dispatch = execution;
         meta.payout = {
           status:
             amount === 0n
@@ -318,7 +380,7 @@ export async function decodePerps(
           pending.amountRaw === amount.toString()
         ) {
           for (const later of engineNodes.filter(
-            (v) => BigInt(v.raw.lt) > BigInt(n.raw.lt),
+            (v) => BigInt(v.raw.lt) > BigInt(execution.raw.lt),
           )) {
             const next = await boundary(engine, later);
             if (!next) break;
@@ -484,12 +546,14 @@ export async function decodePerps(
               if (
                 movement.id === `${flow.id}:in` &&
                 movement.asset.kind === "jetton" &&
+                movement.evidence.kind !== "native_message" && movement.evidence.kind !== "transaction_fee" && movement.evidence.kind !== "message_forward_fee" &&
                 movement.asset.master === engine.root &&
                 movement.direction === "in"
               ) {
+                const tokenEvidence: Omit<typeof movement.evidence, "transactionStatus"> = movement.evidence;
                 movement.purpose = "perps_payout";
                 movement.evidence = {
-                  ...movement.evidence,
+                  ...tokenEvidence,
                   kind: "perps_payout",
                   transactions: unique(evidence).map(ref),
                   stateBeforeHash: terminal.before.dataHash,
@@ -498,6 +562,23 @@ export async function decodePerps(
                   afterSeqno: terminal.evidence.afterSeqno,
                 };
               }
+          }
+        }
+        if (economics.counterpartySettlement && BigInt(economics.counterpartySettlement.amountRaw) > 0n) {
+          const payment = await provePerpsCounterpartyPayment({ input, engine, execution, states, nodes, flows,
+            marketId: request.marketId, claim: economics.counterpartySettlement, receiptFor,
+            boundary: node => boundary(engine, node) });
+          meta.counterpartyPayout = payment.payout;
+          if (payment.payout.status !== 'completed') issue = 'perps_counterparty_payout_pending';
+          group.push(...payment.nodes);
+          if (payment.flow) {
+            usedFlows.add(payment.flow.id);
+            for (const movement of payment.flow.recipient.event?.movements ?? []) {
+              if (movement.id === `${payment.flow.id}:in` && movement.asset.kind === 'jetton' &&
+                  movement.asset.master === engine.root && movement.direction === 'in') {
+                movement.purpose = 'perps_counterparty_profit';
+              }
+            }
           }
         }
         const ownerAsset = input.wallets.get(engine.ownerWallet)!;
@@ -555,7 +636,8 @@ export async function decodePerps(
           const debit = deposit.source.event?.movements.find(
             (m) => m.id === `${deposit.id}:out`,
           );
-          if (debit) {
+          if (debit && debit.evidence.kind !== "native_message" && debit.evidence.kind !== "transaction_fee" && debit.evidence.kind !== "message_forward_fee") {
+            const tokenEvidence: Omit<typeof debit.evidence, "transactionStatus"> = debit.evidence;
             debit.amountRaw = (
               BigInt(debit.amountRaw) - assessedFee
             ).toString();
@@ -566,12 +648,12 @@ export async function decodePerps(
               purpose: "protocol_fee",
               amountRaw: assessedFee.toString(),
               evidence: {
-                ...debit.evidence,
+                ...tokenEvidence,
                 ...states.evidence,
                 transactions: [
                   ref(deposit.source),
                   ref(deposit.recipient),
-                  ref(n),
+                  ref(execution),
                 ],
               },
             });

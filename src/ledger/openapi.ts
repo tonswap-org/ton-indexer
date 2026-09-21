@@ -20,20 +20,19 @@ const perpsSnapshot = {
       required: [
         "collateralRaw",
         "pendingFundingRaw",
-        "crossMargin",
         "referralLinked",
         "openPositionCount",
       ],
       properties: {
         collateralRaw: rawAmount,
         pendingFundingRaw: signedRaw,
-        crossMargin: { type: "integer" },
         referralLinked: { type: "integer" },
         openPositionCount: { type: "integer" },
       },
     },
     position: {
       type: ["object", "null"],
+      required: ["owner", "marketId", "sizeRaw", "marginRaw", "entryNotionalRaw", "lastFundingIndexRaw", "counterparty"],
       properties: {
         owner: { type: "string" },
         marketId: { type: "integer" },
@@ -41,7 +40,11 @@ const perpsSnapshot = {
         marginRaw: rawAmount,
         entryNotionalRaw: rawAmount,
         lastFundingIndexRaw: signedRaw,
-        flags: { type: "integer" },
+        counterparty: {
+          type: "object", additionalProperties: false,
+          required: ["reservedRaw", "pendingFundingRaw", "collectedLossRaw"],
+          properties: { reservedRaw: rawAmount, pendingFundingRaw: rawAmount, collectedLossRaw: rawAmount },
+        },
       },
     },
     pending: {
@@ -184,6 +187,7 @@ const t3RecoveryHub = {
         "outputToken",
         "payoutId",
         "consumed",
+        "referrer",
       ],
       properties: {
         queryId: rawAmount,
@@ -196,6 +200,7 @@ const t3RecoveryHub = {
         outputToken: { type: "integer" },
         payoutId: rawAmount,
         consumed: { type: "integer", enum: [0, 1] },
+        referrer: { type: ["string", "null"] },
       },
     },
   },
@@ -227,7 +232,80 @@ const t3RecoveryBoundary = (state: object) => ({
     },
   },
 });
+const dlmmReceipt = {
+  type: "object", required: ["pool", "owner", "recipient", "binId", "settlementId", "principalRaw", "earnedFeeRaw", "delivery"],
+  description: "Components of exactly one physical receipt. Neither component is an additional cash movement or a country tax classification.",
+  properties: {pool: {type: "string"}, owner: {type: "string"}, recipient: {type: "string"}, binId: {type: "integer"},
+    settlementId: rawAmount, principalRaw: rawAmount, earnedFeeRaw: rawAmount, delivery: evidenceRef},
+};
+const dlmmBoundary = {
+  type: "object", required: ["transaction", "beforeSeqno", "afterSeqno", "beforeDataHash", "beforeAccountState", "afterDataHash", "codeHash"],
+  properties: {transaction: evidenceRef, beforeSeqno: {type: "integer", minimum: 0}, afterSeqno: {type: "integer", minimum: 0},
+    beforeDataHash: {type: ["string", "null"]}, beforeAccountState: {type: "string", enum: ["active", "uninitialized"]},
+    afterDataHash: {type: "string"}, codeHash: {type: "string", pattern: "^[0-9a-f]{64}$"}},
+};
+const dlmmSettlement = {
+  type: "object", required: ["settlementId", "kind", "amountRaw", "sourceWallet", "destinationWallet", "destinationOwner", "requestBodyHash", "requestBodyBoc",
+    "request", "debit", "credit", "acknowledged", "walletFinalized", "poolFinalized", "boundaries"],
+  properties: {settlementId: rawAmount, kind: {type: "integer"}, amountRaw: rawAmount,
+    ...Object.fromEntries(["sourceWallet", "destinationWallet", "destinationOwner", "requestBodyHash", "requestBodyBoc"].map(key => [key, {type: "string"}])),
+    ...Object.fromEntries(["request", "debit", "credit", "acknowledged", "walletFinalized", "poolFinalized"].map(key => [key, evidenceRef])),
+    boundaries: {type: "array", items: dlmmBoundary}},
+};
+const dlmmDelivery = {...dlmmSettlement,
+  required: dlmmSettlement.required.filter(key => !["acknowledged", "walletFinalized", "poolFinalized"].includes(key)),
+  properties: Object.fromEntries(Object.entries(dlmmSettlement.properties).filter(([key]) => !["acknowledged", "walletFinalized", "poolFinalized"].includes(key))),
+};
+const dlmmStateEvidence = {type: "object", required: ["seqno", "dataHash", "transaction"], properties: {
+  seqno: {type: "integer", minimum: 0}, dataHash: {type: "string", pattern: "^[0-9a-f]{64}$"}, transaction: evidenceRef}};
+const dlmmDeposit = {
+  type: "object", additionalProperties: false,
+  required: ["network", "pool", "poolCodeHash", "walletCodeHash", "owner", "binId", "queryId", "sharesBeforeRaw", "sharesAfterRaw", "mintedSharesRaw", "minSharesRaw", "stateBefore", "stateAfter", "contributions"],
+  description: "Original funded provision to an internal DLMM position. Exact contributions bind existing physical movement IDs and qualified state boundaries. No tax ownership, legal date, basis, token precision or fiat valuation is inferred.",
+  properties: {
+    network: {type: "string", enum: ["mainnet", "testnet", "localnet"]},
+    ...Object.fromEntries(["pool", "owner"].map(key => [key, {type: "string"}])),
+    poolCodeHash: hash256, walletCodeHash: hash256, binId: {type: "integer"},
+    ...Object.fromEntries(["queryId", "sharesBeforeRaw", "sharesAfterRaw", "mintedSharesRaw", "minSharesRaw"].map(key => [key, rawAmount])),
+    stateBefore: dlmmStateEvidence, stateAfter: dlmmStateEvidence,
+    contributions: {type: "array", minItems: 2, maxItems: 2, items: {
+      type: "object", additionalProperties: false,
+      required: ["tokenSide", "assetId", "master", "amountRaw", "movementId", "sourceWallet", "destinationWallet", "transferQueryId", "minSharesRaw", "forwardTonRaw", "requestBodyHash", "notificationBodyHash", "origin", "debit", "credit", "acceptance", "boundaries"],
+      properties: {
+        tokenSide: {type: "integer", enum: [0, 1]},
+        ...Object.fromEntries(["assetId", "master", "movementId", "sourceWallet", "destinationWallet"].map(key => [key, {type: "string"}])),
+        ...Object.fromEntries(["amountRaw", "transferQueryId", "minSharesRaw", "forwardTonRaw"].map(key => [key, rawAmount])),
+        requestBodyHash: hash256, notificationBodyHash: hash256,
+        ...Object.fromEntries(["origin", "debit", "credit", "acceptance"].map(key => [key, evidenceRef])),
+        boundaries: {type: "array", minItems: 3, maxItems: 3, items: dlmmBoundary},
+      },
+    }},
+  },
+};
+const dlmmLiquidity = {
+  type: "object", required: ["pool", "poolCodeHash", "walletCodeHash", "owner", "recipient", "binId", "request", "stateBefore", "stateAfter", "sharesBeforeRaw", "sharesAfterRaw", "economics", "payouts"],
+  description: "Current qualified DLMM principal and accrued fee allocation. Collections use proportional requested shares without burning them. A collection is identified by its original transaction, never the shared business query zero. Payouts to another owner carry no invented owned movement. Incomplete evidence remains provisional.",
+  properties: {
+    ...Object.fromEntries(["pool", "poolCodeHash", "walletCodeHash", "owner", "recipient"].map(key => [key, {type: "string"}])), binId: {type: "integer"},
+    request: {type: "object", required: ["opcode", "sharesRaw", "bodyHash", "transaction"], properties: {
+      opcode: {type: "integer", enum: [0x44524d56, 0x44434c4d, 0x44434c54]}, sharesRaw: rawAmount, bodyHash: {type: "string"}, transaction: evidenceRef}},
+    stateBefore: dlmmStateEvidence, stateAfter: dlmmStateEvidence, sharesBeforeRaw: rawAmount, sharesAfterRaw: rawAmount,
+    economics: {type: "object", required: ["principalTRaw", "principalXRaw", "earnedFeeTRaw", "earnedFeeXRaw", "totalTRaw", "totalXRaw"],
+      properties: Object.fromEntries(["principalTRaw", "principalXRaw", "earnedFeeTRaw", "earnedFeeXRaw", "totalTRaw", "totalXRaw"].map(key => [key, rawAmount]))},
+    payouts: {type: "array", minItems: 2, maxItems: 2, items: {type: "object", required: ["tokenSide", "assetId", "master", "sourceWallet", "destinationOwner", "destinationWallet", "settlementId", "totalRaw", "principalRaw", "earnedFeeRaw", "movementId", "delivery", "status", "finalization"], properties: {
+      tokenSide: {type: "integer", enum: [0, 1]},
+      ...Object.fromEntries(["assetId", "master", "sourceWallet", "destinationOwner", "destinationWallet"].map(key => [key, {type: "string"}])),
+      settlementId: {type: ["string", "null"], pattern: "^(0|[1-9][0-9]*)$"}, totalRaw: rawAmount, principalRaw: rawAmount, earnedFeeRaw: rawAmount,
+      movementId: {type: ["string", "null"]}, delivery: {anyOf: [evidenceRef, {type: "null"}]}, status: {type: "string", enum: ["none", "delivered", "unresolved"]},
+      finalization: {type: "string", enum: ["none", "confirmed", "unresolved"]}, deliveryEvidence: dlmmDelivery, settlementEvidence: dlmmSettlement,
+    }}},
+  },
+};
+
 export const ledgerSchemas = {
+  DlmmDepositMetadata: dlmmDeposit,
+  DlmmLiquidityReceipt: dlmmReceipt,
+  DlmmLiquidityMetadata: dlmmLiquidity,
   LedgerT3BurnRecovery: {
     type: "object",
     description:
@@ -353,6 +431,7 @@ export const ledgerSchemas = {
           "perps_collateral",
           "perps_funding",
           "perps_payout",
+          "perps_counterparty_profit",
         ],
       },
       asset: { $ref: "#/components/schemas/LedgerAsset" },
@@ -362,7 +441,13 @@ export const ledgerSchemas = {
       evidence: {
         type: "object",
         required: ["kind"],
+        allOf: [{
+          if: { properties: { kind: { enum: ["native_message", "transaction_fee", "message_forward_fee"] } }, required: ["kind"] },
+          then: { required: ["transactionStatus", "transactions"], properties: { transactions: { minItems: 1, maxItems: 1 } } },
+          else: { not: { required: ["transactionStatus"] } },
+        }],
         properties: {
+          transactionStatus: { type: "string", enum: ["success", "failed"], description: "Terminal outcome of the movement's single original physical transaction. Independent of the enclosing grouped event status." },
           kind: {
             type: "string",
             enum: [
@@ -377,8 +462,6 @@ export const ledgerSchemas = {
               "option_position_delta",
               "option_payout",
               "option_refund",
-              "sccp_burn_record",
-              "sccp_mint",
               "t3_mint",
               "t3_burn",
               "t3_payout",
@@ -386,6 +469,8 @@ export const ledgerSchemas = {
               "perps_payout",
             ],
           },
+          dlmmReceipt: { $ref: "#/components/schemas/DlmmLiquidityReceipt" },
+          dlmmDeposit: { $ref: "#/components/schemas/DlmmDepositMetadata" },
           messageIndex: { type: "integer" },
           opcode: { type: "integer" },
           bodyHash: { type: "string" },
@@ -442,14 +527,13 @@ export const ledgerSchemas = {
               account: { type: "string" },
               method: {
                 type: "string",
-                enum: ["get_sccp_burn_record", "redemption_identity"],
+                enum: ["redemption_identity"],
               },
               args: { type: "array", items: { type: "string" } },
               result: { type: "array", items: { type: "string" } },
               observedAt: { type: "string", format: "date-time" },
             },
-            description:
-              "Authenticated current getter observation. get_sccp_burn_record returns a record BOC in result[0] keyed by the decimal message ID argument. Neither is historical valuation or cross-chain finality.",
+            description: "Authenticated current getter observation.",
           },
         },
       },
@@ -505,7 +589,7 @@ export const ledgerSchemas = {
           status: { type: "string", enum: ["confirmed", "incomplete"] },
           protocol: {
             type: "string",
-            enum: ["dlmm", "jetton", "options", "sccp", "t3", "perps"],
+            enum: ["dlmm", "jetton", "options", "t3", "perps"],
           },
           operation: {
             type: "string",
@@ -513,17 +597,29 @@ export const ledgerSchemas = {
               "swap",
               "lp_deposit",
               "lp_withdraw",
+              "lp_fee_collect",
               "transfer",
               "option_buy",
               "option_exercise",
               "option_refund",
-              "bridge_burn",
-              "bridge_mint",
               "t3_mint",
               "t3_redeem",
               "perps_operation",
             ],
           },
+          dlmmSwap: {
+            type: "object", additionalProperties: false,
+            required: ["poolCodeHash", "paidInputRaw", "consumedInputRaw", "returnedInputRaw", "outputRaw", "inputMovementId", "outputMovementId", "refundMovementId", "acceptance", "finalizations"],
+            properties: {
+              poolCodeHash: {type: "string", pattern: "^[a-f0-9]{64}$", description: "Pool code cell hash authenticated at the exact execution and settlement state boundaries."},
+              paidInputRaw: rawAmount, consumedInputRaw: rawAmount, returnedInputRaw: rawAmount, outputRaw: rawAmount,
+              inputMovementId: {type: "string"}, outputMovementId: {type: ["string", "null"]}, refundMovementId: {type: ["string", "null"]},
+              acceptance: {$ref: "#/components/schemas/LedgerEvidenceRef"},
+              finalizations: {type: "array", minItems: 1, maxItems: 2, items: {$ref: "#/components/schemas/LedgerEvidenceRef"}},
+            },
+            description: "Exact historical swap conservation and independent physical finalization: paid input equals consumed plus returned input. Zero output is a fully returned request, not a trade.",
+          },
+          dlmmLiquidity: { $ref: "#/components/schemas/DlmmLiquidityMetadata" },
           optionLifecycle: {
             type: "object",
             required: [
@@ -634,6 +730,10 @@ export const ledgerSchemas = {
                   },
                   claimId: rawAmount,
                   identityHash: { type: "string" },
+                  logicalIdentityHash: { type: "string" },
+                  notificationCreatedLt: rawAmount,
+                  notificationBodyHash: { type: "string" },
+                  sourceWallet: { type: "string" },
                   queryId: rawAmount,
                   payloadHash: { type: "string" },
                   beforeClaim: { type: "object", additionalProperties: true },
@@ -776,6 +876,7 @@ export const ledgerSchemas = {
               "outcome",
               "depositRaw",
               "payout",
+              "counterpartyPayout",
               "localNetworkFees",
             ],
             properties: {
@@ -790,6 +891,32 @@ export const ledgerSchemas = {
               queryId: rawAmount,
               fundingQueryId: rawAmount,
               depositRaw: rawAmount,
+              oracleExecution: {
+                type: "object",
+                description: "The exact deferred OPEN/CLOS continuation. The original transaction queues the request; only the separate completed transaction proves admission or rejection. State evidence and booked balance movements use that completed transaction's timestamp.",
+                required: ["status", "wireQueryId", "requestHash", "nativeBudgetRaw", "requestedPool", "reason", "queued", "pool", "completed", "intakeEvidence", "intake"],
+                properties: {
+                  status: { type: "string", enum: ["pending", "accepted", "rejected"] },
+                  wireQueryId: rawAmount, requestHash: hash256, nativeBudgetRaw: rawAmount,
+                  requestedPool: { type: "string" },
+                  reason: { type: "integer", enum: [0, 1, 2, 3, 5, 6, 7, 8] },
+                  queued: evidenceRef, pool: { anyOf: [evidenceRef, { type: "null" }] }, completed: { anyOf: [evidenceRef, { type: "null" }] },
+                  intakeEvidence: { type: "object", additionalProperties: true },
+                  intake: perpsSnapshot,
+                  admission: {
+                    type: "object", additionalProperties: false,
+                    description: "Exact funded admission continuation. Accepted OPEN and exposure-increasing MODIFY require both the RiskVault reservation and RiskController policy exchanges; CLOSE is price-only.",
+                    required: ["version", "vault", "controller", "reservation", "vaultResponse", "policyRequest", "policyResponse"],
+                    properties: {
+                      version: { type: "string", const: "perps-funded-admission-v1" },
+                      vault: { type: "string" }, controller: { type: "string" },
+                      reservation: evidenceRef, vaultResponse: evidenceRef,
+                      policyRequest: { anyOf: [evidenceRef, { type: "null" }] },
+                      policyResponse: { anyOf: [evidenceRef, { type: "null" }] },
+                    },
+                  },
+                },
+              },
               outcome: {
                 type: "string",
                 enum: ["accepted", "rejected", "retry", "unresolved"],
@@ -819,7 +946,6 @@ export const ledgerSchemas = {
                   marginRaw: { type: "string" },
                   limitPriceRaw: rawAmount,
                   leverageBps: { type: "integer" },
-                  flags: { type: "integer" },
                   referrer: { type: ["string", "null"] },
                 },
               },
@@ -839,6 +965,10 @@ export const ledgerSchemas = {
                   "badDebtRaw",
                   "tradedNotionalRaw",
                   "executedSizeRaw",
+                  "counterpartyProfitRaw",
+                  "counterpartyLossRaw",
+                  "uncollectedLossRaw",
+                  "counterpartySettlement",
                 ],
                 properties: {
                   outcome: {
@@ -855,6 +985,14 @@ export const ledgerSchemas = {
                   badDebtRaw: rawAmount,
                   tradedNotionalRaw: rawAmount,
                   executedSizeRaw: signedRaw,
+                  counterpartyProfitRaw: { ...rawAmount, description: "Profit authorized against this position's exact funded LP reserve. This is a claim, not physical payout evidence." },
+                  counterpartyLossRaw: { ...rawAmount, description: "Actual trader collateral debited and queued for the LP loss deposit journal; separate deposit completion evidence is required." },
+                  uncollectedLossRaw: rawAmount,
+                  counterpartySettlement: {
+                    type: ["object", "null"], additionalProperties: false,
+                    required: ["actionId", "requestHash", "beneficiary", "amountRaw"],
+                    properties: { actionId: rawAmount, requestHash: hash256, beneficiary: { type: "string" }, amountRaw: rawAmount },
+                  },
                 },
               },
               stateEvidence: {
@@ -892,6 +1030,29 @@ export const ledgerSchemas = {
                   amountRaw: rawAmount,
                   wireId: rawAmount,
                   evidence: { type: "array", items: evidenceRef },
+                },
+              },
+              counterpartyPayout: {
+                type: "object", additionalProperties: false,
+                description: "Separate LP-funded profit payment. A reservation or authorized RVPS claim remains pending until exact token-wallet delivery, RiskVault finality and the authenticated engine RVPH hook are all proven.",
+                required: ["status", "amountRaw", "evidence"],
+                properties: {
+                  status: { type: "string", enum: ["none", "pending", "completed"] },
+                  amountRaw: rawAmount, evidence: { type: "array", items: evidenceRef },
+                  proof: {
+                    type: "object", additionalProperties: false,
+                    required: ["version", "vault", "vaultCodeHash", "rvWallet", "beneficiaryOwner", "beneficiaryWallet", "payoutWireQueryId", "actionId", "bucketId", "positionId", "priorActionId", "priorRequestHash", "requestHash", "amountRaw", "reservation", "dispatch", "delivery", "walletFinality", "hook"],
+                    properties: {
+                      version: { type: "string", const: "perps-counterparty-payment-v1" },
+                      vault: { type: "string" }, vaultCodeHash: hash256, rvWallet: { type: "string" },
+                      beneficiaryOwner: { type: "string" }, beneficiaryWallet: { type: "string" },
+                      payoutWireQueryId: rawAmount, actionId: rawAmount,
+                      bucketId: { type: "integer", minimum: 1, maximum: 65535 }, positionId: hash256,
+                      priorActionId: rawAmount, priorRequestHash: hash256, requestHash: hash256, amountRaw: rawAmount,
+                      reservation: evidenceRef, dispatch: evidenceRef, delivery: evidenceRef,
+                      walletFinality: evidenceRef, hook: evidenceRef,
+                    },
+                  },
                 },
               },
               localNetworkFees: {
@@ -938,6 +1099,7 @@ export const ledgerSchemas = {
               queryId: rawAmount,
               amountRaw: { type: ["string", "null"] },
               mintedRaw: rawAmount,
+              referrer: { type: ["string", "null"], description: "Original inviter from the strict mint/deposit or redemption request; null means no inviter supplied." },
               stage: {
                 type: "string",
                 enum: ["minted", "redeemed", "unresolved"],
@@ -1036,65 +1198,6 @@ export const ledgerSchemas = {
               },
             },
           },
-          bridge: {
-            type: "object",
-            required: [
-              "messageId",
-              "nonce",
-              "amountRaw",
-              "sourceDomain",
-              "destinationDomain",
-              "soraAssetId",
-              "recipient32",
-              "tonMaster",
-              "tonWallet",
-              "tonOwner",
-              "masterCodeHash",
-              "localStage",
-              "counterpartyStatus",
-              "localNetworkFees",
-            ],
-            description:
-              "SCCP linkage and TON-local stage only. Confirmed settlement never implies a remote receipt, source ownership, matching counterparty balance, or available reverse bridge route.",
-            properties: {
-              messageId: { type: ["string", "null"] },
-              nonce: { type: ["string", "null"] },
-              amountRaw: rawAmount,
-              sourceDomain: { type: "integer", minimum: 0, maximum: 5 },
-              destinationDomain: { type: "integer", minimum: 0, maximum: 5 },
-              soraAssetId: { type: ["string", "null"] },
-              recipient32: { type: "string" },
-              tonMaster: { type: "string" },
-              tonWallet: { type: "string" },
-              tonOwner: { type: "string" },
-              masterCodeHash: { type: ["string", "null"] },
-              verifier: { type: "string" },
-              verifierCodeHash: { type: "string" },
-              localStage: {
-                type: "string",
-                enum: ["burned", "minted", "unresolved"],
-              },
-              counterpartyStatus: { type: "string", enum: ["unverified"] },
-              localNetworkFees: {
-                type: "array",
-                description:
-                  "Observed transaction fees, not additive charges. Owned fees are already movement entries; nonowned fees do not imply a separate recipient debit.",
-                items: {
-                  type: "object",
-                  required: [
-                    "transaction",
-                    "amountRaw",
-                    "includedInOwnerFeeMovements",
-                  ],
-                  properties: {
-                    transaction: evidenceRef,
-                    amountRaw: { type: ["string", "null"] },
-                    includedInOwnerFeeMovements: { type: "boolean" },
-                  },
-                },
-              },
-            },
-          },
           pool: { type: "string" },
           factory: { type: "string" },
           series: { type: "string" },
@@ -1110,6 +1213,21 @@ export const ledgerSchemas = {
           evidence: { type: "array", items: evidenceRef },
         },
       },
+    },
+  },
+  LedgerDiscoveryPage: {
+    type: "object",
+    required: ["network", "account", "since", "throughRevision", "revisions", "nextCursor", "coverage"],
+    properties: {
+      network: { type: "string", enum: ["mainnet", "testnet", "localnet"] }, account: { type: "string" },
+      since: { type: "string", format: "date-time" }, throughRevision: { type: "string", pattern: "^(0|[1-9][0-9]{0,29})$" },
+      revisions: { type: "array", items: { type: "object", required: ["revision", "generation", "discoveredAt", "evidenceUtime", "event"], properties: {
+        revision: { type: "string", pattern: "^[1-9][0-9]{0,29}$" }, generation: { type: "string", format: "uuid" },
+        discoveredAt: { type: "string", format: "date-time", description: "Publication observation, never chain confirmation time." },
+        evidenceUtime: { type: "integer", minimum: 0, description: "Latest canonical transaction reference; a discovery candidate bound, not a completed-stage assertion." },
+        event: { $ref: "#/components/schemas/LedgerEvent" },
+      } } },
+      nextCursor: { type: ["string", "null"] }, coverage: { $ref: "#/components/schemas/LedgerPage/properties/coverage" },
     },
   },
   LedgerPage: {
@@ -1140,6 +1258,15 @@ export const ledgerSchemas = {
           "issues",
         ],
         properties: {
+          range: {
+            type: "object", additionalProperties: false,
+            required: ["scope", "fromUtime", "toUtime", "complete", "status", "retryAfter"],
+            properties: { scope: { type: "string", enum: ["perps"] }, fromUtime: { type: "integer" },
+              toUtime: { type: "integer" }, complete: { type: "boolean" },
+              status: { type: "string", enum: ["pending", "running", "complete", "failed"] },
+              retryAfter: { ...nullableDate, description: "Earliest time an uncursored request may retry collection or admit a replacement generation. Existing cursor snapshots remain immutable." } },
+            description: "Complete requested half-open interval for four authenticated perps accounts at one masterchain boundary; never claims older history is complete.",
+          },
           generation: { type: ["string", "null"], format: "uuid" },
           publishedAt: nullableDate,
           headObservedAt: nullableDate,
@@ -1199,6 +1326,24 @@ export const ledgerSchemas = {
   },
 };
 export const ledgerPaths = {
+  "/api/indexer/v1/accounts/{addr}/ledger/discoveries": {
+    get: {
+      summary: "Durable publication discovery for owner ledger changes",
+      description: "Exact per-owner revisions capture later settlement of old requests. Cursor pins a publication generation and maximum revision; restart with after_revision at the previous throughRevision. Initial candidates include publication since enrollment or chain evidence reaching it. Consumers must independently qualify each stage and its chain timestamp. Unavailable or incomplete coverage cannot advance a consumer checkpoint.",
+      parameters: [
+        { $ref: "#/components/parameters/addr" },
+        { name: "since", in: "query", required: true, schema: { type: "string", format: "date-time" }, description: "Canonical ISO timestamp with milliseconds; immutable enrollment boundary." },
+        { name: "after_revision", in: "query", schema: { type: "string", pattern: "^(0|[1-9][0-9]{0,29})$", default: "0" } },
+        { name: "cursor", in: "query", schema: { type: "string", maxLength: 2048 } },
+        { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 500, default: 100 } },
+      ],
+      responses: {
+        200: { description: "Immutable discovery revisions and verified dependency coverage", content: { "application/json": { schema: { $ref: "#/components/schemas/LedgerDiscoveryPage" } } } },
+        400: { description: "Invalid account, boundary or scoped cursor" },
+        503: { description: "Durable ledger unavailable" },
+      },
+    },
+  },
   "/api/indexer/v1/accounts/{addr}/ledger": {
     get: {
       summary:
@@ -1207,6 +1352,8 @@ export const ledgerPaths = {
         "Schedules independent PostgreSQL backfill. Poll while syncing; unpublished snapshots have no events. Atomic amounts are strings. Cursor generations are fixed and retain their date bounds. No fiat valuation or tax classification is implied.",
       parameters: [
         { $ref: "#/components/parameters/addr" },
+        { name: "scope", in: "query", schema: { type: "string", enum: ["perps"] },
+          description: "Independent perps settlement interval; requires both date bounds. Poll unchanged bounds while pending/running." },
         {
           name: "from_utime",
           in: "query",

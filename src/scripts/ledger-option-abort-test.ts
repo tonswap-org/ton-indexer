@@ -46,7 +46,8 @@ import {
   payout,
   boc,
   position,
-  factoryData,
+  factoryData as canonicalFactoryData,
+  acceptedIngressState,
   productData,
   entry,
   vaultData,
@@ -63,15 +64,18 @@ function abortFixture(
   existingBucket?: { locked: bigint; premium: bigint },
   interleavedDeposit = false,
 ) {
+  let ingressState: ReturnType<typeof acceptedIngressState> = {};
+  const factoryData: typeof canonicalFactoryData = (p, claims, active, tombstone, state) =>
+    canonicalFactoryData(p, claims, active, tombstone, {...ingressState, ...state});
   const f = fixture(),
-    amount = collateral + premium + 37n,
+    amount = premium + 20n,
     p = position({
       flags: 0n,
       custodyWire: 55n,
-      excess: 17n,
+      excess: 0n,
       walletFunding: 360000000n,
     }),
-    principal = collateral + premium,
+    principal = premium,
     productCode = kind === 1 ? shoutCode : spreadCode,
     initialVault = {
       tracked: (existingBucket?.locked ?? 0n) + (existingBucket?.premium ?? 0n),
@@ -110,6 +114,7 @@ function abortFixture(
     .storeCoins(notional)
     .storeCoins(premium + 20n)
     .storeUint(10000, 32)
+    .storeAddress(null)
     .endCell();
   const request = f.msg(
     owner,
@@ -151,6 +156,7 @@ function abortFixture(
       .storeRef(payload)
       .endCell(),
   );
+  ingressState = acceptedIngressState(notify);
   const assigned = f.msg(
     factory,
     series,
@@ -413,7 +419,7 @@ function abortFixture(
     data: productData(kind, true, 0n, owner, "absent"),
   });
   const flags = baseFlags | BUY.CANCELLED,
-    factoryAmount = custody ? 37n : amount,
+    factoryAmount = custody ? 20n : amount,
     returnPosition = {
       ...before,
       flags: flags | BUY.REFUND_IN_FLIGHT,
@@ -591,7 +597,7 @@ async function adverseCases() {
           )!;
         f.states.set(`${factory}:${t.lt}`, {
           code: factoryCode,
-          data: factoryData(
+          data: canonicalFactoryData(
             { ...f.p, flags: 2051n, walletFunding: 180000000n },
             [],
             999n,
@@ -604,7 +610,7 @@ async function adverseCases() {
       (f) => {
         f.states.set(`${factory}:${f.finalCancel.lt}`, {
           code: factoryCode,
-          data: factoryData(
+          data: canonicalFactoryData(
             { ...f.returnPosition, owner: other },
             [],
             (7n << 64n) | 3n,
@@ -707,7 +713,7 @@ async function adverseCases() {
       e.movements
         .filter((m) => m.purpose === "option_refund")
         .reduce((sum, m) => sum + BigInt(m.amountRaw), 0n),
-      (vaultPaid ? f.principal : 0n) + (factoryPaid ? 37n : 0n),
+      (vaultPaid ? f.principal : 0n) + (factoryPaid ? 20n : 0n),
       "only actual individual returns become cash",
     );
   }
@@ -798,7 +804,7 @@ async function vaultAccountingCases() {
             assert.equal(boundary.beforeBucket?.lockedRaw ?? null, existing?.locked.toString() ?? null);
           }
           assert.equal(e.movements.filter(m => m.purpose === "option_refund").reduce((sum, m) => sum + BigInt(m.amountRaw), 0n),
-            (vaultPaid ? f.principal : 0n) + (factoryPaid ? 37n : 0n));
+            (vaultPaid ? f.principal : 0n) + (factoryPaid ? 20n : 0n));
         }
   // Mutate the exact historical abort transaction's root, preserving its journal
   // and message graph. A correct tombstone alone cannot excuse bad accounting.
@@ -908,7 +914,7 @@ async function vaultJournalCases() {
         const refunds = e.movements.filter(m => m.purpose === "option_refund");
         assert.equal(refunds.length, 1, label);
         assert.equal(refunds[0]!.source, factory, label);
-        assert.equal(refunds[0]!.amountRaw, "37", label);
+        assert.equal(refunds[0]!.amountRaw, "20", label);
         negatives++;
       }
   let interleaved = 0;

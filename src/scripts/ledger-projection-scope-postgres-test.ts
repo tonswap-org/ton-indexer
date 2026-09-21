@@ -21,7 +21,7 @@ async function main() {
     utime: 1_735_689_600 + lt, status: 'success', kind: 'transfer', totalFeesRaw: fee, actions: [], issues: [],
     movements: [{ id: `physical-${physical}-${lt}:fee`, direction: 'fee', amountRaw: fee, source: physical,
       asset: { kind: 'native', id: 'testnet:native', symbol: 'TON', decimals: 9 },
-      evidence: { kind: 'transaction_fee', transactions: [{ account: physical, lt: String(lt), hash: hash(lt), utime: 1_735_689_600 + lt }] } }],
+      evidence: { kind: 'transaction_fee', transactionStatus: 'success', transactions: [{ account: physical, lt: String(lt), hash: hash(lt), utime: 1_735_689_600 + lt }] } }],
   });
   const projection: LedgerProjection = { events: [event(10, '10', account), event(12, '5', custody)], projectionScope: scope() };
   try {

@@ -9,7 +9,7 @@ export type LaunchpadOriginalRequest = {
 };
 export type LaunchpadRequestIdentity = {
   kind: 'contribute' | 'bid' | 'claim'; sale: string; outerQueryId: string; innerQueryId: string | null;
-  sourceWallet: string | null; forwardPayloadHash: string | null; originalRequest: LaunchpadOriginalRequest;
+  referrer: string | null; sourceWallet: string | null; forwardPayloadHash: string | null; originalRequest: LaunchpadOriginalRequest;
 };
 const address = (value?: string | null) => { try { return value ? canonicalLedgerAddress(value) : null; } catch { return null; } };
 export function launchpadOriginalRequest(anchor: Node, messageIndex: number): LaunchpadOriginalRequest {
@@ -28,7 +28,7 @@ export function readLaunchpadRequests(input: ProjectionInput, node: Node): Launc
     if (message.bounced || address(message.source) !== input.owner) return [];
     const destination = address(message.destination), command = launchpadCommand(message);
     if (destination && controllers.has(destination) && command?.kind === 'claim') return [{
-      kind: 'claim', sale: destination, outerQueryId: command.queryId, innerQueryId: null, sourceWallet: null, forwardPayloadHash: null,
+      kind: 'claim', sale: destination, outerQueryId: command.queryId, innerQueryId: null, referrer: null, sourceWallet: null, forwardPayloadHash: null,
       originalRequest: launchpadOriginalRequest(node, messageIndex),
     }];
     if (!destination || input.wallets.get(destination)?.owner !== input.owner) return [];
@@ -37,6 +37,6 @@ export function readLaunchpadRequests(input: ProjectionInput, node: Node): Launc
     const inner = launchpadCommand({ body: wire.forward.toBoc().toString('base64') });
     if (inner?.kind !== 'contribute' && inner?.kind !== 'bid') return [];
     return [{ kind: inner.kind, sale: wire.owner, outerQueryId: wire.queryId, innerQueryId: inner.queryId,
-      sourceWallet: destination, forwardPayloadHash: wire.forward.hash().toString('hex'), originalRequest: launchpadOriginalRequest(node, messageIndex) }];
+      referrer: inner.referrer, sourceWallet: destination, forwardPayloadHash: wire.forward.hash().toString('hex'), originalRequest: launchpadOriginalRequest(node, messageIndex) }];
   });
 }

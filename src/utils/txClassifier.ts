@@ -193,7 +193,7 @@ const SWAP_EXECUTION_MODE_TWAP = 2;
 const SWAP_EXECUTION_MAX_STEP_V1 = 255;
 const SWAP_EXECUTION_MAX_STEP_V2 = 31;
 const SWAP_QUERY_TOKEN_SYMBOL_BY_CODE: Record<number, string> = {
-  1: 'TON',
+  1: 'GRAM',
   2: 'T3',
   3: 'USDT',
   4: 'USDC',
@@ -529,7 +529,7 @@ export const classifyTransaction = (
       detail = {
         kind: 'swap',
         payAmount: amountIn,
-        receiveAmount: swap?.minAmountOut,
+        minimumReceiveAmount: swap?.minAmountOut,
         payToken,
         receiveToken,
         queryId,
@@ -548,20 +548,12 @@ export const classifyTransaction = (
       const inferredReceiveToken = swap?.zeroForOne === 1 ? 'X' : swap?.zeroForOne === 0 ? 'T3' : undefined;
       const payToken = executionHint?.payTokenSymbol ?? inferredPayToken;
       const receiveToken = executionHint?.receiveTokenSymbol ?? inferredReceiveToken;
-      const recipientWallet = swap?.recipient;
-      const amountOut =
-        recipientWallet
-          ? jettonTransfers.find(
-              (t) =>
-                t.decoded.destination === recipientWallet &&
-                t.decoded.queryId === swapViaNotify.decoded.queryId
-            )?.decoded.amount
-          : undefined;
+      // An emitted transfer is only a requested payout. Physical recipient
+      // credit and the linked settlement journal belong to the account ledger.
       actions.push({
         kind: 'swap',
         pool: pickPool(swapViaNotify.msg),
         amountIn,
-        amountOut,
         minOut: swap?.minAmountOut,
         sender: swapViaNotify.decoded.sender,
         queryId,
@@ -574,7 +566,7 @@ export const classifyTransaction = (
       detail = {
         kind: 'swap',
         payAmount: amountIn,
-        receiveAmount: amountOut ?? swap?.minAmountOut,
+        minimumReceiveAmount: swap?.minAmountOut,
         payToken,
         receiveToken,
         queryId,
@@ -611,7 +603,7 @@ export const classifyTransaction = (
         payToken,
         receiveToken,
         payAmount: swap?.amountIn,
-        receiveAmount: swap?.minAmountOut,
+        minimumReceiveAmount: swap?.minAmountOut,
         queryId: queryIdRaw,
         executionType: executionHint?.executionType,
         twapSlice: executionHint?.twapSlice,
@@ -703,8 +695,9 @@ export const classifyTransaction = (
     });
     detail = { kind: 'transfer', asset: isJetton ? 'jetton' : 'ton', amount };
   } else if (kind === 'contract_call') {
-    actions.push({ kind: 'contract_call', contract: inMsg?.destination ?? outMsgs[0]?.destination, op: inMsg?.op });
-    detail = { kind: 'unknown' };
+    const message = inMsg?.source && inMsg.op ? inMsg : outMsgs.find((entry) => entry.op) ?? inMsg;
+    detail = { kind: 'contract_call', contract: message?.destination, op: message?.op };
+    actions.push(detail);
   }
 
   const status = tx.status ?? (tx.success ? 'success' : 'failed');

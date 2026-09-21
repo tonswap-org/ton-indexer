@@ -3,7 +3,8 @@ import type { RawMessage } from "../data/dataSource";
 import { bodyCell } from "./wire";
 export const OPTION_EXERCISE = 0x46455843,
   OPTION_SHOUT_EXERCISE = 0x45585243,
-  OPTION_SPREAD_EXERCISE = 0x45585350,
+  OPTION_SPREAD_EXERCISE = 0x5353544c,
+  OPTION_SPREAD_PAYOUT = 0x4f505354,
   OPTION_SHOUT_PAYOUT = 0x53595054,
   OPTION_VAULT_PAYOUT = 0x53505954,
   OPTION_RELEASE_COLLATERAL = 0x52434c4b,
@@ -21,17 +22,11 @@ export function optionExercise(message?: RawMessage) {
     const s = c.beginParse();
     if (s.loadUint(32) !== OPTION_EXERCISE) return null;
     const seriesId = s.loadUintBig(64).toString(),
-      positionId = s.loadUintBig(64).toString(),
-      recipient = s.loadAddress().toRawString(),
-      payoutRaw = s.loadCoins().toString(),
-      premiumBurnRaw = s.loadCoins().toString();
+      positionId = s.loadUintBig(64).toString();
     end(s);
     return {
       seriesId,
       positionId,
-      recipient,
-      payoutRaw,
-      premiumBurnRaw,
       bodyHash: c.hash().toString("hex"),
     };
   } catch {
@@ -49,10 +44,18 @@ export function optionProductExercise(message?: RawMessage) {
         OPTION_SHOUT_EXERCISE,
         OPTION_SPREAD_EXERCISE,
         OPTION_SHOUT_PAYOUT,
+        OPTION_SPREAD_PAYOUT,
       ].includes(opcode)
     )
       return null;
+    const seriesId = opcode === OPTION_SPREAD_PAYOUT ? s.loadUintBig(64).toString() : undefined;
     const positionId = s.loadUintBig(64).toString();
+    if (opcode === OPTION_SPREAD_EXERCISE || opcode === OPTION_SPREAD_PAYOUT) {
+      const payoutRaw = opcode === OPTION_SPREAD_PAYOUT ? s.loadCoins().toString() : "0";
+      end(s);
+      return { opcode, seriesId, positionId, payoutRaw, recipient: undefined, premiumBurnRaw: undefined,
+        refundTo: undefined, bodyHash: c.hash().toString("hex") };
+    }
     let recipient: string | undefined,
       payoutRaw: string,
       premiumBurnRaw: string | undefined,
@@ -72,6 +75,7 @@ export function optionProductExercise(message?: RawMessage) {
     end(s);
     return {
       opcode,
+      seriesId,
       positionId,
       payoutRaw,
       recipient,
@@ -164,7 +168,7 @@ export const optionPositionClaimIdentity = (
     .endCell()
     .hash()
     .toString("hex");
-export const optionIngressClaimIdentity = (
+export const optionIngressLogicalIdentity = (
   owner: string,
   queryId: string,
   amountRaw: string,
@@ -180,3 +184,19 @@ export const optionIngressClaimIdentity = (
     .endCell()
     .hash()
     .toString("hex");
+
+/** A distinct wallet credit has its own refund identity even when business terms repeat. */
+export const optionIngressClaimIdentity = (
+  factoryWallet: string,
+  createdLt: string,
+  notificationBodyHash: string,
+) => {
+  if (!/^[1-9][0-9]*$/.test(createdLt) || BigInt(createdLt) >= 1n << 64n ||
+      !/^[0-9a-f]{64}$/.test(notificationBodyHash)) throw Error("Invalid physical option ingress");
+  return beginCell()
+    .storeUint(OPTION_CLAIM_RECEIPT, 32)
+    .storeAddress(Address.parse(factoryWallet))
+    .storeUint(BigInt(createdLt), 64)
+    .storeUint(BigInt("0x" + notificationBodyHash), 256)
+    .endCell().hash().toString("hex");
+};

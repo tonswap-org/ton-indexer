@@ -60,3 +60,8 @@ export function readLaunchpadFills(cell: Cell) {
   }
   return { fillsBoc: cell.toBoc().toString('base64'), fillsHash: hash(cell), fills };
 }
+
+export function readLaunchpadReferralTerms(cell: Cell) {
+  const s = cell.beginParse(), feePaidRaw = raw(s), referrer = maybeAddress(s); end(s);
+  return { feePaidRaw, referrer };
+}

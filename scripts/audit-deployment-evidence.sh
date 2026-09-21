@@ -175,8 +175,7 @@ const allowedManifestFields = [
 ];
 
 const requiredTonMainnetRegistryKeys = [
-  'ClmmRouter',
-  'ClmmPoolFactory',
+  'DexRouter',
   'FeeRouter',
   'Treasury',
   'ReferralRegistry',
@@ -391,6 +390,9 @@ function inspectTonMainnetRegistry(file) {
     return result;
   }
   for (const [key, value] of Object.entries(registry)) {
+    if (/^(clmm|sigma)/i.test(key) || /^(FarmFactory|Farm|FarmStaker|FarmReceiptWallet|BootstrapFactory|BootstrapPool|BootstrapEscrow|DlmmMigrator|PositionNft|PositionCollection)$/i.test(key)) {
+      fail(`mainnet registry contains unsupported first-release role: ${key}`);
+    }
     if (typeof value === 'string' && value.trim().startsWith('REPLACE_WITH_MAINNET_')) {
       result.placeholderKeys.push(key);
     }

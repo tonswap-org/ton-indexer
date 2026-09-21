@@ -1,15 +1,15 @@
 import { Cell, Dictionary, type Slice } from '@ton/core';
-import { end, flag, maybeAddress, raw, readLaunchpadEnvelope, readLaunchpadFills } from './launchpadStateCommon';
+import { end, flag, maybeAddress, raw, readLaunchpadEnvelope, readLaunchpadFills, readLaunchpadReferralTerms } from './launchpadStateCommon';
 import { readLaunchpadSharedJournal } from './launchpadSharedJournal';
 
 export type BondingSaleContribution = {
   paymentAmountRaw: string; tokenAmountRaw: string; claimed: boolean; rewardWallet: string | null; refundWallet: string | null;
-} & ReturnType<typeof readLaunchpadFills>;
+} & ReturnType<typeof readLaunchpadFills> & ReturnType<typeof readLaunchpadReferralTerms>;
 const contributionValue = {
   serialize: (): never => { throw Error('Read-only bonding contribution decoder'); },
   parse: (s: Slice): BondingSaleContribution => {
     const entry = { paymentAmountRaw: raw(s), tokenAmountRaw: raw(s), claimed: s.loadBoolean(), rewardWallet: maybeAddress(s), refundWallet: maybeAddress(s) };
-    const fills = readLaunchpadFills(s.loadRef()); end(s); return { ...entry, ...fills };
+    const fills = readLaunchpadFills(s.loadRef()), referral = readLaunchpadReferralTerms(s.loadRef()); end(s); return { ...entry, ...fills, ...referral };
   },
 };
 function readConfig(cell: Cell) {

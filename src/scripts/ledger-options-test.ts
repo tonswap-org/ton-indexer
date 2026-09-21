@@ -17,6 +17,7 @@ import {
 } from "../ledger/project";
 import {
   optionPositionHash,
+  optionBuyForward,
   optionSeriesBuy,
   OPTION_ACTIVATE,
   OPTION_ACTIVATE_ACK,
@@ -106,7 +107,7 @@ const msg = (
   createdLt: String(lt),
   value: "100",
   forwardFeeRaw: "3",
-  ihrFeeRaw: "0",
+  extraFlagsRaw: "0",
   bounced: false,
   body: body.toBoc().toString("base64"),
   op: body.beginParse().preloadUint(32),
@@ -205,11 +206,12 @@ function fixture(kind: 1 | 2 = 1) {
     .storeCoins(10000)
     .storeCoins(120)
     .storeUint(10000, 32)
+    .storeAddress(null)
     .endCell();
   const transfer = beginCell()
     .storeUint(TRANSFER, 32)
     .storeUint(1234, 64)
-    .storeCoins(1220)
+    .storeCoins(120)
     .storeAddress(A(factory))
     .storeAddress(A(buyer))
     .storeRef(Cell.EMPTY)
@@ -219,7 +221,7 @@ function fixture(kind: 1 | 2 = 1) {
   const internal = beginCell()
     .storeUint(INTERNAL, 32)
     .storeUint(1234, 64)
-    .storeCoins(1220)
+    .storeCoins(120)
     .storeAddress(A(buyer))
     .storeAddress(A(buyer))
     .storeCoins(1)
@@ -228,7 +230,7 @@ function fixture(kind: 1 | 2 = 1) {
   const notification = beginCell()
     .storeUint(NOTIFY, 32)
     .storeUint(1234, 64)
-    .storeCoins(1220)
+    .storeCoins(120)
     .storeAddress(A(buyer))
     .storeAddress(A(buyerWallet))
     .storeCoins(1)
@@ -509,6 +511,15 @@ async function durableGraph() {
   }
 }
 async function main() {
+  const owner = A(addr(800)), inviter = A(addr(801));
+  const purchasePrefix = () => beginCell().storeUint(OPTION_FACTORY_BUY, 32).storeUint(7, 64)
+    .storeAddress(owner).storeCoins(100n).storeCoins(10n).storeUint(10000, 32);
+  for (const referrer of [null, inviter]) {
+    assert.equal(optionBuyForward(purchasePrefix().storeAddress(referrer).endCell())?.referrer, referrer?.toRawString() ?? null);
+  }
+  assert.equal(optionBuyForward(purchasePrefix().endCell()), null, 'omitted inviter is not a current purchase');
+  assert.equal(optionBuyForward(purchasePrefix().storeAddress(owner).endCell()), null, 'self-referral is invalid');
+  assert.equal(optionBuyForward(purchasePrefix().storeAddress(inviter).storeBit(true).endCell()), null, 'inviter tail must be exact');
   for (const kind of [1, 2] as const) {
     const f = fixture(kind),
       event = await option(f.input);
@@ -519,13 +530,13 @@ async function main() {
     assert.equal(event.settlement?.seriesId, "7");
     assert.equal(event.settlement?.positionHash, f.positionHash);
     assert.equal(event.settlement?.protocolFeeRaw, "20");
+    assert.equal(event.settlement?.referrer, null);
     assert.deepEqual(
       event.movements
         .filter((m) => m.asset.kind === "jetton")
         .map((m) => [m.purpose, m.direction, m.amountRaw]),
       [
         ["option_premium", "out", "100"],
-        ["option_collateral", "out", "1100"],
         ["protocol_fee", "fee", "20"],
       ],
     );
@@ -536,8 +547,8 @@ async function main() {
     assert.equal(right.asset.id, `testnet:option-position:${factory}:7:3`);
     assert.equal(right.asset.owner, buyer);
     assert.equal(right.evidence.optionPosition?.sourceWallet, factoryWallet);
-    assert.equal(event.movements.find(m => m.purpose === 'option_collateral')?.asset.wallet, buyerWallet);
-    assert.equal(event.movements.find(m => m.purpose === 'option_collateral')?.evidence.transactions?.[1].account, factoryWallet);
+    assert.equal(event.movements.some(m => m.purpose === 'option_collateral'), false);
+    assert.equal(right.evidence.optionPosition?.collateralRaw, '1100');
     assert.equal(right.evidence.optionPosition?.seriesId, "7");
     assert.equal(right.evidence.optionPosition?.beforeBuyStateRaw, "269");
     assert.equal(right.evidence.transactions?.length, 7);

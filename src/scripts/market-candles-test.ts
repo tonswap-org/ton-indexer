@@ -209,8 +209,10 @@ async function main() {
   assert.deepEqual(lastOnly.candles.map((candle) => candle.ts), [180]);
 
   const swaps = await service.getSwapExecutions(marketAddress, { status: 'success' });
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '3')?.receiveAmountSource, 'actual');
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.receiveAmountSource, 'minimum');
+  assert.equal(swaps.swaps.find((swap) => swap.lt === '3')?.receiveAmountSource, undefined, 'Decoded action is not a ledger receipt');
+  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.receiveAmountSource, undefined);
+  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.receiveAmount, undefined);
+  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.minimumReceiveAmount, '100');
 
   const app = Fastify();
   registerRoutes(app, config, service);
@@ -257,6 +259,11 @@ async function main() {
       releaseId: 'local-run-1',
       registryHash: 'a'.repeat(64),
       releaseManifestHash: 'b'.repeat(64),
+      spotMarkets: [
+        {marketKey:'spot:TOKEN-T3', marketAddress, tokenRoot:marketAddress, assetSymbol:'TOKEN', quoteSymbol:'T3', assetDecimals:0, quoteDecimals:0, tokenRootCodeHash:'e'.repeat(64), poolCodeHash:'f'.repeat(64)},
+        {marketKey:'spot:USDC-T3', marketAddress:`0:${'c'.repeat(64)}`, tokenRoot:`0:${'b'.repeat(64)}`, assetSymbol:'USDC', quoteSymbol:'T3', assetDecimals:6, quoteDecimals:9, tokenRootCodeHash:'e'.repeat(64), poolCodeHash:'f'.repeat(64)},
+      ],
+      approvedComparisons: [{templateId:2, baseSymbol:'TOKEN', comparisonSymbol:'USDC', basePool:marketAddress, comparisonPool:`0:${'c'.repeat(64)}`}],
       markets: [
         {
           saleModel: 'fixed',
@@ -267,6 +274,9 @@ async function main() {
           lpVault: marketAddress,
           optionAddress: marketAddress,
           perpsMarketId: 1,
+          perpsPool: `0:${'d'.repeat(64)}`,
+          perpsPoolCodeHash: 'e'.repeat(64),
+          perpsCandleMarketKey: 'perps-oracle:1',
           optionSeriesId: 'series-1',
           coverPolicyId: 'cover-1',
           assetSymbol: 'TOKEN',
@@ -285,6 +295,16 @@ async function main() {
       '&asset_symbol=TOKEN&quote_symbol=T3&asset_decimals=0&quote_decimals=0&interval=1m',
   });
   assert.equal(canonical.statusCode, 200);
+  const comparisonUrl = (key: string, pool: string) => `/api/indexer/v1/markets/${encodeURIComponent(key)}/candles?market_address=${encodeURIComponent(pool)}&asset_symbol=USDC&quote_symbol=T3&asset_decimals=6&quote_decimals=9&interval=1m`;
+  const comparisonHistory = await canonicalApp.inject({url: comparisonUrl('spot:USDC-T3', `0:${'c'.repeat(64)}`)});
+  assert.equal(comparisonHistory.statusCode, 200, 'explicit comparison-only spot pool is available without a perps registration');
+  assert.equal(comparisonHistory.json().market_key, 'spot:USDC-T3');
+  assert.equal(comparisonHistory.json().token_root, `0:${'b'.repeat(64)}`);
+  assert.equal(comparisonHistory.json().asset_symbol, 'USDC');
+  assert.equal(comparisonHistory.json().asset_decimals, 6);
+  assert.equal(comparisonHistory.json().quote_decimals, 9);
+  assert.equal((await canonicalApp.inject({url:comparisonUrl('spot:USDC-T3', marketAddress)})).statusCode, 400);
+  assert.equal((await canonicalApp.inject({url:comparisonUrl('perps-oracle:2', `0:${'c'.repeat(64)}`)})).statusCode, 404, 'comparison-only spot cannot become a phantom perps market');
   const spoofedMetadata = await canonicalApp.inject({
     method: 'GET',
     url:
@@ -301,6 +321,21 @@ async function main() {
       '&asset_symbol=OTHER&quote_symbol=T3&asset_decimals=0&quote_decimals=0&interval=1m',
   });
   assert.equal(unregistered.statusCode, 404);
+  const perpsPool = `0:${'d'.repeat(64)}`;
+  const perpsCandleUrl = (key: string, pool: string) =>
+    `/api/indexer/v1/markets/${encodeURIComponent(key)}/candles` +
+    `?market_address=${encodeURIComponent(pool)}` +
+    '&asset_symbol=TOKEN&quote_symbol=T3&asset_decimals=0&quote_decimals=0&interval=1m';
+  const oracleHistory = await canonicalApp.inject({ url: perpsCandleUrl('perps-oracle:1', perpsPool) });
+  assert.equal(oracleHistory.statusCode, 200);
+  assert.equal(oracleHistory.json().market_key, 'perps-oracle:1');
+  assert.equal(oracleHistory.json().market_address, perpsPool);
+  assert.equal((await canonicalApp.inject({ url: perpsCandleUrl('perps-oracle:1', marketAddress) })).statusCode, 400,
+    'The symbol-matching spot pool cannot supply the perps oracle chart');
+  assert.equal((await canonicalApp.inject({ url: perpsCandleUrl('spot:TOKEN-T3', perpsPool) })).statusCode, 400,
+    'The perps pool cannot replace the canonical spot pool');
+  assert.equal((await canonicalApp.inject({ url: perpsCandleUrl('perps-oracle:2', perpsPool) })).statusCode, 404,
+    'An unregistered perps market ID cannot borrow another market pool');
   await canonicalApp.close();
 
   const partialStore = new MemoryStore(config);

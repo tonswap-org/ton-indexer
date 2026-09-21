@@ -30,9 +30,9 @@ const walletCode = beginCell().storeUint(0x74, 8).endCell();
 const wrongCode = beginCell().storeUint(0x75, 8).endCell();
 const content = beginCell().storeUint(0, 8).endCell();
 const EXPECTED_INITIAL_DATA_HASH =
-  '0f75c878fec76b3c54f840b7a4230dfd693a527bd3aaf03b91c80c284dd461b6';
+  'db838c715172ef794539a28db01ec0151ad53daf099f6d5fe4193522b24d2f9e';
 const EXPECTED_INITIAL_WALLET_ADDRESS =
-  '0:891aa9895f1b49812c54238709bc95434ca24724a69593f01823799ad7839d00';
+  '0:ad4304430e859464b8abfd3941f775e3732d275c655caa0da8f3e4059762b8f2';
 
 const addressItem = (address: Address): TupleItem => ({
   type: 'slice',
@@ -112,17 +112,31 @@ const assertCanonicalInitialWalletLayout = () => {
   );
 
   const storage = data.beginParse();
-  assert.equal(storage.loadCoins(), 0n);
-  assert.ok(storage.loadAddress().equals(owner));
-  assert.ok(storage.loadAddress().equals(root));
-  assert.equal(storage.loadCoins(), 0n);
-  assert.equal(storage.loadCoins(), 0n);
-  assert.equal(storage.loadMaybeAddress(), null);
-  assert.equal(storage.loadUint(32), 0);
-  assert.equal(storage.loadUintBig(64), 0n);
-  assert.equal(storage.loadCoins(), 0n);
+  assert.equal(storage.loadUint(32), 0x4a545731);
+  assert.equal(storage.remainingBits, 0);
+  assert.equal(storage.remainingRefs, 3);
+  const identity = storage.loadRef().beginParse();
+  const accounting = storage.loadRef().beginParse();
+  const journals = storage.loadRef().beginParse();
+  assert.equal(identity.loadInt(8), owner.workChain);
+  assert.equal(identity.loadUintBig(256), BigInt(`0x${owner.hash.toString('hex')}`));
+  assert.equal(identity.loadInt(8), root.workChain);
+  assert.equal(identity.loadUintBig(256), BigInt(`0x${root.hash.toString('hex')}`));
+  assert.equal(identity.loadBoolean(), false);
+  assert.equal(identity.loadInt(8), 0);
+  assert.equal(identity.loadUintBig(256), 0n);
+  assert.equal(identity.remainingBits, 0);
+  assert.equal(identity.remainingRefs, 0);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.loadUint(32), 0);
+  assert.equal(accounting.loadUintBig(64), 0n);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.remainingBits, 0);
+  assert.equal(accounting.remainingRefs, 0);
 
-  const burnJournal = storage.loadRef().beginParse();
+  const burnJournal = journals.loadRef().beginParse();
   assert.equal(burnJournal.loadUint(8), 0);
   assert.equal(burnJournal.loadUintBig(64), 0n);
   assert.equal(burnJournal.loadCoins(), 0n);
@@ -131,7 +145,7 @@ const assertCanonicalInitialWalletLayout = () => {
   assert.equal(burnJournal.remainingBits, 0);
   assert.equal(burnJournal.remainingRefs, 0);
 
-  const mintJournal = storage.loadRef().beginParse();
+  const mintJournal = journals.loadRef().beginParse();
   assert.equal(mintJournal.loadUint(8), 0);
   assert.equal(mintJournal.loadUintBig(64), 0n);
   assert.equal(mintJournal.loadUintBig(64), 0n);
@@ -139,8 +153,10 @@ const assertCanonicalInitialWalletLayout = () => {
   assert.equal(mintJournal.loadUintBig(256), 0n);
   assert.equal(mintJournal.remainingBits, 0);
   assert.equal(mintJournal.remainingRefs, 0);
-  assert.equal(storage.remainingBits, 0);
-  assert.equal(storage.remainingRefs, 0);
+  assert.equal(journals.loadBit(), false, "Initial permanent mint receipt map must be empty.");
+  assert.equal(journals.loadBit(), false, "Initial referral notification map must be empty.");
+  assert.equal(journals.remainingBits, 0);
+  assert.equal(journals.remainingRefs, 0);
 
   const legacyData = legacyWalletInitialData();
   assert.notEqual(legacyData.hash().toString('hex'), EXPECTED_INITIAL_DATA_HASH);

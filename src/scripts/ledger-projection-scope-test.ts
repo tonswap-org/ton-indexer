@@ -23,7 +23,7 @@ const input = (account = owner): ProjectionInput => ({
 const nativeFlow = (source: string, destination: string): [RawTransaction, RawTransaction] => {
   const message: RawMessage = { source, destination, value: "1000", op: 0,
     body: beginCell().storeUint(0, 32).endCell().toBoc().toString("base64"),
-    createdLt: "11", forwardFeeRaw: "0", ihrFeeRaw: "0" };
+    createdLt: "11", forwardFeeRaw: "0", extraFlagsRaw: "0" };
   return [
     { lt: "10", hash: hash(10), utime: 1735689600, success: true, status: "success",
       totalFeesRaw: "10", inMessage: {}, outMessages: [message] },

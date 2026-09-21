@@ -1,5 +1,6 @@
 import fastify from 'fastify';
 import { createIndexerShutdown } from './shutdown';
+import { NativeAdmissionPool } from './data/admission/nativePool';
 import helmet from '@fastify/helmet';
 import { createServer } from 'node:net';
 import { loadConfig, readRegistryFile } from './config';
@@ -48,6 +49,10 @@ const findAvailablePort = async (host: string, port: number, attempts = 20) => {
   throw new Error(`No available port found starting at ${port}`);
 };
 
+let admissionRuntime: NativeAdmissionPool | undefined;
+const stopAdmissionDuringStartup = () => {
+  void admissionRuntime?.close().finally(() => process.exit(0));
+};
 const start = async () => {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
@@ -71,6 +76,21 @@ const start = async () => {
   }
   if (config.mode === 'production' && config.network === 'mainnet') {
     validateMainnetRegistry(registry);
+  }
+
+  if (registry.PerpsEngine) {
+    if (config.network !== 'testnet' || !config.ledgerPerpsEngineCodeHash || !config.perpsAdmissionArtifacts) {
+      throw new Error('The registered PerpsEngine requires a qualified testnet admission runtime and exact artifact pins.');
+    }
+    admissionRuntime = new NativeAdmissionPool({ ...config.perpsAdmissionArtifacts, engine: registry.PerpsEngine,
+      codeHash: config.ledgerPerpsEngineCodeHash });
+    process.once('SIGTERM', stopAdmissionDuringStartup);
+    process.once('SIGINT', stopAdmissionDuringStartup);
+    logger.info('authenticating perps admission runtime before service readiness');
+    await admissionRuntime.start();
+    logger.info('perps admission runtime authenticated and ready');
+  } else if (config.perpsAdmissionArtifacts) {
+    throw new Error('Admission runtime artifacts require a registered PerpsEngine.');
   }
 
   const opcodes = loadOpcodes(config.opcodesPath);
@@ -101,11 +121,11 @@ const start = async () => {
   }
   const source =
     config.dataSource === 'lite' || !canUseHttp
-      ? await LiteClientDataSource.create(config.network, config.liteserverPool)
+      ? await LiteClientDataSource.create(config.network, config.liteserverPool, logger)
       : await (async () => {
           const primary = await TonClient4DataSource.create(config.network, config.httpEndpoint);
           try {
-            const fallback = await LiteClientDataSource.create(config.network, config.liteserverPool);
+            const fallback = await LiteClientDataSource.create(config.network, config.liteserverPool, logger);
             logger.info('enabled resilient data source', {
               primary: config.httpEndpoint ? 'http4:custom' : 'http4:auto',
               fallback: config.liteserverPool ? 'liteserver:custom' : 'liteserver:ton.org'
@@ -119,6 +139,7 @@ const start = async () => {
           }
         })();
   const service = new IndexerService(config, store, source, opcodes, jettonRoots, metricsCollector, poolTracker);
+  if (admissionRuntime) service.setAdmissionExecutor(admissionRuntime);
   const ledgerPool = config.databaseUrl ? new Pool({connectionString:config.databaseUrl,max:10,connectionTimeoutMillis:10_000}) : undefined;
   const ledgerStore = ledgerPool ? new PostgresLedgerStore(ledgerPool) : undefined;
   if (ledgerStore) await ledgerStore.initialize();
@@ -134,7 +155,6 @@ const start = async () => {
       registry.VestingVault,
       ...(registryMetadata?.markets ?? []).map(market => market.sale)
     ].filter((value): value is string => Boolean(value)),
-    sccpAssets: config.ledgerSccpAssets,
     t3Hub: registry.T3Hub,
     t3Root: registry.T3Root,
     t3RedemptionBinding: config.ledgerT3RedemptionBinding,
@@ -144,6 +164,8 @@ const start = async () => {
     maxPagesPerSync: config.ledgerMaxPagesPerSync,
     maxRelatedAccounts: config.ledgerMaxRelatedAccounts
   }) : undefined;
+
+  if (ledger) service.setSwapLedgerReader((owner, query) => ledger.page(owner, query));
 
   const marketLedger = ledger && ledgerStore ? new DlmmMarketService(ledger, source, new PostgresMarketStore(ledgerStore.pool), config.ledgerMarketBindings, logger, config.ledgerMaxRelatedAccounts) : undefined;
 
@@ -225,7 +247,7 @@ const start = async () => {
       backfillWorker.stop();
       blockFollower.stop();
       // Stop accepting requests and drain SSE while ledger work finishes.
-      await Promise.all([app.close(), (async () => { await marketLedger?.stop(); await ledger?.stop(); })()]);
+      await Promise.all([app.close(), admissionRuntime?.close(), (async () => { await marketLedger?.stop(); await ledger?.stop(); })()]);
       if (config.snapshotOnExit && config.snapshotPath) {
         try {
           const snapshot = store.exportSnapshot();
@@ -243,10 +265,13 @@ const start = async () => {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  process.removeListener('SIGTERM', stopAdmissionDuringStartup);
+  process.removeListener('SIGINT', stopAdmissionDuringStartup);
 };
 
-start().catch((error) => {
+start().catch(async (error) => {
   // eslint-disable-next-line no-console
   console.error('Fatal startup error', error);
+  await admissionRuntime?.close();
   process.exit(1);
 });

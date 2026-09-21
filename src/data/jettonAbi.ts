@@ -1,4 +1,5 @@
 import { Address, Cell, TupleItem, beginCell } from '@ton/core';
+import { writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 
 export type RunGetMethodResult = {
   exitCode: number;
@@ -73,8 +74,8 @@ const sameAddress = (left: Address, right: Address) => left.equals(right);
  *
  * TEP-74 does not standardize wallet storage, so this helper must only be used
  * for TONSWAP roots whose getter address is independently checked against the
- * resulting StateInit. The empty burn and mint journals are refs and therefore
- * remain part of the wallet address even before either settlement flow runs.
+ * resulting StateInit. JTW1 stores bounded identity, accounting and journal
+ * groups in three references; those references are part of the wallet address.
  */
 export const buildTonswapJettonWalletInitialData = (
   owner: Address,
@@ -95,19 +96,21 @@ export const buildTonswapJettonWalletInitialData = (
     .storeUint(0n, 256)
     .endCell();
 
-  return beginCell()
-    .storeCoins(0n)
-    .storeAddress(owner)
-    .storeAddress(root)
-    .storeCoins(0n)
-    .storeCoins(0n)
-    .storeAddress(null)
-    .storeUint(0, 32)
-    .storeUint(0n, 64)
-    .storeCoins(0n)
-    .storeRef(burnJournal)
-    .storeRef(mintJournal)
-    .endCell();
+  return writeCurrentJettonWalletStorage({
+    owner,
+    root,
+    feeDelegate: null,
+    balance: 0n,
+    lockedFees: 0n,
+    borrowedFees: 0n,
+    lastBounceOpcode: 0,
+    lastBounceQueryId: 0n,
+    lastBounceAmount: 0n,
+    burnJournal,
+    mintJournal,
+    mintReceipts: null,
+    referralNotifications: null,
+  });
 };
 
 export const isSuccessfulGetterResult = (

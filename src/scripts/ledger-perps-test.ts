@@ -1,1160 +1,268 @@
-import assert from "node:assert/strict";
-import { PGlite } from "@electric-sql/pglite";
-import { PostgresLedgerStore, type LedgerSqlPool } from "../ledger/store";
-import { LedgerService } from "../ledger/service";
-import { createLogger } from "../utils/logger";
-import { canonicalLedgerHash } from "../ledger/normalize";
-import type { TonDataSource } from "../data/dataSource";
-import { Address, Cell, Dictionary, beginCell } from "@ton/core";
-import { createHash } from "node:crypto";
-import { perpsEconomics, tvmDiv } from "../ledger/perpsEconomics";
-import {
-  emptyPerpsAccount,
-  readPerpsState,
-  type PerpsState,
-  type PerpsPosition,
-} from "../ledger/perpsState";
-import * as w from "../ledger/perpsWire";
-import { parseLedgerPerpsCodeHash } from "../config/ledgerPerps";
-import {
-  projectOwnerLedger,
-  type ProjectionInput,
-  type LedgerChain,
-} from "../ledger/project";
-import { loadOpcodes } from "../utils/opcodes";
-import {
-  TRANSFER,
-  INTERNAL,
-  NOTIFY,
-  SETTLEMENT_INTERNAL,
-} from "../ledger/wire";
-import type { RawMessage, RawTransaction } from "../data/dataSource";
-const address = (n: number) => `0:${n.toString(16).padStart(64, "0")}`,
-  A = (v: string) => Address.parse(v);
-const owner = address(401),
-  engine = address(402),
-  root = address(403),
-  pool = address(404),
-  other = address(405),
-  code = beginCell().storeUint(42, 32).endCell(),
-  walletCode = beginCell().storeUint(43, 32).endCell(),
-  ownerWallet = w.perpsWalletAddress(walletCode, root, owner),
-  engineWallet = w.perpsWalletAddress(walletCode, root, engine),
-  query = "9007199254741233";
-const raw = {
-  serialize: (c: Cell, b: any) => b.storeSlice(c.beginParse()),
-  parse: (s: any) => s.asCell(),
-};
-const base = (): PerpsState => ({
-  root,
-  walletCode,
-  feeBps: 25,
-  feeTreasury: null,
-  router: null,
-  riskVault: null,
-  configHash: "",
-  dataHash: "",
-  accounts: new Map([[owner, emptyPerpsAccount()]]),
-  positions: new Map(),
-  pending: new Map(),
-  markets: new Map([
-    [
-      1,
-      {
-        pool,
-        depthRaw: (2n ** 90n).toString(),
-        alphaRaw: "0",
-        betaRaw: "0",
-        fundingIndexRaw: "0",
-        markRaw: "1000000000",
-        controlFeeDeltaBps: 0,
-        clampBps: 100,
-        adlDeficitRaw: "0",
-      },
-    ],
-  ]),
-});
-const clone = (s: PerpsState): PerpsState => ({
-  ...s,
-  accounts: new Map([...s.accounts].map(([k, v]) => [k, { ...v }])),
-  positions: new Map([...s.positions].map(([k, v]) => [k, { ...v }])),
-  pending: new Map([...s.pending].map(([k, v]) => [k, { ...v }])),
-  markets: new Map([...s.markets].map(([k, v]) => [k, { ...v }])),
-});
-const setPosition = (s: PerpsState, v: PerpsPosition) =>
-  s.positions.set(w.perpsPositionKey(v.owner, v.marketId), v);
-function encode(s: PerpsState) {
-  // Source layout: perps_engine.tolk pack_registry_config, pack_map_bundle,
-  // market_to_persisted and pack_queue_bundle. Big integers stay exact.
-  const cfg = beginCell()
-    .storeAddress(null)
-    .storeAddress(null)
-    .storeAddress(null)
-    .storeAddress(null)
-    .storeUint(s.feeBps, 32)
-    .storeUint(3600, 64)
-    .storeUint(0, 32)
-    .storeUint(0, 32)
-    .storeRef(
-      beginCell()
-        .storeAddress(null)
-        .storeAddress(null)
-        .storeAddress(null)
-        .storeRef(
-          beginCell()
-            .storeUint(128, 8)
-            .storeRef(
-              beginCell().storeAddress(A(s.root)).storeRef(s.walletCode),
-            ),
-        )
-        .endCell(),
-    )
-    .storeRef(Cell.EMPTY)
-    .storeRef(Cell.EMPTY)
-    .storeRef(Cell.EMPTY)
-    .storeUint(1, 32)
-    .endCell();
-  const accounts = Dictionary.empty(Dictionary.Keys.Address(), raw);
-  for (const [a, v] of s.accounts)
-    accounts.set(
-      A(a),
-      beginCell()
-        .storeCoins(BigInt(v.collateralRaw))
-        .storeInt(BigInt(v.pendingFundingRaw), 128)
-        .storeUint(v.crossMargin, 8)
-        .storeUint(v.referralLinked, 8)
-        .storeUint(v.openPositionCount, 32)
-        .endCell(),
-    );
-  const positions = Dictionary.empty(Dictionary.Keys.BigUint(256), raw);
-  for (const [k, v] of s.positions)
-    positions.set(
-      BigInt("0x" + k),
-      beginCell()
-        .storeAddress(A(v.owner))
-        .storeUint(v.marketId, 32)
-        .storeInt(BigInt(v.sizeRaw), 128)
-        .storeCoins(BigInt(v.marginRaw))
-        .storeCoins(BigInt(v.entryNotionalRaw))
-        .storeInt(BigInt(v.lastFundingIndexRaw), 128)
-        .storeUint(v.flags, 32)
-        .endCell(),
-    );
-  const markets = Dictionary.empty(Dictionary.Keys.Uint(32), raw);
-  for (const [id, v] of s.markets) {
-    const p = beginCell()
-      .storeCoins(BigInt(v.depthRaw))
-      .storeInt(BigInt(v.alphaRaw), 128)
-      .storeInt(BigInt(v.betaRaw), 128)
-      .storeUint(100000, 32)
-      .storeUint(500, 32)
-      .storeCoins(2n ** 100n)
-      .storeUint(10000, 32)
-      .storeCoins(1)
-      .storeUint(0, 64)
-      .storeUint(10000, 32)
-      .storeUint(0, 8)
-      .storeRef(Cell.EMPTY)
-      .endCell();
-    const extra = beginCell()
-      .storeUint(0, 128)
-      .storeUint(0, 64)
-      .storeUint(0, 96)
-      .storeUint(0, 64)
-      .storeUint(0, 64)
-      .storeInt(v.controlFeeDeltaBps, 32)
-      .storeUint(v.clampBps, 32)
-      .storeUint(0, 65)
-      .storeCoins(0)
-      .storeCoins(0)
-      .storeCoins(0)
-      .storeUint(0, 64)
-      .storeCoins(0)
-      .storeRef(
-        beginCell()
-          .storeUint(0, 256)
-          .storeUint(0, 256)
-          .storeUint(0, 64)
-          .storeUint(0, 256),
-      )
-      .endCell();
-    const stats = beginCell()
-      .storeInt(BigInt(v.fundingIndexRaw), 128)
-      .storeUint(0, 64)
-      .storeCoins(0)
-      .storeCoins(0)
-      .storeUint(0, 1)
-      .storeCoins(0)
-      .storeUint(0, 64)
-      .storeCoins(BigInt(v.markRaw))
-      .storeUint(0, 64)
-      .storeCoins(BigInt(v.adlDeficitRaw))
-      .storeUint(0, 32)
-      .storeCoins(0)
-      .storeCoins(0)
-      .storeRef(extra)
-      .endCell();
-    markets.set(
-      id,
-      beginCell().storeAddress(A(v.pool)).storeRef(p).storeRef(stats).endCell(),
-    );
-  }
-  const pending = Dictionary.empty(Dictionary.Keys.BigUint(256), raw);
-  for (const [key, v] of s.pending)
-    pending.set(
-      BigInt("0x" + key),
-      beginCell()
-        .storeUint(v.kind, 8)
-        .storeAddress(v.owner ? A(v.owner) : null)
-        .storeUint(v.marketId, 32)
-        .storeUint(BigInt(v.wireId), 64)
-        .storeCoins(BigInt(v.amountRaw))
-        .storeCoins(BigInt(v.queuedRaw))
-        .storeInt(BigInt(v.recordedAt), 64)
-        .endCell(),
-    );
-  return beginCell()
-    .storeRef(
-      beginCell().storeRef(Cell.EMPTY).storeRef(cfg).storeRef(Cell.EMPTY),
-    )
-    .storeRef(
-      beginCell()
-        .storeRef(beginCell().storeDict(markets))
-        .storeRef(beginCell().storeDict(accounts))
-        .storeRef(beginCell().storeDict(positions)),
-    )
-    .storeUint(0, 32 + 64 + 32 + 32 + 32 + 64 + 32 + 32 + 32 + 64 + 32)
-    .storeAddress(null)
-    .storeUint(0, 96)
-    .storeRef(
-      beginCell()
-        .storeRef(Cell.EMPTY)
-        .storeRef(Cell.EMPTY)
-        .storeRef(beginCell().storeDict(pending))
-        .storeRef(Cell.EMPTY),
-    )
-    .storeRef(Cell.EMPTY)
-    .endCell();
-}
-function request(r: w.PerpsRequest) {
-  let b = beginCell().storeUint(r.opcode, 32);
-  if (r.operation === "adl")
-    return b
-      .storeUint(r.marketId, 32)
-      .storeAddress(A(r.owner!))
-      .storeInt(BigInt(r.sizeRaw!), 128)
-      .storeUint(BigInt(r.queryId), 64)
-      .endCell();
-  b.storeUint(BigInt(r.queryId), 64).storeUint(r.marketId, 32);
-  if (r.operation === "open")
-    b.storeInt(BigInt(r.sizeRaw!), 128)
-      .storeCoins(BigInt(r.marginRaw!))
-      .storeCoins(0)
-      .storeUint(10000, 32)
-      .storeAddress(null);
-  if (r.operation === "modify")
-    b.storeInt(BigInt(r.sizeRaw!), 128)
-      .storeInt(BigInt(r.marginRaw!), 128)
-      .storeCoins(0)
-      .storeUint(0, 32);
-  if (r.operation === "close")
-    b.storeInt(BigInt(r.sizeRaw!), 128).storeCoins(0);
-  if (["add_margin", "remove_margin"].includes(r.operation))
-    b.storeCoins(BigInt(r.marginRaw!));
-  if (r.operation === "liquidation")
-    b.storeAddress(A(r.owner!)).storeCoins(BigInt(r.sizeRaw!));
-  return b.endCell();
-}
-const pending = (s: PerpsState, amount: bigint, kind = 3, wire = "71") =>
-  s.pending.set(w.perpsTransferKey(ownerWallet), {
-    kind,
-    owner,
-    marketId: 1,
-    wireId: wire,
-    amountRaw: amount.toString(),
-    queuedRaw: "0",
-    recordedAt: "1700000000",
-  });
-function open() {
-  const b = base(),
-    a = clone(b),
-    size = 2n ** 70n + 17n,
-    margin = 2n ** 65n + 23n,
-    fee = (size * 25n) / 10000n,
-    excess = 113n,
-    r: w.PerpsRequest = {
-      opcode: w.PERPS_OPEN,
-      operation: "open",
-      queryId: query,
-      marketId: 1,
-      sizeRaw: size.toString(),
-      marginRaw: margin.toString(),
-      limitPriceRaw: "0",
-      leverageBps: 10000,
-      referrer: null,
-    };
-  a.accounts.get(owner)!.collateralRaw = margin.toString();
-  a.accounts.get(owner)!.openPositionCount = 1;
-  setPosition(a, {
-    owner,
-    marketId: 1,
-    sizeRaw: size.toString(),
-    marginRaw: margin.toString(),
-    entryNotionalRaw: size.toString(),
-    lastFundingIndexRaw: "0",
-    flags: 0,
-  });
-  pending(a, excess);
-  return { b, a, r, deposit: margin + fee + excess, fee, excess };
-}
-function fixture(
-  b: PerpsState,
-  a: PerpsState,
-  r: w.PerpsRequest,
-  deposit: bigint,
-) {
-  let lt = 100;
-  const chains = new Map<string, LedgerChain>(
-    [owner, engine, ownerWallet, engineWallet].map((account) => [
-      account,
-      {
-        account,
-        generation: "g",
-        historyComplete: true,
-        role:
-          account === owner
-            ? "owner"
-            : account === ownerWallet
-              ? "owned_jetton_wallet"
-              : "counterparty",
-        transactions: [],
-      },
-    ]),
-  );
-  const asset = (wallet: string, o: string) => ({
-    kind: "jetton" as const,
-    id: `localnet:jetton:${root}`,
-    master: root,
-    wallet,
-    owner: o,
-    decimals: 9,
-  });
-  const states = new Map<string, Cell>();
-  const input: ProjectionInput = {
-    network: "localnet",
-    owner,
-    chains,
-    wallets: new Map([
-      [ownerWallet, asset(ownerWallet, owner)],
-      [engineWallet, asset(engineWallet, engine)],
-    ]),
-    pools: new Map(),
-    opcodes: loadOpcodes(),
-    perpsEngines: new Map([
-      [
-        engine,
-        {
-          address: engine,
-          root,
-          codeHash: code.hash().toString("hex"),
-          walletCodeHash: walletCode.hash().toString("hex"),
-          ownerWallet,
-          engineWallet,
-        },
-      ],
-    ]),
-    stateAt: async (_a, lt) =>
-      states.has(lt)
-        ? ({
-            seqno: Number(lt),
-            state: {
-              accountState: "active",
-              codeBoc: code.toBoc().toString("base64"),
-              dataBoc: states.get(lt)!.toBoc().toString("base64"),
-              balance: "0",
-              lastTransactionLt: lt,
-              lastTransactionHash: "00".repeat(32),
-            },
-          } as any)
-        : null,
-  };
-  const msg = (src: string, dest: string, c: Cell): RawMessage => ({
-    source: src,
-    destination: dest,
-    body: c.toBoc().toString("base64"),
-    createdLt: String(++lt),
-    value: "100",
-    forwardFeeRaw: "3",
-    ihrFeeRaw: "0",
-    bounced: false,
-  });
-  const tx = (account: string, im?: RawMessage, outs: RawMessage[] = []) => {
-    const list = chains.get(account)!.transactions,
-      prev = list.at(-1),
-      n: RawTransaction = {
-        lt: String(++lt),
-        hash: createHash("sha256").update(String(lt)).digest("base64"),
-        prevTransactionLt: prev?.lt ?? "0",
-        prevTransactionHash: prev?.hash ?? Buffer.alloc(32).toString("base64"),
-        utime: 1700000000 + lt,
-        success: true,
-        status: "success",
-        totalFeesRaw: "7",
-        inMessage: im,
-        outMessages: outs,
-      };
-    list.push(n);
-    return n;
-  };
-  const initial = tx(engine);
-  states.set(initial.lt, encode(b));
-  const req = request(r);
-  let im: RawMessage;
-  const ns: RawTransaction[] = [];
-  if (deposit) {
-    const fundQuery = BigInt(query) + 1n;
-    const transfer = msg(
-      owner,
-      ownerWallet,
-      beginCell()
-        .storeUint(TRANSFER, 32)
-        .storeUint(fundQuery, 64)
-        .storeCoins(deposit)
-        .storeAddress(A(engine))
-        .storeAddress(A(owner))
-        .storeRef(Cell.EMPTY)
-        .storeCoins(1)
-        .storeRef(req)
-        .endCell(),
-    );
-    tx(owner, undefined, [transfer]);
-    const internal = msg(
-      ownerWallet,
-      engineWallet,
-      beginCell()
-        .storeUint(INTERNAL, 32)
-        .storeUint(fundQuery, 64)
-        .storeCoins(deposit)
-        .storeAddress(A(owner))
-        .storeAddress(A(owner))
-        .storeCoins(1)
-        .storeRef(req)
-        .endCell(),
-    );
-    ns.push(tx(ownerWallet, transfer, [internal]));
-    im = msg(
-      engineWallet,
-      engine,
-      beginCell()
-        .storeUint(NOTIFY, 32)
-        .storeUint(fundQuery, 64)
-        .storeCoins(deposit)
-        .storeAddress(A(owner))
-        .storeAddress(A(ownerWallet))
-        .storeCoins(1)
-        .storeRef(req)
-        .endCell(),
-    );
-    ns.push(tx(engineWallet, internal, [im]));
-  } else {
-    im = msg(r.owner ? other : owner, engine, req);
-    if (!r.owner) tx(owner, undefined, [im]);
-  }
-  const n = tx(engine, im);
-  states.set("0", encode(b));
-  states.set(n.lt, encode(a));
-  const finishPayout = (amount: bigint, wire = "71", dispatch = n) => {
-    const transfer = msg(
-      engine,
-      engineWallet,
-      beginCell()
-        .storeUint(TRANSFER, 32)
-        .storeUint(BigInt(wire), 64)
-        .storeCoins(amount)
-        .storeAddress(A(owner))
-        .storeAddress(A(engine))
-        .storeRef(beginCell().storeUint(0x4a535454, 32))
-        .storeCoins(0)
-        .storeRef(Cell.EMPTY)
-        .endCell(),
-    );
-    dispatch.outMessages.push(transfer);
-    const internal = msg(
-      engineWallet,
-      ownerWallet,
-      beginCell()
-        .storeUint(SETTLEMENT_INTERNAL, 32)
-        .storeUint(BigInt(wire), 64)
-        .storeCoins(amount)
-        .storeAddress(A(engine))
-        .storeAddress(A(engineWallet))
-        .storeCoins(0)
-        .storeRef(Cell.EMPTY)
-        .endCell(),
-    );
-    tx(engineWallet, transfer, [internal]);
-    const control = (src: string, dst: string, op: number) =>
-      msg(
-        src,
-        dst,
-        beginCell()
-          .storeUint(op, 32)
-          .storeUint(BigInt(wire), 64)
-          .storeCoins(amount)
-          .storeAddress(A(ownerWallet))
-          .endCell(),
-      );
-    const ack = control(ownerWallet, engineWallet, 0x4a534143);
-    const credit = tx(ownerWallet, internal, [ack]);
-    const success = control(engineWallet, engine, 0x4a535543);
-    tx(engineWallet, ack, [success]);
-    const finalize = control(engine, engineWallet, 0x4a53464e);
-    const successTx = tx(engine, success, [finalize]);
-    const finalized = control(engineWallet, engine, 0x4a53464b);
-    tx(engineWallet, finalize, [finalized]);
-    const finalTx = tx(engine, finalized);
-    const terminal = clone(a);
-    pending(terminal, amount, 12, wire);
-    const cleared = clone(terminal);
-    cleared.pending.clear();
-    states.set(successTx.lt, encode(terminal));
-    states.set(finalTx.lt, encode(cleared));
-    return { credit, finalTx };
-  };
-  const dispatchReady = (amount: bigint, wire = "71") => {
-    const im = msg(
-      owner,
-      engine,
-      request({
-        opcode: w.PERPS_CLAIM,
-        operation: "claim",
-        queryId: "77",
-        marketId: 1,
-      }),
-    );
-    tx(owner, undefined, [im]);
-    const dispatch = tx(engine, im);
-    const assigned = clone(a);
-    pending(assigned, amount, 3, wire);
-    states.set(dispatch.lt, encode(assigned));
-    return dispatch;
-  };
-  return { input, n, ns, chains, states, finishPayout, dispatchReady };
-}
-async function database() {
-  const o = open(),
-    f = fixture(o.b, o.a, o.r, o.deposit);
-  f.finishPayout(o.excess);
-  const db = new PGlite(),
-    sql: LedgerSqlPool = {
-      query: async (q, p) =>
-        !p && q.includes(";")
-          ? { rows: (await db.exec(q)).at(-1)?.rows ?? [] }
-          : db.query(q, p),
-      connect: async () => sql,
-      end: () => db.close(),
-    },
-    store = new PostgresLedgerStore(sql);
-  let partial = true,
-    wrong = false;
-  const source: TonDataSource = {
-    network: "localnet",
-    getMasterchainInfo: async () => ({ seqno: 1000 }),
-    getAccountState: async (a) => {
-      const head = f.chains.get(a)?.transactions.at(-1);
-      return {
-        accountState: "active",
-        balance: "0",
-        lastTxLt: head?.lt,
-        lastTxHash: head?.hash,
-        codeBoc: (a === engine ? (wrong ? Cell.EMPTY : code) : walletCode)
-          .toBoc()
-          .toString("base64"),
-        dataBoc:
-          a === engine
-            ? f.states.get(head!.lt)!.toBoc().toString("base64")
-            : undefined,
-      };
-    },
-    getTransactions: async (a, limit, lt) =>
-      partial && a === engineWallet
-        ? []
-        : (f.chains.get(a)?.transactions ?? [])
-            .filter((t) => !lt || BigInt(t.lt) <= BigInt(lt))
-            .slice()
-            .reverse()
-            .slice(0, limit),
-    getJettonMetadata: async () => ({ decimals: 9 }),
-    getJettonBalance: async (o, r) => {
-      const a = [...f.input.wallets.values()].find(
-        (a) => a.owner === o && a.master === r,
-      );
-      return a ? { wallet: a.wallet!, balance: "0" } : null;
-    },
-    runGetMethod: async (a, m) => {
-      const v = f.input.wallets.get(a);
-      return v && m === "get_wallet_data"
-        ? {
-            exitCode: 0,
-            stack: [
-              { type: "int", value: 0n },
-              {
-                type: "slice",
-                cell: beginCell().storeAddress(A(v.owner!)).endCell(),
-              },
-              {
-                type: "slice",
-                cell: beginCell().storeAddress(A(v.master!)).endCell(),
-              },
-              { type: "cell", cell: walletCode },
-            ],
-          }
-        : null;
-    },
-    close: async () => {},
-  };
-  const service = new LedgerService(
-    "localnet",
-    store,
-    source,
-    loadOpcodes(),
-    createLogger("silent"),
-    2,
-    {
-      t3Root: root,
-      perpsEngine: engine,
-      perpsEngineCodeHash: code.hash().toString("hex"),
-      maxPagesPerSync: 100,
-    },
-  );
-  try {
-    await store.initialize();
-    for (const t of f.chains.get(engine)!.transactions) {
-      const data = f.states.get(t.lt);
-      if (data)
-        await sql.query(
-          "INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb)",
-          [
-            "localnet",
-            engine,
-            t.lt,
-            canonicalLedgerHash(t.hash),
-            JSON.stringify({
-              seqno: Number(t.lt),
-              state: {
-                accountState: "active",
-                balance: "0",
-                lastTxLt: t.lt,
-                lastTxHash: t.hash,
-                codeBoc: code.toBoc().toString("base64"),
-                dataBoc: data.toBoc().toString("base64"),
-              },
-            }),
-          ],
-        );
+import assert from 'node:assert/strict';
+import { Address, Cell, beginCell } from '@ton/core';
+import { accruePerpsFunding, perpsEconomics, tvmDiv } from '../ledger/perpsEconomics';
+import { emptyPerpsAccount, perpsRiskActionKey, type PerpsState, type PerpsPosition, type PerpsRiskAction } from '../ledger/perpsState';
+import { parseLedgerPerpsCodeHash } from '../config/ledgerPerps';
+import * as wire from '../ledger/perpsWire';
+// Explicit synthetic states exercise the economic verifier. Genuine archived
+// runtime and message-causality cases run in perps-counterparty-economics-test
+// and perps-risk-admission-test; these states never claim physical delivery.
+const address = (n: number) => new Address(0, Buffer.alloc(32, n)).toRawString();
+const owner = address(1), other = address(2), vault = address(3), root = address(4), pool = address(5), wallet = address(6);
+const unit = 1000000000n, subject = beginCell().storeAddress(Address.parse(owner)).storeUint(1, 32).endCell().hash().toString('hex');
+const positionKey = wire.perpsPositionKey(owner, 1), lossKey = beginCell().storeUint(0x43504c53, 32).endCell().hash().toString('hex');
+const base = (): PerpsState => ({ root, walletCode: Cell.EMPTY, feeBps: 0, feeTreasury: null, router: null, riskVault: vault, riskVaultBucketId: 1, nativeSettlement: null,
+    risk: { oracleDegraded: false, tvlDegraded: false, oracleDriftLevel: 0 }, riskNonce: '1', riskActions: new Map(), counterpartyMaintenance: { cursor: '0'.repeat(64), sequence: '0', positionCount: 0 }, configHash: 'a'.repeat(64), dataHash: 'b'.repeat(64),
+    accounts: new Map([[owner, { ...emptyPerpsAccount(), collateralRaw: (25n * unit).toString(), openPositionCount: 1 }],
+        [other, { ...emptyPerpsAccount(), collateralRaw: (500n * unit).toString() }]]), positions: new Map(), pending: new Map(), oracleRefreshes: new Map(),
+    markets: new Map([[1, { pool, depthRaw: (2n ** 90n).toString(), alphaRaw: '0', betaRaw: '0', maxLeverageBps: 5000, maintenanceBps: 500,
+                fundingIndexRaw: '0', fundingRemainderRaw: '0', fundingRateBpsRaw: '0', fundingValidUntil: '0', lastFundingTs: '0',
+                oraclePriceHealthy: true, markRaw: unit.toString(), controlFeeDeltaBps: 0, clampBps: 100, adlDeficitRaw: '0', riskPolicy: null }]]) });
+const clone = (s: PerpsState): PerpsState => ({ ...s, accounts: new Map([...s.accounts].map(([k, v]) => [k, { ...v }])),
+    positions: new Map([...s.positions].map(([k, v]) => [k, { ...v, counterparty: { ...v.counterparty } }])), markets: new Map([...s.markets].map(([k, v]) => [k, { ...v }])),
+    pending: new Map([...s.pending].map(([k, v]) => [k, { ...v }])), riskActions: new Map(s.riskActions) });
+function action(s: PerpsState, notional: bigint, reserve: bigint, payout?: bigint, beneficiary = owner) {
+    const previous = s.riskActions.get(perpsRiskActionKey(1, subject));
+    let body: Cell;
+    if (payout === undefined)
+        body = beginCell().storeUint(0x52564c54, 32).storeUint(1, 64).storeUint(1, 16).storeUint(BigInt('0x' + subject), 256)
+            .storeCoins(notional).storeCoins(reserve).storeCoins(0).endCell();
+    else {
+        assert(previous);
+        body = beginCell().storeUint(0x52565053, 32).storeUint(2, 64).storeUint(1, 16).storeUint(BigInt('0x' + subject), 256)
+            .storeUint(BigInt(previous.actionId), 64).storeUint(BigInt('0x' + previous.requestHash), 256).storeCoins(payout)
+            .storeRef(beginCell().storeCoins(notional).storeCoins(reserve).storeCoins(0).storeAddress(Address.parse(beneficiary))
+            .storeRef(beginCell().storeUint(1, 32).storeAddress(Address.parse(beneficiary)))).endCell();
     }
-    await service.syncAccount(owner);
-    let page = await store.page("localnet", owner);
-    assert.equal(page.coverage.historyComplete, false);
-    assert(
-      !page.events.some(
-        (e) =>
-          e.kind === "perps_operation" && e.settlement?.status === "confirmed",
-      ),
-    );
-    partial = false;
-    await service.syncAccount(owner);
-    page = await store.page("localnet", owner);
-    assert.equal(
-      page.coverage.historyComplete,
-      true,
-      JSON.stringify(page.coverage),
-    );
-    assert(
-      page.events.some(
-        (e) =>
-          e.kind === "perps_operation" &&
-          e.settlement?.perps?.outcome === "accepted",
-      ),
-      JSON.stringify(page),
-    );
-    assert(page.coverage.relatedAccounts?.some((a) => a.account === engine));
-    const generation = page.coverage.generation;
-    await service.syncAccount(owner);
-    assert.equal(
-      (await store.page("localnet", owner)).coverage.generation,
-      generation,
-      "unchanged engine dependency must reuse snapshot",
-    );
-    wrong = true;
-    await service.syncAccount(owner);
-    page = await store.page("localnet", owner);
-    assert(
-      page.coverage.issues.includes(
-        "perps_engine_or_custody_identity_unverified",
-      ),
-    );
-    assert(
-      !page.events.some(
-        (e) =>
-          e.kind === "perps_operation" && e.settlement?.status === "confirmed",
-      ),
-    );
-  } finally {
-    await service.stop();
-    await sql.end();
-  }
+    const value: PerpsRiskAction = { kind: 1, status: payout === undefined ? 4 : 2, actionId: payout === undefined ? '1' : '2', previousActionId: payout === undefined ? '0' : '1',
+        subjectId: subject, requestHash: body.hash().toString('hex'), requestBody: body, continuation: Cell.EMPTY, queuedAmountRaw: '0', settledAmountRaw: '0', recordedAt: '1' };
+    s.riskNonce = value.actionId;
+    s.riskActions.set(perpsRiskActionKey(1, subject), value);
 }
-async function main() {
-  assert.equal(tvmDiv(-101n, 100n), -2n);
-  assert.equal(parseLedgerPerpsCodeHash(" "), undefined);
-  for (const bad of [
-    "0x" + "a".repeat(64),
-    "A".repeat(64),
-    "a".repeat(63),
-    " " + "a".repeat(64),
-  ])
-    assert.throws(() => parseLedgerPerpsCodeHash(bad));
-  assert.equal(parseLedgerPerpsCodeHash("a".repeat(64)), "a".repeat(64));
-  const o = open(),
-    round = readPerpsState(encode(o.a).toBoc().toString("base64"));
-  assert.deepEqual(round.accounts, o.a.accounts);
-  assert.deepEqual(round.positions, o.a.positions);
-  assert.deepEqual(round.markets, o.a.markets);
-  assert.deepEqual(round.pending, o.a.pending);
-  assert.equal(round.root, root);
-  assert.deepEqual(w.perpsRequest(request(o.r)), o.r);
-  const economics = perpsEconomics(
-    o.b,
-    o.a,
-    owner,
-    ownerWallet,
-    o.r,
-    o.deposit.toString(),
-  )!;
-  assert.equal(economics.tradeFeeRaw, o.fee.toString());
-  assert.equal(economics.payoutContributionRaw, "113");
-  assert.equal(
-    BigInt(economics.depositCollateralRaw) +
-      BigInt(economics.tradeFeeRaw) +
-      BigInt(economics.excessRaw),
-    o.deposit,
-  );
-  const f = fixture(o.b, o.a, o.r, o.deposit);
-  f.finishPayout(o.excess);
-  const result = (await projectOwnerLedger(f.input)).events,
-    event = result.find((e) => e.kind === "perps_operation")!;
-  assert.equal(event.settlement?.status, "confirmed", JSON.stringify(result));
-  assert.equal(event.settlement!.perps!.payout.status, "completed");
-  assert.equal(
-    event.settlement!.perps!.fundingQueryId,
-    (BigInt(query) + 1n).toString(),
-  );
-  assert.equal(event.settlement!.perps!.queryId, query);
-  assert.equal(
-    event.movements
-      .filter((m) => m.asset.kind === "jetton" && m.direction === "in")
-      .reduce((s, m) => s + BigInt(m.amountRaw), 0n),
-    113n,
-  );
-  assert.equal(
-    event.movements.filter(
-      (m) =>
-        m.asset.kind === "perps_balance" &&
-        m.asset.balanceType === "collateral",
-    ).length,
-    1,
-  );
-  assert.equal(event.totalFeesRaw, "21");
-  assert.equal(
-    event.movements.find((m) => m.purpose === "perps_payout")?.evidence.kind,
-    "perps_payout",
-  );
-  assert.deepEqual((await projectOwnerLedger(f.input)).events, result);
-  assert.equal(
-    event.movements
-      .filter(
-        (m) =>
-          m.asset.kind === "jetton" &&
-          (m.direction === "out" || m.direction === "fee"),
-      )
-      .reduce((sum, m) => sum + BigInt(m.amountRaw), 0n),
-    o.deposit,
-  );
-  assert.equal(
-    event.movements.find((m) => m.purpose === "protocol_fee")?.amountRaw,
-    o.fee.toString(),
-  );
-
-  const unavailable = fixture(o.b, o.a, o.r, o.deposit);
-  unavailable.input.stateAt = async () => null;
-  assert.equal(
-    (await projectOwnerLedger(unavailable.input)).events.find(
-      (e) => e.kind === "perps_operation",
-    )!.settlement?.status,
-    "incomplete",
-  );
-  const partial = fixture(o.b, o.a, o.r, o.deposit);
-  partial.chains.get(engineWallet)!.historyComplete = false;
-  assert.equal(
-    (await projectOwnerLedger(partial.input)).events.find(
-      (e) => e.kind === "perps_operation",
-    )!.settlement?.status,
-    "incomplete",
-  );
-  const wrong = fixture(o.b, o.a, o.r, o.deposit);
-  wrong.input.perpsEngines!.get(engine)!.codeHash = "00".repeat(32);
-  assert.equal(
-    (await projectOwnerLedger(wrong.input)).events.find(
-      (e) => e.kind === "perps_operation",
-    )!.settlement?.status,
-    "incomplete",
-  );
-  const broken = clone(o.a);
-  broken.accounts.get(owner)!.collateralRaw = (
-    BigInt(o.r.marginRaw!) + 1n
-  ).toString();
-  assert.equal(
-    perpsEconomics(o.b, broken, owner, ownerWallet, o.r, o.deposit.toString()),
-    null,
-  );
-  const rejected = clone(o.b);
-  pending(rejected, o.deposit);
-  const refund = fixture(o.b, rejected, o.r, o.deposit);
-  refund.finishPayout(o.deposit);
-  const rejectedEvent = (await projectOwnerLedger(refund.input)).events.find(
-    (e) => e.kind === "perps_operation",
-  )!;
-  assert.equal(rejectedEvent.settlement?.perps?.outcome, "rejected");
-  assert.equal(rejectedEvent.settlement?.perps?.payout.status, "completed");
-  assert(
-    !rejectedEvent.movements.some((m) => m.asset.balanceType === "collateral"),
-  );
-  const closeBefore = clone(o.a);
-  closeBefore.pending.clear();
-  closeBefore.markets.get(1)!.markRaw = "1100000000";
-  closeBefore.markets.get(1)!.fundingIndexRaw = "1";
-  const position = closeBefore.positions.values().next().value!,
-    size = BigInt(position.sizeRaw),
-    funding = tvmDiv(-size, 10000n),
-    pnl = tvmDiv(size * 100000000n, 1000000000n),
-    notional = tvmDiv(size * 1100000000n, 1000000000n),
-    fee = (notional * 25n) / 10000n,
-    total = BigInt(o.r.marginRaw!) + funding + pnl - fee,
-    closeAfter = clone(closeBefore);
-  closeAfter.positions.clear();
-  closeAfter.accounts.get(owner)!.collateralRaw = "0";
-  closeAfter.accounts.get(owner)!.openPositionCount = 0;
-  pending(closeAfter, total);
-  const close: w.PerpsRequest = {
-    opcode: w.PERPS_CLOSE,
-    operation: "close",
-    marketId: 1,
-    queryId: query,
-    sizeRaw: "1",
-    limitPriceRaw: "0",
-  };
-  const ce = perpsEconomics(
-    closeBefore,
-    closeAfter,
-    owner,
-    ownerWallet,
-    close,
-    "0",
-  )!;
-  assert.equal(ce.fundingRaw, funding.toString());
-  assert.equal(ce.realizedPnlRaw, pnl.toString());
-  assert.equal(ce.payoutContributionRaw, total.toString());
-  const cf = fixture(closeBefore, closeAfter, close, 0n);
-  cf.finishPayout(total);
-  assert.equal(
-    (await projectOwnerLedger(cf.input)).events.find(
-      (e) => e.kind === "perps_operation",
-    )!.settlement?.perps?.payout.status,
-    "completed",
-  );
-  const closeEvent = (await projectOwnerLedger(cf.input)).events.find(
-    (e) => e.kind === "perps_operation",
-  )!;
-  assert.equal(
-    closeEvent.movements
-      .filter(
-        (m) =>
-          m.asset.kind === "perps_balance" &&
-          m.asset.balanceType === "collateral",
-      )
-      .reduce(
-        (sum, m) =>
-          sum + (m.direction === "in" ? 1n : -1n) * BigInt(m.amountRaw),
-        0n,
-      ),
-    -BigInt(o.r.marginRaw!),
-  );
-  assert.equal(
-    closeEvent.movements.find((m) => m.purpose === "protocol_fee")?.amountRaw,
-    fee.toString(),
-  );
-  const retry = clone(closeAfter),
-    retryRequest: w.PerpsRequest = {
-      opcode: w.PERPS_CLAIM,
-      operation: "claim",
-      marketId: 1,
-      queryId: "72",
-    };
-  assert.equal(
-    perpsEconomics(closeAfter, retry, owner, ownerWallet, retryRequest, "0")
-      ?.outcome,
-    "retry",
-  );
-
-  const readyAfter = clone(o.a);
-  pending(readyAfter, o.excess, 2, "0");
-  const ready = fixture(o.b, readyAfter, o.r, o.deposit),
-    dispatch = ready.dispatchReady(o.excess);
-  ready.finishPayout(o.excess, "71", dispatch);
-  const readyEvents = (await projectOwnerLedger(ready.input)).events.filter(
-    (e) => e.kind === "perps_operation",
-  );
-  assert.equal(readyEvents.length, 1);
-  assert.equal(readyEvents[0].settlement?.perps?.payout.status, "completed");
-  assert.equal(readyEvents[0].settlement?.perps?.queryId, query);
-  assert.equal(readyEvents[0].settlement?.perps?.payout.wireId, "71");
-  // Wrong terminal counterparty and failed delivery never turn a journal into receipt.
-  const wrongReceipt = fixture(o.b, o.a, o.r, o.deposit),
-    wrongTerminal = wrongReceipt.finishPayout(o.excess);
-  wrongTerminal.finalTx.inMessage!.body = beginCell()
-    .storeUint(0x4a53464b, 32)
-    .storeUint(71, 64)
-    .storeCoins(o.excess)
-    .storeAddress(A(other))
-    .endCell()
-    .toBoc()
-    .toString("base64");
-  assert.equal(
-    (await projectOwnerLedger(wrongReceipt.input)).events.find(
-      (e) => e.kind === "perps_operation",
-    )!.settlement?.perps?.payout.status,
-    "pending",
-  );
-  const bounced = fixture(o.b, o.a, o.r, o.deposit),
-    bounce = bounced.finishPayout(o.excess);
-  bounce.credit.success = false;
-  bounce.credit.status = "failed";
-  const bounceEvent = (await projectOwnerLedger(bounced.input)).events.find(
-    (e) => e.kind === "perps_operation",
-  )!;
-  assert.equal(bounceEvent.settlement?.perps?.payout.status, "pending");
-  assert(
-    !bounceEvent.movements.some(
-      (m) => m.asset.kind === "jetton" && m.direction === "in",
-    ),
-  );
-  const wrongOwner = clone(o.a);
-  wrongOwner.pending.values().next().value!.owner = other;
-  assert.equal(
-    perpsEconomics(
-      o.b,
-      wrongOwner,
-      owner,
-      ownerWallet,
-      o.r,
-      o.deposit.toString(),
-    ),
-    null,
-  );
-  const wrongPosition = clone(o.a);
-  wrongPosition.positions.values().next().value!.owner = other;
-  assert.throws(() =>
-    readPerpsState(encode(wrongPosition).toBoc().toString("base64")),
-  );
-  const baseline = base(),
-    balance = 1000000n,
-    positionBase: PerpsPosition = {
-      owner,
-      marketId: 1,
-      sizeRaw: "1000000000",
-      marginRaw: balance.toString(),
-      entryNotionalRaw: "1000000000",
-      lastFundingIndexRaw: "0",
-      flags: 0,
-    };
-  baseline.accounts.set(owner, {
-    ...emptyPerpsAccount(),
-    collateralRaw: balance.toString(),
-    openPositionCount: 1,
-  });
-  setPosition(baseline, positionBase);
-  for (const [operation, opcode, delta, deposit] of [
-    ["add_margin", w.PERPS_ADD_MARGIN, 10000n, 10003n],
-    ["remove_margin", w.PERPS_REMOVE_MARGIN, -10000n, 0n],
-  ] as const) {
-    const after = clone(baseline);
-    after.accounts.get(owner)!.collateralRaw = (balance + delta).toString();
-    after.positions.values().next().value!.marginRaw = (
-      balance + delta
-    ).toString();
-    pending(after, delta > 0n ? 3n : -delta);
-    const r: w.PerpsRequest = {
-      opcode,
-      operation,
-      queryId: query,
-      marketId: 1,
-      marginRaw: (delta < 0n ? -delta : delta).toString(),
-    };
-    assert.equal(
-      perpsEconomics(baseline, after, owner, ownerWallet, r, deposit.toString())
-        ?.outcome,
-      "accepted",
-    );
-    assert.equal(
-      (await projectOwnerLedger(fixture(baseline, after, r, deposit).input)).events.find((e) => e.kind === "perps_operation")!.settlement?.status,
-      "confirmed",
-    );
-  }
-  const claimBefore = clone(baseline);
-  claimBefore.markets.get(1)!.fundingIndexRaw = "-1";
-  claimBefore.accounts.get(owner)!.pendingFundingRaw = "7";
-  const claimAfter = clone(claimBefore);
-  claimAfter.accounts.get(owner)!.pendingFundingRaw = "0";
-  claimAfter.positions.values().next().value!.lastFundingIndexRaw = "-1";
-  pending(claimAfter, 100007n, 1);
-  const claim: w.PerpsRequest = {
-    opcode: w.PERPS_CLAIM,
-    operation: "claim",
-    queryId: query,
-    marketId: 1,
-  };
-  const claimEconomics = perpsEconomics(
-    claimBefore,
-    claimAfter,
-    owner,
-    ownerWallet,
-    claim,
-    "0",
-  )!;
-  assert.equal(claimEconomics.fundingRaw, "100000");
-  assert.equal(claimEconomics.payoutContributionRaw, "100007");
-  const modifyAfter = clone(baseline),
-    quarter = 250000000n,
-    release = balance / 4n,
-    modifyFee = (quarter * 25n) / 10000n;
-  modifyAfter.accounts.get(owner)!.collateralRaw = (
-    balance -
-    release -
-    modifyFee
-  ).toString();
-  modifyAfter.positions.values().next().value!.sizeRaw = "750000000";
-  modifyAfter.positions.values().next().value!.entryNotionalRaw = "750000000";
-  modifyAfter.positions.values().next().value!.marginRaw = (
-    balance -
-    release -
-    modifyFee
-  ).toString();
-  pending(modifyAfter, release);
-  const modify: w.PerpsRequest = {
-    opcode: w.PERPS_MODIFY,
-    operation: "modify",
-    marketId: 1,
-    queryId: query,
-    sizeRaw: "-250000000",
-    marginRaw: "0",
-    flags: 0,
-    limitPriceRaw: "0",
-  };
-  assert.equal(
-    perpsEconomics(baseline, modifyAfter, owner, ownerWallet, modify, "0")
-      ?.tradeFeeRaw,
-    modifyFee.toString(),
-  );
-  const liquidBefore = clone(baseline);
-  liquidBefore.markets.get(1)!.markRaw = "999000000";
-  const liquidAfter = clone(liquidBefore);
-  liquidAfter.accounts.get(owner)!.collateralRaw = "750000";
-  liquidAfter.positions.values().next().value!.marginRaw = "750000";
-  liquidAfter.positions.values().next().value!.sizeRaw = "750000000";
-  liquidAfter.positions.values().next().value!.entryNotionalRaw = "750000000";
-  const liquidation: w.PerpsRequest = {
-    opcode: w.PERPS_LIQUIDATE,
-    operation: "liquidation",
-    owner,
-    marketId: 1,
-    queryId: query,
-    sizeRaw: "250000000",
-  };
-  assert.equal(
-    perpsEconomics(
-      liquidBefore,
-      liquidAfter,
-      owner,
-      ownerWallet,
-      liquidation,
-      "0",
-    )?.realizedPnlRaw,
-    "-250000",
-  );
-  const keeper = fixture(liquidBefore, liquidAfter, liquidation, 0n);
-  assert.equal(
-    (await projectOwnerLedger(keeper.input)).events.find(
-      (e) => e.kind === "perps_operation",
-    )!.totalFeesRaw,
-    "0",
-  );
-  const adlBefore = clone(baseline);
-  adlBefore.markets.get(1)!.markRaw = "1001000000";
-  adlBefore.markets.get(1)!.adlDeficitRaw = "100000";
-  const adlAfter = clone(adlBefore);
-  adlAfter.markets.get(1)!.adlDeficitRaw = "0";
-  adlAfter.accounts.get(owner)!.collateralRaw = "1150000";
-  adlAfter.positions.values().next().value!.marginRaw = "750000";
-  adlAfter.positions.values().next().value!.sizeRaw = "750000000";
-  adlAfter.positions.values().next().value!.entryNotionalRaw = "750000000";
-  const adl: w.PerpsRequest = {
-    opcode: w.PERPS_ADL,
-    operation: "adl",
-    owner,
-    marketId: 1,
-    queryId: query,
-    sizeRaw: "250000000",
-  };
-  assert.equal(
-    perpsEconomics(adlBefore, adlAfter, owner, ownerWallet, adl, "0")
-      ?.adlAbsorbedRaw,
-    "100000",
-  );
-  assert.deepEqual(w.perpsRequest(request(adl)), adl);
-  const replayedClaim = fixture(closeAfter, retry, retryRequest, 0n);
-  const replayEvent = (await projectOwnerLedger(replayedClaim.input)).events.find(
-    (e) => e.kind === "perps_operation",
-  )!;
-  assert.equal(replayEvent.settlement?.perps?.outcome, "retry");
-  assert.equal(replayEvent.settlement?.perps?.economics?.fundingRaw, "0");
-  assert(
-    !replayEvent.movements.some(
-      (m) => m.asset.kind === "perps_balance" || m.asset.kind === "jetton",
-    ),
-  );
-  const aggregateBefore = clone(o.b);
-  pending(aggregateBefore, 19n, 3, "70");
-  const aggregateAfter = clone(o.a);
-  pending(aggregateAfter, 19n, 3, "70");
-  aggregateAfter.pending.values().next().value!.queuedRaw = o.excess.toString();
-  const aggregateEvent = (await projectOwnerLedger(
-      fixture(aggregateBefore, aggregateAfter, o.r, o.deposit).input,
-    )).events.find((e) => e.kind === "perps_operation")!;
-  assert.equal(aggregateEvent.settlement?.perps?.outcome, "accepted");
-  assert.equal(
-    aggregateEvent.settlement?.perps?.payout.status,
-    "aggregate_unresolved",
-  );
-  assert(
-    !aggregateEvent.movements.some((m) => m.asset.balanceType === "payout"),
-  );
-  await database();
-  console.log(
-    "Perps exact account, funding/PnL, typed payout/refund, precision, replay, identity and coverage fixtures passed.",
-  );
+function live() {
+    const s = base();
+    const p: PerpsPosition = { owner, marketId: 1, sizeRaw: (10n * unit).toString(), marginRaw: (25n * unit).toString(),
+        entryNotionalRaw: (10n * unit).toString(), lastFundingIndexRaw: '0', counterparty: { reservedRaw: (20n * unit).toString(), pendingFundingRaw: '0', collectedLossRaw: '0' } };
+    s.positions.set(positionKey, p);
+    s.counterpartyMaintenance.positionCount = 1;
+    action(s, 10n * unit, 20n * unit);
+    return s;
 }
-main().catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-});
+function payout(s: PerpsState, amount: bigint) { if (amount > 0n)
+    s.pending.set(wire.perpsTransferKey(wallet), { kind: 3, owner, marketId: 1, wireId: '12', amountRaw: amount.toString(), queuedRaw: '0', recordedAt: '1' }); }
+function closeState(s: PerpsState, profit: bigint, loss = 0n) {
+    const a = clone(s);
+    a.positions.clear();
+    a.counterpartyMaintenance = { ...a.counterpartyMaintenance, positionCount: 0 };
+    a.accounts.set(owner, { ...a.accounts.get(owner)!, collateralRaw: '0', pendingFundingRaw: '0', openPositionCount: 0 });
+    payout(a, 25n * unit - loss);
+    action(a, 0n, 0n, profit);
+    if (loss > 0n)
+        a.pending.set(lossKey, { kind: 16, owner: vault, marketId: 0, wireId: '0', amountRaw: loss.toString(), queuedRaw: '0', recordedAt: '1' });
+    return a;
+}
+const close: wire.PerpsRequest = { opcode: wire.PERPS_CLOSE, operation: 'close', queryId: '9007199254741233', marketId: 1, sizeRaw: '0', limitPriceRaw: '0', referrer: null };
+assert.equal(tvmDiv(-101n, 100n), -2n);
+// Funding checkpoints price only the period during which the prior authenticated
+// rate was valid. These independent synthetic vectors do not claim chain proof.
+const checkpoint = { fundingIndexRaw: '0', fundingRemainderRaw: '0', fundingRateBpsRaw: '120',
+    fundingValidUntil: '1600', lastFundingTs: '1000' };
+assert.deepEqual(accruePerpsFunding(checkpoint, 1300n), { fundingIndexRaw: '10', fundingRemainderRaw: '0', elapsed: 300n });
+assert.deepEqual(accruePerpsFunding(checkpoint, 37000n), { fundingIndexRaw: '20', fundingRemainderRaw: '0', elapsed: 600n },
+    'An idle ten-hour gap accrues only the six hundred authenticated seconds');
+const negativeCheckpoint = { ...checkpoint, fundingRateBpsRaw: '-1' };
+assert.deepEqual(accruePerpsFunding(negativeCheckpoint, 1001n), { fundingIndexRaw: '-1', fundingRemainderRaw: '3599', elapsed: 1n });
+const negativeStep = { ...negativeCheckpoint, ...accruePerpsFunding(negativeCheckpoint, 1001n), lastFundingTs: '1001' };
+assert.deepEqual(accruePerpsFunding(negativeStep, 1002n), { fundingIndexRaw: '-1', fundingRemainderRaw: '3598', elapsed: 1n });
+assert.equal(accruePerpsFunding(negativeStep, 1002n).fundingIndexRaw, accruePerpsFunding(negativeCheckpoint, 1002n).fundingIndexRaw);
+assert.equal(accruePerpsFunding(negativeStep, 1002n).fundingRemainderRaw, accruePerpsFunding(negativeCheckpoint, 1002n).fundingRemainderRaw);
+assert.deepEqual(accruePerpsFunding({ ...checkpoint, fundingValidUntil: '999', fundingRemainderRaw: '77' }, 37000n),
+    { fundingIndexRaw: '0', fundingRemainderRaw: '77', elapsed: 0n }, 'Expired observations preserve fractional debt without growing it');
+assert.deepEqual(accruePerpsFunding({ ...checkpoint, lastFundingTs: '0', fundingValidUntil: '0' }, 37000n),
+    { fundingIndexRaw: '0', fundingRemainderRaw: '0', elapsed: 0n }, 'The first observation cannot price the preceding history');
+for (const defect of [{ fundingRemainderRaw: '-1' }, { fundingRemainderRaw: '3600' }, { fundingRateBpsRaw: (1n << 127n).toString() },
+    { fundingValidUntil: '-1' }, { lastFundingTs: '1301' }]) {
+    assert.throws(() => accruePerpsFunding({ ...checkpoint, ...defect }, 1300n));
+}
+assert.equal(parseLedgerPerpsCodeHash(' '), undefined);
+for (const hash of ['0x' + 'a'.repeat(64), 'A'.repeat(64), 'a'.repeat(63), ' ' + 'a'.repeat(64)])
+    assert.throws(() => parseLedgerPerpsCodeHash(hash));
+assert.equal(parseLedgerPerpsCodeHash('a'.repeat(64)), 'a'.repeat(64));
+const before = live();
+before.markets.get(1)!.markRaw = (unit * 11n / 10n).toString();
+const after = closeState(before, unit), economic = perpsEconomics(before, after, owner, wallet, close, '0');
+assert(economic);
+assert.equal(economic.realizedPnlRaw, unit.toString());
+assert.equal(economic.payoutContributionRaw, (25n * unit).toString());
+assert.equal(economic.counterpartyProfitRaw, unit.toString());
+assert.equal(economic.counterpartySettlement?.beneficiary, owner);
+assert.equal(economic.counterpartySettlement?.amountRaw, unit.toString());
+assert.equal(economic.badDebtRaw, '0');
+for (const field of ['fundingRateBpsRaw', 'fundingValidUntil', 'lastFundingTs'] as const) {
+    const rewritten = clone(after);
+    rewritten.markets.get(1)![field] = '1';
+    assert.equal(perpsEconomics(before, rewritten, owner, wallet, close, '0'), null,
+        'A settlement cannot silently rewrite its funding checkpoint: ' + field);
+}
+for (const defect of ['pooled-margin', 'wrong-beneficiary', 'missing-reservation', 'other-trader', 'extra-claim', 'wrong-predecessor'] as const) {
+    const broken = clone(after);
+    if (defect === 'pooled-margin')
+        payout(broken, 26n * unit);
+    if (defect === 'wrong-beneficiary') {
+        broken.riskActions = new Map(before.riskActions);
+        action(broken, 0n, 0n, unit, other);
+    }
+    if (defect === 'missing-reservation')
+        broken.riskActions.clear();
+    if (defect === 'other-trader')
+        broken.accounts.get(other)!.collateralRaw = (499n * unit).toString();
+    if (defect === 'extra-claim') {
+        broken.riskActions = new Map(before.riskActions);
+        action(broken, 0n, 0n, unit + 1n);
+    }
+    if (defect === 'wrong-predecessor') {
+        const key = perpsRiskActionKey(1, subject), entry = broken.riskActions.get(key)!;
+        broken.riskActions.set(key, { ...entry, previousActionId: '0' });
+    }
+    assert.equal(perpsEconomics(before, broken, owner, wallet, close, '0'), null, defect);
+}
+for (const kind of [12, 13]) {
+    const finalizing = clone(after), key = wire.perpsTransferKey(wallet);
+    finalizing.pending.set(key, { ...finalizing.pending.get(key)!, kind });
+    assert.equal(perpsEconomics(before, finalizing, owner, wallet, close, '0')?.payoutContributionRaw, (25n * unit).toString());
+}
+for (const kind of [1, 10, 11]) {
+    const obsolete = clone(after), key = wire.perpsTransferKey(wallet);
+    obsolete.pending.set(key, { ...obsolete.pending.get(key)!, kind });
+    assert.equal(perpsEconomics(before, obsolete, owner, wallet, close, '0'), null, 'Obsolete pooled funding transfer cannot prove a refund');
+}
+const removeBefore = live();
+removeBefore.markets.get(1)!.fundingIndexRaw = '1';
+const removeAfter = clone(removeBefore), removePosition = removeAfter.positions.get(positionKey)!;
+removePosition.lastFundingIndexRaw = '1';
+removePosition.marginRaw = (24n * unit - 1000000n).toString();
+removeAfter.accounts.get(owner)!.collateralRaw = removePosition.marginRaw;
+payout(removeAfter, unit);
+removeAfter.pending.set(lossKey, { kind: 16, owner: vault, marketId: 0, wireId: '0', amountRaw: '1000000', queuedRaw: '0', recordedAt: '1' });
+const remove: wire.PerpsRequest = { opcode: wire.PERPS_REMOVE_MARGIN, operation: 'remove_margin', queryId: '11', marketId: 1, marginRaw: unit.toString() };
+assert.equal(perpsEconomics(removeBefore, removeAfter, owner, wallet, remove, '0')?.counterpartyLossRaw, '1000000');
+const gap = live();
+gap.markets.get(1)!.markRaw = (100n * unit).toString();
+const capped = perpsEconomics(gap, closeState(gap, 20n * unit), owner, wallet, close, '0');
+assert.equal(capped?.realizedPnlRaw, (990n * unit).toString());
+assert.equal(capped?.counterpartyProfitRaw, (20n * unit).toString());
+assert.equal(capped?.payoutContributionRaw, (25n * unit).toString(), 'Posted margin remains independently funded');
+const loss = live();
+loss.markets.get(1)!.markRaw = (unit * 9n / 10n).toString();
+const lossAfter = closeState(loss, 0n, unit);
+assert.equal(perpsEconomics(loss, lossAfter, owner, wallet, close, '0')?.counterpartyLossRaw, unit.toString());
+const uncollected = clone(lossAfter);
+uncollected.pending.delete(lossKey);
+assert.equal(perpsEconomics(loss, uncollected, owner, wallet, close, '0'), null);
+const stale = clone(before);
+stale.markets.get(1)!.oraclePriceHealthy = false;
+assert.equal(perpsEconomics(stale, after, owner, wallet, close, '0'), null);
+const partial = clone(before), remain = partial.positions.get(positionKey)!;
+remain.sizeRaw = (7500000000n).toString();
+remain.entryNotionalRaw = (7500000000n).toString();
+remain.marginRaw = (18750000000n).toString();
+remain.counterparty.reservedRaw = (15n * unit).toString();
+partial.accounts.get(owner)!.collateralRaw = remain.marginRaw;
+payout(partial, 6250000000n);
+action(partial, 7500000000n, 15n * unit, 250000000n);
+const modify: wire.PerpsRequest = { opcode: wire.PERPS_MODIFY, operation: 'modify', marketId: 1, queryId: '9', sizeRaw: '-2500000000', marginRaw: '0', limitPriceRaw: '0', referrer: null };
+assert.equal(perpsEconomics(before, partial, owner, wallet, modify, '0')?.counterpartyProfitRaw, '250000000');
+const claimBefore = live();
+claimBefore.markets.get(1)!.fundingIndexRaw = '-1';
+claimBefore.positions.get(positionKey)!.counterparty.pendingFundingRaw = '7';
+claimBefore.accounts.get(owner)!.pendingFundingRaw = '7';
+const claimAfter = clone(claimBefore), claimPosition = claimAfter.positions.get(positionKey)!;
+claimPosition.lastFundingIndexRaw = '-1';
+claimPosition.counterparty.pendingFundingRaw = '0';
+claimPosition.counterparty.reservedRaw = (20n * unit - 1000007n).toString();
+claimAfter.accounts.get(owner)!.pendingFundingRaw = '0';
+action(claimAfter, 10n * unit, 20n * unit - 1000007n, 1000007n);
+const claim: wire.PerpsRequest = { opcode: wire.PERPS_CLAIM, operation: 'claim', queryId: '10', marketId: 1 };
+const funding = perpsEconomics(claimBefore, claimAfter, owner, wallet, claim, '0');
+assert.equal(funding?.fundingRaw, '1000000');
+assert.equal(funding?.counterpartyProfitRaw, '1000007');
+assert.equal(funding?.payoutContributionRaw, '0');
+const adl: wire.PerpsRequest = { opcode: wire.PERPS_ADL, operation: 'adl', owner, queryId: '11', marketId: 1, sizeRaw: (10n * unit).toString() };
+assert.equal(perpsEconomics(gap, closeState(gap, 20n * unit), owner, wallet, adl, '0')?.counterpartyProfitRaw, (20n * unit).toString());
+assert.equal(perpsEconomics(gap, partial, owner, wallet, { ...adl, sizeRaw: '2500000000' }, '0'), null, 'Old quarter-position ADL is unsupported');
+console.log('Perps canonical isolated reservation, exact RVPS beneficiary, margin cash, claim, gap, loss and adversarial proofs passed');
+
+// Same-owner positions are isolated too: closing one market must return its
+// margin immediately and must never debit another market's posted collateral.
+const sibling = (state: PerpsState) => {
+    const key = wire.perpsPositionKey(owner, 2), p = state.positions.get(positionKey)!;
+    state.positions.set(key, { ...p, marketId: 2, sizeRaw: unit.toString(), marginRaw: (7n * unit).toString(),
+        entryNotionalRaw: unit.toString(), counterparty: {reservedRaw:(2n*unit).toString(),pendingFundingRaw:'0',collectedLossRaw:'0'} });
+    state.markets.set(2, {...state.markets.get(1)!});
+    state.accounts.set(owner,{...state.accounts.get(owner)!,collateralRaw:(32n*unit).toString(),openPositionCount:2});
+    state.counterpartyMaintenance = {...state.counterpartyMaintenance,positionCount:2};
+    return key;
+};
+const isolatedBefore=live(), siblingKey=sibling(isolatedBefore);
+isolatedBefore.markets.get(1)!.markRaw=(unit*11n/10n).toString();
+const isolatedAfter=clone(isolatedBefore);isolatedAfter.positions.delete(positionKey);
+isolatedAfter.accounts.set(owner,{...isolatedAfter.accounts.get(owner)!,collateralRaw:(7n*unit).toString(),openPositionCount:1});
+isolatedAfter.counterpartyMaintenance={...isolatedAfter.counterpartyMaintenance,positionCount:1};
+payout(isolatedAfter,25n*unit);action(isolatedAfter,0n,0n,unit);
+assert.equal(perpsEconomics(isolatedBefore,isolatedAfter,owner,wallet,close,'0')?.payoutContributionRaw,(25n*unit).toString());
+assert.deepEqual(isolatedAfter.positions.get(siblingKey),isolatedBefore.positions.get(siblingKey));
+const pooledSibling=clone(isolatedAfter);pooledSibling.accounts.get(owner)!.collateralRaw='0';payout(pooledSibling,32n*unit);
+assert.equal(perpsEconomics(isolatedBefore,pooledSibling,owner,wallet,close,'0'),null,'Cannot withdraw the surviving same-owner position margin');
+const fundingIsolatedBefore=live();sibling(fundingIsolatedBefore);fundingIsolatedBefore.markets.get(1)!.fundingIndexRaw='30000';
+const fundingIsolatedAfter=clone(fundingIsolatedBefore);fundingIsolatedAfter.positions.delete(positionKey);
+fundingIsolatedAfter.counterpartyMaintenance={...fundingIsolatedAfter.counterpartyMaintenance,positionCount:1};
+fundingIsolatedAfter.accounts.set(owner,{...fundingIsolatedAfter.accounts.get(owner)!,collateralRaw:(7n*unit).toString(),openPositionCount:1});
+fundingIsolatedAfter.pending.set(lossKey,{kind:16,owner:vault,marketId:0,wireId:'0',amountRaw:(25n*unit).toString(),queuedRaw:'0',recordedAt:'1'});
+action(fundingIsolatedAfter,0n,0n,0n);
+const fundingIsolated=perpsEconomics(fundingIsolatedBefore,fundingIsolatedAfter,owner,wallet,close,'0');
+assert.equal(fundingIsolated?.counterpartyLossRaw,(25n*unit).toString());
+assert.equal(fundingIsolated?.uncollectedLossRaw,(5n*unit).toString());
+assert.equal(fundingIsolated?.payoutContributionRaw,'0');
+console.log('PASS same-owner isolated margin payout, funding cap, and pooled-collateral rejection');
+
+// Funding reversals net the same position's booked LP claim before any trader
+// cash moves. Synthetic state boundaries here independently prove arithmetic.
+const nettedBefore=live();nettedBefore.positions.get(positionKey)!.counterparty.pendingFundingRaw=(2n*unit).toString();
+nettedBefore.accounts.get(owner)!.pendingFundingRaw=(2n*unit).toString();
+nettedBefore.markets.get(1)!.fundingIndexRaw='1000';
+const nettedAfter=closeState(nettedBefore,unit);
+assert.equal(perpsEconomics(nettedBefore,nettedAfter,owner,wallet,close,'0')?.counterpartyLossRaw,'0');
+assert.equal(perpsEconomics(nettedBefore,nettedAfter,owner,wallet,close,'0')?.counterpartyProfitRaw,unit.toString());
+const doublePaid=closeState(nettedBefore,2n*unit,unit);
+assert.equal(perpsEconomics(nettedBefore,doublePaid,owner,wallet,close,'0'),null,'Cannot debit trader cash while paying the canceled funding claim');
+const fundingGap=live();fundingGap.markets.get(1)!.markRaw=(100n*unit).toString();
+fundingGap.markets.get(1)!.fundingIndexRaw='28000';
+fundingGap.positions.get(positionKey)!.counterparty.pendingFundingRaw=(2n*unit).toString();
+fundingGap.accounts.get(owner)!.pendingFundingRaw=(2n*unit).toString();
+const fundingGapAfter=closeState(fundingGap,19n*unit,25n*unit);
+for(const request of [close,claim]) {
+  const result=perpsEconomics(fundingGap,fundingGapAfter,owner,wallet,request,'0');
+  assert.equal(result?.counterpartyProfitRaw,(19n*unit).toString());
+  assert.equal(result?.uncollectedLossRaw,'0','One T3 funding debt is settled from the already capped 20 T3 LP claim');
+  assert.equal(result?.payoutContributionRaw,'0');
+}
+const forgivenGap=closeState(fundingGap,20n*unit,25n*unit);
+assert.equal(perpsEconomics(fundingGap,forgivenGap,owner,wallet,close,'0'),null,'Subtracting funding debt before gross profit cap overpays a price gap');
+const insolventClaim=live();insolventClaim.positions.get(positionKey)!.marginRaw=unit.toString();
+insolventClaim.accounts.get(owner)!.collateralRaw=unit.toString();
+insolventClaim.positions.get(positionKey)!.counterparty.pendingFundingRaw=unit.toString();
+insolventClaim.accounts.get(owner)!.pendingFundingRaw=unit.toString();
+insolventClaim.markets.get(1)!.markRaw=(unit/2n).toString();
+const insolventClaimAfter=closeState(insolventClaim,0n,unit);insolventClaimAfter.pending.delete(wire.perpsTransferKey(wallet));
+const forcedClaim=perpsEconomics(insolventClaim,insolventClaimAfter,owner,wallet,claim,'0');
+assert.equal(forcedClaim?.counterpartyProfitRaw,'0');
+assert.equal(forcedClaim?.uncollectedLossRaw,(3n*unit).toString());
+console.log('PASS funding reversal cancellation, cap-before-debt gap netting, and insolvent funding-claim compulsory close');
+
+const rescueBefore=live();rescueBefore.markets.get(1)!.oraclePriceHealthy=false;
+const rescueAfter=clone(rescueBefore);rescueAfter.accounts.get(owner)!.collateralRaw=(26n*unit).toString();
+rescueAfter.positions.get(positionKey)!.marginRaw=(26n*unit).toString();
+const rescue:wire.PerpsRequest={opcode:wire.PERPS_ADD_MARGIN,operation:'add_margin',queryId:'99',marketId:1,marginRaw:unit.toString()};
+assert.equal(perpsEconomics(rescueBefore,rescueAfter,owner,wallet,rescue,unit.toString())?.depositCollateralRaw,unit.toString(),'A funded isolated margin rescue does not need a healthy price');
+assert.equal(perpsEconomics(rescueBefore,rescueAfter,owner,wallet,rescue,'0'),null,'Stale-oracle rescue cannot fabricate deposited collateral');
+console.log('PASS oracle-independent actual-funded margin rescue');

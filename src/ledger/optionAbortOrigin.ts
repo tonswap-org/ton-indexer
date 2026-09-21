@@ -15,6 +15,8 @@ import {
 } from "./optionLifecycleState";
 import { readOptionPositionState } from "./optionState";
 import { optionNodeOk as ok } from "./optionCash";
+import { perpsWalletAddress } from "./perpsWire";
+import { optionPhysicalIngress } from "./optionIngress";
 import { canonicalLedgerAddress } from "./normalize";
 const addr = (s?: string) => {
   try {
@@ -88,7 +90,8 @@ export async function proveOptionAbortOrigin(
     flow.sourceAsset.owner !== payload.owner ||
     flow.sourceAsset.master !== factory.collateralRoot ||
     flow.recipientAsset.owner !== factory.address ||
-    flow.recipientAsset.master !== factory.collateralRoot
+    flow.recipientAsset.master !== factory.collateralRoot ||
+    flow.recipient.account !== perpsWalletAddress(factory.walletCode, factory.collateralRoot, factory.address)
   )
     return null;
   const series = factory.series.get(payload.seriesId);
@@ -139,6 +142,14 @@ export async function proveOptionAbortOrigin(
     !optionFactoryMatches(state.after, factory)
   )
     return null;
+  const ingress = optionPhysicalIngress(origin.raw.inMessage, flow.recipient.account, factory.address);
+  if (!ingress || BigInt(ingress.notificationCreatedLt) >= BigInt(origin.raw.lt) ||
+      !flow.recipient.raw.outMessages.some((m, i) => receiptFor(flow.recipient, i)?.id === origin.id &&
+        optionPhysicalIngress(m, flow.recipient.account, factory.address)?.physicalIdentity === ingress.physicalIdentity) ||
+      state.before.claimIndex.has(BigInt("0x" + ingress.physicalIdentity)) ||
+      state.after.claimIndex.get(BigInt("0x" + ingress.physicalIdentity)) !== 0n ||
+      state.before.ingressReceipts.has(ingress.logicalIdentity) ||
+      state.after.ingressReceipts.get(ingress.logicalIdentity)?.accepted !== true) return null;
   const before = optionPositionAt(
       state.beforeBoc,
       payload.seriesId,
@@ -152,12 +163,11 @@ export async function proveOptionAbortOrigin(
   const fee = BigInt(payload.premium) - BigInt(buy.premium),
     excess =
       BigInt(flow.wire.amountRaw) -
-      BigInt(payload.premium) -
-      BigInt(buy.collateral);
+      BigInt(payload.premium);
   if (
     before ||
     !position ||
-    excess < 0n ||
+    excess !== 0n ||
     position.owner !== payload.owner ||
     position.sourceWallet !== flow.recipient.account ||
     position.refundOwner !== payload.owner ||
@@ -221,6 +231,7 @@ export async function proveOptionAbortOrigin(
     origin,
     reservation,
     state,
+    ingress,
     position,
     product,
     positionHash: optionPositionHash(payload.seriesId, buy),

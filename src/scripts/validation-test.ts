@@ -70,6 +70,13 @@ const completeMainnetRegistry = Object.fromEntries(
 ) as Record<string, string>;
 assert.doesNotThrow(() => validateMainnetRegistry(completeMainnetRegistry));
 assert.deepEqual(collectMainnetRegistryIssues(completeMainnetRegistry), []);
+assert.equal(REQUIRED_MAINNET_REGISTRY_KEYS.includes('DexRouter'), true);
+for (const role of ['ClmmRouter', 'ClmmPoolFactory', 'ClmmSeedingExecutor']) {
+  assert.throws(() => validateMainnetRegistry({ ...completeMainnetRegistry, [role]: mainnetAddress }), /Unsupported first-release contract roles/);
+}
+const missingDexRouter = { ...completeMainnetRegistry };
+delete missingDexRouter.DexRouter;
+assert.throws(() => validateMainnetRegistry(missingDexRouter), /missing\/placeholder keys: DexRouter/);
 assert.doesNotThrow(() =>
   validateMainnetRegistry({
     ...completeMainnetRegistry,

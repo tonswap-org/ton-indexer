@@ -10,7 +10,7 @@ import type { MarketProjection, MarketNode, DlmmMarketBinding, MarketDependency 
 import type { LedgerSqlPool, LedgerSqlClient } from '../ledger/store';
 
 function actualProjection(): MarketProjection {
-  const f=JSON.parse(readFileSync(resolve(__dirname,'fixtures/dlmm-market-settlements.json'),'utf8'));
+  const f=JSON.parse(readFileSync(resolve(__dirname,'fixtures/dlmm-referral-market-current/dlmm-market-settlements.json'),'utf8'));
   const binding:DlmmMarketBinding={network:'localnet',pool:f.accounts.pool,tokenT:f.accounts.tokenT,tokenX:f.accounts.tokenX, tokenTCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
     poolCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash,
     walletCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_wallet.tolk')).codeHash};
@@ -23,6 +23,16 @@ function actualProjection(): MarketProjection {
   return projectDlmmMarket(binding,nodes,dependencies);
 }
 function changed(p:MarketProjection, marker:string):MarketProjection { const q=structuredClone(p); q.issues.push(marker); q.historyComplete=false; return q; }
+function mismatchReferencedHead(q:MarketProjection) {
+      // A later independent fee finalizer need not appear in user trade evidence.
+      // Place the adversarial head at the latest referenced pool boundary so
+      // this specifically tests equal-LT hash binding, not unrelated later state.
+      const refs:Array<{account:string;lt:string;hash:string}>=[];
+      const visit=(value:any):void=>{if(!value||typeof value!=='object')return;if(value.account===q.binding.pool&&typeof value.lt==='string'&&typeof value.hash==='string')refs.push(value);Object.values(value).forEach(visit);};
+      visit(q.observations);visit(q.candidates);
+      const latest=refs.reduce((a,b)=>BigInt(a.lt)>BigInt(b.lt)?a:b);
+      const dep=q.dependencies.find(d=>d.account===q.binding.pool)!;dep.headLt=latest.lt;dep.headHash='a'.repeat(64);
+}
 function badProjectionCases(p:MarketProjection) {
   const mutations:Array<[string,(q:MarketProjection)=>void]>=[
     ['schema',q=>{q.schema='old' as never;}],
@@ -30,7 +40,7 @@ function badProjectionCases(p:MarketProjection) {
     ['noncanonical account',q=>{q.binding.pool=q.binding.pool.toUpperCase();}],
     ['code hash',q=>{q.binding.poolCodeHash='bad';}],
     ['code binding mismatch',q=>{q.binding.poolCodeHash='a'.repeat(64);}],
-    ['head hash mismatch',q=>{q.dependencies.find(d=>d.account===q.binding.pool)!.headHash='a'.repeat(64);}],
+    ['head hash mismatch at referenced boundary',mismatchReferencedHead],
     ['missing debit boundary',q=>{q.observations[0].input.boundaries=q.observations[0].input.boundaries.filter(b=>b.transaction.account!==q.observations[0].input.debit.account);}],
     ['uninitialized debit',q=>{const b=q.observations[0].input.boundaries.find(b=>b.transaction.account===q.observations[0].input.debit.account)!;b.beforeAccountState='uninitialized';b.beforeDataHash=null;}],
     ['same root',q=>{q.binding.tokenT=q.binding.tokenX;}],
@@ -142,7 +152,7 @@ async function suite(pool:LedgerSqlPool,label:string) {
   const empty=await store.page(network,account);assert.equal(empty.observations.length,0);assert.equal(empty.coverage!.generation,incompleteGeneration.generation);assert.equal(empty.coverage!.historyComplete,false);
   assert.deepEqual(empty.coverage!.candidateCounts,{settled:0,refunded:1,unresolved:5});
   assert.equal((await store.candidatesPage(network,account,{limit:2})).candidates.length,2,'unresolved candidates are independently paginated');
-  const badHead=structuredClone(p);badHead.dependencies.find(d=>d.account===account)!.headHash='a'.repeat(64);
+  const badHead=structuredClone(p);mismatchReferencedHead(badHead);
   await assert.rejects(()=>store.publish(badHead,incompleteGeneration.generation),/coverage/);
   assert.equal((await store.current(network,account))!.generation,incompleteGeneration.generation,'invalid publication does not modify current head');
   // Corruption injection is confined to this disposable database and restored immediately.

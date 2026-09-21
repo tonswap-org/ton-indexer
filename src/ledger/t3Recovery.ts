@@ -214,7 +214,8 @@ export async function recoverT3Burn(
     s.proof.recipient === request.recipient &&
     s.proof.slippage === request.slippage &&
     s.proof.mode === request.mode &&
-    s.proof.outputToken === request.outputToken;
+    s.proof.outputToken === request.outputToken &&
+    s.proof.referrer === request.referrer;
   if (
     !walletMatches(walletState.after) ||
     walletState.after.journal.status !== 4 ||

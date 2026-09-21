@@ -5,16 +5,9 @@ import { readFixedSaleState } from "./launchpadState";
 import { readBondingSaleState } from "./launchpadBondingState";
 import { readAuctionSaleState } from "./launchpadAuctionState";
 import { readPerpsState } from "./perpsState";
-import { perpsWalletAddress } from "./perpsWire";
+import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress } from "./perpsWire";
 import { type LedgerT3Hub } from "./t3";
 import { receiverAddress, t3State, burnRequest, MINT_INTERNAL } from "./t3Wire";
-import type { LedgerSccpBinding } from "../config/ledgerBridge";
-import type { LedgerSccpMaster } from "./sccp";
-import { sccpConfig, sccpBurnRequest, SCCP_BURN, hex256 } from "./sccpWire";
-import {
-  parseSccpBurnedNotification,
-  parseSccpBurnRecord,
-} from "../utils/sccpEvidence";
 import { optionBuyForward, type LedgerOptionFactory } from "./options";
 import { optionExercise, optionVaultPayout } from "./optionLifecycleWire";
 import { optionOwnerAbort } from "./optionAbortWire";
@@ -31,9 +24,14 @@ import {
   INTERNAL,
   NOTIFY,
   REMOVE,
+  COLLECT,
+  COLLECT_TO,
+  collectionRequest,
+  withdrawalRequest,
   SETTLEMENT_INTERNAL,
   TRANSFER,
   opcode,
+  businessOpcode,
   protocolForward,
   unresolvedLaunchpadForward,
   tokenWire,
@@ -67,7 +65,6 @@ export class LedgerGraphBuilder {
     private crawl: (account: string) => Promise<unknown>,
     private maxAccounts = 256,
     private optionFactory?: string,
-    private sccpAssets: LedgerSccpBinding[] = [],
     private t3Hub?: string,
     private t3Root?: string,
     private perpsEngine?: string,
@@ -86,7 +83,6 @@ export class LedgerGraphBuilder {
       launchpadSales = new Map<string, LedgerLaunchpadSale>(),
       perpsEngines = new Map<string, LedgerPerpsEngine>(),
       t3Hubs = new Map<string, LedgerT3Hub>(),
-      sccpMasters = new Map<string, LedgerSccpMaster>(),
       issues = new Set<string>();
     const load = async (
       account: string,
@@ -210,7 +206,6 @@ export class LedgerGraphBuilder {
     for (const root of new Set([
       ...this.roots,
       ...(this.t3Root ? [this.t3Root] : []),
-      ...this.sccpAssets.map((a) => a.master),
     ]))
       await ownerWallet(root);
     const candidates = new Set<string>();
@@ -223,7 +218,7 @@ export class LedgerGraphBuilder {
     for (const tx of chains.get(owner)!.transactions) {
       for (const msg of [tx.inMessage, ...tx.outMessages]) {
         if (!msg) continue;
-        const op = opcode(msg);
+        const op = businessOpcode(msg);
         if (op === 0x434c414d && addr(msg.source) === owner && msg.destination) {
           const target = addr(msg.destination);
           if (target) {
@@ -239,14 +234,14 @@ export class LedgerGraphBuilder {
         )
           optionIds.add(exercise.seriesId);
         if (
-          (op === TRANSFER || op === SCCP_BURN) &&
+          op === TRANSFER &&
           addr(msg.source) === owner &&
           msg.destination
         )
           await wallet(msg.destination, "owned_jetton_wallet");
         if (op === NOTIFY && addr(msg.destination) === owner && msg.source)
           await wallet(msg.source, "owned_jetton_wallet");
-        if (op === REMOVE && addr(msg.source) === owner && msg.destination)
+        if ([REMOVE, COLLECT, COLLECT_TO].includes(op!) && addr(msg.source) === owner && msg.destination)
           candidates.add(addr(msg.destination)!);
       }
     }
@@ -358,7 +353,7 @@ export class LedgerGraphBuilder {
             payout = optionVaultPayout(message);
           if (
             exercise &&
-            (addr(message?.source) === owner || exercise.recipient === owner)
+            addr(message?.source) === owner
           )
             optionIds.add(exercise.seriesId);
           if (payout?.recipient === owner) optionIds.add(payout.seriesId);
@@ -397,6 +392,27 @@ export class LedgerGraphBuilder {
         if (balance) await wallet(balance.wallet, "counterparty");
         else issues.add("pool_wallet_identity_unresolved");
         await ownerWallet(root);
+        // A requested recipient identifies a discovery target, never ownership
+        // or proof of payout. Historical code and message receipts qualify it.
+        const recipients = new Set((chains.get(candidate)?.transactions ?? []).flatMap(tx => {
+          if (addr(tx.inMessage?.source) !== owner) return [];
+          const request = withdrawalRequest(tx.inMessage) ?? collectionRequest(tx.inMessage);
+          return request && request.recipient !== owner ? [request.recipient] : [];
+        }));
+        for (const recipient of recipients) {
+          // A zero payout does not deploy a recipient wallet. Follow actual
+          // positive dispatches for this root; historical settlement proof still
+          // decides whether a requested collection executed and fully paid.
+          const dispatched = (chains.get(candidate)?.transactions ?? []).some(tx => tx.success && tx.outMessages.some(message => {
+            if (message.bounced || addr(message.source) !== candidate || addr(message.destination) !== addr(balance?.wallet)) return false;
+            const transfer = tokenWire(message);
+            return transfer?.op === TRANSFER && transfer.owner === recipient && BigInt(transfer.amountRaw) > 0n;
+          }));
+          if (!dispatched) continue;
+          const delivered = await this.source.getJettonBalance(recipient, root).catch(() => null);
+          const identity = delivered ? await wallet(delivered.wallet, "counterparty") : null;
+          if (!identity || identity.owner !== recipient || identity.master !== root) issues.add("dlmm_recipient_wallet_unresolved");
+        }
       }
     }
     await inspectOwned();
@@ -536,7 +552,16 @@ export class LedgerGraphBuilder {
     const t3Address = addr(this.t3Hub),
       t3Root = addr(this.t3Root);
     if (t3Address && t3Root) {
-      let relevant = false;
+      // Detect owned transaction evidence before optional state discovery. A
+      // receiver lookup failure must not silently hide an already delivered mint.
+      let relevant = [...chains.values()].some(
+        (chain) => (chain.role === "owner" || chain.role === "owned_jetton_wallet") &&
+          chain.transactions.some((tx) => [tx.inMessage, ...tx.outMessages].some(
+            (message) => burnRequest(message) || opcode(message) === MINT_INTERNAL ||
+              tokenWire(message)?.owner === t3Address ||
+              addr(message?.destination) === t3Address,
+          )),
+      );
       try {
         const routes = await this.source.runGetMethod(
             t3Address,
@@ -569,19 +594,8 @@ export class LedgerGraphBuilder {
             t3Address,
             owner,
           ),
-          receiverState = await this.source.getAccountState(receiver);
-        relevant =
-          receiverState.accountState === "active" ||
-          [...chains.values()].some(
-            (c) =>
-              c.role === "owned_jetton_wallet" &&
-              c.transactions.some(
-                (tx) =>
-                  burnRequest(tx.inMessage) ||
-                  opcode(tx.inMessage) === MINT_INTERNAL ||
-                  tokenWire(tx.inMessage)?.owner === t3Address,
-              ),
-          );
+          receiverState = await this.source.getAccountState(receiver).catch(() => null);
+        relevant ||= receiverState?.accountState === "active";
         if (relevant) {
           const hubState = await this.source.getAccountState(t3Address),
             emitter = await this.source.runGetMethod(t3Root, "root_emitter");
@@ -617,7 +631,8 @@ export class LedgerGraphBuilder {
               throw Error("T3 vault identity");
             await ownerWallet(hub.reserveRoots[i]);
           }
-          if (receiverState.accountState === "active") {
+          if (!receiverState) issues.add("t3_receiver_state_unavailable");
+          if (receiverState?.accountState === "active") {
             const identity = await this.source.runGetMethod(
               receiver,
               "receiver_identity",
@@ -745,112 +760,6 @@ export class LedgerGraphBuilder {
         if (relevant) issues.add("t3_hub_identity_or_custody_unresolved");
       }
     }
-    const sccpCandidates = new Set<string>();
-    for (const chain of chains.values())
-      if (chain.role === "owned_jetton_wallet") {
-        const identity = wallets.get(chain.account);
-        if (!identity?.master) continue;
-        if (
-          chain.transactions.some(
-            (tx) =>
-              sccpBurnRequest(tx.inMessage) ||
-              (() => {
-                const wire = tokenWire(tx.inMessage);
-                return (
-                  wire?.op === INTERNAL &&
-                  wire.owner === null &&
-                  wire.forward.bits.length === 256 &&
-                  wire.forward.refs.length === 0 &&
-                  addr(tx.inMessage?.source) === identity.master
-                );
-              })(),
-          )
-        )
-          sccpCandidates.add(identity.master);
-      }
-    for (const masterAddress of sccpCandidates) {
-      const binding = this.sccpAssets.find(
-        (asset) => asset.master === masterAddress,
-      );
-      if (!binding) {
-        issues.add("sccp_master_binding_unavailable");
-        continue;
-      }
-      await load(masterAddress, "counterparty");
-      try {
-        const state = await this.source.getAccountState(masterAddress),
-          result = await this.source.runGetMethod(
-            masterAddress,
-            "get_sccp_config",
-            [],
-          );
-        const config = result?.exitCode === 0 ? sccpConfig(result.stack) : null;
-        if (
-          state.accountState !== "active" ||
-          !state.codeBoc ||
-          Cell.fromBase64(state.codeBoc).hash().toString("hex") !==
-            binding.masterCodeHash ||
-          !config ||
-          config.soraAssetId !== binding.soraAssetId
-        )
-          throw new Error("SCCP master binding mismatch");
-        let verifierTrusted = false;
-        if (binding.verifier && binding.verifier === config.verifier) {
-          const verifierState = await this.source.getAccountState(
-            binding.verifier,
-          );
-          verifierTrusted =
-            verifierState.accountState === "active" &&
-            Boolean(verifierState.codeBoc) &&
-            Cell.fromBase64(verifierState.codeBoc!).hash().toString("hex") ===
-              binding.verifierCodeHash;
-          if (verifierTrusted) await load(binding.verifier, "counterparty");
-        }
-        const master: LedgerSccpMaster = {
-          ...binding,
-          nonce: config.nonce,
-          verifierTrusted,
-          burns: new Map(),
-        };
-        for (const raw of chains.get(masterAddress)?.transactions ?? [])
-          for (const message of raw.outMessages) {
-            if (addr(message.destination) !== owner) continue;
-            let receipt: ReturnType<typeof parseSccpBurnedNotification>;
-            try {
-              receipt = parseSccpBurnedNotification(message.body, message.op);
-            } catch {
-              continue;
-            }
-            if (!receipt) continue;
-            const id = hex256(receipt.messageId);
-            if (master.burns.has(id)) continue;
-            const observedAt = new Date().toISOString();
-            const result = await this.source.runGetMethod(
-              masterAddress,
-              "get_sccp_burn_record",
-              [{ type: "int", value: receipt.messageId }],
-            );
-            let stack = result?.stack ?? [];
-            if (stack.length === 1 && stack[0].type === "tuple")
-              stack = stack[0].items;
-            if (
-              result?.exitCode !== 0 ||
-              stack.length !== 1 ||
-              stack[0].type !== "cell"
-            )
-              continue;
-            const record = parseSccpBurnRecord(stack[0].cell);
-            master.burns.set(id, {
-              record,
-              boc: stack[0].cell.toBoc().toString("base64"),
-              observedAt,
-            });
-          }
-        sccpMasters.set(masterAddress, master);
-      } catch {
-        issues.add("sccp_master_identity_unresolved");
-      }
-    }
     const stateAt: ProjectionInput["stateAt"] = async (account, lt, hash) => {
       const canonicalHash = canonicalLedgerHash(hash);
       const existing = (
@@ -886,7 +795,7 @@ export class LedgerGraphBuilder {
               this.perpsEngineCodeHash
           )
             throw Error("code");
-          const state = readPerpsState(current.dataBoc);
+          const state = readPerpsState(current.dataBoc, this.perpsEngineCodeHash);
           if (state.root !== addr(this.t3Root)) throw Error("root");
           const ownerAddress = perpsWalletAddress(
             state.walletCode,
@@ -924,6 +833,18 @@ export class LedgerGraphBuilder {
             ownerWallet: ownerAddress,
             engineWallet,
           });
+          // Oracle callbacks execute OPEN/CLOS after the original transaction.
+          // Retain the actual pool chain, including a failed PRPQ delivery, so
+          // the projector can prove the original request-to-callback edge.
+          const oraclePools = new Set<string>();
+          for (const transaction of chains.get(engineAddress)?.transactions ?? []) {
+            for (const message of transaction.outMessages) {
+              const request = perpsOracleMessage(message), destination = addr(message.destination);
+              if (request?.opcode === PERPS_ORACLE_PULL && addr(message.source) === engineAddress && destination)
+                oraclePools.add(destination);
+            }
+          }
+          for (const pool of oraclePools) await load(pool, 'counterparty');
         } catch {
           issues.add("perps_engine_or_custody_identity_unverified");
         }
@@ -944,7 +865,6 @@ export class LedgerGraphBuilder {
         configuredOptionFactory,
         addr(this.optionVault),
       ].filter((s): s is string => Boolean(s)),
-      sccpMasters,
       t3Hubs,
       perpsEngines,
       stateAt,

@@ -1,4 +1,5 @@
-import type { LedgerSccpBinding } from "../config/ledgerBridge";
+import { metadataText } from "../utils/jettonMetadata";
+import { PerpsRangeService } from "./perpsRange";
 import { randomUUID } from "node:crypto";
 import type { TonDataSource } from "../data/dataSource";
 import {
@@ -14,12 +15,13 @@ import {
   canonicalLedgerHash,
   normalizeLedgerEvent,
 } from "./normalize";
-import type { LedgerAsset, LedgerQuery } from "./types";
+import type { LedgerAsset, LedgerQuery, LedgerDiscoveryQuery } from "./types";
 import { LedgerGraphBuilder } from "./graph";
 import { projectOwnerLedger } from "./project";
 
 /** Persists and validates account chains without consulting MemoryStore or its retention cap. */
 export class LedgerService {
+  private ranges?: PerpsRangeService;
   private pending = new Set<string>();
   private running = new Map<string, Promise<unknown>>();
   private timer?: NodeJS.Timeout;
@@ -49,7 +51,6 @@ export class LedgerService {
       t3Root?: string;
       perpsEngine?: string;
       perpsEngineCodeHash?: string;
-      sccpAssets?: LedgerSccpBinding[];
       maxWatchedAccounts?: number;
       maxPagesPerSync?: number;
       maxRelatedAccounts?: number;
@@ -58,6 +59,9 @@ export class LedgerService {
 
   start() {
     this.stopped = false;
+    this.ranges ??= new PerpsRangeService(this.network, this.store, this.source, this.opcodes, this.options);
+    void this.ranges.start(() => this.logger.warn("perps range resume unavailable"))
+      .catch(() => this.logger.warn("perps range resume unavailable"));
     this.timer = setInterval(
       () =>
         void this.resume().catch(() =>
@@ -75,6 +79,7 @@ export class LedgerService {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.pending.clear();
+    await this.ranges?.stop();
     await Promise.allSettled(this.running.values());
   }
 
@@ -159,6 +164,10 @@ export class LedgerService {
 
   async page(address: string, query: LedgerQuery = {}) {
     const account = canonicalLedgerAddress(address);
+    if (query.scope === "perps") {
+      this.ranges ??= new PerpsRangeService(this.network, this.store, this.source, this.opcodes, this.options);
+      return this.ranges.page(account, query);
+    }
     // Cursor requests keep reading the same immutable run and never restart it.
     const admitted = query.cursor ? true : await this.requestSync(account);
     const page = await this.store.page(this.network, account, query);
@@ -169,6 +178,18 @@ export class LedgerService {
     }
     if (this.pending.has(account) || this.running.has(account))
       page.coverage.syncing = true;
+    return page;
+  }
+
+  async discoveries(address: string, query: LedgerDiscoveryQuery) {
+    const account = canonicalLedgerAddress(address);
+    const admitted = query.cursor ? true : await this.requestSync(account);
+    const page = await this.store.discoveries(this.network, account, query);
+    if (!admitted) {
+      page.coverage.historyComplete = false;
+      page.coverage.issues.push('watch_capacity_reached');
+    }
+    if (this.pending.has(account) || this.running.has(account)) page.coverage.syncing = true;
     return page;
   }
 
@@ -215,7 +236,6 @@ export class LedgerService {
             (related) => this.syncAccount(related, false, budget),
             this.options.maxRelatedAccounts ?? 256,
             this.options.optionFactory,
-            this.options.sccpAssets ?? [],
             this.options.t3Hub,
             this.options.t3Root,
             this.options.perpsEngine,
@@ -430,7 +450,8 @@ export class LedgerService {
           "history_predecessor_unavailable",
           "history_sync_interrupted",
         ];
-        const code =
+        const postgresCode = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+        const code = /^[0-9A-Z]{5}$/.test(postgresCode) ? "ledger_storage_unavailable" :
           error instanceof Error && known.includes(error.message)
             ? error.message
             : "history_source_unavailable";
@@ -493,7 +514,7 @@ export class LedgerService {
       master,
       wallet: canonicalLedgerAddress(wallet),
       owner,
-      symbol: metadata?.symbol,
+      symbol: metadataText(metadata?.symbol),
       decimals: metadata?.decimals,
     };
   }

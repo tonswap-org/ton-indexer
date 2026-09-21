@@ -20,7 +20,7 @@ const makeBodyBase64 = () => {
 const SWAP_EXECUTION_QUERY_MAGIC = 0xd2n;
 const SWAP_EXECUTION_QUERY_MAGIC_V1 = 0xd1n;
 const SWAP_EXECUTION_MODE_TWAP = 2n;
-const SWAP_TOKEN_CODE_TON = 1n;
+const SWAP_TOKEN_CODE_GRAM = 1n;
 const SWAP_TOKEN_CODE_T3 = 2n;
 
 const encodeSwapExecutionQueryId = (params: {
@@ -188,7 +188,7 @@ const twapQueryId = encodeSwapExecutionQueryId({
   twapSlice: 2,
   twapTotal: 5,
   payTokenCode: SWAP_TOKEN_CODE_T3,
-  receiveTokenCode: SWAP_TOKEN_CODE_TON,
+  receiveTokenCode: SWAP_TOKEN_CODE_GRAM,
 });
 const swapViaJettonTx: RawTransaction = {
   lt: '3',
@@ -223,7 +223,7 @@ if (swapViaJettonIndexed.ui.detail.kind === 'swap') {
   assert.equal(swapViaJettonIndexed.ui.detail.querySequence, 7777);
   assert.equal(swapViaJettonIndexed.ui.detail.queryNonce, 9);
   assert.equal(swapViaJettonIndexed.ui.detail.payToken, 'T3');
-  assert.equal(swapViaJettonIndexed.ui.detail.receiveToken, 'TON');
+  assert.equal(swapViaJettonIndexed.ui.detail.receiveToken, 'GRAM');
 }
 
 const v1QueryId = encodeSwapExecutionQueryIdV1({ mode: SWAP_EXECUTION_MODE_TWAP, twapSlice: 7, twapTotal: 9 });
@@ -304,11 +304,12 @@ const swapViaNotificationAction = swapViaNotificationIndexed.actions[0];
 assert.equal(swapViaNotificationAction?.kind, 'swap');
 if (swapViaNotificationAction?.kind === 'swap') {
   assert.equal(swapViaNotificationAction.amountIn, '789');
-  assert.equal(swapViaNotificationAction.amountOut, '555');
+  assert.equal(swapViaNotificationAction.amountOut, undefined, 'Outgoing transfer request is not recipient credit');
   assert.equal(swapViaNotificationAction.minOut, '456');
 }
 if (swapViaNotificationIndexed.ui.detail.kind === 'swap') {
-  assert.equal(swapViaNotificationIndexed.ui.detail.receiveAmount, '555');
+  assert.equal(swapViaNotificationIndexed.ui.detail.receiveAmount, undefined);
+  assert.equal(swapViaNotificationIndexed.ui.detail.minimumReceiveAmount, '456');
 }
 
 console.log('classifier ok');

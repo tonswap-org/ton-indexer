@@ -1,4 +1,7 @@
-import { Cell, beginCell } from '@ton/core';
+// Prices encode the raw payment/token ratio with 18 fractional digits.
+const LAUNCHPAD_PRICE_SCALE = 10n ** 18n;
+const LAUNCHPAD_MAX_PRICE = (1n << 120n) - 1n;
+import { Cell } from '@ton/core';
 import type { Network } from '../models';
 import type { Flow, Node, ProjectionInput } from './project';
 import type { LedgerEvent, LedgerEvidenceRef } from './types';
@@ -10,7 +13,7 @@ import { readT3RecoveryWallet } from './t3RecoveryState';
 import { readFixedSaleState, type FixedSaleContribution } from './launchpadState';
 import { readBondingSaleState, type BondingSaleContribution } from './launchpadBondingState';
 import { readAuctionSaleState, type AuctionSaleBid } from './launchpadAuctionState';
-import { launchpadCommand, fixedSaleSettlementRequestHash } from './launchpadWire';
+import { launchpadCommand } from './launchpadWire';
 
 import { readLaunchpadRequests, type LaunchpadOriginalRequest } from './launchpadRequests';
 export type LaunchpadParticipationEntitlement =
@@ -25,7 +28,7 @@ export type LaunchpadAcceptanceEvidence = {
 export type LaunchpadParticipationMetadata = {
   network: Network; model: LedgerLaunchpadSale['model']; requestKind: 'contribution' | 'bid';
   sale: string; factory: string | null; saleId: string | null; participant: string;
-  outerQueryId: string; innerQueryId: string; originalRequest: LaunchpadOriginalRequest;
+  outerQueryId: string; innerQueryId: string; referrer: string | null; originalRequest: LaunchpadOriginalRequest;
   payment: { root: string; sourceWallet: string; destinationWallet: string; amountRaw: string; requestBodyHash: string; forwardPayloadHash: string };
   entitlement: LaunchpadParticipationEntitlement | null; stateEvidence: LaunchpadAcceptanceEvidence[];
   tokenDelivery: 'separate-settlement';
@@ -114,26 +117,17 @@ function beneficiaryChanges(before: { claimed: boolean; rewardWallet: string | n
   requireEvidence(!before?.claimed && !after.claimed && after.rewardWallet === (reward ?? owner) && after.refundWallet === (refund ?? owner) &&
     (!before?.rewardWallet || before.rewardWallet === after.rewardWallet) && (!before?.refundWallet || before.refundWallet === after.refundWallet), 'launchpad_participant_beneficiary_unverified');
 }
-type FeeRecord = { settlementId:string; amountRaw:string; route:number; kind:number; recipientOwner:string; sourceWallet:string; destinationWallet:string;
-  forwardTonAmountRaw:string; forwardPayloadBoc:string; forwardPayloadHash:string; requestHash:string; predecessorId:string; status:number; deliveryReservedRaw:string; finalizeReservedRaw:string; tokenRoot?:string };
-type FeeState = { metrics:{feeBps:number;feeRecipient:string|null}; journal:{entries:Map<string,FeeRecord>;nextSettlementId:string;currentPaymentId:string;currentSaleId:string;
-  tailPaymentId:string;tailSaleId:string;reservedPaymentRaw:string;reservedSaleRaw:string} };
-function feeJournal(before:FeeState,after:FeeState,sale:LedgerLaunchpadSale,amount:bigint) {
-  const fee=amount*BigInt(before.metrics.feeBps)/10000n,b=before.journal,a=after.journal;
-  if(fee===0n){requireEvidence(same(except(b,['entries']),except(a,['entries']))&&same([...b.entries],[...a.entries]),'launchpad_zero_fee_journal_changed');return;}
-  const added=[...a.entries.values()].filter(entry=>!b.entries.has(entry.settlementId)),record=one(added),recipient=before.metrics.feeRecipient;
-  const payload=sale.model==='auction'?Cell.EMPTY:beginCell().storeUint(0x4c504645,32).endCell();
-  requireEvidence(record&&recipient&&record.settlementId===b.nextSettlementId&&record.amountRaw===fee.toString()&&record.route===1&&record.kind===1&&
-    record.recipientOwner===recipient&&record.sourceWallet===sale.paymentWallet&&record.destinationWallet===perpsWalletAddress(sale.paymentWalletCode,sale.paymentRoot,recipient)&&
-    (sale.model==='fixed'?record.tokenRoot===undefined:record.tokenRoot===sale.paymentRoot)&&record.forwardTonAmountRaw==='0'&&record.forwardPayloadHash===payload.hash().toString('hex')&&
-    record.requestHash===fixedSaleSettlementRequestHash(sale.address,record)&&record.predecessorId===b.tailPaymentId&&
-    a.entries.size===b.entries.size+1&&[...b.entries].every(([id,value])=>same(value,a.entries.get(id)))&&
-    BigInt(a.nextSettlementId)===BigInt(b.nextSettlementId)+1n&&a.tailPaymentId===record.settlementId&&a.currentSaleId===b.currentSaleId&&a.tailSaleId===b.tailSaleId&&
-    a.reservedSaleRaw===b.reservedSaleRaw&&BigInt(a.reservedPaymentRaw)-BigInt(b.reservedPaymentRaw)===fee,'launchpad_contribution_fee_liability_unverified');
-  const start=sale.model==='auction'?'140000000':'160000000';
-  requireEvidence(record.status===2 ? b.tailPaymentId==='0'&&b.currentPaymentId==='0'&&a.currentPaymentId===record.settlementId&&record.deliveryReservedRaw==='0'&&record.finalizeReservedRaw==='40000000'
-    : record.status===1&&a.currentPaymentId===b.currentPaymentId&&((record.deliveryReservedRaw==='0'&&record.finalizeReservedRaw==='0')||(record.deliveryReservedRaw===start&&record.finalizeReservedRaw==='40000000')),
-    'launchpad_contribution_fee_lane_unverified');
+type FeeState = { journal: { entries: Map<string, unknown>; referralCredits: { dataHash: string } } };
+function feeJournal(before: FeeState, after: FeeState) {
+  // Participation accrues the fee in the buyer's position. Purchased tokens
+  // must arrive before the later claim may create a CRED or fee wire.
+  requireEvidence(same(except(before.journal, ['entries']), except(after.journal, ['entries'])) &&
+    same([...before.journal.entries], [...after.journal.entries]), 'launchpad_participation_dispatched_fee');
+}
+function referralTerms(before: { feePaidRaw: string; referrer: string | null } | null,
+  after: { feePaidRaw: string; referrer: string | null }, requested: string | null, fee: bigint) {
+  requireEvidence(after.referrer === (before ? before.referrer : requested) &&
+    BigInt(after.feePaidRaw) - BigInt(before?.feePaidRaw ?? '0') === fee, 'launchpad_participant_referral_terms_unverified');
 }
 function appendedFill(before:{fillsHash:string;fills:{hash:string}[]}|null,after:{fills:{tokenAmountRaw:string;paymentAmountRaw:string;hash:string;previousHash:string|null}[]},tokens:bigint,amount:bigint) {
   const head=after.fills[0],old=before?.fills??[];
@@ -143,31 +137,33 @@ function appendedFill(before:{fillsHash:string;fills:{hash:string}[]}|null,after
 }
 function fixedEntitlement(boundary: Awaited<ReturnType<typeof readFixedLaunchpadBoundary>>, sale:LedgerLaunchpadFixedSale, owner: string, amount: bigint, command: Extract<NonNullable<ReturnType<typeof launchpadCommand>>, {kind:'contribute'}>): LaunchpadParticipationEntitlement {
   const b = boundary.before, a = boundary.after, before = b.contributions.get(owner) ?? null, after = a.contributions.get(owner), price = BigInt(b.config.priceRaw);
-  requireEvidence(after && !b.metrics.finalized && !a.metrics.finalized && price > 0n && amount > 0n && amount % price === 0n, 'launchpad_contribution_entitlement_unverified');
-  const tokens = amount / price;
+  requireEvidence(after && !b.metrics.finalized && !a.metrics.finalized && price > 0n && amount > 0n && amount * LAUNCHPAD_PRICE_SCALE / price > 0n, 'launchpad_contribution_entitlement_unverified');
+  const tokens = amount * LAUNCHPAD_PRICE_SCALE / price;
   beneficiaryChanges(before, after, owner, command.rewardWallet, command.refundWallet);
+  referralTerms(before, after, command.referrer, amount * BigInt(b.metrics.feeBps) / 10000n);
   requireEvidence(BigInt(after.paymentAmountRaw) - BigInt(before?.paymentAmountRaw ?? '0') === amount &&
     BigInt(after.tokenAmountRaw) - BigInt(before?.tokenAmountRaw ?? '0') === tokens && sameOtherEntries(b.contributions, a.contributions, owner) &&
     BigInt(a.metrics.totalRaisedRaw) - BigInt(b.metrics.totalRaisedRaw) === amount && BigInt(a.metrics.outstandingRaisedRaw) - BigInt(b.metrics.outstandingRaisedRaw) === amount &&
     BigInt(a.metrics.totalSoldRaw) - BigInt(b.metrics.totalSoldRaw) === tokens && BigInt(a.metrics.totalFeesRaw) - BigInt(b.metrics.totalFeesRaw) === amount * BigInt(b.metrics.feeBps) / 10000n &&
     same(except(b.metrics, ['totalRaisedRaw','outstandingRaisedRaw','totalSoldRaw','totalFeesRaw']), except(a.metrics, ['totalRaisedRaw','outstandingRaisedRaw','totalSoldRaw','totalFeesRaw'])), 'launchpad_contribution_delta_unverified');
-  feeJournal(b,a,sale,amount);
+  feeJournal(b,a);
   return {model:'fixed',before,after,paymentDeltaRaw:amount.toString(),tokenDeltaRaw:tokens.toString(),priceRaw:price.toString()};
 }
 
 function bondingEntitlement(boundary:Awaited<ReturnType<typeof readBondingBoundary>>,sale:Extract<LedgerLaunchpadSale,{model:'bonding'}>,owner:string,amount:bigint,command:Extract<NonNullable<ReturnType<typeof launchpadCommand>>,{kind:'contribute'}>):LaunchpadParticipationEntitlement {
   const b=boundary.before,a=boundary.after,before=b.contributions.get(owner)??null,after=a.contributions.get(owner),price=BigInt(b.metrics.currentPriceRaw);
-  requireEvidence(after&&!b.metrics.finalized&&!a.metrics.finalized&&price>0n&&amount>0n&&amount%price===0n,'launchpad_bonding_entitlement_unverified');
-  const tokens=amount/price,denominator=BigInt(b.config.slopeDenominatorRaw),numerator=BigInt(b.config.slopeNumeratorRaw),sold=BigInt(a.metrics.totalSoldRaw);
+  requireEvidence(after&&!b.metrics.finalized&&!a.metrics.finalized&&price>0n&&amount>0n&&amount*LAUNCHPAD_PRICE_SCALE/price>0n,'launchpad_bonding_entitlement_unverified');
+  const tokens=amount*LAUNCHPAD_PRICE_SCALE/price,denominator=BigInt(b.config.slopeDenominatorRaw),numerator=BigInt(b.config.slopeNumeratorRaw),sold=BigInt(a.metrics.totalSoldRaw);
   requireEvidence(denominator>0n,'launchpad_bonding_price_unverified');
   const nextPrice=BigInt(b.config.basePriceRaw)+numerator*sold/denominator;
   beneficiaryChanges(before,after,owner,command.rewardWallet,command.refundWallet);appendedFill(before,after,tokens,amount);
+  referralTerms(before,after,command.referrer,amount*BigInt(b.metrics.feeBps)/10000n);
   requireEvidence(BigInt(after.paymentAmountRaw)-BigInt(before?.paymentAmountRaw??'0')===amount&&BigInt(after.tokenAmountRaw)-BigInt(before?.tokenAmountRaw??'0')===tokens&&sameOtherEntries(b.contributions,a.contributions,owner)&&
     BigInt(a.metrics.totalRaisedRaw)-BigInt(b.metrics.totalRaisedRaw)===amount&&sold-BigInt(b.metrics.totalSoldRaw)===tokens&&
-    a.metrics.lastPriceRaw===b.metrics.currentPriceRaw&&a.metrics.currentPriceRaw===nextPrice.toString()&&nextPrice<=9223372036854775807n&&
+    a.metrics.lastPriceRaw===b.metrics.currentPriceRaw&&a.metrics.currentPriceRaw===nextPrice.toString()&&nextPrice<=LAUNCHPAD_MAX_PRICE&&
     BigInt(a.metrics.totalFeesRaw)-BigInt(b.metrics.totalFeesRaw)===amount*BigInt(b.metrics.feeBps)/10000n&&same(b.referral,a.referral)&&
     same(except(b.metrics,['totalRaisedRaw','totalSoldRaw','lastPriceRaw','currentPriceRaw','totalFeesRaw']),except(a.metrics,['totalRaisedRaw','totalSoldRaw','lastPriceRaw','currentPriceRaw','totalFeesRaw'])),
-    'launchpad_bonding_delta_unverified');feeJournal(b,a,sale,amount);
+    'launchpad_bonding_delta_unverified');feeJournal(b,a);
   return {model:'bonding',before,after,paymentDeltaRaw:amount.toString(),tokenDeltaRaw:tokens.toString(),priceRaw:price.toString()};
 }
 function auctionEntitlement(boundary:Awaited<ReturnType<typeof readAuctionBoundary>>,sale:Extract<LedgerLaunchpadSale,{model:'auction'}>,owner:string,amount:bigint,command:Extract<NonNullable<ReturnType<typeof launchpadCommand>>,{kind:'bid'}>,utime:number):LaunchpadParticipationEntitlement {
@@ -175,15 +171,15 @@ function auctionEntitlement(boundary:Awaited<ReturnType<typeof readAuctionBounda
   const interval=BigInt(b.config.priceDecayInterval),start=BigInt(b.config.startPriceRaw),reserve=BigInt(b.config.reservePriceRaw),tick=BigInt(b.config.tickSizeRaw),elapsed=BigInt(utime)-BigInt(b.config.startTime);
   requireEvidence(interval>0n&&tick>0n&&start>=reserve&&reserve>0n,'launchpad_auction_price_unverified');
   const decayed=start-(elapsed>0n?elapsed/interval*tick:0n),currentPrice=decayed<reserve?reserve:decayed;
-  requireEvidence(after&&!b.metrics.finalized&&!a.metrics.finalized&&amount>0n&&quantity>0n&&price>=currentPrice&&price*quantity===amount&&(!before||before.maxPriceRaw===command.maxPriceRaw),'launchpad_bid_entitlement_unverified');
+  requireEvidence(after&&!b.metrics.finalized&&!a.metrics.finalized&&amount>0n&&quantity>0n&&price>=currentPrice&&(price*quantity+LAUNCHPAD_PRICE_SCALE-1n)/LAUNCHPAD_PRICE_SCALE===amount&&(!before||before.maxPriceRaw===command.maxPriceRaw),'launchpad_bid_entitlement_unverified');
   beneficiaryChanges(before,after,owner,command.rewardWallet,command.refundWallet);appendedFill(before,after,quantity,amount);
+  referralTerms(before,after,command.referrer,0n);
   requireEvidence(after.maxPriceRaw===command.maxPriceRaw&&BigInt(after.commitmentRaw)-BigInt(before?.commitmentRaw??'0')===amount&&
     BigInt(after.quantityRaw)-BigInt(before?.quantityRaw??'0')===quantity&&sameOtherEntries(b.bids,a.bids,owner)&&
     BigInt(a.metrics.totalCommittedRaw)-BigInt(b.metrics.totalCommittedRaw)===amount&&BigInt(a.metrics.totalQuantityRaw)-BigInt(b.metrics.totalQuantityRaw)===quantity&&
-    BigInt(a.metrics.totalFeesRaw)-BigInt(b.metrics.totalFeesRaw)===amount*BigInt(b.metrics.feeBps)/10000n&&same(b.referral,a.referral)&&
-    b.pendingTransfersHash===a.pendingTransfersHash&&same(b.lastBounce,a.lastBounce)&&
-    same(except(b.metrics,['totalCommittedRaw','totalQuantityRaw','totalFeesRaw']),except(a.metrics,['totalCommittedRaw','totalQuantityRaw','totalFeesRaw'])),
-    'launchpad_bid_delta_unverified');feeJournal(b,a,sale,amount);
+    a.metrics.totalFeesRaw===b.metrics.totalFeesRaw&&same(b.referral,a.referral)&&
+    same(except(b.metrics,['totalCommittedRaw','totalQuantityRaw']),except(a.metrics,['totalCommittedRaw','totalQuantityRaw'])),
+    'launchpad_bid_delta_unverified');feeJournal(b,a);
   return {model:'auction',before,after,commitmentDeltaRaw:amount.toString(),quantityDeltaRaw:quantity.toString(),maxPriceRaw:price.toString()};
 }
 const readBondingBoundary=(input:ProjectionInput,node:Node,sale:LedgerLaunchpadSale)=>readLaunchpadBoundary(input,node,sale,readBondingSaleState);
@@ -197,7 +193,7 @@ function participationRequest(input:ProjectionInput,nodes:Node[],flow:Flow,sale:
     request.owner === sale.address && request.forward.hash().equals(flow.wire.forward.hash()), 'launchpad_original_payment_request_unverified');
   const original = initiatingRequest(input,nodes,flow,receiptFor);
   const metadata:LaunchpadParticipationMetadata={network:input.network,model:sale.model,requestKind:command!.kind==='bid'?'bid':'contribution',sale:sale.address,factory:sale.factory,saleId:null,participant:input.owner,
-    outerQueryId:flow.wire.queryId,innerQueryId:command!.queryId,originalRequest:original.originalRequest,
+    outerQueryId:flow.wire.queryId,innerQueryId:command!.queryId,referrer:('referrer' in command! ? command!.referrer : null) ?? null,originalRequest:original.originalRequest,
     payment:{root:sale.paymentRoot,sourceWallet:flow.source.account,destinationWallet:flow.recipient.account,amountRaw:flow.wire.amountRaw,requestBodyHash:requestBody.hash().toString('hex'),forwardPayloadHash:flow.wire.forward.hash().toString('hex')},
     entitlement:null,stateEvidence:[],tokenDelivery:'separate-settlement'};
   return {original,command:command!,metadata};

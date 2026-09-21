@@ -1,3 +1,4 @@
+import { runTransactionEvidenceTests } from './transaction-evidence-test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { get as httpGet } from 'node:http';
@@ -144,7 +145,8 @@ const testRateLimitIgnoresUntrustedForwardedFor = async () => {
   };
   const app = fastify({ logger: false, trustProxy: false });
   const service = {
-    getHealth() {
+    getAdmissionStatus() { return { configured: false, ready: false }; },
+      getHealth() {
       return { lastMasterSeqno: 1 };
     },
   };
@@ -185,7 +187,8 @@ const testRateLimitUsesForwardedForOnlyWithTrustedProxy = async () => {
   };
   const app = fastify({ logger: false, trustProxy: true });
   const service = {
-    getHealth() {
+    getAdmissionStatus() { return { configured: false, ready: false }; },
+      getHealth() {
       return { lastMasterSeqno: 1 };
     },
   };
@@ -224,7 +227,8 @@ const testRateLimitBucketsAreIsolated = async () => {
     },
   };
   const service = {
-    getHealth() {
+    getAdmissionStatus() { return { configured: false, ready: false }; },
+      getHealth() {
       return { lastMasterSeqno: 1 };
     },
     async getTransactions() {
@@ -286,144 +290,7 @@ const testRateLimiterResetsExpiredWindowsAndDisabledLimiterAllowsAll = () => {
   }
 };
 
-const testJsonRpcGetTransactionsFillsLimitAcrossPages = async () => {
-  const config = testConfig({ pageSize: 10 });
-  const pages = new Map<number, IndexedTx[]>();
-  pages.set(1, Array.from({ length: 10 }, (_value, index) => makeIndexedTx(20 - index)));
-  pages.set(2, Array.from({ length: 10 }, (_value, index) => makeIndexedTx(10 - index)));
-  const requestedPages: number[] = [];
-  const service = {
-    async getTransactions(_address: string, page: number) {
-      requestedPages.push(page);
-      return {
-        page,
-        page_size: 10,
-        total_txs: 20,
-        total_pages: 2,
-        total_pages_min: 2,
-        history_complete: true,
-        txs: pages.get(page) ?? [],
-        network: 'testnet',
-      };
-    },
-    async getTransactionsByCursor() {
-      throw new Error('cursor path should not be used');
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
 
-  const response = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 99,
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 15 },
-    },
-  });
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.equal(body.id, 99);
-  assert.equal(body.ok, true);
-  assert.equal(body.result.length, 15);
-  assert.deepEqual(requestedPages, [1, 2]);
-  assert.equal(body.result[0].transaction_id.lt, '20');
-  assert.equal(body.result[14].transaction_id.lt, '6');
-  await app.close();
-};
-
-const testJsonRpcGetTransactionsCapsLimitAndDedupesPages = async () => {
-  const config = testConfig({ pageSize: 10 });
-  const requestedPages: number[] = [];
-  const service = {
-    async getTransactions(_address: string, page: number) {
-      requestedPages.push(page);
-      const start = 1_000 - (page - 1) * 10;
-      return {
-        page,
-        page_size: 10,
-        total_txs: 100,
-        total_pages: null,
-        total_pages_min: 10,
-        history_complete: false,
-        txs: Array.from({ length: 10 }, (_value, index) => makeIndexedTx(start - index)),
-        network: 'testnet',
-      };
-    },
-    async getTransactionsByCursor() {
-      throw new Error('cursor path should not be used');
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
-
-  const capped = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 'cap',
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 999 },
-    },
-  });
-  assert.equal(capped.statusCode, 200);
-  assert.equal(capped.json().ok, true);
-  assert.equal(capped.json().result.length, 50);
-  assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
-  await app.close();
-
-  const dedupeCalls: number[] = [];
-  const dedupeService = {
-    async getTransactions(_address: string, page: number) {
-      dedupeCalls.push(page);
-      const pages = new Map<number, IndexedTx[]>([
-        [1, [makeIndexedTx(60), makeIndexedTx(59), makeIndexedTx(59)]],
-        [2, [makeIndexedTx(59), makeIndexedTx(58), makeIndexedTx(57)]],
-        [3, []],
-      ]);
-      return {
-        page,
-        page_size: 3,
-        total_txs: 5,
-        total_pages: null,
-        total_pages_min: 2,
-        history_complete: false,
-        txs: pages.get(page) ?? [],
-        network: 'testnet',
-      };
-    },
-    async getTransactionsByCursor() {
-      throw new Error('cursor path should not be used');
-    },
-  };
-  const dedupeApp = fastify({ logger: false });
-  registerTestRoutes(dedupeApp, { ...config, pageSize: 3 }, dedupeService as any);
-  await dedupeApp.ready();
-
-  const deduped = await dedupeApp.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 'dedupe',
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 10 },
-    },
-  });
-  assert.equal(deduped.statusCode, 200);
-  assert.equal(deduped.json().ok, true);
-  assert.deepEqual(
-    deduped.json().result.map((entry: { transaction_id: { lt: string } }) => entry.transaction_id.lt),
-    ['60', '59', '58', '57']
-  );
-  assert.deepEqual(dedupeCalls, [1, 2, 3]);
-  await dedupeApp.close();
-};
 
 const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
   let calls = 0;
@@ -1122,135 +989,8 @@ const testRunGetMethodRejectsOversizedStackBeforeServiceCall = async () => {
   await app.close();
 };
 
-const testJsonRpcCursorPaginationStopsOnDuplicateCursor = async () => {
-  const config = testConfig({ pageSize: 10 });
-  let cursorCalls = 0;
-  const service = {
-    async getTransactions() {
-      throw new Error('page path should not be used');
-    },
-    async getTransactionsByCursor(_address: string, lt: string, hash: string) {
-      cursorCalls += 1;
-      return {
-        page: 1,
-        page_size: 1,
-        total_txs: 1,
-        total_pages: null,
-        total_pages_min: 1,
-        history_complete: false,
-        txs: [makeIndexedTx(Number(lt), hash)],
-        network: 'testnet',
-      };
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
 
-  const response = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 3,
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 3, lt: '100', hash: validHash },
-    },
-  });
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.result.length, 1);
-  assert.equal(cursorCalls, 1);
-  await app.close();
-};
 
-const testJsonRpcCursorRequiresExactInclusiveTransaction = async () => {
-  let cursorCalls = 0;
-  const service = {
-    async getTransactions() {
-      throw new Error('page path should not be used');
-    },
-    async getTransactionsByCursor() {
-      cursorCalls += 1;
-      return {
-        page: 1,
-        page_size: 10,
-        total_txs: 1,
-        total_pages: null,
-        total_pages_min: 1,
-        history_complete: false,
-        // The REST store can legitimately return the next lower transaction,
-        // but Toncenter's cursor must identify the first transaction exactly.
-        txs: [makeIndexedTx(99, validHash)],
-        network: 'testnet',
-      };
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, testConfig({ pageSize: 10 }), service as any);
-  await app.ready();
-
-  const response = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 4,
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 3, lt: '100', hash: validHash },
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(response.json().ok, true);
-  assert.deepEqual(response.json().result, []);
-  assert.equal(cursorCalls, 1);
-  await app.close();
-};
-
-const testJsonRpcCursorAcceptsZeroPaddedLtAlias = async () => {
-  let cursorCalls = 0;
-  const service = {
-    async getTransactions() {
-      throw new Error('page path should not be used');
-    },
-    async getTransactionsByCursor() {
-      cursorCalls += 1;
-      return {
-        page: 1,
-        page_size: 10,
-        total_txs: 1,
-        total_pages: null,
-        total_pages_min: 1,
-        history_complete: false,
-        txs: [makeIndexedTx(100, validHash)],
-        network: 'testnet',
-      };
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, testConfig({ pageSize: 10 }), service as any);
-  await app.ready();
-
-  const response = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 5,
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 1, lt: '0100', hash: validHash },
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(response.json().ok, true);
-  assert.equal(response.json().result.length, 1);
-  assert.equal(response.json().result[0].transaction_id.lt, '100');
-  assert.equal(cursorCalls, 1);
-  await app.close();
-};
 
 const testDefiSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
   let calls = 0;
@@ -1633,7 +1373,7 @@ const testDebugEndpointReturnsDisabledWithoutService = async () => {
   await app.close();
 };
 
-const testOperationalRoutesDoNotRequireAdminAndPublicReadsStayOpen = async () => {
+const testOperationalRoutesRequireAdminAndPublicReadsStayOpen = async () => {
   const app = fastify({ logger: false });
   const service = {
     async runGetMethod() {
@@ -1644,7 +1384,7 @@ const testOperationalRoutesDoNotRequireAdminAndPublicReadsStayOpen = async () =>
   await app.ready();
 
   const metrics = await app.inject({ method: 'GET', url: '/api/indexer/v1/metrics' });
-  assert.equal(metrics.statusCode, 200);
+  assert.equal(metrics.statusCode, 400);
   assert.equal(metrics.json().code, 'metrics_disabled');
 
   const snapshot = await app.inject({ method: 'POST', url: '/api/indexer/v1/snapshot/load' });
@@ -2006,68 +1746,6 @@ const testAccountSwapQueryRejectsInvalidTimeWindow = async () => {
   });
   assert.equal(inverted.statusCode, 400);
   assert.equal(inverted.json().code, 'bad_request');
-  assert.equal(calls, 0);
-  await app.close();
-};
-
-const testSccpProofRejectsPartialTrustedCheckpoint = async () => {
-  let calls = 0;
-  const service = {
-    async getTonSccpBurnProofMaterial() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
-
-  const response = await app.inject({
-    method: 'GET',
-    url:
-      `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=${validAddress}` +
-      `&message_id=0x${'a'.repeat(64)}&trusted_checkpoint_seqno=123`,
-  });
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.json().code, 'bad_request');
-  assert.equal(calls, 0);
-  await app.close();
-};
-
-const testSccpProofRejectsMalformedRequiredFieldsBeforeServiceCall = async () => {
-  let calls = 0;
-  const service = {
-    async getTonSccpBurnProofMaterial() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
-
-  const invalidJetton = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=bad&message_id=0x${'a'.repeat(64)}`,
-  });
-  assert.equal(invalidJetton.statusCode, 400);
-  assert.equal(invalidJetton.json().code, 'invalid_address');
-
-  const invalidMessageId = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=${validAddress}&message_id=0xabc`,
-  });
-  assert.equal(invalidMessageId.statusCode, 400);
-  assert.equal(invalidMessageId.json().code, 'FST_ERR_VALIDATION');
-
-  const invalidTarget = await app.inject({
-    method: 'GET',
-    url:
-      `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=${validAddress}` +
-      `&message_id=0x${'a'.repeat(64)}&target_seqno=0`,
-  });
-  assert.equal(invalidTarget.statusCode, 400);
-  assert.equal(invalidTarget.json().code, 'FST_ERR_VALIDATION');
   assert.equal(calls, 0);
   await app.close();
 };
@@ -2769,12 +2447,11 @@ const run = async () => {
   await testRateLimitUsesForwardedForOnlyWithTrustedProxy();
   await testRateLimitBucketsAreIsolated();
   testRateLimiterResetsExpiredWindowsAndDisabledLimiterAllowsAll();
-  await testJsonRpcGetTransactionsFillsLimitAcrossPages();
-  await testJsonRpcGetTransactionsCapsLimitAndDedupesPages();
   await testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall();
   await testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall();
   await testStreamRejectsMissingOrInvalidAddresses();
   await testStreamPreservesCorsAndRateLimitHeadersAfterHijack();
+  await runTransactionEvidenceTests();
   await testJsonRpcRejectsMalformedTransactionCursors();
   await testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCall();
   await testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall();
@@ -2785,9 +2462,6 @@ const run = async () => {
   await testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints();
   await testRunGetMethodRejectsMalformedStackBeforeServiceCall();
   await testRunGetMethodRejectsOversizedStackBeforeServiceCall();
-  await testJsonRpcCursorPaginationStopsOnDuplicateCursor();
-  await testJsonRpcCursorRequiresExactInclusiveTransaction();
-  await testJsonRpcCursorAcceptsZeroPaddedLtAlias();
   await testDefiSnapshotRejectsInvalidInputsBeforeServiceCall();
   await testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall();
   await testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall();
@@ -2796,7 +2470,7 @@ const run = async () => {
   await testJsonRpcBatchGetMethodRejectsMissingCallsAndIsolatesFailures();
   await testDebugEndpointReturnsDisabledWithoutService();
   await testMutableOperationalRoutesRequireAdminToken();
-  await testOperationalRoutesDoNotRequireAdminAndPublicReadsStayOpen();
+  await testOperationalRoutesRequireAdminAndPublicReadsStayOpen();
   await testWriteRpcRelayIsPublicWhenExplicitlyEnabled();
   testCorsExactOriginAllowlistAndWildcardFallback();
   await testDocsRouteSetsNonceCspAndSecurityHeaders();
@@ -2812,8 +2486,6 @@ const run = async () => {
   testMemoryStoreGlobalLimitEvictsColdAddresses();
   testMemoryStoreMaxAddressEvictionAdjustsTotal();
   await testAccountSwapQueryRejectsInvalidTimeWindow();
-  await testSccpProofRejectsPartialTrustedCheckpoint();
-  await testSccpProofRejectsMalformedRequiredFieldsBeforeServiceCall();
   await testBlockFollowerCatchesUpAcrossMultipleBatches();
   await testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest();
   await testBlockFollowerRejectsReorderedCatchupSegment();

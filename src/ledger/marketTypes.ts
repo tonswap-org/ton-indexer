@@ -22,14 +22,7 @@ export type MarketBoundaryEvidence = {
   transaction: LedgerEvidenceRef; beforeSeqno: number; afterSeqno: number;
   beforeDataHash: string | null; beforeAccountState: 'active' | 'uninitialized'; afterDataHash: string; codeHash: string;
 };
-export type MarketSettlementEvidence = {
-  settlementId: string; kind: 'swap_output' | 'unused_input_refund';
-  amountRaw: string; sourceWallet: string; destinationWallet: string; destinationOwner: string;
-  requestBodyHash: string; requestBodyBoc: string;
-  request: LedgerEvidenceRef; debit: LedgerEvidenceRef; credit: LedgerEvidenceRef;
-  acknowledged: LedgerEvidenceRef; walletFinalized: LedgerEvidenceRef; poolFinalized: LedgerEvidenceRef;
-  boundaries: MarketBoundaryEvidence[];
-};
+export type MarketSettlementEvidence = Omit<import('./dlmmProof').DlmmSettlementEvidence, 'kind'> & { kind: 'swap_output' | 'unused_input_refund' };
 export type MarketObservation = {
   id: string; network: Network; pool: string; kind: 'settled_dlmm_execution';
   acceptance: LedgerEvidenceRef; executionUtime: number; deliveredUtime: number; finalizedUtime: number;

@@ -1,0 +1,110 @@
+{
+  "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/official-getter-runtime-feasibility-01/authenticated-capture-09/stdout.jsonl",
+  "sourceSha256": "c9b5b729f32dbb5b2a9e1b59b820fd1dc5305b034d168c387ddae90d1f7e92fc",
+  "origin": "Actual authenticated native capture09, one fresh constructed unsigned CLOSE; current-time acceptance only at retained capture timestamp.",
+  "sourceResult": {
+    "@type": "smc.verifiedRunResult",
+    "block_id": {
+      "@type": "ton.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 84779529,
+      "root_hash": "j1v6K4MRd2zbJgBZhZYofmlpiIav8B9x2CuuYdve3dU=",
+      "file_hash": "DsEg9tlqSb5MRtu/AjTJJp9CdF2I1L9923x8mA4Ceo4="
+    },
+    "shard_block_id": {
+      "@type": "ton.blockIdExt",
+      "workchain": 0,
+      "shard": "-9223372036854775808",
+      "seqno": 90012040,
+      "root_hash": "iE7RKNvVHMHR7xHM4cgDdFyU+Kf5O3VPQ3v+s4OeOmc=",
+      "file_hash": "VLpunZbfx8+p4yhPLpVHAHI8RHcBvsOgLNlxqRjBbVU="
+    },
+    "master_utime": 1789399530,
+    "shard_utime": 1789399530,
+    "shard_lt": "96548839000001",
+    "global_version": 15,
+    "code_hash": "unuD2pGuhAZFIakWv2Els0Os4hgtus6fJUjf2jZxcds=",
+    "data_hash": "9TZxh53w7XX7L2rgE2LJwgJcbdpN4ZKN0sDalXoFSJI=",
+    "config_hash": "cwM1zgn2m3DB5VsTo3mx9IacV2YFtQjGctfKQEH48Mo=",
+    "gas_limit": 1000000,
+    "gas_used": 507666,
+    "exit_code": 0,
+    "stack": [
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "-1"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "1789399530"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "98933456107039602259763653396579997369822904020958921902176053130726115823068"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "1000000000"
+        }
+      },
+      {
+        "@type": "tvm.stackEntryNumber",
+        "number": {
+          "@type": "tvm.numberDecimal",
+          "number": "1789399526"
+        }
+      }
+    ],
+    "data_unchanged": true,
+    "actions_empty": true
+  },
+  "pins": [
+    {
+      "file": "account_state.boc",
+      "sha256": "f093fd43fc1e74a112fddc13c5745246ad782cae714bff5a6d6216840a1c03d6",
+      "bytes": 203891
+    },
+    {
+      "file": "account_proof.boc",
+      "sha256": "c51ed44629048759a14f321073a3b97ef02a0deb46dce9ad31a7fab95e321ddd",
+      "bytes": 2767
+    },
+    {
+      "file": "shard_proof.boc",
+      "sha256": "fdce1c172c9f26bd7224379a3fc51aca1ca24fe431f86373ec051135531a54ec",
+      "bytes": 1222
+    },
+    {
+      "file": "config_state_proof.boc",
+      "sha256": "4ae59de3ab549306605c3b4c58682578380b4b47229ab64cb7cb2694f52cce51",
+      "bytes": 518
+    },
+    {
+      "file": "config_proof.boc",
+      "sha256": "dabdae743b840814fd6a604e90cfabcc8647c1b8da3e9eb27d5a35da9beafb4b",
+      "bytes": 30170
+    },
+    {
+      "file": "context.boc",
+      "sha256": "f4df251a11088e7ec8cd93ae01ea942ea4f822cff69538731e481dc4d7d9d860",
+      "bytes": 217286
+    },
+    {
+      "file": "arguments.boc",
+      "sha256": "599282f5a2a4d1277927290d7cb71dbfc403dba8280037677e7f4672022da948",
+      "bytes": 315
+    }
+  ]
+}

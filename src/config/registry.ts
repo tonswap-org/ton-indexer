@@ -3,8 +3,7 @@ import { Address } from '@ton/core';
 export const MAINNET_PLACEHOLDER_PREFIX = 'REPLACE_WITH_MAINNET_';
 
 export const REQUIRED_MAINNET_REGISTRY_KEYS = [
-  'ClmmRouter',
-  'ClmmPoolFactory',
+  'DexRouter',
   'FeeRouter',
   'Treasury',
   'ReferralRegistry',
@@ -16,6 +15,15 @@ export const REQUIRED_MAINNET_REGISTRY_KEYS = [
   'DlmmRegistry',
   'DlmmPoolFactory'
 ] as const;
+
+export const assertCurrentContractRoles = (roles: Record<string, unknown>): void => {
+  const unsupported = Object.keys(roles).filter(role =>
+    /^(clmm|sigma)/i.test(role) || /^(FarmFactory|Farm|FarmStaker|FarmReceiptWallet|BootstrapFactory|BootstrapPool|BootstrapEscrow|DlmmMigrator|PositionNft|PositionCollection)$/i.test(role)
+  );
+  if (unsupported.length) {
+    throw new Error(`Unsupported first-release contract roles: ${unsupported.join(', ')}. Use DexRouter and DLMM pools.`);
+  }
+};
 
 type MainnetRegistryIssueReason = 'missing_or_placeholder' | 'invalid_address' | 'testnet_only_address';
 
@@ -58,6 +66,7 @@ export const collectMainnetRegistryIssues = (registry: Record<string, string>): 
 };
 
 export const validateMainnetRegistry = (registry: Record<string, string>) => {
+  assertCurrentContractRoles(registry);
   const issues = collectMainnetRegistryIssues(registry);
   if (!issues.length) return;
 

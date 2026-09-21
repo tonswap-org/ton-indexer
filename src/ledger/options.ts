@@ -60,16 +60,17 @@ export function optionBuyForward(cell: Cell) {
       owner = s.loadAddress().toRawString(),
       notional = s.loadCoins().toString(),
       premium = s.loadCoins().toString(),
-      correlationScaleBps = s.loadUint(32);
+      correlationScaleBps = s.loadUint(32),
+      referrer = s.loadMaybeAddress()?.toRawString() ?? null;
     end(s);
     if (
       seriesId === "0" ||
       notional === "0" ||
       premium === "0" ||
-      correlationScaleBps === 0
+      correlationScaleBps === 0 || referrer === owner
     )
       return null;
-    return { seriesId, owner, notional, premium, correlationScaleBps };
+    return { seriesId, owner, notional, premium, correlationScaleBps, referrer };
   } catch {
     return null;
   }
@@ -168,6 +169,7 @@ export async function decodeOptionPurchases(
       factory: flow.recipientAsset.owner,
       seriesId: payload.seriesId,
       notionalRaw: payload.notional,
+      referrer: payload.referrer,
     };
     const incomplete = (issue: string) =>
       operations.push({
@@ -236,8 +238,7 @@ export async function decodeOptionPurchases(
           item.buy.op ===
             (series.kind === 2 ? OPTION_BUY_SPREAD : OPTION_BUY_SHOUT) &&
           BigInt(item.buy.premium) <= BigInt(payload.premium) &&
-          BigInt(flow.wire.amountRaw) >=
-            BigInt(payload.premium) + BigInt(item.buy.collateral),
+          BigInt(flow.wire.amountRaw) === BigInt(payload.premium),
       );
     if (buys.length !== 1) {
       incomplete("option_position_assignment_unverified");
@@ -338,8 +339,7 @@ export async function decodeOptionPurchases(
           ).toString(),
           expectedExcess = (
             BigInt(flow.wire.amountRaw) -
-            BigInt(payload.premium) -
-            BigInt(buy.collateral)
+            BigInt(payload.premium)
           ).toString();
         const exact = (p: typeof bp) =>
           p &&
@@ -435,8 +435,7 @@ export async function decodeOptionPurchases(
       ).toString(),
       excess =
         BigInt(flow.wire.amountRaw) -
-        BigInt(payload.premium) -
-        BigInt(buy.collateral);
+        BigInt(payload.premium);
     if (confirmed && anchor.event) {
       if (debit) {
         anchor.event.movements = anchor.event.movements.filter(
@@ -444,7 +443,6 @@ export async function decodeOptionPurchases(
         );
         for (const [purpose, amount, direction] of [
           ["option_premium", buy.premium, "out"],
-          ["option_collateral", buy.collateral, "out"],
           ["protocol_fee", protocolFeeRaw, "fee"],
           ["option_excess", excess.toString(), "out"],
         ] as const)

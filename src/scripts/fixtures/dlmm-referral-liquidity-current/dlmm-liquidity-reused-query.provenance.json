@@ -1,0 +1,6 @@
+{
+  "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/reused-query/dlmm-liquidity-settlements.json",
+  "sha256": "57c07658a82139c6a11b64c85479fa3b7c358fab02df12dcaa9ed8e71afdca0c",
+  "format": "gzip of byte-identical original Sandbox fixture; no transaction or archive edits",
+  "scope": "Two independent same-owner, same-bin, same-query deposits. Original current raw transactions and boundaries."
+}

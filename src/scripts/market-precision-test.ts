@@ -15,7 +15,7 @@ import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import type { LedgerService } from '../ledger/service';
 import type { TonDataSource, AccountStateResponse } from '../data/dataSource';
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
-const fixturePath=resolve(__dirname,'fixtures/dlmm-market-precision.json');
+const fixturePath=resolve(__dirname,'fixtures/dlmm-referral-market-current/dlmm-market-precision.json');
 const f=JSON.parse(readFileSync(fixturePath,'utf8'));
 const source='contracts/shared/jetton/jetton_root.tolk';
 const rootCodeHash=f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName===source).codeHash;

@@ -5,6 +5,7 @@ import { IndexerService } from '../indexerService';
 import { loadOpcodes } from '../utils/opcodes';
 import { AccountState } from '../models';
 import { TonDataSource } from '../data/dataSource';
+import { runGetterFreshnessTests } from './getter-freshness-cases';
 
 const config = {
   ...loadConfig(),
@@ -49,6 +50,7 @@ const dummySource: TonDataSource = {
 const service = new IndexerService(config, store, dummySource, opcodes, []);
 
 const run = async () => {
+  await runGetterFreshnessTests();
   const addr = `0:${'1'.repeat(64)}`;
   const first = await service.getBalance(addr);
   assert.equal(first.ton.balance, '100');
@@ -156,6 +158,8 @@ const run = async () => {
           kind: 'swap',
           amountIn: '1000',
           amountOut: '995',
+          tokenIn: { kind: 'jetton', master: addr, symbol: 'T3' },
+          tokenOut: { kind: 'ton' },
           queryId: '1',
           executionType: 'twap',
           twapSlice: 2,
@@ -173,7 +177,6 @@ const run = async () => {
         detail: {
           kind: 'swap',
           payToken: 'T3',
-          receiveToken: 'TON',
           payAmount: '1000',
           receiveAmount: '995',
           queryId: '1',
@@ -208,7 +211,7 @@ const run = async () => {
         outCount: 0,
         detail: {
           kind: 'swap',
-          payToken: 'TON',
+          payToken: 'GRAM',
           receiveToken: 'T3',
           payAmount: '10',
           receiveAmount: '100',
@@ -249,10 +252,20 @@ const run = async () => {
   const reversedPair = await service.getSwapExecutions(addr, {
     limit: 10,
     payToken: 'T3',
-    receiveToken: 'TON',
+    receiveToken: 'GRAM',
     includeReverse: true,
   });
   assert.equal(reversedPair.total_swaps, 2);
+
+  const nativePair = await service.getSwapExecutions(addr, {
+    limit: 10, payToken: 'GRAM', receiveToken: 'T3',
+  });
+  assert.equal(nativePair.total_swaps, 1);
+  assert.equal(nativePair.swaps[0]?.payToken, 'GRAM');
+  const unrelatedTicker = await service.getSwapExecutions(addr, {
+    limit: 10, payToken: 'TON', receiveToken: 'T3', includeReverse: true,
+  });
+  assert.equal(unrelatedTicker.total_swaps, 0, 'TON must not alias the native GRAM ticker');
 
   const fromWindow = await service.getSwapExecutions(addr, { limit: 10, fromUtime: 101 });
   assert.equal(fromWindow.total_swaps, 1);
@@ -264,6 +277,25 @@ const run = async () => {
   assert.equal(fixedWindow.swaps[0]?.txId, '12:swap1');
   assert.equal(fixedWindow.summary.twap_run_count, 1);
   assert.equal(fixedWindow.twap_runs[0]?.id, 'seq:1234');
+
+  const original = store.get(addr)!.txs.find((tx) => tx.lt === '12')!;
+  store.setBalance(addr, { ...updatedState, lastTxLt: '14', lastTxHash: txHash(14), updatedAt: Date.now() });
+  store.addTransactions(addr, [{
+    ...original, lt: '14', hash: txHash(14), prevTransactionLt: '13', prevTransactionHash: txHash(13), utime: 102,
+    actions: [{ kind: 'swap', tokenIn: { kind: 'ton' }, tokenOut: { kind: 'jetton', master: addr, symbol: 'T3' },
+      amountIn: '1000000000', amountOut: '2000000000' }],
+    ui: { ...original.ui, txId: '14:native-swap', utime: 102, detail: { kind: 'swap' } },
+  }]);
+  const nativeFallback = await service.getSwapExecutions(addr, { limit: 10, payToken: 'GRAM', receiveToken: 'T3' });
+  assert.equal(nativeFallback.swaps[0]?.payToken, 'GRAM');
+  assert.equal(nativeFallback.swaps[0]?.receiveToken, 'T3');
+  const nativeCandles = await service.getMarketCandles('spot:GRAM-T3', addr, {
+    assetSymbol: 'GRAM', quoteSymbol: 'T3', assetDecimals: 9, quoteDecimals: 9, fromUtime: 102,
+  });
+  assert.equal(nativeCandles.market_key, 'spot:GRAM-T3');
+  assert.equal(nativeCandles.candle_count, 1);
+  assert.equal(nativeCandles.candles[0]?.close, 2);
+  assert.deepEqual(nativeCandles.candles[0]?.sourceTxIds, ['14:native-swap']);
 
   console.log('response cache ok');
 };

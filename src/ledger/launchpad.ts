@@ -46,7 +46,7 @@ function immutableRecord(before: FixedSaleSettlement, after: FixedSaleSettlement
 }
 function refundRecord(record: FixedSaleSettlement, sale: LedgerLaunchpadFixedSale, owner: string, amount: string) {
   return record.route === 1 && record.kind === 3 && record.amountRaw === amount && record.recipientOwner === owner &&
-    record.sourceWallet === sale.paymentWallet && record.destinationWallet === perpsWalletAddress(sale.paymentWalletCode, sale.paymentRoot, owner) &&
+    record.tokenRoot === sale.paymentRoot && record.sourceWallet === sale.paymentWallet && record.destinationWallet === perpsWalletAddress(sale.paymentWalletCode, sale.paymentRoot, owner) &&
     record.forwardTonAmountRaw === '0' && Cell.fromBase64(record.forwardPayloadBoc).bits.length === 0 &&
     Cell.fromBase64(record.forwardPayloadBoc).refs.length === 0 && record.requestHash === fixedSaleSettlementRequestHash(sale.address, record);
 }
@@ -55,13 +55,14 @@ function validateEnqueue(before: SaleState, after: SaleState, sale: LedgerLaunch
   requireEvidence(before.registry.factory !== null && before.metrics.finalized && after.metrics.finalized && !before.metrics.successful && !after.metrics.successful &&
     BigInt(before.metrics.totalRaisedRaw) < BigInt(before.config.softCapRaw), 'launchpad_refund_failed_sale_unverified');
   requireEvidence(old && updated && !old.claimed && (old.refundWallet === null || old.refundWallet === owner) && BigInt(old.paymentAmountRaw) > 0n && updated.claimed &&
-    updated.paymentAmountRaw === '0' && updated.tokenAmountRaw === '0' && old.rewardWallet === updated.rewardWallet && old.refundWallet === updated.refundWallet &&
+    updated.paymentAmountRaw === '0' && updated.tokenAmountRaw === '0' && old.rewardWallet === updated.rewardWallet && old.refundWallet === updated.refundWallet && old.feePaidRaw === updated.feePaidRaw && old.referrer === updated.referrer &&
     sameOtherEntries(before.contributions, after.contributions, new Set([owner])), 'launchpad_refund_entitlement_unverified');
   const amount = BigInt(old.paymentAmountRaw), oldMetrics = before.metrics, newMetrics = after.metrics;
   requireEvidence(BigInt(oldMetrics.outstandingRaisedRaw) - BigInt(newMetrics.outstandingRaisedRaw) === amount &&
     BigInt(newMetrics.totalRefundedRaw) - BigInt(oldMetrics.totalRefundedRaw) === amount &&
     BigInt(newMetrics.totalRefundedRaw) === BigInt(newMetrics.totalRaisedRaw) - BigInt(newMetrics.outstandingRaisedRaw) &&
-    same(except(oldMetrics, ['outstandingRaisedRaw', 'totalRefundedRaw', 'escrowBalanceRaw']), except(newMetrics, ['outstandingRaisedRaw', 'totalRefundedRaw', 'escrowBalanceRaw'])), 'launchpad_refund_accounting_delta_unverified');
+    BigInt(oldMetrics.totalFeesRaw) - BigInt(newMetrics.totalFeesRaw) === BigInt(old.feePaidRaw) &&
+    same(except(oldMetrics, ['outstandingRaisedRaw', 'totalRefundedRaw', 'escrowBalanceRaw', 'totalFeesRaw']), except(newMetrics, ['outstandingRaisedRaw', 'totalRefundedRaw', 'escrowBalanceRaw', 'totalFeesRaw'])), 'launchpad_refund_accounting_delta_unverified');
   const b = before.journal, a = after.journal;
   const added = [...a.entries.values()].filter(record => !b.entries.has(record.settlementId));
   const record = one(added.filter(item => refundRecord(item, sale, owner, old.paymentAmountRaw)));
@@ -72,34 +73,47 @@ function validateEnqueue(before: SaleState, after: SaleState, sale: LedgerLaunch
     BigInt(a.nextSettlementId) === BigInt(b.nextSettlementId) + BigInt(added.length) &&
     a.currentPaymentId === record.settlementId && a.currentSaleId === b.currentSaleId && a.tailSaleId === b.tailSaleId &&
     a.reservedSaleRaw === b.reservedSaleRaw, 'launchpad_refund_enqueue_journal_unverified');
-  const fee = amount * BigInt(oldMetrics.feeBps) / 10000n;
   const escrow = added.filter(item => item !== record);
   if (escrow.length) {
-    const item = escrow[0], remaining = BigInt(oldMetrics.escrowBalanceRaw) - fee;
+    const item = escrow[0], remaining = BigInt(oldMetrics.escrowBalanceRaw);
     requireEvidence(newMetrics.outstandingRaisedRaw === '0' && newMetrics.escrowBalanceRaw === '0' && remaining > 0n &&
       item.settlementId === (BigInt(record.settlementId) + 1n).toString() && item.route === 1 && item.kind === 6 &&
       item.recipientOwner === before.registry.owner && item.recipientOwner !== owner && item.amountRaw === remaining.toString() &&
       item.sourceWallet === sale.paymentWallet && item.destinationWallet === perpsWalletAddress(sale.paymentWalletCode, sale.paymentRoot, item.recipientOwner) &&
       item.predecessorId === record.settlementId && item.status === 1 && item.requestHash === fixedSaleSettlementRequestHash(sale.address, item) &&
       a.tailPaymentId === item.settlementId, 'launchpad_refund_separate_escrow_unverified');
-  } else requireEvidence(BigInt(oldMetrics.escrowBalanceRaw) - BigInt(newMetrics.escrowBalanceRaw) === fee && a.tailPaymentId === record.settlementId, 'launchpad_refund_escrow_delta_unverified');
+  } else requireEvidence(BigInt(oldMetrics.escrowBalanceRaw) - BigInt(newMetrics.escrowBalanceRaw) === 0n && a.tailPaymentId === record.settlementId, 'launchpad_refund_escrow_delta_unverified');
   requireEvidence(BigInt(a.reservedPaymentRaw) - BigInt(b.reservedPaymentRaw) === added.reduce((sum, item) => sum + BigInt(item.amountRaw), 0n), 'launchpad_refund_reserve_enqueue_unverified');
   return { old, updated, record };
 }
 function validateCallback(before: SaleState, after: SaleState, record: FixedSaleSettlement, phase: 'delivery' | 'finalization') {
   const b = before.journal, a = after.journal, old = b.entries.get(record.settlementId), next = a.entries.get(record.settlementId);
+  const successor = old?.successorId && old.successorId !== '0' ? b.entries.get(old.successorId) : undefined;
+  const advanced = phase === 'finalization' && successor?.status === 1 && BigInt(successor.deliveryReservedRaw) > 0n && successor.finalizeReservedRaw === '40000000';
+  const changed = new Set([record.settlementId, ...(advanced ? [successor!.settlementId] : [])]);
   requireEvidence(old && next && immutableRecord(record, old, ['status', 'deliveryReservedRaw', 'finalizeReservedRaw']) &&
     immutableRecord(old, next, ['status', 'finalizeReservedRaw']) && old.deliveryReservedRaw === '0' && next.deliveryReservedRaw === '0' &&
-    sameOtherEntries(b.entries, a.entries, new Set([record.settlementId])) &&
-    same(before.metrics, after.metrics) && same([...before.contributions], [...after.contributions]) &&
-    a.nextSettlementId === b.nextSettlementId && a.currentSaleId === b.currentSaleId && a.tailSaleId === b.tailSaleId &&
-    a.reservedSaleRaw === b.reservedSaleRaw && b.currentPaymentId === record.settlementId,
+    sameOtherEntries(b.entries, a.entries, changed) && same(before.metrics, after.metrics) && same([...before.contributions], [...after.contributions]) &&
+    a.referralCredits.dataHash === b.referralCredits.dataHash && a.nextSettlementId === b.nextSettlementId &&
+    a.currentSaleId === b.currentSaleId && a.tailSaleId === b.tailSaleId && a.reservedSaleRaw === b.reservedSaleRaw && b.currentPaymentId === record.settlementId,
     'launchpad_refund_callback_state_unverified');
-  if (phase === 'delivery') requireEvidence(old.status === 2 && next.status === 3 && old.finalizeReservedRaw === '40000000' && next.finalizeReservedRaw === '0' &&
-    a.currentPaymentId === b.currentPaymentId && a.tailPaymentId === b.tailPaymentId && a.reservedPaymentRaw === b.reservedPaymentRaw, 'launchpad_refund_delivery_delta_unverified');
-  else requireEvidence(old.status === 3 && next.status === 5 && old.finalizeReservedRaw === '0' && next.finalizeReservedRaw === '0' &&
-    a.currentPaymentId === '0' && a.tailPaymentId === (b.tailPaymentId === record.settlementId ? '0' : b.tailPaymentId) &&
-    BigInt(b.reservedPaymentRaw) - BigInt(a.reservedPaymentRaw) === BigInt(record.amountRaw), 'launchpad_refund_final_reserve_release_unverified');
+  if (phase === 'delivery') {
+    requireEvidence(old.status === 2 && next.status === 3 && old.finalizeReservedRaw === '40000000' && next.finalizeReservedRaw === '0' &&
+      BigInt(b.reservedNativeRaw) - BigInt(a.reservedNativeRaw) === 40000000n &&
+      a.currentPaymentId === b.currentPaymentId && a.tailPaymentId === b.tailPaymentId && a.reservedPaymentRaw === b.reservedPaymentRaw,
+      'launchpad_refund_delivery_delta_unverified');
+  } else {
+    if (advanced) {
+      const dispatched = a.entries.get(successor!.settlementId);
+      requireEvidence(dispatched && successor!.route === old.route && successor!.predecessorId === old.settlementId &&
+        immutableRecord(successor!, dispatched, ['status','deliveryReservedRaw']) && dispatched.status === 2 && dispatched.deliveryReservedRaw === '0' &&
+        a.currentPaymentId === successor!.settlementId && BigInt(b.reservedNativeRaw) - BigInt(a.reservedNativeRaw) === BigInt(successor!.deliveryReservedRaw),
+        'launchpad_refund_successor_dispatch_unverified');
+    } else requireEvidence(a.currentPaymentId === '0' && a.reservedNativeRaw === b.reservedNativeRaw, 'launchpad_refund_final_lane_unverified');
+    requireEvidence(old.status === 3 && next.status === 5 && old.finalizeReservedRaw === '0' && next.finalizeReservedRaw === '0' &&
+      a.tailPaymentId === (b.tailPaymentId === record.settlementId ? '0' : b.tailPaymentId) &&
+      BigInt(b.reservedPaymentRaw) - BigInt(a.reservedPaymentRaw) === BigInt(record.amountRaw), 'launchpad_refund_final_reserve_release_unverified');
+  }
 }
 function exactEdge<T>(node: Node, destination: string, receiptFor: ReceiptFor, parse: (message?: Node['raw']['inMessage']) => T | null, match: (value: T) => boolean) {
   return one(node.raw.outMessages.flatMap((message, index) => {

@@ -403,6 +403,9 @@ export async function decodeT3(
           ? w.mintRequest(origin.raw.inMessage)
           : null,
         initialNote = origin ? tokenWire(origin.raw.inMessage) : null;
+      const originalDeposit = initialNote ? w.depositNote(initialNote.forward) : null;
+      if (initialRequest) meta.referrer = initialRequest.referrer;
+      else if (originalDeposit) meta.referrer = originalDeposit.referrer;
       const initialMint =
         Boolean(
           initialRequest?.queryId === r.queryId &&
@@ -437,7 +440,8 @@ export async function decodeT3(
             const m = d.source.event?.movements.find(
               (m) => m.id === `${d.id}:out`,
             );
-            if (!m) continue;
+            if (!m || (m.evidence.kind === "native_message" || m.evidence.kind === "transaction_fee" || m.evidence.kind === "message_forward_fee")) continue;
+            const tokenEvidence: Omit<typeof m.evidence, "transactionStatus"> = m.evidence;
             const fee =
               remaining < BigInt(m.amountRaw) ? remaining : BigInt(m.amountRaw);
             remaining -= fee;
@@ -448,14 +452,14 @@ export async function decodeT3(
                 direction: "fee",
                 purpose: "protocol_fee",
                 amountRaw: fee.toString(),
-                evidence: { ...m.evidence, ...state.evidence },
+                evidence: { ...tokenEvidence, ...state.evidence },
               });
               m.amountRaw = (BigInt(m.amountRaw) - fee).toString();
             }
           }
         }
       }
-      proved = proved && funding && complete(ns);
+      proved = proved && funding && initialMint && complete(ns);
       if (proved) {
         meta.stage = "minted";
         issue = "";
@@ -463,6 +467,8 @@ export async function decodeT3(
       } else
         issue = !funding
           ? "t3_mint_funding_unverified"
+          : !initialMint
+            ? "t3_mint_original_request_unverified"
           : !complete(ns)
             ? "related_account_history_incomplete"
             : issue;
@@ -488,6 +494,7 @@ export async function decodeT3(
             recipient: input.owner,
             queryId: d.wire.queryId,
             amountRaw: null,
+            referrer: w.depositNote(d.wire.forward)?.referrer ?? null,
             stage: "unresolved",
             reserveRoots: hub.reserveRoots,
             basketRaw: hub.reserveRoots.map((r) =>
@@ -526,6 +533,7 @@ export async function decodeT3(
             w.burnNotify,
             (v) =>
               w.burnProof(v.payload)?.queryId === r.queryId &&
+              w.burnProof(v.payload)?.payload.hash().equals(r.payload.hash()) === true &&
               v.owner === input.owner &&
               v.amountRaw === r.amountRaw,
           ),
@@ -603,6 +611,7 @@ export async function decodeT3(
           recipient: request.recipient,
           queryId: request.queryId,
           amountRaw: request.amountRaw,
+          referrer: request.referrer,
           stage: "unresolved",
           reserveRoots: hub.reserveRoots,
           basketRaw: zeros(),
@@ -694,7 +703,8 @@ export async function decodeT3(
             v.amountRaw === request.amountRaw &&
             v.slippage === request.slippage &&
             v.mode === request.mode &&
-            v.outputToken === request.outputToken
+            v.outputToken === request.outputToken &&
+            v.referrer === request.referrer
             ? [n]
             : [];
         });
@@ -828,10 +838,11 @@ export async function decodeT3(
           const m = f.recipient.event?.movements.find(
             (m) => m.id === `${f.id}:in`,
           );
-          if (m) {
+          if (m && m.evidence.kind !== "native_message" && m.evidence.kind !== "transaction_fee" && m.evidence.kind !== "message_forward_fee") {
+            const tokenEvidence: Omit<typeof m.evidence, "transactionStatus"> = m.evidence;
             m.purpose = "t3_payout";
             m.evidence = {
-              ...m.evidence,
+              ...tokenEvidence,
               kind: "t3_payout",
               getter: identity.getter,
             };

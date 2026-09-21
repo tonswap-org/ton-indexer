@@ -1,6 +1,8 @@
 import { FastifyReply } from 'fastify';
+import { AdmissionError, AdmissionErrorCode } from '../data/admission/protocol';
 
-export type ErrorCode =
+export type ErrorCode = AdmissionErrorCode
+  | 'balance_unavailable'
   | 'invalid_address'
   | 'invalid_cursor'
   | 'cursor_mismatch'
@@ -25,4 +27,14 @@ export const publicErrorMessage = (error: unknown, fallback: string) => {
     return 'request timed out';
   }
   return fallback;
+};
+
+/** Only locally created typed admission failures cross the public boundary.
+ * Upstream text, process output and proof bytes are never exposed as errors. */
+export const publicAdmissionError = (error: unknown) => {
+  if (!(error instanceof AdmissionError)) return null;
+  const status = error.code === 'admission_invalid_request' ? 400 :
+    error.code === 'admission_timeout' ? 504 :
+    error.code === 'admission_busy' || error.code === 'admission_unavailable' ? 503 : 502;
+  return { status, code: error.code, message: error.code };
 };

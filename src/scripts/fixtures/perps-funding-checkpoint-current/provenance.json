@@ -1,0 +1,8 @@
+{
+  "schema": "perps-funding-checkpoint-fixture-v1",
+  "source": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/artifacts/perps-oracle-pull/funding-remainder-qualified-state.json",
+  "sourceTest": "PerpsEngineFunding.spec.ts: retains fractional funding through a zero rate and offsets an opposite rate exactly",
+  "engineCodeHash": "672adf0e4798430a169468e52d7665024f1ed6293958334a4fcfe32358e570a7",
+  "sha256": "c1e12c9897b8235f1ed815e18733356a4e6d67a524a08d4bd4c3c32567461fed",
+  "scope": "Unmodified current Sandbox engine code/data after authenticated pool funding callbacks; no live chain or transaction-history claim."
+}

@@ -1,4 +1,5 @@
-import { Address, Cell, TupleItem } from '@ton/core';
+import { decodeOriginalTransaction, assertOriginalTransactionPage } from './transactionEvidence';
+import { Address, Cell, Transaction, TupleItem } from '@ton/core';
 import { Buffer } from 'node:buffer';
 import { createRequire } from 'node:module';
 import { getHttpV4Endpoint, getHttpV4Endpoints } from '@orbs-network/ton-access';
@@ -6,11 +7,8 @@ import { Network } from '../models';
 import {
   AccountStateResponse,
   MasterchainInfo,
-  RawMessage,
   RawTransaction,
-  TonDataSource,
-  TonSccpBurnProofMaterial,
-  TonSccpBurnProofMaterialRequest
+  TonDataSource
 } from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 import {
@@ -24,7 +22,7 @@ type TonClient4Like = {
   getLastBlock(): Promise<any>;
   getAccount(seqno: number, address: Address): Promise<any>;
   getAccountLite(seqno: number, address: Address): Promise<any>;
-  getAccountTransactionsParsed(address: Address, lt: bigint, hash: Buffer, limit: number): Promise<any>;
+  getAccountTransactions(address: Address, lt: bigint, hash: Buffer): Promise<Array<{ tx: Transaction; block: { workchain: number } }>>;
   runMethod(seqno: number, address: Address, name: string, args?: TupleItem[]): Promise<any>;
 };
 
@@ -156,24 +154,6 @@ const createTonClient4 = (endpoint: string): TonClient4Like => {
   });
 };
 
-const decodeOp = (bodyBase64?: string): number | undefined => {
-  if (!bodyBase64) return undefined;
-  try {
-    const cell = Cell.fromBase64(bodyBase64);
-    const slice = cell.beginParse();
-    if (slice.remainingBits < 32) return undefined;
-    const op = slice.loadUint(32);
-    return Number(op);
-  } catch {
-    return undefined;
-  }
-};
-
-const parseAddress = (raw?: string | null): string | undefined => {
-  if (!raw) return undefined;
-  return raw;
-};
-
 const readStateKind = (value: unknown): 'active' | 'uninitialized' | 'frozen' | null => {
   const record = asRecord(value);
   const typeRaw = typeof value === 'string' ? value : typeof record?.type === 'string' ? record.type : null;
@@ -257,9 +237,6 @@ const requireHash32 = (value: unknown, label: string): Buffer => {
   return decoded;
 };
 
-const canonicalHash32 = (value: unknown, label: string): string =>
-  requireHash32(value, label).toString('base64');
-
 const readLastTxHash = (lastTx: unknown): string | undefined => {
   const record = asRecord(lastTx);
   if (!record) return undefined;
@@ -286,38 +263,6 @@ const parseRunMethodResponse = (response: unknown): { exitCode: number; stack: T
     }
   }
   return { exitCode, stack };
-};
-
-const mapMessage = (message: any): RawMessage | undefined => {
-  if (!message) return undefined;
-  const info = message.info;
-  let source: string | undefined;
-  let destination: string | undefined;
-  let value: string | undefined;
-
-  if (info?.type === 'internal') {
-    source = parseAddress(info.src);
-    destination = parseAddress(info.dest);
-    value = info.value;
-  } else if (info?.type === 'external-in') {
-    destination = parseAddress(info.dest);
-  } else if (info?.type === 'external-out') {
-    // external-out dest can be null or an object; keep it undefined for now.
-  }
-
-  const op = decodeOp(message.body);
-
-  return {
-    source,
-    destination,
-    value,
-    op,
-    body: message.body ?? undefined,
-    createdLt: info?.type === 'internal' ? info.createdLt : undefined,
-    bounced: info?.type === 'internal' ? info.bounced : undefined,
-    forwardFeeRaw: info?.type === 'internal' ? info.fwdFee : undefined,
-    ihrFeeRaw: info?.type === 'internal' ? info.ihrFee : undefined,
-  };
 };
 
 export class TonClient4DataSource implements TonDataSource {
@@ -372,7 +317,8 @@ export class TonClient4DataSource implements TonDataSource {
     const last = await this.getLastBlockCached();
     return {
       seqno: last.last.seqno,
-      timestamp: last.now,
+      // V4 exposes server time, not the canonical masterblock creation time.
+      // Do not report server clock as a chain freshness watermark.
     };
   }
 
@@ -445,31 +391,13 @@ export class TonClient4DataSource implements TonDataSource {
     }
 
     const cursorHashBytes = requireHash32(cursorHash, 'Transaction cursor hash');
-    const txs = await this.call((client) =>
-      client.getAccountTransactionsParsed(
-        parsed,
-        BigInt(cursorLt),
-        cursorHashBytes,
-        limit
-      )
-    );
-
-    return txs.transactions.map((tx: any) => {
-      const parsedStatus = tx.parsed?.status;
-      const status = parsedStatus === 'success' ? 'success' : parsedStatus === 'failed' ? 'failed' : 'pending';
-      return {
-        lt: tx.lt,
-        hash: canonicalHash32(tx.hash, 'Transaction hash'),
-        prevTransactionLt: tx.prevTransaction.lt,
-        prevTransactionHash: canonicalHash32(tx.prevTransaction.hash, 'Predecessor transaction hash'),
-        utime: tx.time,
-        success: status === 'success',
-        status,
-        totalFeesRaw: typeof tx.fees === 'string' && /^(0|[1-9]\d*)$/.test(tx.fees) ? tx.fees : undefined,
-        inMessage: mapMessage(tx.inMessage),
-        outMessages: (tx.outMessages ?? []).map(mapMessage).filter(Boolean),
-      };
+    const txs = await this.call((client) => client.getAccountTransactions(parsed, BigInt(cursorLt), cursorHashBytes));
+    const page = txs.slice(0, limit).map(({ tx, block }) => {
+      if (block.workchain !== parsed.workChain) throw new Error('Transaction evidence block belongs to a different workchain.');
+      return decodeOriginalTransaction(tx.raw, parsed);
     });
+    if (page.length === 0) return [];
+    return assertOriginalTransactionPage(page, parsed, { lt: BigInt(cursorLt).toString(), hash: cursorHashBytes.toString('base64') });
   }
 
   async runGetMethod(
@@ -560,12 +488,6 @@ export class TonClient4DataSource implements TonDataSource {
     } catch {
       return null;
     }
-  }
-
-  async getTonSccpBurnProofMaterial(
-    _request: TonSccpBurnProofMaterialRequest
-  ): Promise<TonSccpBurnProofMaterial> {
-    throw new Error('TON SCCP proof material requires a lite-server-backed data source.');
   }
 
   private async call<T>(fn: (client: TonClient4Like) => Promise<T>): Promise<T> {

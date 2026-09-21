@@ -16,7 +16,6 @@ import {
 } from '../ledger/project';
 import {
   findTransactionState,
-  readDlmmPositionState,
   type LedgerStateSnapshot,
 } from '../ledger/archive';
 import {
@@ -32,6 +31,7 @@ import {
   tokenWire,
   withdrawalRequest,
 } from '../ledger/wire';
+import { readDlmmLiquidityState } from '../ledger/dlmmLiquidityState';
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 import { resolveDlmmPoolSettlementEvidence, type DlmmPoolMessageEvidence } from '../utils/dlmmSettlementEvidence';
@@ -127,7 +127,7 @@ const message = (
   op: body.bits.length >= 32 ? body.beginParse().preloadUint(32) : undefined,
   value,
   forwardFeeRaw: '3',
-  ihrFeeRaw: '0',
+  extraFlagsRaw: '0',
   bounced: false,
 });
 function fixture(): ProjectionInput {
@@ -365,13 +365,13 @@ async function testSwap() {
   const result = (await projectOwnerLedger(f)).events;
   const event = result.find((e) => e.kind === 'swap')!;
   assert(event, JSON.stringify(result));
-  assert.equal(event.settlement?.status, 'confirmed', JSON.stringify(event));
+  assert.equal(event.settlement?.status, 'incomplete', 'raw delivery and pool acknowledgement lack required historical swap archives');
   const inputMovement = event.movements.find(m => m.asset.kind === 'jetton' && m.direction === 'out')!;
   const inputTransaction = f.chains.get(ownedT)!.transactions.find(t => bodyCell(t.inMessage))!;
   assert.equal(inputMovement.evidence.queryId, '42');
   assert.equal(inputMovement.evidence.requestBodyHash, bodyCell(inputTransaction.inMessage)!.hash().toString('hex'));
   assert.deepEqual(
-    event.movements
+    result.flatMap(row => row.movements)
       .filter((m) => m.asset.kind === 'jetton')
       .map((m) => [m.direction, m.asset.master, m.amountRaw]),
     [
@@ -379,31 +379,78 @@ async function testSwap() {
       ['in', rootX, received.toString()],
     ]
   );
-  assert.equal(event.totalFeesRaw, '300');
+  assert.equal(result.reduce((n,row) => n + BigInt(row.totalFeesRaw ?? '0'), 0n), 300n);
   assert.equal(
-    event.movements
+    result.flatMap(row => row.movements)
       .filter((m) => m.evidence.kind === 'transaction_fee')
       .reduce((n, m) => n + BigInt(m.amountRaw), 0n),
     300n
   );
   assert.equal(
-    event.movements
+    result.flatMap(row => row.movements)
       .filter((m) => m.evidence.kind === 'message_forward_fee')
       .reduce((n, m) => n + BigInt(m.amountRaw), 0n),
     6n
   );
   assert(
-    event.movements
+    result.flatMap(row => row.movements)
       .filter((m) => m.asset.kind === 'jetton')
       .every((m) => m.evidence.transactions?.length === 2)
   );
   assert.equal(
-    event.movements.filter(
+    result.flatMap(row => row.movements).filter(
       (m) => m.asset.kind === 'native' && m.direction === 'out'
     ).length,
     1,
     'internal owner/custody native transfers are not counted twice'
   );
+  // Synthetic qualified-ledger service boundary, not historical chain proof.
+  // The actual archive-free projection above must stay incomplete. Real Sandbox
+  // full/partial/refund qualification is covered by ledger-dlmm-swap-test.ts.
+  // This isolated service case retains amounts above 2^80 and minOut=1.
+  const supplied = structuredClone(event);
+  supplied.movements = result.flatMap(row => structuredClone(row.movements));
+  supplied.issues = ['jetton_decimals_unresolved'];
+  const outputMovement = supplied.movements.find(m => m.asset.kind === 'jetton' && m.direction === 'in')!;
+  const acceptance = {account: pool, lt: '40', hash: hash(40), utime: 1700000040};
+  const finalized = {account: pool, lt: '80', hash: hash(80), utime: 1700000080};
+  supplied.settlement = {...event.settlement!, status: 'confirmed', evidence: [...event.settlement!.evidence, finalized],
+    dlmmSwap: {poolCodeHash: '1'.repeat(64), paidInputRaw: paid.toString(), consumedInputRaw: paid.toString(), returnedInputRaw: '0', outputRaw: received.toString(),
+      inputMovementId: inputMovement.id, outputMovementId: outputMovement.id, refundMovementId: null, acceptance, finalizations: [finalized]}};
+  const qualifiedResult = [supplied];
+  const config = { ...loadConfig(), network: 'testnet' as const, responseCacheEnabled: false };
+  const store = new MemoryStore(config);
+  const originals = f.chains.get(owner)!.transactions.map(raw => classifyTransaction(owner, raw, opcodes));
+  store.addTransactions(owner, originals);
+  const head = originals.slice().sort((a, b) => BigInt(a.lt) > BigInt(b.lt) ? -1 : 1)[0];
+  store.setBalance(owner, { address: owner, balance: '0', lastTxLt: head.lt, lastTxHash: head.hash, updatedAt: Date.now() });
+  store.markHistoryComplete(owner);
+  const service = new IndexerService(config, store, {} as TonDataSource, opcodes, []);
+  const page = (events: typeof result) => ({ network: 'testnet' as const, account: owner, events, nextCursor: null,
+    coverage: { generation: 'receipt-generation', snapshotComplete: true, historyComplete: false, issues: ['unrelated_wallet_gap'] } }) as any;
+  service.setSwapLedgerReader(async () => page(qualifiedResult));
+  const receivedSwaps = await service.getSwapExecutions(owner);
+  assert.equal(receivedSwaps.swaps.length, 1);
+  assert.equal(receivedSwaps.swaps[0].receiveAmount, received.toString());
+  assert.equal(receivedSwaps.swaps[0].minimumReceiveAmount, '1');
+  assert.deepEqual(receivedSwaps.swaps[0].receipt, { ledgerEventId: event.id, generation: 'receipt-generation', assetId: `testnet:jetton:${rootX}` });
+  for (const mutation of ['unconfirmed', 'request-body', 'original-transaction', 'foreign-owner', 'invalid-amount', 'duplicate-event']) {
+    const altered = structuredClone(qualifiedResult), target = altered.find(item => item.id === event.id)!;
+    if (mutation === 'unconfirmed') target.settlement!.status = 'incomplete';
+    if (mutation === 'request-body') target.movements.find(item => item.asset.kind === 'jetton' && item.direction === 'out')!.evidence.requestBodyHash = 'f'.repeat(64);
+    if (mutation === 'original-transaction') for (const movement of target.movements) for (const ref of movement.evidence.transactions ?? []) if (ref.account === owner) ref.hash = hash(999);
+    if (mutation === 'foreign-owner') target.movements.find(item => item.asset.kind === 'jetton' && item.direction === 'in')!.asset.owner = other;
+    if (mutation === 'invalid-amount') target.movements.find(item => item.asset.kind === 'jetton' && item.direction === 'in')!.amountRaw = '1e9';
+    if (mutation === 'duplicate-event') altered.push(structuredClone(target));
+    service.setSwapLedgerReader(async () => page(altered));
+    assert.equal((await service.getSwapExecutions(owner)).swaps[0].receiveAmount, undefined, mutation);
+  }
+  let pages = 0;
+  service.setSwapLedgerReader(async () => ++pages === 1 ? { ...page(qualifiedResult), nextCursor: 'next' }
+    : { ...page([]), coverage: { ...page([]).coverage, generation: 'other-generation' } });
+  assert.equal((await service.getSwapExecutions(owner)).swaps[0].receiveAmount, undefined, 'changed ledger generation');
+  service.setSwapLedgerReader(async () => { throw new Error('Ledger unavailable'); });
+  assert.equal((await service.getSwapExecutions(owner)).swaps[0].receiveAmount, undefined, 'unavailable ledger');
   f.chains.get(poolX)!.historyComplete = false;
   assert.equal(
     (await projectOwnerLedger(f)).events.find((e) => e.kind === 'swap')?.settlement
@@ -428,11 +475,12 @@ async function testSwap() {
 }
 async function testImmediateSwapFinalization() {
   const immediate = swapFixture();
-  const event = (await projectOwnerLedger(immediate.f)).events.find(e => e.kind === 'swap')!;
-  assert.equal(event?.settlement?.status, 'confirmed', 'current JSUC emits its sole JSFN directly');
+  const projection = (await projectOwnerLedger(immediate.f)).events;
+  const event = projection.find(e => e.kind === 'swap')!;
+  assert.equal(event?.settlement?.status, 'incomplete', 'JSUC/JSFN request evidence cannot replace exact historical cash finalization');
   assert.equal(event.settlement?.queryId, '42');
   assert.deepEqual(
-    event.movements.filter(m => m.asset.kind === 'jetton').map(m => [m.direction, m.asset.master, m.amountRaw]),
+    projection.flatMap(row => row.movements).filter(m => m.asset.kind === 'jetton').map(m => [m.direction, m.asset.master, m.amountRaw]),
     [['out', rootT, immediate.paid.toString()], ['in', rootX, immediate.received.toString()]]
   );
   const debit = event.movements.find(m => m.asset.kind === 'jetton' && m.direction === 'out')!;
@@ -696,12 +744,12 @@ async function testDeposit() {
       : lt === after.lt && h === after.hash
         ? state(after, 9007199254741000n, 101)
         : null;
-  const event = (await projectOwnerLedger(f)).events.find(
-    (e) => e.kind === 'lp_deposit'
-  )!;
-  assert.equal(event.settlement?.status, 'confirmed', JSON.stringify(event));
+  const events = (await projectOwnerLedger(f)).events.filter(e => e.kind === 'lp_deposit');
+  assert.equal(events.length, 2, 'unqualified contributions remain independent instead of joining on a reusable query');
+  const event = events[0];
+  assert.equal(event.settlement?.status, 'incomplete', 'Partial synthetic dictionary does not qualify current pool state');
   assert.deepEqual(
-    event.movements
+    events.flatMap(row => row.movements)
       .filter((m) => m.asset.kind === 'jetton')
       .map((m) => [m.direction, m.asset.master, m.amountRaw]),
     [
@@ -709,16 +757,7 @@ async function testDeposit() {
       ['out', rootX, '3033'],
     ]
   );
-  const shares = event.movements.find((m) => m.asset.kind === 'lp_position')!;
-  assert.equal(shares.amountRaw, '7');
-  assert.equal(shares.asset.binId, -7);
-  assert.equal(shares.asset.decimals, 0);
-  assert.equal(shares.evidence.beforeSeqno, 100);
-  assert.equal(shares.evidence.afterSeqno, 101);
-  assert.notEqual(
-    shares.evidence.stateBeforeHash,
-    shares.evidence.stateAfterHash
-  );
+  assert(!event.movements.some(m => m.asset.kind === 'lp_position'), 'An unqualified dictionary delta is not mint evidence');
   f.stateAt = async () => null;
   const absent = (await projectOwnerLedger(f)).events.find(
     (e) => e.kind === 'lp_deposit'
@@ -843,33 +882,11 @@ async function testWithdrawal() {
   const event = (await projectOwnerLedger(f)).events.find(
     (e) => e.kind === 'lp_withdraw'
   )!;
-  assert.equal(event.settlement?.status, 'confirmed', JSON.stringify(event));
-  assert.deepEqual(
-    event.movements
-      .filter((m) => m.asset.kind === 'jetton')
-      .map((m) => [m.direction, m.asset.master, m.amountRaw]),
-    [
-      ['in', rootT, '11'],
-      ['in', rootX, '33'],
-    ]
-  );
-  assert.equal(
-    event.movements.find((m) => m.asset.kind === 'lp_position')?.amountRaw,
-    shares.toString()
-  );
-  assert.equal(
-    event.totalFeesRaw,
-    '400',
-    'root request, both owned wallets and completion receipt fees are grouped'
-  );
-  assert.equal(
-    (await projectOwnerLedger(f)).events
-      .filter((e) => e.kind === 'transfer')
-      .flatMap((e) => e.movements)
-      .filter((m) => m.asset.kind === 'jetton').length,
-    1,
-    'equal-amount unrelated payouts are excluded by terminal journal nonce'
-  );
+  assert.equal(event.settlement?.status, 'incomplete', 'Amounts and a terminal nonce alone do not qualify current contract execution');
+  assert(!event.movements.some(m => m.asset.kind === 'lp_position'), 'Unqualified share dictionary never proves a burn');
+  assert(!event.settlement?.dlmmLiquidity, 'No principal or fee breakdown is invented from aggregate payouts');
+  assert.equal((await projectOwnerLedger(f)).events.flatMap(e => e.movements).filter(m => m.asset.kind === 'jetton').length, 3,
+    'All physical receipts remain available even when protocol attribution is unresolved');
   f.chains.get(ownedX)!.historyComplete = false;
   assert.equal(
     (await projectOwnerLedger(f)).events.find((e) => e.kind === 'lp_withdraw')
@@ -991,14 +1008,23 @@ async function testTransfersAndDedup() {
   );
 }
 async function testArchive() {
-  assert.equal(
-    readDlmmPositionState(
-      positionData(9007199254740993n).toBoc().toString('base64'),
-      owner,
-      -7
-    ).shares,
-    9007199254740993n
-  );
+  const zeroHash = '0'.repeat(64);
+  const emptySource = {
+    getMasterchainInfo: async () => ({seqno: 100}),
+    getAccountStateAtSeqno: async (_account: string, seqno: number) => seqno < 40
+      ? {balance: '0', accountState: 'uninitialized', lastTxLt: '0', lastTxHash: zeroHash}
+      : {balance: '1', accountState: 'active', lastTxLt: '10', lastTxHash: hash(10)},
+  } as TonDataSource;
+  assert.equal((await findTransactionState(emptySource, pool, {lt: '0', hash: zeroHash}))?.seqno, 39,
+    'First credit uses the last authenticated transaction-free block');
+  assert.equal(await findTransactionState(emptySource, pool, {lt: '0', hash: hash(1)}), null, 'Nonzero first-transaction hash is rejected');
+  assert.equal(await findTransactionState({...emptySource, getAccountStateAtSeqno: async () =>
+    ({balance: '0', accountState: 'active', lastTxLt: '0', lastTxHash: zeroHash})} as TonDataSource, pool, {lt: '0', hash: zeroHash}), null,
+    'An active zero-cursor state cannot establish an undeployed wallet');
+  assert.equal(await findTransactionState({...emptySource, getAccountStateAtSeqno: async () =>
+    ({balance: '0', accountState: 'uninitialized'})} as TonDataSource, pool, {lt: '0', hash: zeroHash}), null,
+    'Missing history metadata does not establish absence');
+  assert.throws(() => readDlmmLiquidityState(positionData(9007199254740993n).toBoc().toString('base64')), 'A partial position cell is not the current DLMM layout');
   const source = {
     getMasterchainInfo: async () => ({ seqno: 100 }),
     getAccountStateAtSeqno: async (_account: string, seqno: number) => ({
@@ -1034,7 +1060,7 @@ async function main() {
   await testTransfersAndDedup();
   await testArchive();
   console.log(
-    'ledger exact spot/LP settlement, custody fees, replay deduplication and archive provenance tests passed'
+    'ledger spot settlement, unqualified LP rejection, custody fees, replay deduplication and archive provenance tests passed'
   );
 }
 main().catch((error) => {

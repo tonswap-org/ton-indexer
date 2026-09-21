@@ -17,7 +17,7 @@ type FactoryState = ReturnType<typeof readOptionFactoryConfig>;
 const unchangedSeries = (a: OptionFactorySeries, b: OptionFactorySeries, allocation = false) =>
   (Object.keys(a) as Array<keyof OptionFactorySeries>).every(key =>
     key === "stateHash" || key === "openNotionalRaw" || key === "collateralLockedRaw" ||
-    (allocation && key === "nextTokenId") || a[key] === b[key]);
+    (allocation && key === "nextTokenId") || (key === "writer" ? JSON.stringify(a.writer) === JSON.stringify(b.writer) : a[key] === b[key]));
 function unchangedOtherSeries(a: FactoryState, b: FactoryState, own: string) {
   return a.series.size === b.series.size && [...a.series].every(([id, series]) =>
     id === own || series.stateHash === b.series.get(id)?.stateHash);

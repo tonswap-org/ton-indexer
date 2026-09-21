@@ -1,0 +1,8 @@
+{
+  "scope": "Unchanged current compiled Sandbox capture. Native conservation and current journal layout only; not live historical-state qualification.",
+  "file": "payout.json",
+  "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/preparation/native-funding-risk-vault/captures-05/current-payout.json",
+  "sha256": "28caf31709e0a49994e5999c7021f7eca0ef5143c487f89751ee97850fdb23c9",
+  "closure": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/preparation/native-funding-risk-vault/handoff.json",
+  "closureSha256": "34606ed410169df908002782effa434a3a204dc8cdc48820b2351dcedd2380a0"
+}

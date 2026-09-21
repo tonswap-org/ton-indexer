@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { Address, Cell, Dictionary, beginCell } from "@ton/core";
 import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
   projectOwnerLedger,
   type ProjectionInput,
@@ -11,7 +13,7 @@ import { loadOpcodes } from "../utils/opcodes";
 import { INTERNAL, NOTIFY, TRANSFER, BURN, BURN_NOTIFY } from "../ledger/wire";
 import * as w from "../ledger/t3Wire";
 import { perpsWalletAddress } from "../ledger/perpsWire";
-import { t3ReceiptKey } from "../ledger/t3RecoveryState";
+import { readT3RecoveryHub, t3ReceiptKey } from "../ledger/t3RecoveryState";
 import { parseLedgerT3RedemptionBinding } from "../config/ledgerT3";
 import {
   projectionFingerprint,
@@ -44,12 +46,22 @@ const query = "9007199254741033",
   wire = "9007199254741061",
   payout = "9007199254741067",
   amount = 2n ** 80n + 31n;
+function emptyReferralState(completedMints?: Dictionary<bigint, Cell>) {
+  return beginCell().storeUint(0, 32).storeCoins(0).storeUint(1, 64).storeUint(0, 64).storeUint(0, 64)
+    .storeRef(Cell.EMPTY).storeRef(beginCell().storeUint(0, 64).storeUint(0, 64).storeDict(null).storeDict(null)).storeDict(completedMints ?? null).endCell();
+}
+function emptyBounceState() {
+  return beginCell().storeAddress(null).storeUint(0, 32).storeUint(0, 32).storeCoins(0).storeInt(0, 64)
+    .storeRef(Cell.EMPTY).storeRef(beginCell().storeUint(1, 64).storeDict(null).storeDict(null))
+    .storeRef(emptyReferralState()).endCell();
+}
+const inviterCell = (referrer: string | null = null) => beginCell().storeAddress(referrer ? A(referrer) : null).endCell();
 function state(
   mintFee = 100,
   redeemFee = 100,
   supply = 1000n,
   balance = [1000n, 0n, 0n],
-  bounce = Cell.EMPTY,
+  bounce = emptyBounceState(),
   enabled = 1,
 ) {
   const peg = beginCell()
@@ -71,7 +83,7 @@ function state(
     .storeRef(Cell.EMPTY)
     .storeUint(0, 208)
     .storeRef(
-      beginCell().storeRef(peg.endCell()).storeRef(Cell.EMPTY).endCell(),
+      beginCell().storeRef(Cell.EMPTY).storeRef(Cell.EMPTY).storeRef(peg.endCell()).storeRef(Cell.EMPTY).endCell(),
     )
     .storeAddress(A(other))
     .storeAddress(A(root))
@@ -167,7 +179,7 @@ function fixture() {
     op: body.beginParse().preloadUint(32),
     value: "100",
     forwardFeeRaw: "3",
-    ihrFeeRaw: "0",
+    extraFlagsRaw: "0",
     bounced: false,
   });
   const tx = (
@@ -257,7 +269,7 @@ function fixture() {
   };
   return { input, config, identity, msg, tx, transfer };
 }
-function mint(basket = [amount, 0n, 0n]) {
+function mint(basket = [amount, 0n, 0n], referrer: string | null = null) {
   const f = fixture(),
     note = beginCell()
       .storeUint(w.DEPOSIT_NOTE, 32)
@@ -265,6 +277,7 @@ function mint(basket = [amount, 0n, 0n]) {
       .storeUint(basket.filter((v) => v > 0n).length > 1 ? 0 : 1, 8)
       .storeUint(10000, 16)
       .storeAddress(A(owner))
+      .storeRef(inviterCell(referrer))
       .endCell(),
     deposit = f.transfer(
       owner,
@@ -335,6 +348,7 @@ function mint(basket = [amount, 0n, 0n]) {
         .storeCoins(basket[1])
         .storeCoins(basket[2])
         .storeMaybeRef(null)
+        .storeRef(inviterCell(referrer))
         .endCell(),
     );
     f.tx(owner, undefined, [originMessage]);
@@ -445,7 +459,7 @@ function mint(basket = [amount, 0n, 0n]) {
     accepted,
   };
 }
-function redeem(sliced = false, recovery = false) {
+function redeem(sliced = false, recovery = false, referrer: string | null = null) {
   const f = fixture();
   if (recovery) for (const a of [tw, root, hub]) f.tx(a);
   const n = 2n ** 60n + 37n,
@@ -458,6 +472,7 @@ function redeem(sliced = false, recovery = false) {
       .storeUint(0, 16)
       .storeUint(0, 8)
       .storeUint(0, 8)
+      .storeAddress(referrer ? A(referrer) : null)
       .endCell(),
     request = f.msg(
       owner,
@@ -548,6 +563,7 @@ function redeem(sliced = false, recovery = false) {
       .storeUint(0, 8)
       .storeUint(0, 8)
       .storeMaybeRef(null)
+      .storeRef(inviterCell(referrer))
       .endCell(),
   );
   f.tx(owner, undefined, [redeemRequest]);
@@ -704,8 +720,8 @@ function redeem(sliced = false, recovery = false) {
     request,
   };
 }
-function recoveredRedeem() {
-  const f = redeem(false, true);
+function recoveredRedeem(referrer: string | null = null) {
+  const f = redeem(false, true, referrer);
   const request = w.burnRequest(f.request)!;
   const requestHash = w.burnRequestHash(root, tw, owner, request);
   const intentHash = w.burnIntentHash(owner, query);
@@ -768,6 +784,7 @@ function recoveredRedeem() {
       .storeRef(Cell.EMPTY)
       .endCell();
   };
+  // Synthetic archive boundary in the sole current wallet storage layout.
   const walletState = (
     status: number,
     balance = status ? f.n : f.n * 2n,
@@ -790,13 +807,23 @@ function recoveredRedeem() {
           .storeUint(status ? BigInt("0x" + requestHash) : 0n, 256)
           .storeAddress(status ? A(hub) : null),
       )
-      .storeRef(Cell.EMPTY)
+      .storeRef(
+        beginCell()
+          .storeUint(0, 8)
+          .storeUint(0, 64)
+          .storeUint(0, 64)
+          .storeCoins(0)
+          .storeUint(0, 256),
+      )
+      .storeDict(null)
+      .storeDict(null)
       .endCell();
   const hubState = (
     consumed: number | null,
     proofWire = wire,
     proofPayout = payout,
     enabled = 1,
+    proofReferrer: string | null = referrer,
   ) => {
     const entries = Dictionary.empty(
       Dictionary.Keys.BigUint(256),
@@ -821,6 +848,7 @@ function recoveredRedeem() {
           .storeUint(0, 8)
           .storeUint(BigInt(proofPayout), 64)
           .storeUint(consumed, 8)
+          .storeRef(inviterCell(proofReferrer))
           .endCell(),
       );
       identities.set(BigInt(proofPayout), key);
@@ -831,15 +859,13 @@ function recoveredRedeem() {
       .storeDict(identities);
     const bounce = beginCell()
       .storeAddress(null)
-      .storeUint(0, 64)
-      .storeCoins(0)
-      .storeUint(0, 64)
-      .storeAddress(null)
+      .storeUint(0, 32)
       .storeUint(0, 32)
       .storeCoins(0)
-      .storeUint(0, 64)
+      .storeInt(0, 64)
       .storeRef(Cell.EMPTY)
       .storeRef(proofs)
+      .storeRef(emptyReferralState())
       .endCell();
     return state(
       100,
@@ -1524,6 +1550,60 @@ async function database() {
   }
 }
 async function main() {
+  const currentBounce = emptyBounceState();
+  assert.equal(currentBounce.bits.length, 134, "Empty current bounce tuple is exactly 134 bits");
+  assert.equal(currentBounce.refs.length, 3, "Mint, burn and referral journals are mandatory");
+  const controlBounce = beginCell().storeAddress(A(other)).storeUint(0x52474d44, 32).storeUint(7, 32)
+    .storeCoins(40_000_000).storeInt(1_800_000_000, 64);
+  currentBounce.refs.forEach(ref => controlBounce.storeRef(ref));
+  const controlState = state(100, 100, 1000n, [1000n, 0n, 0n], controlBounce.endCell()).toBoc().toString('base64');
+  assert.equal(w.t3State(controlState).mintFeeBps, 100);
+  assert.equal(readT3RecoveryHub(controlState, owner, query).proof, null);
+  const obsoleteBounce = beginCell().storeSlice(currentBounce.beginParse())
+    .storeAddress(null).storeUint(0, 32).storeCoins(0).storeInt(0, 64).endCell();
+  const obsoleteBounceState = state(100, 100, 1000n, [1000n, 0n, 0n], obsoleteBounce).toBoc().toString('base64');
+  assert.throws(() => w.t3State(obsoleteBounceState), /Trailing T3 wire/);
+  assert.throws(() => readT3RecoveryHub(obsoleteBounceState, owner, query), /trailing/i);
+  const current = state();
+  const payload = current.refs[0];
+  const refs = [...payload.refs];
+  refs[2] = beginCell().storeRef(refs[2].refs[2]).storeRef(refs[2].refs[3]).endCell();
+  const obsoleteRuntime = new Cell({ bits: current.bits, refs: [new Cell({ bits: payload.bits, refs })] });
+  assert.throws(() => w.t3State(obsoleteRuntime.toBoc().toString('base64')), /peg runtime layout/);
+
+  const referredMint = mint([amount, 0n, 0n], other);
+  const referredMintEvent = (await projectOwnerLedger(referredMint.input)).events.find(e => e.kind === "t3_mint")!;
+  assert.equal(referredMintEvent.settlement?.status, "confirmed");
+  assert.equal(referredMintEvent.settlement?.t3?.referrer, other);
+  const referredBasket = mint([amount, amount, amount], other);
+  assert.equal((await projectOwnerLedger(referredBasket.input)).events.find(e => e.kind === "t3_mint")?.settlement?.t3?.referrer, other);
+  const referredRedemption = recoveredRedeem(other);
+  const referredRedeemEvent = (await projectOwnerLedger(referredRedemption.input)).events.find(e => e.kind === "t3_redeem")!;
+  assert.equal(referredRedeemEvent.settlement?.status, "confirmed");
+  assert.equal(referredRedeemEvent.settlement?.t3?.referrer, other);
+  const swappedInvitation = recoveredRedeem(other);
+  swappedInvitation.boundary(hub, swappedInvitation.execute,
+    swappedInvitation.hubState(0, wire, payout, 1, owner), swappedInvitation.hubState(1, wire, payout, 1, owner));
+  assert.notEqual((await projectOwnerLedger(swappedInvitation.input)).events.find(e => e.kind === "t3_redeem")?.settlement?.status, "confirmed", "A continuation may not replace the original inviter");
+  const oldDeposit = beginCell().storeUint(w.DEPOSIT_NOTE, 32).storeUint(1, 8).storeUint(1, 8).storeUint(10000, 16).storeAddress(A(owner)).endCell();
+  assert.equal(w.depositNote(oldDeposit), null, "Old deposit without mandatory referral reference is unsupported");
+  assert.equal(w.depositNote(beginCell().storeSlice(oldDeposit.beginParse()).storeRef(inviterCell(other)).endCell())?.referrer, other);
+  assert.throws(() => w.referralAddress(beginCell().storeAddress(A(other)).storeUint(1, 1).endCell()));
+  const oldBurn = beginCell().storeUint(0x54335242, 32).storeAddress(A(owner)).storeUint(0, 16).storeUint(0, 8).storeUint(0, 8).endCell();
+  assert.equal(w.burnPayload(oldBurn), null, "Old burn application without mandatory inviter is unsupported");
+  assert.equal(w.burnPayload(beginCell().storeSlice(oldBurn.beginParse()).storeAddress(A(other)).endCell())?.referrer, other);
+  assert.throws(() => w.t3State(state(100, 100, 1000n, [1000n, 0n, 0n], Cell.EMPTY).toBoc().toString("base64")), "Old hub storage without referral state is unsupported");
+
+  const archivedReceipt = beginCell().storeUint(w.T3_MINT_RECEIPT, 32).storeUint(25, 64).storeAddress(A(owner)).storeCoins(100)
+    .storeCoins(100).storeCoins(0).storeCoins(0).storeMaybeRef(null).endCell();
+  const archivedMint = beginCell().storeUint(4, 8).storeUint(25, 64).storeUint(3, 64).storeCoins(100)
+    .storeAddress(A(owner)).storeAddress(A(owner)).storeUint(42, 256).storeRef(archivedReceipt).endCell();
+  const completedMints = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+  const archivedKey = BigInt(`0x${beginCell().storeUint(0x54334d52, 32).storeAddress(A(owner)).storeUint(25, 64).endCell().hash().toString('hex')}`);
+  completedMints.set(archivedKey, archivedMint);
+  assert.doesNotThrow(() => w.readT3ReferralState(emptyReferralState(completedMints)));
+  completedMints.set(archivedKey + 1n, archivedMint);
+  assert.throws(() => w.readT3ReferralState(emptyReferralState(completedMints)), /archived mint identity/);
   assert.equal(w.t3State(state().toBoc().toString("base64")).mintFeeBps, 100);
   const m = mint(),
     events = (await projectOwnerLedger(m.input)).events,
@@ -1822,6 +1902,25 @@ async function main() {
   }
   await recoveryTests();
   await database();
+  // Explicitly generated current-ABI fixtures. Historical captured receipts,
+  // including the missing-decimals fixture, remain immutable.
+  if (process.env.T3_WEB_FIXTURES_DIR) {
+    const directory = resolve(process.env.T3_WEB_FIXTURES_DIR);
+    const fixtures = {
+      "t3-mint.json": {
+        events, network: "localnet", owner, hub, root,
+        collateralRoot: roots[0], queryId: query, amountRaw: String(amount),
+      },
+      "t3-redemption.json": {
+        network: "localnet", owner, hub, root, ownerWallet: tw, receiver,
+        queryId: query, rootWireId: wire, payoutId: payout, amountRaw: String(r.n),
+        reserveRoots: roots, reserveVaults: vaults, custodyWallets: custody,
+        burnBodyBoc: r.request.body, events: rs,
+      },
+    };
+    await Promise.all(Object.entries(fixtures).map(([name, fixture]) =>
+      writeFile(resolve(directory, name), `${JSON.stringify(fixture, null, 2)}\n`)));
+  }
   console.log(
     "T3 exact ledger mint/redemption, custody, fees, replay and incomplete evidence tests passed",
   );
