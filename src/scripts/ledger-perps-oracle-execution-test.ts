@@ -9,7 +9,7 @@ import { canonicalLedgerHash } from '../ledger/normalize';
 import { readPerpsState } from '../ledger/perpsState';
 import { loadOpcodes } from '../utils/opcodes';
 import { perpsWalletAddress } from '../ledger/perpsWire';
-import { opcode } from '../ledger/wire';
+import { businessOpcode as opcode } from '../ledger/wire';
 
 const provenance = JSON.parse(readFileSync(join(__dirname, 'fixtures/perps-risk-admission-current/provenance.json'), 'utf8'));
 

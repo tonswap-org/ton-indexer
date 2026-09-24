@@ -5,6 +5,8 @@ import type { DlmmMarketBinding, MarketDependency, MarketNode } from './marketTy
 import { findTransactionState, type LedgerStateSnapshot } from './archive';
 import { canonicalLedgerAddress, canonicalLedgerHash } from './normalize';
 import { bodyCell, NOTIFY, opcode as messageOpcode, SWAP, tokenWire } from './wire';
+import { readDlmmRouterState } from './dlmmRouterState';
+import { readDlmmRouterExecute, ROUTER_POOL_EXECUTE, ROUTER_POOL_COMPLETION_ACK } from './dlmmRoutedWire';
 import { readDlmmMarketState } from './dlmmState';
 import { parseDlmmSwapForward } from '../utils/dlmmSettlementEvidence';
 import { perpsWalletAddress } from './perpsWire';
@@ -91,16 +93,19 @@ export class DlmmMarketGraphBuilder {
       if (node.raw.success && (!node.raw.status || node.raw.status === 'success') && !bodyCell(node.raw.inMessage)) issues.add('market_pool_input_undecodable');
       const notice = tokenWire(node.raw.inMessage), payload = notice?.op === NOTIFY ? notice.forward : null;
       if ((node.raw.inMessage?.op === NOTIFY || messageOpcode(node.raw.inMessage) === NOTIFY) && (!notice || notice.forward.bits.length < 32)) issues.add('market_pool_notification_undecodable');
-      const swap = payload && payload.bits.length >= 32 && payload.beginParse().preloadUint(32) === SWAP ? parseDlmmSwapForward(payload) : null;
+      const routedCandidate = node.raw.inMessage?.op===ROUTER_POOL_EXECUTE || messageOpcode(node.raw.inMessage)===ROUTER_POOL_EXECUTE;
+      let routed: ReturnType<typeof readDlmmRouterExecute> | null = null;
+      if (routedCandidate) {try {routed=readDlmmRouterExecute(bodyCell(node.raw.inMessage)!);} catch {issues.add('market_routed_request_invalid');}}
+      const swap = routed?.swap ?? (payload && payload.bits.length >= 32 && payload.beginParse().preloadUint(32) === SWAP ? parseDlmmSwapForward(payload) : null);
       const op = bodyCell(node.raw.inMessage)?.beginParse();
       const opcode = op && op.remainingBits >= 32 ? op.preloadUint(32) : null;
-      if (!swap && ![0x4a535543, 0x4a53464b, 0x44535259].includes(opcode ?? -1)) continue;
+      if (!routedCandidate && !swap && ![0x4a535543, 0x4a53464b, 0x44535259, ROUTER_POOL_EXECUTE, ROUTER_POOL_COMPLETION_ACK].includes(opcode ?? -1)) continue;
       await hydrate(node);
-      if (!swap || !notice) continue;
+      if (!swap) continue;
       const [tPrecision,xPrecision]=await Promise.all([precisionAt(node,binding.tokenT,binding.tokenTCodeHash),precisionAt(node,binding.tokenX,binding.tokenXCodeHash)]);
       node.assetPrecision=swap.zeroForOne===1?{input:tPrecision,output:xPrecision}:{input:xPrecision,output:tPrecision};
-      if (notice.owner) needed.add(notice.owner);
-      if (notice.senderWallet) needed.add(notice.senderWallet);
+      if (notice?.owner) needed.add(notice.owner);
+      if (notice?.senderWallet) needed.add(notice.senderWallet);
       if (node.raw.inMessage?.source) try { needed.add(canonicalLedgerAddress(node.raw.inMessage.source)); } catch { issues.add('market_wallet_address_invalid'); }
       try {
         if (!node.after?.state.dataBoc) throw new Error();
@@ -108,9 +113,28 @@ export class DlmmMarketGraphBuilder {
         if (state.tokenT !== binding.tokenT || state.tokenX !== binding.tokenX || state.walletCodeHash !== binding.walletCodeHash) throw new Error();
         const inputRoot = swap.zeroForOne === 1 ? binding.tokenT : binding.tokenX;
         needed.add(perpsWalletAddress(state.walletCode, inputRoot, binding.pool));
-        if (notice.owner) needed.add(perpsWalletAddress(state.walletCode, inputRoot, notice.owner));
+        if (notice?.owner) needed.add(perpsWalletAddress(state.walletCode, inputRoot, notice.owner));
         for (const record of state.settlements.values()) { needed.add(record.sourceWallet); needed.add(record.destinationWallet); }
       } catch { issues.add('market_historical_wallet_derivation_unavailable'); }
+    }
+    if (binding.router) {
+      const routerNodes=await load(binding.router);
+      for(const node of routerNodes) {
+        if(![NOTIFY,0x4a535543,0x4a53464b,0x52505343].includes(messageOpcode(node.raw.inMessage)??-1))continue;
+        await hydrate(node);
+        const notice=tokenWire(node.raw.inMessage);
+        if(notice?.op===NOTIFY) {if(notice.owner)needed.add(notice.owner);if(notice.senderWallet)needed.add(notice.senderWallet);}
+        try {
+          if(!node.after?.state.dataBoc)throw Error();
+          const state=readDlmmRouterState(node.after.state.dataBoc);
+          if(state.walletCodeHash!==binding.walletCodeHash)throw Error();
+          for(const root of [binding.tokenT,binding.tokenX])needed.add(perpsWalletAddress(state.walletCode,root,binding.router));
+          for(const record of state.settlements.values())if([7,8,12].includes(record.kind)) {
+            needed.add(record.sourceWallet);needed.add(record.destinationWallet);
+            if(record.kind!==12)needed.add(record.destinationOwner);
+          }
+        }catch{issues.add('market_router_archive_unavailable');}
+      }
     }
     for (const account of [...needed].sort()) {
       const related = await load(account);

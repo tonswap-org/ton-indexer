@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Address, Cell, Dictionary, beginCell, loadMessage } from '@ton/core';
-import { readDlmmMarketState } from '../ledger/dlmmState';
+import { readDlmmMarketState, readDlmmRouterOperation } from '../ledger/dlmmState';
 import { verifyDlmmDeposit } from '../ledger/dlmmLiquidity';
 import { ref, type DlmmProofBinding } from '../ledger/dlmmProof';
 import type { MarketNode } from '../ledger/marketTypes';
@@ -69,6 +69,34 @@ test('every captured pool boundary reads only an exact current constructor or pe
   assert(count > 20); assert(constructors > 0); console.log(JSON.stringify({ boundaryStates: count, constructorStates: constructors }));
 });
 
+test('current pool metadata rejects obsolete guards, omitted cumulative observations and unknown pool kinds', () => {
+  const data = Cell.fromBase64(wb.before.dataBoc!);
+  const guard = data.refs[2];
+  const oldGuard = beginCell().storeBits(guard.bits.substring(0,416)).endCell();
+  assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data,2,oldGuard))), /structures_invalid/);
+  const tailedGuard = beginCell().storeBits(guard.bits).storeBit(0).endCell();
+  assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data,2,tailedGuard))), /structures_invalid/);
+  const observations = data.refs[1], ring = observations.refs[0];
+  const oldRing = beginCell(); ring.refs.slice(0,3).forEach(ref => oldRing.storeRef(ref));
+  assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data,1,replaceRef(observations,0,oldRing.endCell())))), /observation_ring_invalid/);
+  const root = beginCell().storeBits(data.bits.substring(0,833)).storeUint(3,8).storeBits(data.bits.substring(841,data.bits.length-841));
+  data.refs.forEach(ref=>root.storeRef(ref));
+  assert.throws(()=>readDlmmMarketState(toBoc(root.endCell())),/pool_layout_invalid/);
+});
+test('current router operation records reject omitted receipts, tails, hash substitution and invalid terminal status', () => {
+  const boundary = poolBoundaries.find(b => b.after.dataBoc && readDlmmMarketState(b.after.dataBoc).routerOperations.size > 0)!;
+  const data = Cell.fromBase64(boundary.after.dataBoc!), products=data.refs[3].refs[1].refs[3].refs[3];
+  const entries=products.refs[1].beginParse().loadDict(Dictionary.Keys.BigUint(64),Dictionary.Values.Cell());
+  const cell=[...entries.values()][0]; readDlmmRouterOperation(cell);
+  const tail=beginCell().storeBits(cell.bits).storeBit(0);cell.refs.forEach(ref=>tail.storeRef(ref));
+  assert.throws(()=>readDlmmRouterOperation(tail.endCell()),/trailing_data/);
+  assert.throws(()=>readDlmmRouterOperation(beginCell().storeBits(cell.bits).storeRef(cell.refs[0]).endCell()),/layout_invalid/);
+  assert.throws(()=>readDlmmRouterOperation(replaceRef(cell,0,Cell.EMPTY)),/fields_invalid/);
+  const status=beginCell().storeBits(cell.bits.substring(0,320)).storeUint(3,8).storeBits(cell.bits.substring(328,cell.bits.length-328));
+  cell.refs.forEach(ref=>status.storeRef(ref));
+  assert.throws(()=>readDlmmRouterOperation(status.endCell()),/fields_invalid/);
+});
+
 for (const intent of fixture.intents.filter(i => i.kind !== 'swap')) test(`actual ${intent.label} conserves separate principal and earned fees`, () => {
   const b = original(intent), before = read(b.before.dataBoc), after = read(b.after.dataBoc), prior = JSON.stringify({ before: [...before.bins], after: [...after.bins], original: intent });
   const result = verifyDlmmLiquidityTransition(before, after, request(intent));
@@ -112,7 +140,7 @@ for (const mutation of ['other-bin', 'other-owner', 'growth', 'fee-claim', 'cred
   if (mutation === 'shares') bad.positions.set(target, (BigInt(bad.positions.get(target)!) + 1n).toString());
   if (mutation === 'fee-reserve') bad.bins.get(0)!.feeReserveTRaw = '0';
   if (mutation === 'journal-total') bad.withdrawals.set(withdrawal.businessQueryId, { ...bad.withdrawals.get(withdrawal.businessQueryId)!, totalTRaw: '320757' });
-  if (mutation === 'guard') bad.market.guardHash = '0'.repeat(64);
+  if (mutation === 'guard') bad.market.guardConfigurationHash = '0'.repeat(64);
   if (mutation === 'farm') bad.market.farmingHash = '0'.repeat(64);
   if (mutation === 'active-query') bad.activeWithdrawalQueryId = '0';
   if (mutation === 'initial-delivered') bad.withdrawals.set(withdrawal.businessQueryId, { ...bad.withdrawals.get(withdrawal.businessQueryId)!, legT: 1 });

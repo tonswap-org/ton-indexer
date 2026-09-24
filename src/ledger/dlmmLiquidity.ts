@@ -1,3 +1,4 @@
+import { DLMM_ADD_PROCESSING_VALUE } from './dlmmState';
 import { canonicalLedgerHash } from './normalize';
 import type { LedgerEvidenceRef, DlmmLiquidityMetadata, DlmmDepositMetadata } from './types';
 import type { MarketNode } from './marketTypes';
@@ -59,8 +60,10 @@ export function verifyDlmmDeposit(binding: DlmmProofBinding, supplied: readonly 
     before.pending.get(pendingKey)?.recordHash === pending.recordHash && !after.pending.has(pendingKey) && after.pending.size === before.pending.size - 1,
     'dlmm_deposit_pending_identity_invalid');
   const firstT = first.root === binding.tokenT;
+  const originalFunding = BigInt(first.notice.forwardTonRaw);
+  const refundFunding = (originalFunding > DLMM_ADD_PROCESSING_VALUE ? originalFunding - DLMM_ADD_PROCESSING_VALUE : 0n).toString();
   requireProof(pending.amountTRaw === (firstT ? first.notice.amountRaw : '0') && pending.amountXRaw === (firstT ? '0' : first.notice.amountRaw) &&
-    pending.fundingTRaw === (firstT ? first.notice.forwardTonRaw : '0') && pending.fundingXRaw === (firstT ? '0' : first.notice.forwardTonRaw) &&
+    pending.fundingTRaw === (firstT ? refundFunding : '0') && pending.fundingXRaw === (firstT ? '0' : refundFunding) &&
     pending.minSharesRaw === first.intent.minSharesRaw && pending.vaultT === (firstT ? owner : null) && pending.vaultX === (firstT ? null : owner) &&
     pending.notificationHashT === (firstT ? dlmmLiquidityNotificationCommitment(first.node.raw.inMessage) : '0'.repeat(64)) &&
     pending.notificationHashX === (firstT ? '0'.repeat(64) : dlmmLiquidityNotificationCommitment(first.node.raw.inMessage)),

@@ -18,7 +18,7 @@ import type { DlmmMarketBinding } from '../ledger/marketTypes';
 
 async function main() {
   const f = JSON.parse(readFileSync(`${__dirname}/fixtures/dlmm-referral-market-current/dlmm-market-settlements.json`, 'utf8'));
-  const binding: DlmmMarketBinding = { network: 'localnet', pool: f.accounts.pool, tokenT: f.accounts.tokenT, tokenX: f.accounts.tokenX, tokenTCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
+  const binding: DlmmMarketBinding = { router: null, routerCodeHash: null, network: 'localnet', pool: f.accounts.pool, tokenT: f.accounts.tokenT, tokenX: f.accounts.tokenX, tokenTCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
     poolCodeHash: f.compiler.find((x: any) => x.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash,
     walletCodeHash: f.compiler.find((x: any) => x.entrypointFileName.endsWith('/jetton/jetton_wallet.tolk')).codeHash };
   assert.deepEqual(parseLedgerMarketBindings(undefined, 'localnet'), []);

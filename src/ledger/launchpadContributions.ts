@@ -152,10 +152,25 @@ function fixedEntitlement(boundary: Awaited<ReturnType<typeof readFixedLaunchpad
 
 function bondingEntitlement(boundary:Awaited<ReturnType<typeof readBondingBoundary>>,sale:Extract<LedgerLaunchpadSale,{model:'bonding'}>,owner:string,amount:bigint,command:Extract<NonNullable<ReturnType<typeof launchpadCommand>>,{kind:'contribute'}>):LaunchpadParticipationEntitlement {
   const b=boundary.before,a=boundary.after,before=b.contributions.get(owner)??null,after=a.contributions.get(owner),price=BigInt(b.metrics.currentPriceRaw);
-  requireEvidence(after&&!b.metrics.finalized&&!a.metrics.finalized&&price>0n&&amount>0n&&amount*LAUNCHPAD_PRICE_SCALE/price>0n,'launchpad_bonding_entitlement_unverified');
-  const tokens=amount*LAUNCHPAD_PRICE_SCALE/price,denominator=BigInt(b.config.slopeDenominatorRaw),numerator=BigInt(b.config.slopeNumeratorRaw),sold=BigInt(a.metrics.totalSoldRaw);
-  requireEvidence(denominator>0n,'launchpad_bonding_price_unverified');
-  const nextPrice=BigInt(b.config.basePriceRaw)+numerator*sold/denominator;
+  requireEvidence(after && !b.metrics.finalized && !a.metrics.finalized && price > 0n && amount > 0n,
+    'launchpad_bonding_entitlement_unverified');
+  const denominator = BigInt(b.config.slopeDenominatorRaw), numerator = BigInt(b.config.slopeNumeratorRaw);
+  const basePrice = BigInt(b.config.basePriceRaw), soldBefore = BigInt(b.metrics.totalSoldRaw);
+  const sold = BigInt(a.metrics.totalSoldRaw), maxSupply = BigInt(b.config.maxSupplyRaw);
+  const tokens = BigInt(after.tokenAmountRaw) - BigInt(before?.tokenAmountRaw ?? '0');
+  requireEvidence(denominator > 0n && basePrice > 0n && numerator >= 0n && soldBefore >= 0n &&
+    tokens > 0n && soldBefore + tokens <= maxSupply && price === basePrice + numerator * soldBefore / denominator,
+    'launchpad_bonding_price_unverified');
+  const curveDenominator = 2n * denominator * LAUNCHPAD_PRICE_SCALE;
+  const cumulative = (quantity: bigint) => (quantity * (2n * denominator * basePrice + numerator * quantity) +
+    curveDenominator - 1n) / curveDenominator;
+  const priorPayment = cumulative(soldBefore), nextSold = soldBefore + tokens;
+  // Exact cumulative rounding is invariant under split fills. The next-token
+  // check also proves the contract's maximal inverse across rounding plateaus.
+  requireEvidence(cumulative(nextSold) - priorPayment === amount &&
+    (nextSold === maxSupply || cumulative(nextSold + 1n) - priorPayment > amount),
+    'launchpad_bonding_entitlement_unverified');
+  const nextPrice = basePrice + numerator * sold / denominator;
   beneficiaryChanges(before,after,owner,command.rewardWallet,command.refundWallet);appendedFill(before,after,tokens,amount);
   referralTerms(before,after,command.referrer,amount*BigInt(b.metrics.feeBps)/10000n);
   requireEvidence(BigInt(after.paymentAmountRaw)-BigInt(before?.paymentAmountRaw??'0')===amount&&BigInt(after.tokenAmountRaw)-BigInt(before?.tokenAmountRaw??'0')===tokens&&sameOtherEntries(b.contributions,a.contributions,owner)&&

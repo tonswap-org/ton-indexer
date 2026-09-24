@@ -8,6 +8,7 @@ import type { LedgerEvidenceRef } from './types';
 export type DlmmMarketBinding = {
   network: Network; pool: string; poolCodeHash: string; walletCodeHash: string;
   tokenT: string; tokenX: string; tokenTCodeHash: string; tokenXCodeHash: string;
+  router: string | null; routerCodeHash: string | null;
 };
 export type MarketNode = {
   account: string; raw: RawTransaction;
@@ -36,6 +37,7 @@ export type MarketObservation = {
   input: { request: LedgerEvidenceRef; debit: LedgerEvidenceRef; credit: LedgerEvidenceRef; boundaries: MarketBoundaryEvidence[] };
   allocation: MarketBoundaryEvidence;
   settlements: MarketSettlementEvidence[];
+  routing: MarketRoutingEvidence | null;
   fees: { transaction: LedgerEvidenceRef; nativeAmountRaw: string | null }[];
 };
 export type MarketCandidate = {
@@ -49,4 +51,13 @@ export type MarketProjection = {
   issues: string[];
   /** Coverage of supplied, pinned chains only; never worldwide market coverage. */
   historyComplete: boolean;
+};
+
+export type RouterSettlementEvidence = Omit<import('./dlmmProof').DlmmSettlementEvidence, 'poolFinalized'> & { routerFinalized: LedgerEvidenceRef };
+export type MarketRoutingEvidence = {
+  router: string; businessId: string; requestHash: string; completionHash: string;
+  routerAcceptance: LedgerEvidenceRef; completion: LedgerEvidenceRef; completionAcknowledged: LedgerEvidenceRef;
+  inputSettlement: RouterSettlementEvidence; terminalSettlement: RouterSettlementEvidence;
+  protocolFeeSettlement: import('./dlmmProof').DlmmSettlementEvidence | null;
+  boundaries: MarketBoundaryEvidence[];
 };

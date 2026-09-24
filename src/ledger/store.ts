@@ -89,7 +89,7 @@ export function projectionFingerprint(
       if (movement.evidence.getter) movement.evidence.getter.observedAt = "";
   }
   const snapshot = {
-    decoder: "exact-ledger-v19",
+    decoder: "exact-ledger-v20",
     projectionScope: projection.projectionScope,
     events: [...fingerprintEvents].sort((a, b) => a.id.localeCompare(b.id)),
     related: related

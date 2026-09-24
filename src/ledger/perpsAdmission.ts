@@ -2,6 +2,7 @@ import { Address, type Cell, type Slice } from '@ton/core';
 import type { Node } from './project';
 import type { PerpsBoundary, PerpsOracleExecution } from './perpsOracle';
 import { bodyCell, messageKey } from './wire';
+import { decodeNativeFundingBody } from './nativeFunding';
 import { perpsPositionKey, type PerpsRequest } from './perpsWire';
 import { perpsAccount, perpsPending, perpsPosition, perpsOracleTradeTransition,
   type PerpsOracleRefreshReceipt } from './perpsState';
@@ -47,17 +48,20 @@ export async function readPerpsAdmission(input: {
       const message = node.raw.outMessages[index], body = bodyCell(message);
       if (!body || message.bounced || address(message.source) !== engine || address(message.destination) !== target) continue;
       try {
-        const s = body.beginParse();
+        const decoded = decodeNativeFundingBody(body);
+        if (!decoded.funding || decoded.funding.refundKind !== 0 || decoded.funding.moduleId !== 0 ||
+            decoded.funding.refundTo !== owner || decoded.funding.correlationId !== queued.wireQueryId) continue;
+        const business = decoded.businessBody, s = business.beginParse();
         if (phase === 1) {
           if (s.loadUint(32) !== RVLT) continue;
           const action = s.loadUintBig(64), bucket = s.loadUint(16), position = s.loadUintBig(256);
           const notional = s.loadCoins(), im = s.loadCoins(), cm = s.loadCoins(); end(s);
           if (!action || bucket !== states.after.riskVaultBucketId || position !== BigInt(`0x${perpsPositionKey(owner, request.marketId)}`)) continue;
-          requests.push({ destination: receiptFor(node, index), body, messageKey: messageKey(message)!, action, bucket, position, notional, im, cm });
+          requests.push({ destination: receiptFor(node, index), body: business, messageKey: messageKey(message)!, action, bucket, position, notional, im, cm });
         } else {
           if (s.loadUint(32) !== RPRQ || s.loadUint(32) !== policy!.policyId ||
               s.loadUintBig(64).toString() !== queued.wireQueryId) continue;
-          end(s); requests.push({ destination: receiptFor(node, index), body, messageKey: messageKey(message)! });
+          end(s); requests.push({ destination: receiptFor(node, index), body: business, messageKey: messageKey(message)! });
         }
       } catch { /* A malformed or unrelated outbound is not this admission. */ }
     }
@@ -73,13 +77,26 @@ export async function readPerpsAdmission(input: {
           address(message.source) !== target || address(message.destination) !== engine ||
           !messageKey(message) || messageKey(callback.raw.inMessage) !== messageKey(message)) continue;
       try {
-        const s = body.beginParse(), opcode = s.loadUint(32);
+        const decoded = decodeNativeFundingBody(body);
+        if (!decoded.funding || decoded.funding.refundKind !== 0 || decoded.funding.moduleId !== 0 ||
+            decoded.funding.refundTo !== owner || decoded.funding.correlationId !== queued.wireQueryId) continue;
+        const s = decoded.businessBody.beginParse(), opcode = s.loadUint(32);
         if (phase === 1) {
           if (![RVAK, RVNK].includes(opcode) || s.loadUintBig(64) !== sent.action || s.loadUint(16) !== sent.bucket ||
               s.loadUintBig(256) !== sent.position || s.loadUintBig(256) !== BigInt(`0x${sent.body.hash().toString('hex')}`)) continue;
-          const notional = s.loadCoins(), im = s.loadCoins(), cm = s.loadCoins(), reason = s.loadUint(16); end(s);
-          if (opcode === RVAK && (reason !== 0 || notional !== sent.notional || im !== sent.im || cm !== sent.cm)) continue;
-          if (opcode === RVNK && reason === 0) continue;
+          const notional = s.loadCoins(), im = s.loadCoins(), cm = s.loadCoins(), reason = s.loadUint(16);
+          const head = s.loadRef().beginParse(); end(s);
+          const currentActionId = head.loadUintBig(64), currentRequestHash = head.loadUintBig(256); end(head);
+          if ((currentActionId === 0n) !== (currentRequestHash === 0n)) continue;
+          if (opcode === RVAK && (reason !== 0 || notional !== sent.notional || im !== sent.im || cm !== sent.cm
+              || currentActionId !== sent.action || currentRequestHash !== BigInt(`0x${sent.body.hash().toString('hex')}`))) continue;
+          if (opcode === RVNK) {
+            const requestHash = BigInt(`0x${sent.body.hash().toString('hex')}`);
+            if (currentActionId === 0n && (notional !== 0n || im !== 0n || cm !== 0n)) continue;
+            if (!(reason === 1 ? currentActionId > sent.action!
+                : reason === 2 ? currentActionId === sent.action && currentRequestHash !== requestHash
+                : [3, 4, 5].includes(reason) && currentActionId === sent.action && currentRequestHash === requestHash)) continue;
+          }
         } else {
           if (opcode !== RPRS || s.loadUintBig(64).toString() !== queued.wireQueryId) continue;
           const lease = s.loadRef(); end(s);

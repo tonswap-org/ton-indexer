@@ -1,3 +1,4 @@
+import { routingEvidenceRefs } from './routedEvidence';
 import { validateHistoricalJettonPrecision } from './jettonPrecision';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -55,13 +56,15 @@ function boundary(value: MarketBoundaryEvidence, label: string) {
 }
 function boundaries(values: MarketBoundaryEvidence[], label: string) { array(values, label); if (!values.length) invalid(label); for (const value of values) boundary(value, label); }
 function binding(value: DlmmMarketBinding) {
-  object(value, ['network','pool','poolCodeHash','walletCodeHash','tokenT','tokenX','tokenTCodeHash','tokenXCodeHash'], 'binding');
+  object(value, ['network','pool','poolCodeHash','walletCodeHash','tokenT','tokenX','tokenTCodeHash','tokenXCodeHash','router','routerCodeHash'], 'binding');
   if (!['mainnet','testnet','localnet'].includes(value.network)) invalid('network');
   address(value.pool, 'pool'); address(value.tokenT, 'token T'); address(value.tokenX, 'token X');
+  if ((value.router === null) !== (value.routerCodeHash === null)) invalid('router binding');
+  if (value.router !== null) { address(value.router, 'router'); hash(value.routerCodeHash, 'router code'); }
   if (value.tokenT === value.tokenX) invalid('distinct roots'); hash(value.poolCodeHash, 'pool code'); hash(value.walletCodeHash, 'wallet code'); hash(value.tokenTCodeHash,'root T code'); hash(value.tokenXCodeHash,'root X code');
 }
 function observation(value: MarketObservation, b: DlmmMarketBinding) {
-  object(value, ['id','network','pool','kind','acceptance','executionUtime','deliveredUtime','finalizedUtime','payer','recipient','businessQueryId','inputAsset','outputAsset','assetPrecision','paidInputRaw','returnedInputRaw','consumedInputRaw','outputRaw','ratio','input','allocation','settlements','fees'], 'observation');
+  object(value, ['id','network','pool','kind','acceptance','executionUtime','deliveredUtime','finalizedUtime','payer','recipient','businessQueryId','inputAsset','outputAsset','assetPrecision','paidInputRaw','returnedInputRaw','consumedInputRaw','outputRaw','ratio','input','allocation','settlements','routing','fees'], 'observation');
   id(value.id, 'observation ID'); if (value.network !== b.network || value.pool !== b.pool || value.kind !== 'settled_dlmm_execution') invalid('observation binding');
   ref(value.acceptance, 'acceptance'); if (value.id !== observationId(b.network, value.acceptance)) invalid('observation ID identity'); if (value.acceptance.account !== b.pool) invalid('acceptance pool');
   for (const timestamp of [value.executionUtime,value.deliveredUtime,value.finalizedUtime]) time(timestamp, 'observation time');
@@ -98,19 +101,52 @@ function observation(value: MarketObservation, b: DlmmMarketBinding) {
     try { const cells=Cell.fromBoc(Buffer.from(s.requestBodyBoc,'base64')); if(cells.length!==1 || cells[0].hash().toString('hex')!==s.requestBodyHash) invalid('request BOC identity'); } catch { invalid('request BOC identity'); }
     for (const key of ['request','debit','credit','acknowledged','walletFinalized','poolFinalized'] as const) ref(s[key], `settlement ${key}`);
     if (s.request.account!==b.pool || s.debit.account!==s.sourceWallet || s.credit.account!==s.destinationWallet || s.acknowledged.account!==b.pool || s.walletFinalized.account!==s.sourceWallet || s.poolFinalized.account!==b.pool) invalid('settlement evidence endpoints');
-    if(s.kind==='swap_output' && s.destinationOwner!==value.recipient || s.kind==='unused_input_refund' && s.destinationOwner!==value.payer) invalid('settlement owner');
+    if(s.destinationOwner!==(value.routing?b.router:s.kind==='swap_output'?value.recipient:value.payer)) invalid('settlement owner');
     if(s.request.utime < value.executionUtime || s.credit.utime < s.request.utime || s.walletFinalized.utime < s.credit.utime || s.poolFinalized.utime < s.walletFinalized.utime) invalid('settlement chronology');
     boundaries(s.boundaries, 'settlement boundaries');
   }
   if(totalOutput!==output || totalRefund!==returned) invalid('settlement conservation');
-  const creditIds=new Set([refId(value.input.credit),...value.settlements.map(s=>refId(s.credit))]);
-  const allBoundaries=[...value.input.boundaries,value.allocation,...value.settlements.flatMap(s=>s.boundaries)];
-  for(const bnd of allBoundaries) if(bnd.codeHash!==(bnd.transaction.account===b.pool?b.poolCodeHash:b.walletCodeHash) || bnd.beforeAccountState==='uninitialized' && !creditIds.has(refId(bnd.transaction))) invalid('boundary binding');
+  validateRouting(value,b);
+  const routing=value.routing;
+  const routeLegs=routing?[routing.inputSettlement,routing.terminalSettlement,...(routing.protocolFeeSettlement?[routing.protocolFeeSettlement]:[])]:[];
+  const creditIds=new Set([...routeLegs.map(s=>refId(s.credit)),refId(value.input.credit),...value.settlements.map(s=>refId(s.credit))]);
+  const allBoundaries=[...value.input.boundaries,value.allocation,...value.settlements.flatMap(s=>s.boundaries),...routeLegs.flatMap(s=>s.boundaries),...(routing?.boundaries??[])];
+  for(const bnd of allBoundaries) if(bnd.codeHash!==(bnd.transaction.account===b.pool?b.poolCodeHash:bnd.transaction.account===b.router?b.routerCodeHash:b.walletCodeHash) || bnd.beforeAccountState==='uninitialized' && !creditIds.has(refId(bnd.transaction))) invalid('boundary binding');
   for(const r of [value.input.debit,value.input.credit,...value.settlements.flatMap(s=>[s.request,s.debit,s.credit,s.acknowledged,s.walletFinalized,s.poolFinalized])]) if(!allBoundaries.some(b=>refId(b.transaction)===refId(r))) invalid('missing transaction boundary');
-  if (Math.max(...value.settlements.map(s=>s.credit.utime))!==value.deliveredUtime || Math.max(...value.settlements.map(s=>s.poolFinalized.utime))!==value.finalizedUtime) invalid('settlement times');
+  if ((routing?routing.terminalSettlement.credit.utime:Math.max(...value.settlements.map(s=>s.credit.utime)))!==value.deliveredUtime || (routing?routing.terminalSettlement.routerFinalized.utime:Math.max(...value.settlements.map(s=>s.poolFinalized.utime)))!==value.finalizedUtime) invalid('settlement times');
   array(value.fees, 'fees'); const fees=new Set<string>();
   for (const fee of value.fees) { object(fee,['transaction','nativeAmountRaw'],'fee'); ref(fee.transaction,'fee transaction'); const k=refId(fee.transaction); if(fees.has(k)) invalid('duplicate fee'); fees.add(k); if(fee.nativeAmountRaw!==null) atomic(fee.nativeAmountRaw,'fee amount'); }
 }
+
+function validateRouting(value: MarketObservation,b:DlmmMarketBinding) {
+  const r=value.routing;if(r===null)return;
+  object(r,['router','businessId','requestHash','completionHash','routerAcceptance','completion','completionAcknowledged','inputSettlement','terminalSettlement','protocolFeeSettlement','boundaries'],'routing');
+  if(!b.router || !b.routerCodeHash || r.router!==b.router)invalid('routing binding');
+  atomic(r.businessId,'router business ID',true,UINT64_MAX);hash(r.requestHash,'router request hash');hash(r.completionHash,'router completion hash');
+  for(const e of [r.routerAcceptance,r.completion,r.completionAcknowledged])ref(e,'routing transaction');
+  if(r.routerAcceptance.account!==b.router || r.completion.account!==b.router || r.completionAcknowledged.account!==b.pool ||
+    BigInt(r.routerAcceptance.lt)>=BigInt(value.acceptance.lt) || BigInt(r.completion.lt)<=BigInt(value.acceptance.lt) || BigInt(r.completionAcknowledged.lt)<=BigInt(r.completion.lt))invalid('routing chronology');
+  boundaries(r.boundaries,'routing boundaries');
+  const legs=[r.inputSettlement,r.terminalSettlement];
+  if(legs[0].kind!==12 || legs[0].amountRaw!==value.paidInputRaw || legs[0].destinationOwner!==b.pool ||
+    legs[1].kind!==8 || legs[1].amountRaw!==value.outputRaw || legs[1].destinationOwner!==value.recipient || value.returnedInputRaw!=='0')invalid('routing cash conservation');
+  for(const leg of [...legs,...(r.protocolFeeSettlement?[r.protocolFeeSettlement]:[])]) {
+    const pool='poolFinalized' in leg,final=pool?leg.poolFinalized:leg.routerFinalized,controller=pool?b.pool:b.router;
+    object(leg,['settlementId','kind','amountRaw','sourceWallet','destinationWallet','destinationOwner','requestBodyHash','requestBodyBoc','request','debit','credit','acknowledged','walletFinalized',pool?'poolFinalized':'routerFinalized','boundaries'],'routing leg');
+    atomic(leg.settlementId,'routing settlement ID',true,UINT64_MAX);atomic(leg.amountRaw,'routing amount',true);
+    for(const a of [leg.sourceWallet,leg.destinationWallet,leg.destinationOwner])address(a,'routing endpoint');hash(leg.requestBodyHash,'routing request hash');
+    try {const cells=Cell.fromBoc(Buffer.from(leg.requestBodyBoc,'base64'));if(cells.length!==1||cells[0].hash().toString('hex')!==leg.requestBodyHash)invalid('routing request BOC');}catch{invalid('routing request BOC');}
+    for(const e of [leg.request,leg.debit,leg.credit,leg.acknowledged,leg.walletFinalized,final])ref(e,'routing leg evidence');
+    if(leg.request.account!==controller || leg.acknowledged.account!==controller || final.account!==controller || leg.debit.account!==leg.sourceWallet || leg.walletFinalized.account!==leg.sourceWallet || leg.credit.account!==leg.destinationWallet)invalid('routing leg endpoints');
+    if(BigInt(leg.request.lt)>=BigInt(leg.debit.lt)||BigInt(leg.debit.lt)>=BigInt(leg.credit.lt)||BigInt(leg.credit.lt)>=BigInt(leg.acknowledged.lt)||BigInt(leg.acknowledged.lt)>=BigInt(leg.walletFinalized.lt)||BigInt(leg.walletFinalized.lt)>=BigInt(final.lt))invalid('routing leg chronology');
+    boundaries(leg.boundaries,'routing leg boundaries');
+    for(const e of [leg.request,leg.debit,leg.credit,leg.acknowledged,leg.walletFinalized,final])if(!leg.boundaries.some(b=>refId(b.transaction)===refId(e)))invalid('routing leg missing boundary');
+    if(pool && (leg.kind!==9 || leg.destinationOwner!==b.router))invalid('routing protocol fee');
+  }
+  if(refId(legs[0].request)!==refId(r.routerAcceptance)||BigInt(legs[0].routerFinalized.lt)>=BigInt(value.acceptance.lt)||refId(legs[1].request)!==refId(r.completion))invalid('routing transition linkage');
+  for(const e of [r.routerAcceptance,r.completion,r.completionAcknowledged])if(!r.boundaries.some(b=>refId(b.transaction)===refId(e)))invalid('routing boundary missing');
+}
+
 function stable(value: unknown): unknown {
   if(Array.isArray(value)) return value.map(stable);
   if(value && typeof value==='object') return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,stable(v)]));
@@ -130,7 +166,7 @@ export function validateMarketProjection(value: MarketProjection): void {
   if(!dependencies.has(value.binding.pool) || value.historyComplete && value.dependencies.some(dep=>!dep.historyComplete)) invalid('dependency coverage');
   array(value.observations,'observations'); const observations=new Map<string,MarketObservation>(),acceptances=new Set<string>();
   for(const o of value.observations) { observation(o,value.binding); if(observations.has(o.id) || acceptances.has(refId(o.acceptance))) invalid('duplicate observation'); observations.set(o.id,o); acceptances.add(refId(o.acceptance));
-    const refs=[o.acceptance,o.input.request,o.input.debit,o.input.credit,...o.input.boundaries.map(b=>b.transaction),o.allocation.transaction,...o.fees.map(f=>f.transaction),...o.settlements.flatMap(s=>[s.request,s.debit,s.credit,s.acknowledged,s.walletFinalized,s.poolFinalized,...s.boundaries.map(b=>b.transaction)])];
+    const refs=[o.acceptance,o.input.request,o.input.debit,o.input.credit,...o.input.boundaries.map(b=>b.transaction),o.allocation.transaction,...o.fees.map(f=>f.transaction),...routingEvidenceRefs(o.routing),...o.settlements.flatMap(s=>[s.request,s.debit,s.credit,s.acknowledged,s.walletFinalized,s.poolFinalized,...s.boundaries.map(b=>b.transaction)])];
     for(const r of refs) { const dep=dependencies.get(r.account); if(!dep || BigInt(r.lt)>BigInt(dep.headLt) || r.lt===dep.headLt && r.hash!==dep.headHash || r.utime*1000>Date.parse(dep.checkedThrough)) invalid('evidence outside dependency coverage'); }
   }
   array(value.candidates,'candidates'); const candidates=new Set<string>(),candidateAcceptances=new Set<string>(),observed=new Set<string>();

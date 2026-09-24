@@ -3,28 +3,30 @@ import { end, flag, maybeAddress, raw, readLaunchpadEnvelope, readLaunchpadFills
 import { readLaunchpadSharedJournal } from './launchpadSharedJournal';
 
 export type BondingSaleContribution = {
-  paymentAmountRaw: string; tokenAmountRaw: string; claimed: boolean; rewardWallet: string | null; refundWallet: string | null;
+  paymentAmountRaw: string; tokenAmountRaw: string; claimed: boolean; fillCount: number; rewardWallet: string | null; refundWallet: string | null;
 } & ReturnType<typeof readLaunchpadFills> & ReturnType<typeof readLaunchpadReferralTerms>;
 const contributionValue = {
   serialize: (): never => { throw Error('Read-only bonding contribution decoder'); },
   parse: (s: Slice): BondingSaleContribution => {
-    const entry = { paymentAmountRaw: raw(s), tokenAmountRaw: raw(s), claimed: s.loadBoolean(), rewardWallet: maybeAddress(s), refundWallet: maybeAddress(s) };
-    const fills = readLaunchpadFills(s.loadRef()), referral = readLaunchpadReferralTerms(s.loadRef()); end(s); return { ...entry, ...fills, ...referral };
+    const entry = { paymentAmountRaw: raw(s), tokenAmountRaw: raw(s), claimed: s.loadBoolean(), fillCount: s.loadUint(16), rewardWallet: maybeAddress(s), refundWallet: maybeAddress(s) };
+    const fills = readLaunchpadFills(s.loadRef()), referral = readLaunchpadReferralTerms(s.loadRef()); end(s); if (entry.fillCount !== fills.fills.length || entry.fillCount > 64) throw Error('Bonding fill count mismatch'); return { ...entry, ...fills, ...referral };
   },
 };
 function readConfig(cell: Cell) {
-  const s = cell.beginParse(), curveKind = s.loadUint(8), basePriceRaw = raw(s), slopeNumeratorRaw = raw(s), slopeDenominatorRaw = raw(s);
-  const maxSupplyRaw = raw(s), softCapRaw = raw(s), startTime = s.loadIntBig(64).toString(), endTime = s.loadIntBig(64).toString();
-  const minContributionRaw = raw(s), maxContributionRaw = raw(s), hardCapRaw = raw(s), insuranceTargetRaw = raw(s), insuranceBps = s.loadUint(16);
-  const refundsEnabled = flag(s) === 1, schedulePresent = s.loadBoolean();
-  const schedule = schedulePresent ? { cliff: s.loadIntBig(64).toString(), duration: s.loadIntBig(64).toString(), period: s.loadIntBig(64).toString() } : null; end(s);
+  const s = cell.beginParse(), curve = s.loadRef().beginParse(), limits = s.loadRef().beginParse(), timing = s.loadRef().beginParse(); end(s);
+  const curveKind = curve.loadUint(8), basePriceRaw = raw(curve), slopeNumeratorRaw = raw(curve), slopeDenominatorRaw = raw(curve), maxSupplyRaw = raw(curve); end(curve);
+  const softCapRaw = raw(limits), minContributionRaw = raw(limits), maxContributionRaw = raw(limits), hardCapRaw = raw(limits), insuranceTargetRaw = raw(limits);
+  const refundsEnabled = flag(limits) === 1, insuranceBps = limits.loadUint(16); end(limits);
+  const startTime = timing.loadIntBig(64).toString(), endTime = timing.loadIntBig(64).toString(), schedulePresent = flag(timing) === 1;
+  const scheduleValues = { cliff: timing.loadIntBig(64).toString(), duration: timing.loadIntBig(64).toString(), period: timing.loadIntBig(64).toString() }; end(timing);
+  const schedule = schedulePresent ? scheduleValues : null;
   if (curveKind !== 1) throw Error('Unsupported bonding curve kind');
   return { curveKind: 1 as const, basePriceRaw, slopeNumeratorRaw, slopeDenominatorRaw, maxSupplyRaw, softCapRaw, startTime, endTime,
     minContributionRaw, maxContributionRaw, hardCapRaw, insuranceTargetRaw, insuranceBps, refundsEnabled, schedule };
 }
 /** Current configured sale_bonding.tolk serialization only. */
 export function readBondingSaleState(dataBoc: string) {
-  const { configCell, stateCell, headerFeeRecipient, headerFeeBps, ...envelope } = readLaunchpadEnvelope(dataBoc);
+  const { configCell, stateCell, headerFeeRecipient, headerFeeBps, ...envelope } = readLaunchpadEnvelope(dataBoc, 'bonding');
   const config = readConfig(configCell), s = stateCell.beginParse();
   if (s.remainingRefs !== 4) throw Error('Bonding state reference layout');
   const r = s.loadRef().beginParse();

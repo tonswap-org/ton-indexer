@@ -1,6 +1,8 @@
 {
-  "source": "/Users/mtakemiya/dev/tonswap/output/referral-first-release-20260914/liquidity-current/receipt-final/reused-query/dlmm-liquidity-settlements.json",
-  "sha256": "57c07658a82139c6a11b64c85479fa3b7c358fab02df12dcaa9ed8e71afdca0c",
-  "format": "gzip of byte-identical original Sandbox fixture; no transaction or archive edits",
-  "scope": "Two independent same-owner, same-bin, same-query deposits. Original current raw transactions and boundaries."
+  "file": "dlmm-liquidity-reused-query.json.gz",
+  "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-indexer-current/reused-query/dlmm-liquidity-settlements.json",
+  "sha256": "2c0447f780d555b44a497f8c51617aab3d95aba33372e7f5c78232c97655300a",
+  "transactions": 480,
+  "compressed": true,
+  "poolCodeHash": "4c1a96d9872851bbc47fba64ba4bcff0cb5efc0c2172d1d20ba712d4bcdc44c2"
 }

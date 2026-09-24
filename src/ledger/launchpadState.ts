@@ -26,14 +26,15 @@ const contributionValue = {
 
 /** Strict current configured fixed-sale layout. Settlement records share the same mandatory first-release schema across all models. */
 export function readFixedSaleState(dataBoc: string) {
-  const { configCell, stateCell, headerFeeRecipient, headerFeeBps, ...envelope } = readLaunchpadEnvelope(dataBoc);
+  const { configCell, stateCell, headerFeeRecipient, headerFeeBps, ...envelope } = readLaunchpadEnvelope(dataBoc, 'fixed');
   const config = readConfig(configCell), state = stateCell.beginParse();
   const totalRaisedRaw = raw(state);
   if (state.remainingRefs !== 4) throw Error('Fixed-sale state reference layout');
-  const m = state.loadRef().beginParse();
-  const metrics = { totalRaisedRaw, totalSoldRaw: raw(m), totalRefundedRaw: raw(m), outstandingRaisedRaw: raw(m), saleSupplyRaw: raw(m),
-    finalized: m.loadBoolean(), successful: m.loadBoolean(), feeRecipient: maybeAddress(m), feeBps: m.loadUint(16), totalFeesRaw: raw(m),
-    escrowBalanceRaw: raw(m), pendingEscrowReturnRaw: raw(m), pendingEscrowQueryId: m.loadUintBig(64).toString() }; end(m);
+  const m = state.loadRef().beginParse(), amounts = m.loadRef().beginParse();
+  const metrics = { totalRaisedRaw, totalSoldRaw: raw(amounts), totalRefundedRaw: raw(amounts), outstandingRaisedRaw: raw(amounts), saleSupplyRaw: raw(amounts),
+    totalFeesRaw: raw(amounts), escrowBalanceRaw: raw(amounts), pendingEscrowReturnRaw: raw(amounts),
+    finalized: m.loadBoolean(), successful: m.loadBoolean(), feeRecipient: maybeAddress(m), feeBps: m.loadUint(16),
+    pendingEscrowQueryId: m.loadUintBig(64).toString() }; end(amounts); end(m);
   if (headerFeeRecipient !== metrics.feeRecipient || headerFeeBps !== metrics.feeBps) throw Error('Fixed-sale fee configuration mismatch');
   const c = state.loadRef().beginParse(), entries = c.loadDict(Dictionary.Keys.Address(), contributionValue); end(c);
   const contributions = new Map([...entries].map(([owner, entry]) => [owner.toRawString(), entry]));

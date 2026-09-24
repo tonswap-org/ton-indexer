@@ -1,3 +1,4 @@
+import { readCoverPolicyPage, type CoverPageOptions, type CoverPolicySnapshot } from './utils/cover';
 import { decodeControlMeshSnapshot } from './utils/controlMesh';
 import { decodeRiskControllerSnapshot, type RiskControllerSnapshot } from './utils/riskController';
 import { readOriginalTransactionEvidence, originalTransactionToToncenter } from './data/transactionEvidence';
@@ -449,11 +450,6 @@ const GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
 const GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
 const GOVERNANCE_SCAN_BATCH_SIZE = 5;
 const COVER_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const COVER_MAX_SCAN_DEFAULT = 20;
-const COVER_MAX_SCAN_LIMIT = 64;
-const COVER_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
-const COVER_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
-const COVER_SCAN_BATCH_SIZE = 5;
 
 const DEFI_SNAPSHOT_CACHE_TTL_MS = 5_000;
 const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
@@ -561,27 +557,6 @@ type CoverStateSnapshot = {
   riskBucketId: string | null;
 };
 
-type CoverPolicySnapshot = {
-  id: string;
-  owner: string | null;
-  pool: string | null;
-  lowerBound: string | null;
-  upperBound: string | null;
-  payout: string | null;
-  coveredNotional: string | null;
-  windowSeconds: string | null;
-  requiredObservations: string | null;
-  breachStart: string | null;
-  breachSeconds: string | null;
-  lastObservation: string | null;
-  lastHealthyObservation: string | null;
-  breachObservations: string | null;
-  lastVolatilityTimestamp: string | null;
-  lastVolatilityRequestHash: string | null;
-  status: string | null;
-  riskVault: string | null;
-  riskBucketId: string | null;
-};
 
 type CoverSnapshotResponse = {
   manager: string;
@@ -591,6 +566,9 @@ type CoverSnapshotResponse = {
   policy_count: number;
   scanned: number;
   policies: CoverPolicySnapshot[];
+  live_revision: string;
+  next_after_slot: number | null;
+  page_complete: true;
   source: 'lite' | 'http4';
   network: Network;
   updated_at: number;
@@ -666,7 +644,7 @@ type DefiSnapshotRequest = {
   };
   options?: {
     governance?: { maxScan?: number; maxMisses?: number };
-    cover?: { maxScan?: number; maxMisses?: number };
+    cover?: { limit?: number };
   };
   contracts: {
     activationGate?: string | null;
@@ -2098,19 +2076,11 @@ export class IndexerService {
 
   async getCoverSnapshot(
     managerAddress: string,
-    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number } = {}
+    options: CoverPageOptions = {}
   ): Promise<CoverSnapshotResponse> {
     const normalizedManager = normalizeAddress(managerAddress);
     const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
-    const maxScan = Math.max(1, Math.min(COVER_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? COVER_MAX_SCAN_DEFAULT)));
-    const maxConsecutiveMisses = Math.max(
-      1,
-      Math.min(
-        COVER_MAX_CONSECUTIVE_MISSES_LIMIT,
-        Math.trunc(options.maxConsecutiveMisses ?? COVER_MAX_CONSECUTIVE_MISSES_DEFAULT)
-      )
-    );
-    const cacheKey = [normalizedManager, normalizedOwner ?? '', maxScan, maxConsecutiveMisses].join('|');
+    const cacheKey = [normalizedManager, normalizedOwner ?? '', options.limit ?? 40, options.afterSlot ?? 0, options.revision ?? ''].join('|');
 
     if (this.config.responseCacheEnabled) {
       const cached = this.coverSnapshotCache.get(cacheKey);
@@ -2147,98 +2117,8 @@ export class IndexerService {
             }
           : null;
       const enabled = enabledRes?.exitCode === 0 ? tupleItemBool(enabledRes.stack[0]) : null;
-      const totalPoliciesRaw = stateRes?.exitCode === 0 && stateRes.stack.length === 16
-        ? tupleItemBigInt(stateRes.stack[0]) : null;
-      if (totalPoliciesRaw !== null && totalPoliciesRaw <= 0n) {
-        const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-        return {
-          manager: normalizedManager,
-          owner: normalizedOwner,
-          enabled,
-          state,
-          policy_count: 0,
-          scanned: 0,
-          policies: [],
-          source,
-          network: this.network,
-          updated_at: Math.floor(Date.now() / 1000)
-        };
-      }
-      const totalPolicies = totalPoliciesRaw && totalPoliciesRaw > 0n ? totalPoliciesRaw : 0n;
-      const scanCount = totalPolicies > 0n
-        ? Number(totalPolicies < BigInt(maxScan) ? totalPolicies : BigInt(maxScan))
-        : maxScan;
-      const startPolicyId = totalPolicies > 0n ? totalPolicies : BigInt(maxScan);
-      const scanFloor = startPolicyId - BigInt(scanCount) + 1n;
-
-      const policies: CoverPolicySnapshot[] = [];
-      let scanned = 0;
-      let misses = 0;
-      let policyResponded = false;
-
-      outer: for (let startId = startPolicyId; startId >= scanFloor; startId -= BigInt(COVER_SCAN_BATCH_SIZE)) {
-        const candidateEnd = startId - BigInt(COVER_SCAN_BATCH_SIZE) + 1n;
-        const endId = candidateEnd > scanFloor ? candidateEnd : scanFloor;
-        const batchIds = Array.from(
-          { length: Number(startId - endId + 1n) },
-          (_, index) => startId - BigInt(index),
-        );
-          const batch = await Promise.all(
-            batchIds.map((policyId) =>
-              this.runGetMethodSource(normalizedManager, 'get_policy', [{ type: 'int', value: policyId }]).catch(
-                () => null
-              )
-            )
-          );
-
-        for (let index = 0; index < batch.length; index += 1) {
-          scanned += 1;
-          const res = batch[index];
-          if (res) policyResponded = true;
-          if (!res || res.exitCode !== 0 || res.stack.length !== 19) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) break outer;
-            continue;
-          }
-          const stack = res.stack;
-          const exists = tupleItemBool(stack[0]);
-          if (!exists) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) break outer;
-            continue;
-          }
-          const owner = tupleItemAddress(stack[1]);
-          misses = 0;
-          if (normalizedOwner && owner !== normalizedOwner) {
-            continue;
-          }
-          policies.push({
-            id: String(batchIds[index]),
-            owner,
-            pool: tupleItemAddress(stack[2]),
-            lowerBound: tupleItemBigIntString(stack[3]),
-            upperBound: tupleItemBigIntString(stack[4]),
-            payout: tupleItemBigIntString(stack[5]),
-            coveredNotional: tupleItemBigIntString(stack[6]),
-            windowSeconds: tupleItemBigIntString(stack[7]),
-            requiredObservations: tupleItemBigIntString(stack[8]),
-            breachStart: tupleItemBigIntString(stack[9]),
-            breachSeconds: tupleItemBigIntString(stack[10]),
-            lastObservation: tupleItemBigIntString(stack[11]),
-            lastHealthyObservation: tupleItemBigIntString(stack[12]),
-            breachObservations: tupleItemBigIntString(stack[13]),
-            lastVolatilityTimestamp: tupleItemBigIntString(stack[14]),
-            lastVolatilityRequestHash: tupleItemBigIntString(stack[15]),
-            status: tupleItemBigIntString(stack[16]),
-            riskVault: tupleItemAddress(stack[17]),
-            riskBucketId: tupleItemBigIntString(stack[18])
-          });
-        }
-      }
-
-      if (!policyResponded && !stateRes && !enabledRes) {
-        throw new Error('Cover snapshot is unavailable from the configured data source.');
-      }
+      const page = await readCoverPolicyPage({ ...options, owner: normalizedOwner },
+        (method, args) => this.runGetMethodSource(normalizedManager, method, args));
 
       const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
       return {
@@ -2246,9 +2126,8 @@ export class IndexerService {
         owner: normalizedOwner,
         enabled,
         state,
-        policy_count: policies.length,
-        scanned,
-        policies,
+        policy_count: page.policies.length,
+        ...page,
         source,
         network: this.network,
         updated_at: Math.floor(Date.now() / 1000)
@@ -2318,14 +2197,8 @@ export class IndexerService {
       typeof options.governance?.maxMisses === 'number' && Number.isFinite(options.governance.maxMisses)
         ? Math.max(1, Math.trunc(options.governance.maxMisses))
         : undefined;
-    const coverMaxScan =
-      typeof options.cover?.maxScan === 'number' && Number.isFinite(options.cover.maxScan)
-        ? Math.max(1, Math.trunc(options.cover.maxScan))
-        : undefined;
-    const coverMaxMisses =
-      typeof options.cover?.maxMisses === 'number' && Number.isFinite(options.cover.maxMisses)
-        ? Math.max(1, Math.trunc(options.cover.maxMisses))
-        : undefined;
+    const coverLimit = options.cover?.limit;
+
 
     const cacheKey = [
       normalizedOwner ?? '',
@@ -2339,7 +2212,7 @@ export class IndexerService {
       includeGovernance ? 'g1' : 'g0',
       includeCover ? 'c1' : 'c0',
       `gov:${govMaxScan ?? ''}:${govMaxMisses ?? ''}`,
-      `cover:${coverMaxScan ?? ''}:${coverMaxMisses ?? ''}`,
+      `cover:${coverLimit ?? ''}`,
       ...Object.entries(normalizedContracts)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, value]) => `${key}:${value ?? ''}`),
@@ -2828,8 +2701,7 @@ export class IndexerService {
 	              sections.cover = ok(
 	                await this.getCoverSnapshot(manager, {
 	                  owner: normalizedOwner ?? undefined,
-	                  maxScan: coverMaxScan,
-	                  maxConsecutiveMisses: coverMaxMisses
+	                  limit: coverLimit
 	                })
 	              );
 	            } catch (error) {

@@ -67,11 +67,13 @@ async function main() {
     const original = data('deliveredAccounts');
     const replaceJournal = (transform: (entry: Cell) => Cell) => {
       const tail = original.refs[3];
-      const entries = tail.refs[2].beginParse().loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+      const journal = tail.refs[2].beginParse();
+      const entries = journal.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+      const queue = journal.loadRef();
       const key = BigInt('0x' + beginCell().storeUint(0x52564f55, 32).storeUint(2, 8).storeUint(1, 16).storeUint(10, 64).endCell().hash().toString('hex'));
       entries.set(key, transform(entries.get(key)!));
       const nextTail = beginCell().storeBits(tail.bits);
-      tail.refs.forEach((ref, i) => nextTail.storeRef(i === 2 ? beginCell().storeDict(entries).endCell() : ref));
+      tail.refs.forEach((ref, i) => nextTail.storeRef(i === 2 ? beginCell().storeDict(entries).storeRef(queue).endCell() : ref));
       const next = beginCell().storeBits(original.bits);
       original.refs.forEach((ref, i) => next.storeRef(i === 3 ? nextTail.endCell() : ref));
       return next.endCell();
@@ -80,6 +82,20 @@ async function main() {
     assert.throws(() => read(replaceJournal(entry => beginCell().storeBits(entry.bits)
       .storeRef(beginCell().storeSlice(entry.refs[0].beginParse()).storeBit(1).endCell()).storeRef(entry.refs[1]).endCell())));
     assert.throws(() => readRiskVaultPayoutJournal(original, 1, '10', root, '00'.repeat(32)));
+    const replaceQueue = (queue: Cell | null) => {
+      const tail = original.refs[3], journal = tail.refs[2].beginParse();
+      const entries = journal.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+      const replacement = beginCell().storeDict(entries); if (queue) replacement.storeRef(queue);
+      const nextTail = beginCell().storeBits(tail.bits);
+      tail.refs.forEach((ref, index) => nextTail.storeRef(index === 2 ? replacement.endCell() : ref));
+      return beginCell().storeRef(original.refs[0]).storeRef(original.refs[1]).storeRef(original.refs[2]).storeRef(nextTail.endCell()).endCell();
+    };
+    assert.throws(() => read(replaceQueue(null)), 'Missing current mandatory FIFO is unsupported.');
+    assert.throws(() => read(replaceQueue(beginCell().storeUint(1, 64).storeUint(0, 64).storeBit(0).endCell())));
+    assert.throws(() => read(replaceQueue(beginCell().storeUint(0, 64).storeUint(1, 64).storeBit(0).endCell())));
+    const foreign = Dictionary.empty(Dictionary.Keys.BigUint(64), Dictionary.Values.BigUint(256)); foreign.set(0n, 1n);
+    assert.throws(() => read(replaceQueue(beginCell().storeUint(0, 64).storeUint(1, 64).storeDict(foreign).endCell())));
+
   });
   console.log(`${checks.length} current RiskVault native checks passed; no live or historical-state qualification claimed.`);
 }

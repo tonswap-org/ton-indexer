@@ -1,3 +1,4 @@
+import { writeCurrentJettonWalletStorage } from "../ledger/jettonWalletState";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -46,11 +47,11 @@ test('all ten real wallet addresses derive from current unchanged code, root and
       assert.equal(state.lockedFeesRaw, '0'); assert.equal(state.borrowedFeesRaw, '0'); states++;
     }
   }
-  assert.equal(addresses, 10); assert.equal(states, 115);
+  assert.equal(addresses, 10); assert.equal(states, 91);
 });
 
-test('eleven authentic JSTT starts debit exact token amounts and replace only the permitted source tuple', () => {
-  const starts = sourceEvents(0x0f8a7ea5); assert.equal(starts.length, 11);
+test('seven authentic JSTT starts debit exact token amounts and replace only the permitted source tuple', () => {
+  const starts = sourceEvents(0x0f8a7ea5); assert.equal(starts.length, 7);
   for (const t of starts) {
     assert(t.raw.success); const b = boundary(t), before = read(b.before), after = read(b.after), m = t.raw.inMessage!;
     const s = Cell.fromBase64(m.body).beginParse(); s.loadUint(32);
@@ -66,8 +67,8 @@ test('eleven authentic JSTT starts debit exact token amounts and replace only th
   }
 });
 
-test('eleven actual recipient JSAC receipts advance Sent to Accepted without a second debit', () => {
-  const acks = sourceEvents(0x4a534143); assert.equal(acks.length, 11);
+test('seven actual recipient JSAC receipts advance Sent to Accepted without a second debit', () => {
+  const acks = sourceEvents(0x4a534143); assert.equal(acks.length, 7);
   for (const t of acks) {
     const b = boundary(t), before = read(b.before), after = read(b.after), tuple = bodyTuple(t.raw.inMessage!);
     assert.equal(t.raw.inMessage!.source, before.transfer.destination); assert(t.raw.success);
@@ -79,8 +80,8 @@ test('eleven actual recipient JSAC receipts advance Sent to Accepted without a s
   }
 });
 
-test('eleven source finalizers retain None tombstones and never convert journal cleanup into another cash movement', () => {
-  const finalizers = sourceEvents(0x4a53464e); assert.equal(finalizers.length, 11);
+test('seven source finalizers retain None tombstones and never convert journal cleanup into another cash movement', () => {
+  const finalizers = sourceEvents(0x4a53464e); assert.equal(finalizers.length, 7);
   for (const t of finalizers) {
     const b = boundary(t), before = read(b.before), after = read(b.after), tuple = bodyTuple(t.raw.inMessage!);
     assert.equal(t.raw.inMessage!.source, a.pool); assert.equal(before.transfer.status, 2); assert.equal(after.transfer.status, 0);
@@ -91,8 +92,8 @@ test('eleven source finalizers retain None tombstones and never convert journal 
   }
 });
 
-test('eleven real destination credits add their exact amounts while preserving unrelated transfer and burn state', () => {
-  const credits = fixture.transactions.filter(t => t.raw.inMessage?.op === 0x4a534954); assert.equal(credits.length, 11);
+test('seven real destination credits add their exact amounts while preserving unrelated transfer and burn state', () => {
+  const credits = fixture.transactions.filter(t => t.raw.inMessage?.op === 0x4a534954); assert.equal(credits.length, 7);
   for (const t of credits) {
     assert(t.raw.success); const b = boundary(t), before = b.before.dataBoc ? read(b.before) : null, after = read(b.after), tuple = bodyTuple(t.raw.inMessage!);
     assert.equal(BigInt(after.balanceRaw) - BigInt(before?.balanceRaw ?? '0'), BigInt(tuple.amountRaw));
@@ -109,7 +110,7 @@ test('READY and a failed retry produce no transfer start; funded recovery consum
   }
   const recoveries = sourceEvents(0x0f8a7ea5).filter(t => t.phase === 'retry-output-recovery'); assert.equal(recoveries.length, 1);
   const state = read(boundary(recoveries[0]).after), intent = fixture.intents.find(row=>row.phase==='underfunded-output')!;
-  assert(BigInt(state.transfer.queryId)>BigInt(intent.firstSettlementId), 'funded retry promotes the old never-admitted wire before dispatch'); assert.equal(state.transfer.amountRaw, '11997'); assert.equal(state.transfer.status, 1);
+  assert.equal(state.transfer.queryId, intent.firstSettlementId, 'funded retry uses the original never-admitted wire'); assert.equal(state.transfer.amountRaw, '12000'); assert.equal(state.transfer.status, 1);
 });
 
 test('repeating a business request uses distinct source wires, including finalized tuple replacement', () => {
@@ -121,11 +122,13 @@ test('repeating a business request uses distinct source wires, including finaliz
 });
 
 /** Synthetic parser vectors only: they do not claim any on-chain receipt. */
-const vector = (opcode: number, destination: string | null, burnStatus = 0) => beginCell().storeCoins(123)
-  .storeAddress(Address.parse(a.pool)).storeAddress(Address.parse(a.tokenT)).storeCoins(4).storeCoins(5)
-  .storeAddress(destination ? Address.parse(destination) : null).storeUint(opcode, 32).storeUint(77, 64).storeCoins(88)
-  .storeRef(beginCell().storeUint(burnStatus, 8).storeUint(9, 64).storeCoins(10).storeUint(11, 256).storeAddress(Address.parse(a.payer)).endCell())
-  .storeRef(beginCell().storeUint(0, 8).storeUint(0, 64).storeUint(0, 64).storeCoins(0).storeUint(0, 256).endCell()).storeDict(null).storeDict(null).endCell();
+const vector = (opcode: number, destination: string | null, burnStatus = 0) => writeCurrentJettonWalletStorage({
+  owner: Address.parse(a.pool), root: Address.parse(a.tokenT), feeDelegate: destination ? Address.parse(destination) : null,
+  balance: 123n, lockedFees: 4n, borrowedFees: 5n, lastBounceOpcode: opcode, lastBounceQueryId: 77n, lastBounceAmount: 88n,
+  burnJournal: beginCell().storeUint(burnStatus, 8).storeUint(9, 64).storeCoins(10).storeUint(11, 256).storeAddress(Address.parse(a.payer)).endCell(),
+  mintJournal: beginCell().storeUint(0, 8).storeUint(0, 64).storeUint(0, 64).storeCoins(0).storeUint(0, 256).endCell(),
+  mintReceipts: null, referralNotifications: null,
+});
 for (const [name, opcode, destination, status] of [
   ['empty destination dominates opcode', 0x4a534954, null, 0],
   ['sent', 0x4a534954, a.wallets.recipient[1], 1],

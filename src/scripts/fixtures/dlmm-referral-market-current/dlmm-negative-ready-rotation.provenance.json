@@ -1,5 +1,8 @@
 {
-  "sha256": "4a813fe6259646b4c046e9bf7f082d8c0d5c7947ab26f79eda6e20e49a677ab2",
-  "source": "../output/referral-first-release-20260914/direct-receipt/negative/dlmm-negative-ready-rotation.json",
-  "poolCodeHash": "cce255be276c271bac5218fac83099da6186adb40e8f411cf994e689388e0760"
+  "file": "dlmm-negative-ready-rotation.json",
+  "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-indexer-current/negative/dlmm-negative-ready-rotation.json",
+  "sha256": "d9ac90b465f96bdcbc6e52a33106ab3c1932b0139b587fc8694c26942c0ca41c",
+  "transactions": 88,
+  "compressed": false,
+  "poolCodeHash": "4c1a96d9872851bbc47fba64ba4bcff0cb5efc0c2172d1d20ba712d4bcdc44c2"
 }

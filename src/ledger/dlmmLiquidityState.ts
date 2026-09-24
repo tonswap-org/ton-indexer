@@ -139,7 +139,7 @@ export function readDlmmLiquidityState(boc: string): DlmmLiquidityState {
   if (market.poolKind !== 4 || market.binSpacing < 1 || market.binSpacing > 200) throw Error('dlmm_liquidity_pool_kind_invalid');
   binIdValid(market.activeBinId);
   const cell = Cell.fromBase64(boc), bs = cell.refs[0].beginParse();
-  const guard = cell.refs[2].beginParse(); guard.skip(288); const binLiquidityCapRaw = guard.loadUintBig(128).toString(); end(guard);
+  const guard = cell.refs[2].beginParse(); guard.skip(288); const binLiquidityCapRaw = guard.loadUintBig(128).toString(); guard.skip(192); end(guard);
   const feeGrowthGlobalTRaw = bs.loadUintBig(256).toString(), feeGrowthGlobalXRaw = bs.loadUintBig(256).toString();
   const binDict = bs.loadRef(); end(bs);
   if (market.storageForm === 'constructor') return { market, bins: new Map(), feeGrowthGlobalTRaw, feeGrowthGlobalXRaw,
@@ -231,7 +231,7 @@ export function deriveDlmmLiquidityAmounts(state: DlmmLiquidityState, request: D
 export function verifyDlmmLiquidityTransition(before: DlmmLiquidityState, after: DlmmLiquidityState, request: DlmmLiquidityRequest): DlmmLiquidityAmounts {
   const result = deriveDlmmLiquidityAmounts(before, request);
   const same = (a: unknown, b: unknown, code: string) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw Error(code); };
-  for (const field of ['tokenT', 'tokenX', 'treasury', 'router', 'stableAmp', 'routerOperationsHash', 'poolKind', 'binSpacing', 'activeBinId', 'feePips', 'impactCapBps', 'governance', 'controlSeqno', 'walletCodeHash', 'guardHash', 'farmingHash'] as const)
+  for (const field of ['tokenT', 'tokenX', 'treasury', 'router', 'stableAmp', 'routerOperationsHash', 'poolKind', 'binSpacing', 'activeBinId', 'feePips', 'impactCapBps', 'governance', 'controlSeqno', 'walletCodeHash', 'guardConfigurationHash', 'farmingHash'] as const)
     same(before.market[field], after.market[field], `dlmm_liquidity_changed_${field}`);
   if (before.market.storageForm === 'constructor' && before.market.provenanceHash === null) {
     if (!after.market.provenanceIsDefault) throw Error('dlmm_liquidity_constructor_provenance_changed');
@@ -244,6 +244,17 @@ export function verifyDlmmLiquidityTransition(before: DlmmLiquidityState, after:
   const actualBin = after.bins.get(request.binId);
   if (!actualBin) throw Error('dlmm_liquidity_after_bin_missing');
   same(actualBin, result.afterBin, 'dlmm_liquidity_bin_delta_invalid');
+  const highWater = [BigInt(before.market.binReserveHighWater), BigInt(result.afterBin.reserveTRaw), BigInt(result.afterBin.reserveXRaw)].reduce((a, b) => a > b ? a : b);
+  same(after.market.binReserveHighWater, highWater.toString(), 'dlmm_liquidity_high_water_invalid');
+  const activeBin = after.bins.get(after.market.activeBinId);
+  const minimum = 8_000_000_000_000n, floorT = BigInt(after.market.minTReserve), floorX = BigInt(after.market.minXReserve);
+  const healthy = floorT >= minimum && floorX >= minimum && activeBin &&
+    BigInt(activeBin.reserveTRaw) - BigInt(activeBin.feeReserveTRaw) > floorT &&
+    BigInt(activeBin.reserveXRaw) - BigInt(activeBin.feeReserveXRaw) > floorX;
+  const priorHealthy = BigInt(before.market.oracleDepthHealthySince), now = BigInt(after.market.lastUpdate);
+  const expectedHealthy = healthy ? priorHealthy === 0n || priorHealthy > now ? now : priorHealthy : 0n;
+  same(after.market.oracleDepthHealthySince, expectedHealthy.toString(), 'dlmm_liquidity_depth_health_invalid');
+
   same(after.market.feeClaimedT, result.afterFeeClaimedTRaw, 'dlmm_liquidity_claimed_fee_delta_invalid'); same(after.market.feeClaimedX, result.afterFeeClaimedXRaw, 'dlmm_liquidity_claimed_fee_delta_invalid');
   if (request.kind !== 'add') same(before.market.pendingHash, after.market.pendingHash, 'dlmm_liquidity_pending_changed');
   if (request.kind === 'withdrawal') {

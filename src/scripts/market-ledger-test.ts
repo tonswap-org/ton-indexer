@@ -7,7 +7,7 @@ import type { DlmmMarketBinding, MarketNode, MarketDependency } from '../ledger/
 
 function fixtureInput(name: string) {
 const fixture = JSON.parse(readFileSync(`${__dirname}/fixtures/dlmm-referral-market-current/${name}`, 'utf8'));
-const binding: DlmmMarketBinding = { network: 'localnet', pool: fixture.accounts.pool, tokenT: fixture.accounts.tokenT, tokenX: fixture.accounts.tokenX, tokenTCodeHash:fixture.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:fixture.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
+const binding: DlmmMarketBinding = { router: null, routerCodeHash: null, network: 'localnet', pool: fixture.accounts.pool, tokenT: fixture.accounts.tokenT, tokenX: fixture.accounts.tokenX, tokenTCodeHash:fixture.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:fixture.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
   poolCodeHash: fixture.compiler.find((entry: any) => entry.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash,
   walletCodeHash: fixture.compiler.find((entry: any) => entry.entrypointFileName.endsWith('/jetton/jetton_wallet.tolk')).codeHash };
 const nodes: MarketNode[] = fixture.transactions.map((entry: any) => {
@@ -22,14 +22,14 @@ const result = project();
 assert.equal(result.candidates.length, 6);
 assert.equal(result.observations.length, 5);
 assert.deepEqual(result.observations.map(value => [value.paidInputRaw, value.returnedInputRaw, value.consumedInputRaw, value.outputRaw]), [
-  ['10000', '0', '10000', '9997'], ['15000', '0', '15000', '14996'], ['10000', '0', '10000', '9997'],
-  ['12000', '0', '12000', '11997'], ['2000000', '1016696', '983304', '983009'],
+  ['10000', '0', '10000', '10000'], ['15000', '0', '15000', '15000'], ['10000', '0', '10000', '10000'],
+  ['12000', '0', '12000', '12000'], ['2000000', '1017000', '983000', '983000'],
 ]);
 assert.equal(result.candidates.filter(value => value.status === 'refunded').length, 1);
 assert.equal(result.historyComplete, false);
 assert.equal(new Set(result.observations.map(value => value.id)).size, 5);
 assert.notEqual(result.observations[0].payer, result.observations[0].recipient);
-assert.deepEqual(result.observations.at(-1)!.ratio, { numerator: '983009', denominator: '983304', unit: 'output_atomic_per_input_atomic', includesTradingFees: true });
+assert.deepEqual(result.observations.at(-1)!.ratio, { numerator: '1', denominator: '1', unit: 'output_atomic_per_input_atomic', includesTradingFees: true });
 assert.deepEqual(project([...nodes].reverse()), result);
 const duplicate = project([...nodes, nodes[60]]);
 assert.equal(duplicate.observations.length, 0);
@@ -43,7 +43,7 @@ assert.equal(noArchives.observations.length, 0);
 assert.ok(noArchives.candidates.every(value => value.issues.includes('market_archive_missing')));
 const firstAcceptanceLt = fixture.transactions.find((row:any) => row.phase === 'full-t-to-x' && row.account === binding.pool && row.raw.inMessage?.op === 0x7362d09c).raw.lt;
 const pool = nodes.find(node => node.account === binding.pool && node.raw.lt === firstAcceptanceLt)!;
-assert.equal(readDlmmMarketState(pool.after!.state.dataBoc!).settlements.size, 2);
+assert.equal(readDlmmMarketState(pool.after!.state.dataBoc!).settlements.size, 1);
 const heads = new Map<string, MarketNode>();
 for (const node of nodes) if (!heads.has(node.account) || BigInt(heads.get(node.account)!.raw.lt) < BigInt(node.raw.lt)) heads.set(node.account, node);
 const dependencies: MarketDependency[] = [...heads].map(([account, head]) => ({ account, generation: '00000000-0000-4000-8000-000000000001',
@@ -72,7 +72,7 @@ for (const label of ['missing input original', 'missing recipient credit', 'miss
 }
 const queued = fixtureInput('dlmm-market-queued-settlements.json'), queueResult = projectDlmmMarket(queued.binding, queued.nodes, []);
 assert.equal(queueResult.observations.length, 3, JSON.stringify(queueResult.candidates));
-assert.deepEqual(queueResult.observations.map(value => value.outputRaw), ['9997', '19994', '9997']);
+assert.deepEqual(queueResult.observations.map(value => value.outputRaw), ['10000', '20000', '10000']);
 assert.ok(queueResult.observations[1].settlements[0].request.lt !== queueResult.observations[1].acceptance.lt, 'queued output dispatch follows its original acceptance');
 assert.equal(queueResult.observations[1].settlements[0].request.lt, queueResult.observations[0].settlements[0].poolFinalized.lt, 'prior JSFK dispatches next head');
 assert.equal(BigInt(queueResult.observations[2].settlements[0].settlementId), BigInt(queueResult.observations[2].businessQueryId) + 1n, 'allocator skips the business query ID');
@@ -83,10 +83,14 @@ for (const [source, baseline, index, trigger] of [[{binding, nodes}, result, 3, 
   const isDispatch = (node: MarketNode) => node.account === payout.request.account && node.raw.lt === payout.request.lt;
   const dispatch = source.nodes.find(isDispatch)!;
   const before = readDlmmMarketState(dispatch.before!.state.dataBoc!), after = readDlmmMarketState(dispatch.after!.state.dataBoc!);
-  const fresh = after.settlements.get(payout.settlementId)!, prior = before.settlements.get(fresh.predecessorId)!;
+  const fresh = after.settlements.get(payout.settlementId)!, prior = before.settlements.get(fresh.settlementId)!;
   assert.equal(prior.status, 1, `${trigger}: the original liability had not entered the wallet`);
-  assert.ok(BigInt(fresh.settlementId) > BigInt(prior.settlementId));
-  assert.equal(after.settlements.has(prior.settlementId), false);
+  assert.equal(fresh.settlementId, prior.settlementId, `${trigger}: a liability that never entered its wallet retains the original wire identity`);
+  assert.equal(fresh.status, 2);
+  assert.equal(fresh.predecessorId, '0');
+  assert.equal(after.nextSettlementId, before.nextSettlementId);
+  assert.equal(after.settlements.size, before.settlements.size - (trigger === 'finalizer' ? 1 : 0));
+  assert.equal(fresh.fundedRaw, '220000000');
   assert.equal(fresh.amountRaw, prior.amountRaw);
   assert.equal(fresh.destinationWallet, prior.destinationWallet);
   assert.ok(payout.boundaries.some(boundary => boundary.transaction.lt === dispatch.raw.lt));

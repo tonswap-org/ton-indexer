@@ -101,7 +101,7 @@ for (const retired of [
 const coverStateProps = spec.components?.schemas?.CoverStateResponse?.properties ?? {};
 assert.ok('governance' in coverStateProps);
 const coverPolicyProps = spec.components?.schemas?.CoverPolicyResponse?.properties ?? {};
-for (const field of ['coveredNotional', 'lastVolatilityTimestamp', 'lastVolatilityRequestHash']) {
+for (const field of ['coveredNotional', 'lastVolatilityTimestamp', 'lastVolatilityRequestHash', 'startsAt', 'expiresAt', 'graceEndsAt', 'riskPositionKey', 'closeReason', 'closeQueryId', 'closeRequester', 'premiumFinal', 'exitNativeEscrow']) {
   assert.ok(field in coverPolicyProps);
 }
 for (const retired of ['clmmFactory', 'clmmPoolHashHigh', 'clmmPoolHashLow', 'marketKind', 'kindConfig']) {

@@ -14,7 +14,7 @@ const bytes = readFileSync(resolve(directory, 'dlmm-negative-ready-rotation.json
 const provenance = JSON.parse(readFileSync(resolve(directory, 'dlmm-negative-ready-rotation.provenance.json'), 'utf8'));
 assert.equal(createHash('sha256').update(bytes).digest('hex'), provenance.sha256);
 const fixture = JSON.parse(bytes.toString());
-const binding = {network: 'localnet' as const, pool: fixture.accounts.pool, tokenT: fixture.accounts.tokenT, tokenX: fixture.accounts.tokenX,
+const binding = {router: null, routerCodeHash: null, network: 'localnet' as const, pool: fixture.accounts.pool, tokenT: fixture.accounts.tokenT, tokenX: fixture.accounts.tokenX,
   tokenTCodeHash: fixture.compiler.find((c: any) => c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
   tokenXCodeHash: fixture.compiler.find((c: any) => c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
   poolCodeHash: fixture.compiler.find((c: any) => c.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash,
@@ -34,7 +34,7 @@ for (const node of nodes.filter(n => n.account === binding.pool && tokenWire(n.r
 }
 const projection = projectDlmmMarket(binding, nodes, []);
 assert.equal(projection.observations.length, 2, JSON.stringify(projection.candidates.map(value => ({status: value.status, issues: value.issues}))));
-assert.deepEqual(projection.observations.map(value => value.outputRaw), ['9997', '10997']);
+assert.deepEqual(projection.observations.map(value => value.outputRaw), ['10000', '11000']);
 const recovered = projection.observations[0], payout = recovered.settlements[0];
 const head = nodes.filter(node => node.account === binding.pool).at(-1)!;
 const receipt = [...readDlmmMarketState(head.after!.state.dataBoc!).directSwaps.receipts.values()].find(value => value.businessQueryId === recovered.businessQueryId)!;

@@ -2,7 +2,10 @@
   "schema": "perps-funding-checkpoint-fixture-v1",
   "source": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/artifacts/perps-oracle-pull/funding-remainder-qualified-state.json",
   "sourceTest": "PerpsEngineFunding.spec.ts: retains fractional funding through a zero rate and offsets an opposite rate exactly",
-  "engineCodeHash": "672adf0e4798430a169468e52d7665024f1ed6293958334a4fcfe32358e570a7",
-  "sha256": "c1e12c9897b8235f1ed815e18733356a4e6d67a524a08d4bd4c3c32567461fed",
-  "scope": "Unmodified current Sandbox engine code/data after authenticated pool funding callbacks; no live chain or transaction-history claim."
+  "engineCodeHash": "806cd1dfeeb953afbbe44803c28c3e787e51b544f1570ec4f64162d39bbc2b6a",
+  "sha256": "86baa6a2c811530d290c476d86fe2918da8f76ac060bd96fc3ecbfb9b431cece",
+  "scope": "Unmodified current Sandbox engine code/data after authenticated pool funding callbacks; no live chain or transaction-history claim.",
+  "walletCodeHash": "c6a2543ca7ee992bc0a90e84586fdd8c1bb1bf3afbe031a6a0c1325a91554ddf",
+  "sourceTestLog": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260923-g16/preparation/perps-funding-checkpoint-final/producer.log",
+  "sourceTestLogSha256": "db4a4519e899266b890d31ca49211cfbe7a403920e6064903b7badd84f453379"
 }

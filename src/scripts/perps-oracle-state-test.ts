@@ -82,7 +82,7 @@ const closeRequest = beginCell().storeUint(PERPS_CLOSE, 32).storeUint(7, 64).sto
 const partialCloseRequest = beginCell().storeUint(PERPS_CLOSE, 32).storeUint(7, 64).storeUint(1, 32).storeInt(9, 128).storeCoins(12).storeAddress(null).endCell();
 const openRequest = beginCell().storeUint(PERPS_OPEN, 32).storeUint(7, 64).storeUint(1, 32).storeInt(9, 128).storeCoins(15)
   .storeCoins(12).storeUint(20000, 32).storeAddress(null).endCell();
-const notification = (request = openRequest, fundingOwner = owner, forwardTon = 1280000000n) => beginCell()
+const notification = (request = openRequest, fundingOwner = owner, forwardTon = 2080000000n) => beginCell()
   .storeUint(0x7362d09c, 32).storeUint(99, 64).storeCoins(16).storeAddress(fundingOwner).storeAddress(requestedPool)
   .storeCoins(forwardTon).storeRef(request).endCell();
 const tradeOrder = (request = closeRequest, funding = empty, outcome = 2, reason = 0, pool: Address | null = requestedPool) => beginCell()
@@ -138,6 +138,12 @@ const engineAccount = BigInt('0x' + Address.parse(currentFixture.engine).hash.to
 const currentStorage = currentFixture.transactions.filter((saved: any) =>
   loadTransaction(Cell.fromBase64(saved.transaction).beginParse()).address === engineAccount).at(-1).newStorage;
 const currentData = Cell.fromBase64(currentStorage);
+for (const queueRefs of [currentData.refs[2].refs.slice(0, 2), [...currentData.refs[2].refs, Cell.EMPTY]]) {
+  const obsoleteQueue = withRefs(currentData.refs[2], queueRefs);
+  const obsoleteState = withRefs(currentData, [currentData.refs[0], currentData.refs[1], obsoleteQueue, currentData.refs[3]]);
+  assert.throws(() => readPerpsState(obsoleteState.toBoc().toString('base64'), currentCodeHash),
+    /Perps canonical queue bundle/, 'The exact three-reference queue bundle is mandatory');
+}
 const currentWithAccrual = (accrual?: Cell) => {
   const marketDict = currentData.refs[1].refs[0].beginParse().loadDict(Dictionary.Keys.Uint(32), raw);
   for (const [id, market] of marketDict) {

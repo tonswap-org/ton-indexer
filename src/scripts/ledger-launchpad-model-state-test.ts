@@ -114,12 +114,18 @@ for (const f of fixtures) {
     assert.equal(balance(credit.after) - balance(credit.before), 2n);
   });
 }
-test('bonding: each participant-local acceptance pushes exact fill and uses the before-state price across interleaving', () => {
+test('bonding: each participant-local acceptance pushes exact cumulative-curve fill across interleaving', () => {
   for (const intent of bonding.intents.filter(i => i.expectedAcceptance)) {
     const b = acceptance(bonding, intent.phase), before = readBondingSaleState(b.before.dataBoc!), after = readBondingSaleState(b.after.dataBoc!);
     const old = before.contributions.get(intent.requester), added = after.contributions.get(intent.requester)!;
-    const amount = BigInt(intent.amountRaw), tokens = amount * LAUNCHPAD_PRICE_SCALE / BigInt(before.metrics.currentPriceRaw);
-    assert.equal(tokens * BigInt(before.metrics.currentPriceRaw) / LAUNCHPAD_PRICE_SCALE, amount);
+    const amount = BigInt(intent.amountRaw), tokens = BigInt(added.tokenAmountRaw) - BigInt(old?.tokenAmountRaw ?? '0');
+    const sold = BigInt(before.metrics.totalSoldRaw), denominator = BigInt(before.config.slopeDenominatorRaw);
+    const divisor = 2n * denominator * LAUNCHPAD_PRICE_SCALE;
+    const cumulative = (quantity: bigint) => (quantity * (2n * denominator * BigInt(before.config.basePriceRaw) +
+      BigInt(before.config.slopeNumeratorRaw) * quantity) + divisor - 1n) / divisor;
+    assert.equal(cumulative(sold + tokens) - cumulative(sold), amount);
+    assert(amount > tokens * BigInt(before.metrics.currentPriceRaw) / LAUNCHPAD_PRICE_SCALE,
+      'The nonzero-slope fill includes the price increase across the acquired quantity.');
     assert.equal(BigInt(added.paymentAmountRaw) - BigInt(old?.paymentAmountRaw ?? '0'), amount);
     assert.equal(BigInt(added.tokenAmountRaw) - BigInt(old?.tokenAmountRaw ?? '0'), tokens);
     assert.equal(added.fills[0].paymentAmountRaw, intent.amountRaw); assert.equal(added.fills[0].tokenAmountRaw, tokens.toString());
@@ -135,11 +141,11 @@ test('bonding: each participant-local acceptance pushes exact fill and uses the 
 test('bonding: real partial refund pops latest fill while later identical request creates new provenance', () => {
   const b = boundaries(bonding, 'owner-partial-refund')[0], before = readBondingSaleState(b.before.dataBoc!), after = readBondingSaleState(b.after.dataBoc!);
   const old = before.contributions.get(bonding.accounts.owner)!, next = after.contributions.get(bonding.accounts.owner)!;
-  assert.deepEqual(old.fills.map(f => f.paymentAmountRaw), ['3000000000', '1000000000']);
-  assert.deepEqual(next.fills, old.fills.slice(1)); assert.equal(next.paymentAmountRaw, '1000000000');
+  assert.deepEqual(old.fills.map(f => f.paymentAmountRaw), ['3500000000', '1500000000']);
+  assert.deepEqual(next.fills, old.fills.slice(1)); assert.equal(next.paymentAmountRaw, '1500000000');
   assert.equal(next.fillsHash, old.fills[0].previousHash);
   const followup = acceptance(bonding, 'owner-third-identical-body');
-  assert.equal(readBondingSaleState(followup.before.dataBoc!).contributions.get(bonding.accounts.owner)!.paymentAmountRaw, '1000000000');
+  assert.equal(readBondingSaleState(followup.before.dataBoc!).contributions.get(bonding.accounts.owner)!.paymentAmountRaw, '1500000000');
 });
 test('auction: repeated bids retain a single limit price and add exact commitment/quantity/fill', () => {
   for (const intent of auction.intents.filter(i => i.expectedAcceptance)) {
@@ -175,7 +181,7 @@ test('shared settlement parser preserves complete records and raw FINAL/negative
   assert.throws(() => readLaunchpadSharedSettlement(sharedRecord({ predecessorId: specimen.settlementId })));
 });
 test('shared journal rejects key conflicts and trailing state', () => {
-  const env = readLaunchpadEnvelope(acceptance(bonding, 'owner-rejected').after.dataBoc!), journal = env.stateCell.refs[3];
+  const env = readLaunchpadEnvelope(acceptance(bonding, 'owner-rejected').after.dataBoc!, 'bonding'), journal = env.stateCell.refs[3];
   assert(readLaunchpadSharedJournal(journal).entries.size > 0);
   const s = journal.beginParse(), d = s.loadDict(Dictionary.Keys.BigUint(64), Dictionary.Values.Cell());
   d.set(BigInt(specimen.settlementId), sharedRecord({ settlementId: '99999' }));
@@ -193,8 +199,13 @@ test('all current model roots reject trailing or older routing shape and unknown
     const root = Cell.fromBase64(acceptance(f, 'owner-first').after.dataBoc!);
     assert.throws(() => read(f, boc(beginCell().storeSlice(root.beginParse()).storeBit(1).endCell())));
     assert.throws(() => read(f, boc(replaceRef(root, 1, beginCell().storeSlice(root.refs[1].beginParse()).storeRef(Cell.EMPTY).endCell()))));
-    const cfg = root.refs[2], s = cfg.beginParse(); s.skip(8);
-    assert.throws(() => read(f, boc(replaceRef(root, 2, beginCell().storeUint(255, 8).storeSlice(s).endCell()))), /Unsupported/);
+    const cfg = root.refs[2], taggedConfig = f.model === 'bonding' ? cfg.refs[0] : cfg;
+    const s = taggedConfig.beginParse(); s.skip(8);
+    const badKind = beginCell().storeUint(255, 8).storeSlice(s).endCell();
+    assert.throws(() => read(f, boc(replaceRef(root, 2, f.model === 'bonding' ? replaceRef(cfg, 0, badKind) : badKind))), /Unsupported/);
+    const header = root.beginParse(); header.skip(32);
+    assert.throws(() => read(f, boc(beginCell().storeSlice(header).endCell())), /Current Launchpad model/);
+    assert.throws(() => read(f, boc(beginCell().storeUint(0x534c4631, 32).storeSlice(header).endCell())), /Current Launchpad model/);
     assert.throws(() => read(f, 'not-a-boc'));
     assert.throws(() => read(f, boc(Cell.EMPTY)));
   }

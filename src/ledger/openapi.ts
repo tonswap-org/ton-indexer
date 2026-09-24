@@ -10,6 +10,25 @@ const evidenceRef = {
     utime: { type: "integer" },
   },
 };
+const routedBoundary = {
+  type: "object", additionalProperties: false,
+  required: ["transaction","beforeSeqno","afterSeqno","beforeDataHash","beforeAccountState","afterDataHash","codeHash"],
+  properties: {transaction:evidenceRef,beforeSeqno:{type:"integer",minimum:0},afterSeqno:{type:"integer",minimum:0},beforeDataHash:{type:["string","null"]},beforeAccountState:{enum:["active","uninitialized"]},afterDataHash:{type:"string"},codeHash:{type:"string"}},
+};
+const routedSettlement = (finalizer: "routerFinalized" | "poolFinalized") => ({
+  type: "object", additionalProperties:false,
+  required:["settlementId","kind","amountRaw","sourceWallet","destinationWallet","destinationOwner","requestBodyHash","requestBodyBoc","request","debit","credit","acknowledged","walletFinalized",finalizer,"boundaries"],
+  properties:{settlementId:rawAmount,kind:{type:"integer"},amountRaw:rawAmount,
+    ...Object.fromEntries(["sourceWallet","destinationWallet","destinationOwner","requestBodyHash","requestBodyBoc"].map(key=>[key,{type:"string"}])),
+    ...Object.fromEntries(["request","debit","credit","acknowledged","walletFinalized",finalizer].map(key=>[key,evidenceRef])),boundaries:{type:"array",minItems:1,items:routedBoundary}},
+});
+const routedSwapEvidence = {
+  type:"object",additionalProperties:false,
+  required:["router","businessId","requestHash","completionHash","routerAcceptance","completion","completionAcknowledged","inputSettlement","terminalSettlement","protocolFeeSettlement","boundaries"],
+  properties:{router:{type:"string"},businessId:rawAmount,requestHash:{type:"string"},completionHash:{type:"string"},routerAcceptance:evidenceRef,completion:evidenceRef,completionAcknowledged:evidenceRef,
+    inputSettlement:routedSettlement("routerFinalized"),terminalSettlement:routedSettlement("routerFinalized"),protocolFeeSettlement:{anyOf:[{type:"null"},routedSettlement("poolFinalized")]},boundaries:{type:"array",minItems:1,items:routedBoundary}},
+  description:"Qualified current Router custody: original payer funding, input wallet finalization, physical pool output and protocol fee, RPSC/RPCA completion, and independent final beneficiary settlement. The protocol fee is not counted as another user payment.",
+};
 const signedRaw = { type: "string", pattern: "^-?(0|[1-9][0-9]*)$" };
 const perpsSnapshot = {
   type: "object",
@@ -615,6 +634,7 @@ export const ledgerSchemas = {
               paidInputRaw: rawAmount, consumedInputRaw: rawAmount, returnedInputRaw: rawAmount, outputRaw: rawAmount,
               inputMovementId: {type: "string"}, outputMovementId: {type: ["string", "null"]}, refundMovementId: {type: ["string", "null"]},
               acceptance: {$ref: "#/components/schemas/LedgerEvidenceRef"},
+              routing: routedSwapEvidence,
               finalizations: {type: "array", minItems: 1, maxItems: 2, items: {$ref: "#/components/schemas/LedgerEvidenceRef"}},
             },
             description: "Exact historical swap conservation and independent physical finalization: paid input equals consumed plus returned input. Zero output is a fully returned request, not a trade.",

@@ -30,7 +30,16 @@ export function readRiskVaultPayoutJournal(data: Cell, bucket: number, action: s
   end(token);
   const tail = data.refs[3]; if (tail.bits.length !== 336 || tail.refs.length !== 4) throw Error('Unsupported RiskVault tail');
   const version = tail.beginParse(); version.skip(320); if (version.loadUint(16) !== 3) throw Error('Unsupported RiskVault version');
-  const ds = tail.refs[2].beginParse(), entries = ds.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell()); end(ds);
+  const ds = tail.refs[2].beginParse(), entries = ds.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+  const queue = ds.loadRef().beginParse(); end(ds);
+  const head = queue.loadUintBig(64), endIndex = queue.loadUintBig(64);
+  const ready = queue.loadDict(Dictionary.Keys.BigUint(64), Dictionary.Values.BigUint(256)); end(queue);
+  if (head > endIndex || BigInt(ready.size) !== endIndex - head) throw Error('Noncanonical RiskVault ready FIFO');
+  for (const [index, entryKey] of ready) {
+    const target = entries.get(entryKey);
+    if (index < head || index >= endIndex || !target || target.bits.length < 352 ||
+        target.beginParse().skip(344).loadUint(8) !== 1) throw Error('Unbound RiskVault ready FIFO entry');
+  }
   const key = BigInt(`0x${beginCell().storeUint(0x52564f55, 32).storeUint(2, 8).storeUint(bucket, 16).storeUint(BigInt(action), 64).endCell().hash().toString('hex')}`);
   const cell = entries.get(key); if (!cell) return null;
   const s = cell.beginParse(); if (s.loadUint(8) !== 2 || s.loadUint(16) !== bucket || s.loadUintBig(64).toString() !== action) throw Error('Wrong RiskVault payout key');

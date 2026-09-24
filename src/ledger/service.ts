@@ -41,6 +41,7 @@ export class LedgerService {
     private options: {
       jettonRoots?: string[];
       dlmmRegistry?: string;
+      marketBindings?: import("./marketTypes").DlmmMarketBinding[];
       optionFactory?: string;
       optionVault?: string;
       optionCodeHashes?: import("../config/ledgerOptions").LedgerOptionsCodeHashes;
@@ -245,6 +246,7 @@ export class LedgerService {
             this.options.t3RedemptionBinding,
             this.options.launchpadCodeHashes,
             this.options.launchpadControllers,
+            this.options.marketBindings,
           );
           const graph = await builder.build(
             account,

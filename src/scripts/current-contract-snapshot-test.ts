@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { Address, TupleItem, beginCell } from '@ton/core';
+import { Address, Dictionary, TupleItem, beginCell } from '@ton/core';
 import Fastify from 'fastify';
 import { registerRoutes } from '../api/routes';
 import { loadConfig } from '../config';
@@ -24,9 +24,11 @@ const coverState: TupleItem[] = [
   int(8), int(900), int(10), int(11), address(vault), address(governance), address(riskVault), int(12),
 ];
 const coverPolicy: TupleItem[] = [
-  int(1), address(owner), address(pool), int(-11), int(22), int(3_000), int(4_000),
+  int(-1), address(owner), address(pool), int(-11), int(22), int(3_000), int(4_000),
   int(3_600), int(3), int(100), int(200), int(300), int(400), int(5), int(600),
   int(0xabc), int(2), address(riskVault), int(9),
+  int(100), int(604900), int(606700), int(1), int(0), int(0),
+  { type: 'slice', cell: beginCell().storeAddress(null).endCell() }, int(-1), int(500000000),
 ];
 const volConfig: TupleItem[] = [
   address(seriesManager), address(oracle), address(automation), address(coverManager), int(2_500), int(60), int(1_250),
@@ -46,13 +48,24 @@ const controlMeshState: TupleItem[] = [
 ];
 controlMeshState[36] = int(2_000_000_000);
 
+function livePage(entries: Array<[number, bigint]>, args?: TupleItem[], revision = 1n): TupleItem[] {
+  const cursor = args?.[0], limit = args?.[1];
+  assert(cursor?.type === 'int' && limit?.type === 'int');
+  const remaining = entries.filter(([slot]) => BigInt(slot) > cursor.value);
+  const selected = remaining.slice(0, Number(limit.value));
+  const ids = Dictionary.empty(Dictionary.Keys.Uint(16), Dictionary.Values.BigUint(64));
+  for (const [slot, id] of selected) ids.set(slot, id);
+  return [int(revision), int(selected.at(-1)?.[0] ?? cursor.value), int(remaining.length <= selected.length ? -1 : 0), { type: 'cell', cell: beginCell().storeDict(ids).endCell() }];
+}
+
 function sourceFor(retired = false): TonDataSource {
   return {
     network: 'localnet',
     async getMasterchainInfo() { return { seqno: 1 }; },
     async getAccountState() { return { balance: '0' }; },
     async getTransactions() { return []; },
-    async runGetMethod(_address, method) {
+    async runGetMethod(_address, method, args) {
+      if (method === 'live_policy_ids') return { exitCode: 0, stack: livePage([[1, 1n]], args) };
       if (method === 'get_state') return { exitCode: 0, stack: coverState };
       if (method === 'registry_enabled') return { exitCode: 0, stack: [int(1)] };
       if (method === 'get_policy') {
@@ -101,6 +114,7 @@ async function main() {
     breachStart: '100', breachSeconds: '200', lastObservation: '300',
     lastHealthyObservation: '400', breachObservations: '5', lastVolatilityTimestamp: '600',
     lastVolatilityRequestHash: '2748', status: '2', riskVault, riskBucketId: '9',
+    startsAt: '100', expiresAt: '604900', graceEndsAt: '606700', riskPositionKey: '1', closeReason: '0', closeQueryId: '0', closeRequester: null, premiumFinal: true, exitNativeEscrow: '500000000',
   });
 
   const highPolicyId = (1n << 63n) + 17n;
@@ -108,6 +122,7 @@ async function main() {
   const highSource = sourceFor();
   const baseGetter = highSource.runGetMethod.bind(highSource);
   highSource.runGetMethod = async (contract, method, args) => {
+    if (method === 'live_policy_ids') return { exitCode: 0, stack: livePage([[1, 1n], [1024, highPolicyId]], args) };
     if (method === 'get_state') {
       const stack = [...coverState];
       stack[0] = int(highPolicyId);
@@ -117,14 +132,21 @@ async function main() {
       const item = args?.[0];
       assert(item?.type === 'int');
       requestedPolicyIds.push(item.value);
-      return { exitCode: 0, stack: coverPolicy };
+      const stack = [...coverPolicy]; stack[22] = int(item.value === 1n ? 1 : 1024);
+      return { exitCode: 0, stack };
     }
     return baseGetter(contract, method, args);
   };
   const highService = new IndexerService(config, new MemoryStore(config), highSource, loadOpcodes(undefined), []);
-  const highCover = await highService.getCoverSnapshot(manager, { maxScan: 2 });
-  assert.deepEqual(requestedPolicyIds, [highPolicyId, highPolicyId - 1n]);
-  assert.deepEqual(highCover.policies.map((policy) => policy.id), [highPolicyId.toString(), (highPolicyId - 1n).toString()]);
+  const highCover = await highService.getCoverSnapshot(manager, { limit: 1 });
+  assert.deepEqual(requestedPolicyIds, [1n], 'old live policy remains discoverable after many newer closed policies');
+  assert.equal(highCover.next_after_slot, 1);
+  const second = await highService.getCoverSnapshot(manager, { limit: 1, afterSlot: 1, revision: highCover.live_revision });
+  assert.deepEqual(second.policies.map(policy => policy.id), [highPolicyId.toString()]);
+  assert.equal(second.next_after_slot, null);
+  await assert.rejects(highService.getCoverSnapshot(manager, { afterSlot: 1 }), /revision/);
+  await assert.rejects(highService.getCoverSnapshot(manager, { afterSlot: 1, revision: '2' }), /membership changed/);
+  await assert.rejects(highService.getCoverSnapshot(manager, { limit: 41 }), /page size/);
 
   const vol = await current.getVolIndexSnapshot(volIndex, { sourcePool: pool, routeIds: [7] });
   assert.equal(vol.config?.coverManager, coverManager);
@@ -179,8 +201,7 @@ async function main() {
   await api.close();
 
   const unsupported = service(true);
-  const retiredCover = await unsupported.getCoverSnapshot(manager);
-  assert.deepEqual(retiredCover.policies, [], 'retired 18-field cover policy must not be shifted into current fields');
+  await assert.rejects(unsupported.getCoverSnapshot(manager), /unavailable or malformed/, 'An incompatible policy ABI must not look like an empty portfolio');
   const retiredVol = await unsupported.getVolIndexSnapshot(volIndex, { sourcePool: pool, routeIds: [7] });
   assert.equal(retiredVol.config, null, 'retired config with PerpsEngine slot must be rejected');
   assert.deepEqual(retiredVol.route_ids, [], 'retired route with marketId slot must be rejected');

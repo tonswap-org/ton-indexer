@@ -26,8 +26,8 @@ export async function testPerpsRangeWalletIdentity() {
     assert.equal(hash(account.dataBoc), account.dataHash);
     assert.throws(() => readT3RecoveryWallet(account.dataBoc), 'the immutable earlier testnet layout is unsupported');
   }
-  const parallelCapture = fixture('perps-referral-current/perps-wallet-current-local.json');
-  for (const account of parallelCapture.accounts) {
+  const parallelCapture = fixture('perps-range-funded-current/current-wallets.json');
+  for (const account of parallelCapture.wallets) {
     assert.equal(hash(account.codeBoc), account.codeHash); assert.equal(hash(account.dataBoc), account.dataHash);
     const decoded = readT3RecoveryWallet(account.dataBoc);
     qualifyPerpsRangeWallet('localnet', account.address, decoded.owner, decoded.root, Cell.fromBase64(account.codeBoc), { balance: '0', accountState: account.state, ...account });

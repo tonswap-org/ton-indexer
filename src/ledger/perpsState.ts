@@ -1,5 +1,5 @@
 import { Address, beginCell, Cell, Dictionary, type Slice } from "@ton/core";
-import { perpsOpenNotification, perpsPositionKey, perpsRequest, perpsTransferKey, type PerpsRequest } from "./perpsWire";
+import { perpsOpenNotification, perpsPositionKey, perpsRequest, perpsTransferKey, PERPS_ORACLE_REFRESH_VALUE, PERPS_RISK_ADMISSION_VALUE, type PerpsRequest } from "./perpsWire";
 import { decodeNativeFundingContext, type NativeFundingContext } from './nativeFunding';
 const end = (s: Slice) => {
   if (s.remainingBits || s.remainingRefs)
@@ -172,7 +172,7 @@ export function readPerpsOracleRefreshes(cell: Cell): Map<string, PerpsOracleRef
           (request.operation === 'modify' && (BigInt(request.marginRaw!) > 0n) !== hasNotification) ||
           (hasNotification ? !funding || funding.owner !== owner.toRawString() ||
             JSON.stringify(funding.request) !== JSON.stringify(request) || notification.hash().toString('hex') !== requestHash ||
-            BigInt(funding.forwardTonRaw) !== BigInt(nativeBudgetRaw) + 480000000n
+            BigInt(funding.forwardTonRaw) !== BigInt(nativeBudgetRaw) + PERPS_ORACLE_REFRESH_VALUE + PERPS_RISK_ADMISSION_VALUE
             : requestCell.hash().toString('hex') !== requestHash) ||
           admissionPhase > 2 || ![1, 2, 3].includes(outcome) ||
           (outcome === 1 && (reason !== 0 || (admissionPhase === 0 ? status !== 1 : status !== 2))) ||
@@ -438,7 +438,7 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
     });
   }
   const q = queues.beginParse();
-  q.loadRef();
+  if (q.remainingBits !== 0 || q.remainingRefs !== 3) throw Error('Perps canonical queue bundle');
   q.loadRef();
   const pendingCell = q.loadRef();
   const queueTail = q.loadRef().beginParse();

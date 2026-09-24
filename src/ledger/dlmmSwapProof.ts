@@ -1,6 +1,4 @@
-import { Address, Cell, beginCell } from '@ton/core';
-import { perpsWalletAddress } from './perpsWire';
-import { readDlmmLiquidityState } from './dlmmLiquidityState';
+import { DLMM_TRANSFER_DELIVERY_VALUE, DLMM_TRANSFER_CONTROL_VALUE, DLMM_ADD_PROCESSING_VALUE } from './dlmmState';
 import { parseDlmmSwapForward } from '../utils/dlmmSettlementEvidence';
 import { tokenWire, NOTIFY, dlmmLiquidityNotificationCommitment } from './wire';
 import { createDlmmProofGraph, requireProof, address, successful, type DlmmProofBinding } from './dlmmProof';
@@ -20,15 +18,22 @@ export function verifyDlmmSwapExecution(binding: DlmmProofBinding, proof: Return
         paymentSource.node.account === notice.senderWallet && payment.flow.wire.queryId === notice.queryId && payment.flow.wire.forward.hash().equals(notice.forward.hash()), 'market_original_funding_unverified');
       const records = [...state.after.settlements.values()].filter(record => !state.before.settlements.has(record.settlementId))
         .sort((a, b) => BigInt(a.settlementId) < BigInt(b.settlementId) ? -1 : 1);
-      requireProof(records.length >= 1 && records.length <= 3 && state.before.withdrawalsHash === state.after.withdrawalsHash && state.before.routerOperationsHash === state.after.routerOperationsHash, 'market_allocation_count_invalid');
+      requireProof(records.length >= 1 && records.length <= 2 && state.before.withdrawalsHash === state.after.withdrawalsHash && state.before.routerOperationsHash === state.after.routerOperationsHash, 'market_allocation_count_invalid');
       let next = BigInt(state.before.nextSettlementId);
+      const forwarded = BigInt(notice.forwardTonRaw);
+      requireProof(forwarded >= DLMM_ADD_PROCESSING_VALUE, 'market_direct_processing_unfunded');
+      let settlementBudget = forwarded - DLMM_ADD_PROCESSING_VALUE;
       for (const record of records) {
+        const required = DLMM_TRANSFER_DELIVERY_VALUE + DLMM_TRANSFER_CONTROL_VALUE;
+        const assigned = settlementBudget < required ? settlementBudget : required;
+        settlementBudget -= assigned;
+        requireProof((record.status !== 2 || assigned === required) && BigInt(record.fundedRaw) === assigned - (record.status === 2 ? DLMM_TRANSFER_DELIVERY_VALUE : 0n), 'market_allocation_native_funding_invalid');
         let attempts = 0;
         while ((next === 0n || next === forward.queryId || state.before.settlements.has(next.toString()) || state.before.withdrawalIds.has(next.toString())) && attempts < 32) { next++; attempts++; }
         requireProof(attempts < 32 && next < 0xffffffffffffffffn && record.settlementId === next.toString(), 'market_allocation_sequence_invalid');
         next++;
         requireProof(record.businessQueryId === forward.queryId.toString() &&
-          record.predecessorId === '0' && [1, 2].includes(record.status) && [1, 2, 9].includes(record.kind) &&
+          record.predecessorId === '0' && [1, 2].includes(record.status) && [1, 2].includes(record.kind) &&
           record.recordedAt === acceptance.raw.utime && record.forwardTonAmountRaw === '0' && !record.forwardPayload.bits.length && !record.forwardPayload.refs.length, 'market_allocation_record_invalid');
       }
       requireProof(next.toString() === state.after.nextSettlementId, 'market_allocation_counter_invalid');
@@ -43,20 +48,11 @@ export function verifyDlmmSwapExecution(binding: DlmmProofBinding, proof: Return
         records.map(record => record.kind).join(',') === [...refunds, ...outputs, ...fees].map(record => record.kind).join(',') &&
         (!fees.length || outputs.length === 1 && fees[0].tokenSide === 0 && state.after.treasury !== null && fees[0].destinationOwner === state.after.treasury), 'market_allocation_roles_invalid');
       for (const record of records) {
-        const runnable = (value: typeof record) => value.status === 2 || value.status === 1 && value.fundedRaw === '180000000';
+        const runnable = (value: typeof record) => value.status === 2 || value.status === 1 && value.fundedRaw === (DLMM_TRANSFER_DELIVERY_VALUE + DLMM_TRANSFER_CONTROL_VALUE).toString();
         const later = runnable(record) ? records.find(candidate => BigInt(candidate.settlementId) > BigInt(record.settlementId) && candidate.sourceWallet === record.sourceWallet && runnable(candidate)) : undefined;
         requireProof(record.successorId === (later?.settlementId ?? '0'), 'market_allocation_successor_invalid');
       }
-      const fee = fees[0];
-      if (fee) {
-        requireProof(fee.sourceWallet === perpsWalletAddress(state.after.walletCode, binding.tokenT, binding.pool) &&
-          fee.destinationWallet === perpsWalletAddress(state.after.walletCode, binding.tokenT, state.after.treasury!) &&
-          (fee.status === 1 ? BigInt(fee.fundedRaw) <= 180000000n : fee.fundedRaw === '40000000'), 'market_protocol_fee_wallet_identity_invalid');
-        const request = beginCell().storeUint(0x0f8a7ea5, 32).storeUint(BigInt(fee.settlementId), 64).storeCoins(BigInt(fee.amountRaw))
-          .storeAddress(Address.parse(fee.destinationOwner)).storeAddress(Address.parse(binding.pool))
-          .storeRef(beginCell().storeUint(0x4a535454, 32).endCell()).storeCoins(0).storeRef(Cell.EMPTY).endCell();
-        requireProof(request.hash().toString('hex') === fee.requestHash, 'market_protocol_fee_request_invalid');
-      }
+      requireProof(fees.length === 0 && (!outputs.length || state.before.feePips === 0), 'market_direct_fee_path_invalid');
       const returned = BigInt(refunds[0]?.amountRaw ?? '0'), paid = BigInt(notice.amountRaw), consumed = paid - returned;
       requireProof(returned <= paid && (outputs.length ? consumed > 0n && BigInt(outputs[0].amountRaw) >= forward.minAmountOut : returned === paid), 'market_input_conservation_failed');
       const added = [0n, 0n]; for (const record of records) added[record.tokenSide] += BigInt(record.amountRaw);
@@ -69,16 +65,7 @@ export function verifyDlmmSwapExecution(binding: DlmmProofBinding, proof: Return
             records.some(added => added.settlementId === after.successorId && added.sourceWallet === record.sourceWallet));
         }), 'market_allocation_reserve_delta_invalid');
       const settlements: MarketSettlementEvidence[] = [...refunds, ...outputs].map(record => ({ ...settle(acceptance, record, state.after.walletCode), kind: record.kind === 1 ? 'swap_output' : 'unused_input_refund' }));
-      // The fee is a separate treasury liability. Its allocation leaves the
-      // traded T3 reserves and never changes payer refund/output identities.
-      if (fee) {
-        const before = readDlmmLiquidityState(acceptance.before!.state.dataBoc!), after = readDlmmLiquidityState(acceptance.after!.state.dataBoc!);
-        const sum = (bins: typeof before.bins, side: 'reserveTRaw' | 'reserveXRaw') => [...bins.values()].reduce((value, bin) => value + BigInt(bin[side]), 0n);
-        const deltaT = sum(after.bins, 'reserveTRaw') - sum(before.bins, 'reserveTRaw'), deltaX = sum(after.bins, 'reserveXRaw') - sum(before.bins, 'reserveXRaw');
-        const output = BigInt(outputs[0].amountRaw), protocol = BigInt(fee.amountRaw);
-        requireProof(deltaT === (inputSide === 0 ? consumed : -output) - protocol && deltaX === (inputSide === 0 ? -output : consumed), 'market_protocol_fee_reserve_economics_invalid');
-      }
       if (!outputs.length) requireProof(state.before.binsHash === state.after.binsHash && state.before.observationsHash === state.after.observationsHash, 'market_refunded_price_state_changed');
       return { forward, notice: {...notice, owner: notice.owner!, senderWallet: notice.senderWallet!}, inputRoot, outputRoot, inputSide, paid, returned, consumed,
-        output: BigInt(outputs[0]?.amountRaw ?? '0'), protocolFeeAllocation: fee ? {settlementId: fee.settlementId, root: binding.tokenT, amountRaw: fee.amountRaw, sourceWallet: fee.sourceWallet, destinationOwner: fee.destinationOwner, destinationWallet: fee.destinationWallet, requestHash: fee.requestHash} : null, state, original, paymentSource, paymentCredit, payment, settlements };
+        output: BigInt(outputs[0]?.amountRaw ?? '0'), protocolFeeAllocation: null, state, original, paymentSource, paymentCredit, payment, settlements };
 }

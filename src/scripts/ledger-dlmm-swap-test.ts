@@ -96,40 +96,8 @@ async function main() {
       const notice = tokenWire(acceptance.raw.inMessage), forward = notice && protocolForward(notice.forward);
       if (forward?.operation !== 'swap') continue;
       const verified = verifyDlmmSwapExecution(binding, graph, acceptance);
-      if (verified.protocolFeeAllocation) {
-        await test(`${label}/${acceptance.raw.lt}: protocol fee is a separate exact T3 treasury allocation, not payer cash`, () => {
-          const fee = verified.protocolFeeAllocation!;
-          assert.equal(fee.root, binding.tokenT); assert.equal(fee.destinationOwner, fixture.accounts.creator);
-          assert.equal(fee.sourceWallet, fixture.accounts.wallets.pool[0]);
-          assert(!verified.settlements.some(settlement => settlement.settlementId === fee.settlementId));
-          assert.equal(verified.settlements.length, Number(verified.output > 0n) + Number(verified.returned > 0n));
-          const intent = fixture.intents.find((intent: any) => intent.businessQueryId === forward.queryId)!;
-          assert.equal(BigInt(fee.amountRaw), (BigInt(intent.quote.feePaid) * 1700n + 9999n) / 10000n);
-        });
-        for (const mutation of ['foreign-kind', 'unknown-kind', 'wrong-token', 'wrong-owner', 'wrong-source', 'wrong-wallet', 'wrong-request', 'wrong-successor', 'overfunded', 'wrong-economic-amount']) {
-          await test(`${label}/${acceptance.raw.lt}: rejects protocol fee ${mutation}`, () => {
-            const wrapped = {...graph, poolAt: (node: MarketNode) => {
-              const state = graph.poolAt(node);
-              if (node !== acceptance) return state;
-              const after = {...state.after, settlements: new Map(state.after.settlements)};
-              const original = after.settlements.get(verified.protocolFeeAllocation!.settlementId)!, fee = {...original};
-              after.settlements.set(fee.settlementId, fee);
-              if (mutation === 'foreign-kind') fee.kind = 8;
-              if (mutation === 'unknown-kind') fee.kind = 10;
-              if (mutation === 'wrong-token') fee.tokenSide = 1;
-              if (mutation === 'wrong-owner') fee.destinationOwner = owner;
-              if (mutation === 'wrong-source') fee.sourceWallet = fixture.accounts.wallets.payer[0];
-              if (mutation === 'wrong-wallet') fee.destinationWallet = fixture.accounts.wallets.payer[0];
-              if (mutation === 'wrong-request') fee.requestHash = 'f'.repeat(64);
-              if (mutation === 'wrong-successor') fee.successorId = '1';
-              if (mutation === 'overfunded') fee.fundedRaw = '180000001';
-              if (mutation === 'wrong-economic-amount') fee.amountRaw = (BigInt(fee.amountRaw) + 1n).toString();
-              return {...state, after};
-            }};
-            assert.throws(() => verifyDlmmSwapExecution(binding, wrapped, acceptance));
-          });
-        }
-      }
+      assert.equal(verified.protocolFeeAllocation, null, 'direct current swaps never allocate protocol fees');
+      assert.equal(verified.state.before.feePips, 0, 'executed direct fixture is explicitly zero-fee');
     }
     const projection = await projectOwnerLedger(ownerInput()), rows = swaps(projection.events);
     assert.equal(rows.length, fixture.intents.length);

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Address, Cell, loadTransaction } from '@ton/core';
+import { Address, Cell, beginCell, loadTransaction } from '@ton/core';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { readPerpsState } from '../ledger/perpsState';
 import { readPerpsOracleExecution, type PerpsBoundary } from '../ledger/perpsOracle';
 import { perpsWalletAddress } from '../ledger/perpsWire';
-import { messageKey, opcode } from '../ledger/wire';
+import { messageKey, businessOpcode as opcode } from '../ledger/wire';
+import { decodeNativeFundingBody } from '../ledger/nativeFunding';
 import type { Node } from '../ledger/project';
 
 const folder = join(__dirname, 'fixtures/perps-risk-admission-current');
@@ -85,5 +86,63 @@ async function main() {
     }
   }
   console.log('PASS missing, forged, malformed and unsuccessful risk callbacks fail closed');
+  for (const defect of ['missing-head', 'wrong-action', 'wrong-request', 'trailing-head', 'trailing-reply'] as const) {
+    const { args, nodes } = fixture('open-accepted');
+    const callback = nodes.find(node => node.account === args.engine && opcode(node.raw.inMessage) === 0x5256414b)!;
+    const outer = Cell.fromBase64(callback.raw.inMessage!.body!);
+    const original = decodeNativeFundingBody(outer).businessBody;
+    const head = original.refs[0].beginParse(), action = head.loadUintBig(64), requestHash = head.loadUintBig(256);
+    const nextHead = beginCell().storeUint(defect === 'wrong-action' ? action + 1n : action, 64)
+      .storeUint(defect === 'wrong-request' ? requestHash ^ 1n : requestHash, 256);
+    if (defect === 'trailing-head') nextHead.storeBit(0);
+    const reply = beginCell().storeBits(original.bits);
+    if (defect !== 'missing-head') reply.storeRef(nextHead.endCell());
+    if (defect === 'trailing-reply') reply.storeBit(0);
+    const replacement = beginCell().storeBits(outer.bits).storeRef(reply.endCell()).endCell().toBoc().toString('base64');
+    const previousBody = callback.raw.inMessage!.body;
+    // Keep causal matching intact so only exact current wire validation can
+    // reject the forged journal head; the historical engine boundary is intact.
+    for (const node of nodes) for (const message of node.raw.outMessages) {
+      if (message.body === previousBody) message.body = replacement;
+    }
+    callback.raw.inMessage!.body = replacement;
+    args.receiptFor = (node, index) => {
+      const key = messageKey(node.raw.outMessages[index]);
+      const matches = key ? nodes.filter(candidate => messageKey(candidate.raw.inMessage) === key) : [];
+      return matches.length === 1 ? matches[0] : null;
+    };
+    assert(!(await readPerpsOracleExecution(args))?.execution, defect);
+  }
+  console.log('PASS current liability journal head is mandatory, exact and bound to the request');
+  for (const target of [0x5256414b, 0x52505253]) {
+    for (const defect of ['bare', 'wrong-owner', 'wrong-wire', 'foreign-module'] as const) {
+      const { args, nodes } = fixture('open-accepted');
+      const callback = nodes.find(node => node.account === args.engine && opcode(node.raw.inMessage) === target)!;
+      assert(callback?.raw.inMessage?.body);
+      const original = callback.raw.inMessage.body;
+      const decoded = decodeNativeFundingBody(Cell.fromBase64(original));
+      assert(decoded.funding);
+      const funding = decoded.funding;
+      const replacement = (defect === 'bare' ? decoded.businessBody : beginCell()
+        .storeUint(0x434e4657, 32)
+        .storeUint(BigInt(funding.correlationId) + (defect === 'wrong-wire' ? 1n : 0n), 64)
+        .storeUint(defect === 'foreign-module' ? 1 : 0, 8)
+        .storeUint(defect === 'foreign-module' ? 1 : 0, 32)
+        .storeAddress(Address.parse(defect === 'wrong-owner' ? args.engine : funding.refundTo))
+        .storeRef(decoded.businessBody).endCell()).toBoc().toString('base64');
+      for (const node of nodes) for (const message of node.raw.outMessages)
+        if (message.body === original) message.body = replacement;
+      callback.raw.inMessage.body = replacement;
+      args.receiptFor = (node, index) => {
+        const key = messageKey(node.raw.outMessages[index]);
+        const matches = key ? nodes.filter(candidate => messageKey(candidate.raw.inMessage) === key) : [];
+        return matches.length === 1 ? matches[0] : null;
+      };
+      assert(!(await readPerpsOracleExecution(args))?.execution,
+        `${target.toString(16)}/${defect}: matching message edges cannot replace the original payer and wire`);
+    }
+  }
+  console.log('PASS funded vault and policy replies require the original direct owner and exact wire even with matching causal message edges');
+
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

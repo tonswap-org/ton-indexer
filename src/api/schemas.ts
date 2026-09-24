@@ -116,9 +116,11 @@ export const optionsSnapshotQuerySchema = {
 
 export const coverSnapshotQuerySchema = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     owner: { type: 'string' },
-    max_scan: { type: 'integer', minimum: 1, maximum: 64 },
-    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
+    after_slot: { type: 'integer', minimum: 0, maximum: 1024 },
+    limit: { type: 'integer', minimum: 1, maximum: 40 },
+    revision: { type: 'string', pattern: '^(0|[1-9][0-9]{0,19})$' },
   },
 };

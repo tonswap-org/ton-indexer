@@ -1,27 +1,46 @@
 {
   "source": "Unmodified current PerpsRiskAdmission.spec.ts funded OPEN/plain CLOSE, with no state mutation after explicit rangeStartLt. Initial Sandbox setup is an input boundary, not a deployment archive proof; no live testnet claim.",
-  "engineCodeHash": "672adf0e4798430a169468e52d7665024f1ed6293958334a4fcfe32358e570a7",
+  "engineCodeHash": "806cd1dfeeb953afbbe44803c28c3e787e51b544f1570ec4f64162d39bbc2b6a",
   "artifacts": [
     {
       "relative": "open.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/captures-a-funded-round-trip-with-uninterrupted-account-history-open-880.json",
-      "sha256": "73296e0371fd90de528531ee4da3086aa23a8f97a854097b9d586b53f3c06c67"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260923-g16/preparation/perps-risk-final-capture-v3/captures-a-funded-round-trip-with-uninterrupted-account-history-open-880.json",
+      "sha256": "569020821f59cc667ee0e8d35084c8857038896b2b16e1e2e3924b03360ff3f2",
+      "bytes": 859564
     },
     {
       "relative": "close.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/captures-a-funded-round-trip-with-uninterrupted-account-history-direct-close.json",
-      "sha256": "91dd126ff57327bd4ebb9ab3a53a0ab71de80f1a489ac46ca406db3dc9e8583d"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260923-g16/preparation/perps-risk-final-capture-v3/captures-a-funded-round-trip-with-uninterrupted-account-history-direct-close.json",
+      "sha256": "0ea597f94c056283f83c1ba65e5e06db52b6f0a300cd557c8a3e17fcaabb83d0",
+      "bytes": 916006
     },
     {
       "relative": "range.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/captures-a-funded-round-trip-with-uninterrupted-account-history-uninterrupted-range.json",
-      "sha256": "51c1d83e195e58f69fe66b8149eecd15b64601eb0daa3f968cef93a96e900d5f"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260923-g16/preparation/perps-risk-final-capture-v3/captures-a-funded-round-trip-with-uninterrupted-account-history-uninterrupted-range.json",
+      "sha256": "47ca02c00acf3dcef1c73914eabdc85686f0e8f0e7c5abb3079d2494bef4389c",
+      "bytes": 2130496
     },
     {
       "relative": "current-wallets.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-execution-fixtures/release-current-20260920-final/current-wallets.json",
-      "sha256": "d9f9eefd78b4672cfb890ea96c162a8f0d65385a0e9efc110ffa86eda935b96d"
+      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-current-abi-20260923/current-wallets.json",
+      "sha256": "15a55672996111a3c67fc19355be52b2b22f6aa72d00ffc325977bf810ccedad",
+      "bytes": 60597
     }
   ],
-  "poolCodeHash": "583d8fdd3b13388e4bbf63def6c0e44e0da2ed15b7cf50bbe040df1d33d68b90"
+  "poolCodeHash": "79b52cd46386f7e63318494c7ce4bca81e729bb324c9f2785ba376b136594cac",
+  "walletCodeHash": "c6a2543ca7ee992bc0a90e84586fdd8c1bb1bf3afbe031a6a0c1325a91554ddf",
+  "validation": [
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260923-g16/preparation/perps-risk-final-capture-v3/producer.log",
+      "sha256": "2663bddaacc50780fd00a53a4a891241205045394f18f07fad5a0d6472fdd9e8",
+      "bytes": 2547
+    }
+  ],
+  "sourceBinding": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260923-g16/preparation/perps-risk-final-capture-v3/source-binding.json",
+    "sha256": "6805f6090162e2240038d5ef13f30493245c310c441f11cd4b9259ef37cd6fbf",
+    "bytes": 5734
+  },
+  "capturedOn": "2026-09-23",
+  "live": false
 }

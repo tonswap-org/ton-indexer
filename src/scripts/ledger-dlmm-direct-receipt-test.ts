@@ -7,8 +7,8 @@ import {readDlmmDirectSwaps} from '../ledger/dlmmDirectSwapState';
 import {createDlmmProofGraph} from '../ledger/dlmmProof';
 import type {MarketNode} from '../ledger/marketTypes';
 
-const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/dlmm-referral-market-current/dlmm-market-queued-settlements.json'), 'utf8'));
-const binding = {network: 'localnet' as const, pool: fixture.accounts.pool, tokenT: fixture.accounts.tokenT, tokenX: fixture.accounts.tokenX,
+const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/dlmm-referral-market-current/dlmm-negative-ready-rotation.json'), 'utf8'));
+const binding = {router: null, routerCodeHash: null, network: 'localnet' as const, pool: fixture.accounts.pool, tokenT: fixture.accounts.tokenT, tokenX: fixture.accounts.tokenX,
   poolCodeHash: fixture.compiler.find((c: any) => c.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash,
   walletCodeHash: fixture.compiler.find((c: any) => c.entrypointFileName.endsWith('/jetton/jetton_wallet.tolk')).codeHash};
 const nodes: MarketNode[] = fixture.transactions.map((entry: any) => {
@@ -54,9 +54,9 @@ for (const node of nodes.filter(node => node.account === binding.pool && node.af
           receipts.set(key, replaceRef(old, legIndex, replaceRef(oldLeg, 0, beginCell().storeDict(null).endCell())));
         })), /initial_wire_missing/);
       }
-      if (leg.wires.size > 1 && !rotatedChecked) {
+      if ([...leg.wires.values()].some(wire => wire.disposition === 1) && !rotatedChecked) {
         rotatedChecked = true;
-        const first = leg.wires.get(leg.initialId)!; assert.equal(first.disposition, 1);
+        const first = [...leg.wires.values()].find(wire => wire.disposition === 1)!; assert.equal(first.disposition, 1);
         assert.ok(BigInt(leg.currentId) > BigInt(leg.initialId));
         const legIndex = leg === receipt.refund ? 1 : 2;
         for (const disposition of [0, 3, 4]) assert.throws(() => parse(editStore(store, (receipts) => {

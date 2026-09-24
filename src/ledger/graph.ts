@@ -1,3 +1,7 @@
+import type { DlmmMarketBinding } from "./marketTypes";
+import { readDlmmRouterState } from "./dlmmRouterState";
+import { readDlmmMarketState } from "./dlmmState";
+import { ROUTED_SWAP_INTENT, ROUTER_POOL_EXECUTE, ROUTER_POOL_COMPLETED, ROUTER_POOL_COMPLETION_ACK } from "./dlmmRoutedWire";
 import type { LedgerPerpsEngine } from "./perps";
 import type { LedgerLaunchpadSale } from "./launchpadModels";
 import type { LedgerLaunchpadCodeHashes } from "../config/ledgerLaunchpad";
@@ -74,6 +78,7 @@ export class LedgerGraphBuilder {
     private t3RedemptionBinding?: import("../config/ledgerT3").LedgerT3RedemptionBinding,
     private launchpadCodeHashes?: LedgerLaunchpadCodeHashes,
     private launchpadControllers: string[] = [],
+    private configuredMarketBindings: DlmmMarketBinding[] = [],
   ) {}
   async build(owner: string, generation: string, ownerCheckedAt?: string) {
     const chains = new Map<string, LedgerChain>(),
@@ -208,6 +213,10 @@ export class LedgerGraphBuilder {
       ...(this.t3Root ? [this.t3Root] : []),
     ]))
       await ownerWallet(root);
+    const marketBindings = new Map(this.configuredMarketBindings
+      .filter(binding => binding.network === this.network)
+      .map(binding => [binding.pool, binding]));
+    const routedBindings = new Map<string, DlmmMarketBinding>();
     const candidates = new Set<string>();
     const launchpadCandidates = new Set<string>();
     const knownLaunchpadControllers = new Set(
@@ -268,6 +277,17 @@ export class LedgerGraphBuilder {
             ) {
               launchpadCandidates.add(request.owner);
               knownLaunchpadControllers.add(request.owner);
+            }
+            if (request?.op === TRANSFER && request.owner &&
+                request.forward.bits.length >= 32 &&
+                request.forward.beginParse().preloadUint(32) === ROUTED_SWAP_INTENT) {
+              const routes = [...marketBindings.values()].filter(binding =>
+                binding.router === request.owner && Boolean(binding.routerCodeHash));
+              if (!routes.length) issues.add("dlmm_router_binding_unresolved");
+              for (const binding of routes) {
+                routedBindings.set(binding.pool, binding);
+                candidates.add(binding.pool);
+              }
             }
             if (
               request?.op === TRANSFER &&
@@ -378,7 +398,12 @@ export class LedgerGraphBuilder {
       }
     }
     for (const candidate of candidates) {
-      const pool = await this.loadPool(candidate).catch(() => null);
+      const binding = routedBindings.get(candidate);
+      // A configured deployment supplies discovery identity; historical code,
+      // custody, and settlement boundaries still decide qualification.
+      const pool = binding ? { address: binding.pool, tokenT: binding.tokenT,
+        tokenX: binding.tokenX, codeHash: binding.poolCodeHash }
+        : await this.loadPool(candidate).catch(() => null);
       if (!pool) {
         issues.add("protocol_pool_identity_unresolved");
         continue;
@@ -850,6 +875,48 @@ export class LedgerGraphBuilder {
         }
       }
     }
+    // Routed payments settle across the Router, pool, and physical wallets.
+    // Discover these endpoints from exact configured historical contract states,
+    // never from a live getter that could select another Router or code version.
+    for (const binding of routedBindings.values()) {
+      const router = binding.router!;
+      await load(router, "counterparty");
+      const needed = new Set<string>();
+      for (const [account, expectedCode, relevantOps] of [
+        [router, binding.routerCodeHash!, [NOTIFY, 0x4a535543, 0x4a53464b, ROUTER_POOL_COMPLETED]],
+        [binding.pool, binding.poolCodeHash, [ROUTER_POOL_EXECUTE, 0x4a535543, 0x4a53464b, ROUTER_POOL_COMPLETION_ACK]],
+      ] as const) {
+        for (const tx of chains.get(account)?.transactions ?? []) {
+          if (!(relevantOps as readonly number[]).includes(opcode(tx.inMessage) ?? -1)) continue;
+          const notice = tokenWire(tx.inMessage);
+          if (notice?.op === NOTIFY) {
+            if (notice.owner) needed.add(notice.owner);
+            if (notice.senderWallet) needed.add(notice.senderWallet);
+          }
+          try {
+            const archive = await stateAt(account, tx.lt, tx.hash);
+            if (!archive?.state.codeBoc || !archive.state.dataBoc ||
+                Cell.fromBase64(archive.state.codeBoc).hash().toString("hex") !== expectedCode)
+              throw Error("code");
+            const state = account === router ? readDlmmRouterState(archive.state.dataBoc)
+              : readDlmmMarketState(archive.state.dataBoc);
+            if (state.walletCodeHash !== binding.walletCodeHash) throw Error("wallet_code");
+            for (const root of [binding.tokenT, binding.tokenX])
+              needed.add(perpsWalletAddress(state.walletCode, root, account));
+            for (const record of state.settlements.values()) {
+              if (account === router && ![7, 8, 12].includes(record.kind)) continue;
+              needed.add(record.sourceWallet);
+              needed.add(record.destinationWallet);
+              if (record.destinationOwner) needed.add(record.destinationOwner);
+            }
+          } catch { issues.add("dlmm_routed_archive_unavailable"); }
+        }
+      }
+      for (const account of [...needed].sort()) {
+        await load(account, account === owner ? "owner" : "counterparty");
+        await wallet(account, "counterparty");
+      }
+    }
     const checkedTimes = [...chains.values()]
       .map((chain) => chain.checkedAt)
       .filter((value): value is string => Boolean(value))
@@ -858,6 +925,7 @@ export class LedgerGraphBuilder {
       chains,
       wallets,
       pools,
+      marketBindings,
       optionFactories,
       launchpadSales,
       launchpadControllers: [...knownLaunchpadControllers],

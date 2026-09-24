@@ -81,7 +81,8 @@ async function main() {
   await test('fixture is authentic current-contract execution with no seeded token or position state', () => {
     assert.equal(sha(fixtureBytes), provenance.files.find((row: any) => row.file === 'dlmm-zero-payout-settlements.json').sha256);
     assert.equal(binding.poolCodeHash, provenance.poolCodeHash);
-    assert.equal(fixture.transactions.length, 87); assert.equal(fixture.boundaries.length, 87);
+    const count=provenance.files.find((row: any) => row.file === 'dlmm-zero-payout-settlements.json').transactions;
+    assert.equal(fixture.transactions.length,count);assert.equal(fixture.boundaries.length,count);assert(count>=87);
     for (const entry of fixture.transactions) {
       const cell = Cell.fromBase64(entry.transactionBoc), tx = loadTransaction(cell.beginParse());
       assert.equal(cell.hash().toString('hex'), entry.raw.hash);

@@ -222,6 +222,7 @@ export type LedgerEvent = {
       paidInputRaw: string; consumedInputRaw: string; returnedInputRaw: string; outputRaw: string;
       inputMovementId: string; outputMovementId: string | null; refundMovementId: string | null;
       acceptance: LedgerEvidenceRef; finalizations: LedgerEvidenceRef[];
+      routing?: import("./marketTypes").MarketRoutingEvidence;
     };
     dlmmLiquidity?: DlmmLiquidityMetadata;
     launchpad?: import("./launchpad").LaunchpadRefundMetadata;

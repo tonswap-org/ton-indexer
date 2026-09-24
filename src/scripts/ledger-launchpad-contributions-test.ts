@@ -51,8 +51,8 @@ function alterParticipant(f:Fixture,field:'payment'|'tokens'|'claimed'|'benefici
  const row=ownerAcceptance(f),state=snapshot(f,row),root=Cell.fromBase64(state.state.dataBoc!),inner=root.refs[3],entryRef=f.model==='fixed'?1:1,cell=inner.refs[entryRef],cursor=cell.beginParse();
  const entries=cursor.loadDict(Dictionary.Keys.Address(),{serialize:(value:Cell,b:any)=>b.storeSlice(value.beginParse()),parse:(s:any)=>{const value=s.asCell();s.skip(s.remainingBits);while(s.remainingRefs)s.loadRef();return value;}});
  const owner=Address.parse(f.input.owner),old=entries.get(owner)!;assert(old);const s=old.beginParse(),first=s.loadCoins();
- const price=f.model==='auction'?s.loadCoins():null,quantity=s.loadCoins(),claimed=s.loadBoolean(),reward=s.loadMaybeAddress(),refund=s.loadMaybeAddress();
- const b=beginCell().storeCoins(first+(field==='payment'?1n:0n));if(price!==null)b.storeCoins(price);b.storeCoins(quantity+(field==='tokens'?1n:0n)).storeBit(field==='claimed'?true:claimed)
+ const price=f.model==='auction'?s.loadCoins():null,quantity=s.loadCoins(),claimed=s.loadBoolean(),fillCount=f.model==='bonding'?s.loadUint(16):null,reward=s.loadMaybeAddress(),refund=s.loadMaybeAddress();
+ const b=beginCell().storeCoins(first+(field==='payment'?1n:0n));if(price!==null)b.storeCoins(price);b.storeCoins(quantity+(field==='tokens'?1n:0n)).storeBit(field==='claimed'?true:claimed);if(fillCount!==null)b.storeUint(fillCount,16);b
   .storeAddress(field==='beneficiary'?Address.parse(f.accounts.creator):reward).storeAddress(refund);
  if(field==='fill'){const fill=s.loadRef().beginParse(),tokens=fill.loadCoins();b.storeRef(beginCell().storeCoins(tokens+1n).storeSlice(fill).endCell());}b.storeSlice(s);entries.set(owner,b.endCell());
  const updated=beginCell().storeDict(entries).endCell();state.state.dataBoc=replaceRef(root,3,replaceRef(inner,entryRef,updated)).toBoc().toString('base64');parsers[f.model](state.state.dataBoc);

@@ -35,6 +35,9 @@ import type { Network } from "../models";
 import { classifyTransaction } from "../utils/txClassifier";
 import { createDlmmProofGraph } from "./dlmmProof";
 import { verifyDlmmSwapExecution } from "./dlmmSwapProof";
+import { verifyDlmmRoutedSwapExecution } from "./dlmmRoutedSwapProof";
+import { ROUTED_SWAP_INTENT, ROUTER_POOL_EXECUTE } from "./dlmmRoutedWire";
+import { routingEvidenceRefs, mapRoutingEvidence } from "./routedEvidence";
 import type { OpcodeSets } from "../utils/opcodes";
 import {
   canonicalLedgerAddress,
@@ -53,7 +56,7 @@ import type {
 import type { LedgerStateSnapshot } from "./archive";
 import { dlmmPendingLiquidityKey, readDlmmLiquidityState } from "./dlmmLiquidityState";
 import { projectDlmmLiquidity, verifyDlmmDeposit } from "./dlmmLiquidity";
-import type { MarketNode } from "./marketTypes";
+import type { DlmmMarketBinding, MarketNode } from "./marketTypes";
 import { matchPhysicalJettonFlow } from "./jettonFlow";
 import {
   INTERNAL,
@@ -104,6 +107,7 @@ export type ProjectionInput = {
   chains: Map<string, LedgerChain>;
   wallets: Map<string, LedgerAsset>;
   pools: Map<string, LedgerPool>;
+  marketBindings?: Map<string, DlmmMarketBinding>;
   opcodes: OpcodeSets;
   optionFactories?: Map<string, LedgerOptionFactory>;
   /** Configured controllers remain known protocol scope even when qualification fails. */
@@ -390,7 +394,7 @@ export async function projectOwnerLedger(
     anchor: Node;
     kind: "swap" | "lp_deposit" | "lp_withdraw" | "lp_fee_collect";
     settlement?: LedgerEvent["settlement"];
-    pool: string;
+    pool?: string;
     queryId?: string;
     confirmed: boolean;
     evidence: LedgerEvidenceRef[];
@@ -480,6 +484,14 @@ export async function projectOwnerLedger(
       destination: direction === "in" ? owner : pool.address,
       evidence,
     });
+  const routedCandidates = new Map<string,{operation:Operation;flow:Flow}>();
+  for(const node of nodes) {
+    const notice=tokenWire(node.raw.inMessage);
+    if(notice?.op!==NOTIFY || notice.owner!==owner || notice.forward.bits.length<32 || notice.forward.beginParse().preloadUint(32)!==ROUTED_SWAP_INTENT)continue;
+    const flow=flowForNotification(node);if(!flow)continue;
+    const operation:Operation={anchor:flow.source,kind:'swap',pool:undefined,queryId:notice.queryId,confirmed:false,evidence:uniqueRefs([ref(node),ref(flow.source),ref(flow.recipient)]),issue:'routed_swap_settlement_unconfirmed'};
+    routedCandidates.set(node.id,{operation,flow});operations.push(operation);usedFlows.add(flow.id);
+  }
   for (const pool of pools.values()) {
     const poolNodes = nodes.filter((n) => n.account === pool.address);
     let swapProof: ReturnType<typeof createDlmmProofGraph> | null = null;
@@ -496,6 +508,36 @@ export async function projectOwnerLedger(
       return swapProof = createDlmmProofGraph({network, pool: pool.address, poolCodeHash: pool.codeHash, walletCodeHash,
         tokenT: pool.tokenT, tokenX: pool.tokenX}, proofNodes);
     };
+    for(const node of poolNodes.filter(node=>opcode(node.raw.inMessage)===ROUTER_POOL_EXECUTE)) {
+      try {
+        const binding=input.marketBindings?.get(pool.address);
+        if(!binding || binding.network!==network || binding.poolCodeHash!==pool.codeHash || binding.tokenT!==pool.tokenT || binding.tokenX!==pool.tokenX)throw Error('routed_swap_binding_unqualified');
+        const graph=await swapGraph(),acceptance=graph.nodes.find(n=>nodeId(n.account,n.raw)===node.id)!;
+        const proof=verifyDlmmRoutedSwapExecution(binding,graph,acceptance);
+        const admission=proof.routing.routerAcceptance;
+        const pending=routedCandidates.get(`${admission.account}:${admission.lt}:${canonicalLedgerHash(admission.hash)}`);
+        if(!pending || proof.notice.owner!==owner || proof.forward.recipient!==owner || pending.operation.confirmed)continue;
+        const {flow:inputFlow,operation}=pending;
+        const terminal=proof.routing.terminalSettlement;
+        const matching=(debit:LedgerEvidenceRef,credit:LedgerEvidenceRef,amountRaw:string)=>flows.filter(flow=>flow.confirmed &&
+          flow.source.account===debit.account&&flow.source.raw.lt===debit.lt&&canonicalLedgerHash(flow.source.raw.hash)===canonicalLedgerHash(debit.hash)&&
+          flow.recipient.account===credit.account&&flow.recipient.raw.lt===credit.lt&&canonicalLedgerHash(flow.recipient.raw.hash)===canonicalLedgerHash(credit.hash)&&flow.wire.amountRaw===amountRaw);
+        const terminalFlows=matching(terminal.debit,terminal.credit,terminal.amountRaw);
+        if(terminalFlows.length!==1 || !inputFlow.confirmed || proof.paid.toString()!==inputFlow.wire.amountRaw ||
+          inputFlow.source.account!==proof.paymentSource.node.account || inputFlow.source.raw.lt!==proof.paymentSource.node.raw.lt)throw Error('routed_swap_owner_cash_unverified');
+        const evidence=uniqueRefs([ref(node),ref(inputFlow.source),ref(inputFlow.recipient),...routingEvidenceRefs(proof.routing),
+          ...proof.settlements.flatMap(s=>[s.request,s.debit,s.credit,s.acknowledged,s.walletFinalized,s.poolFinalized,...s.boundaries.map(b=>b.transaction)])]
+          .map(value=>({...value,hash:canonicalLedgerHash(value.hash)})));
+        if(!evidence.every(value=>chains.get(value.account)?.historyComplete))throw Error('routed_swap_history_incomplete');
+        for(const value of evidence) {const member=nodes.find(n=>n.account===value.account&&n.raw.lt===value.lt&&canonicalLedgerHash(n.raw.hash)===value.hash);if(member)attach(inputFlow.source,member);}
+        for(const leg of [proof.routing.inputSettlement,terminal,...proof.settlements,...(proof.routing.protocolFeeSettlement?[proof.routing.protocolFeeSettlement]:[])])for(const flow of matching(leg.debit,leg.credit,leg.amountRaw))usedFlows.add(flow.id);
+        operation.pool=pool.address;operation.confirmed=true;operation.evidence=evidence;operation.issue=undefined;
+        operation.settlement={status:'confirmed',protocol:'dlmm',operation:'swap',pool:pool.address,queryId:proof.notice.queryId,evidence,
+          dlmmSwap:{poolCodeHash:pool.codeHash,paidInputRaw:proof.paid.toString(),consumedInputRaw:proof.consumed.toString(),returnedInputRaw:proof.returned.toString(),outputRaw:proof.output.toString(),
+            inputMovementId:`${inputFlow.id}:out`,outputMovementId:proof.output>0n?`${terminalFlows[0].id}:in`:null,refundMovementId:proof.returned>0n?`${terminalFlows[0].id}:in`:null,
+            acceptance:ref(node),finalizations:[{...terminal.routerFinalized,hash:canonicalLedgerHash(terminal.routerFinalized.hash)}],routing:mapRoutingEvidence(proof.routing,value=>({...value,hash:canonicalLedgerHash(value.hash)}))}};
+      }catch { /* Original routed funding remains an explicit incomplete swap. */ }
+    }
     const deposits = new Map<
       string,
       Array<{ node: Node; flow: Flow; binId: number; queryId: string }>

@@ -5,6 +5,7 @@ import { bodyCell } from './wire';
 import { readPerpsAdmission, samePerpsAdmission } from './perpsAdmission';
 import {
   PERPS_EXPIRE_ORDER, PERPS_ORACLE_FAILED, PERPS_ORACLE_PULL, PERPS_ORACLE_RESULT,
+  PERPS_ORACLE_REFRESH_VALUE, PERPS_RISK_ADMISSION_VALUE, PERPS_NOTIFICATION_ENVELOPE_VALUE, PERPS_CLOSE_ORACLE_VALUE, PERPS_CLOSE_PROCESSING_VALUE,
   perpsOracleMessage, type PerpsRequest,
 } from './perpsWire';
 import {
@@ -46,7 +47,9 @@ export async function readPerpsOracleExecution(input: {
   if (old && (old.wireQueryId === queued.wireQueryId || old.queryId === queued.queryId || old.order?.outcome === 1)) return null;
   if (queued.order.funding ? queued.order.funding.senderWallet !== ownerWallet :
       address(original.raw.inMessage?.source) !== owner || BigInt(original.raw.inMessage?.value ?? '0') !==
-        BigInt(queued.order.nativeBudgetRaw) + (request.operation === 'modify' ? 500000000n : 320000000n)) return null;
+        BigInt(queued.order.nativeBudgetRaw) + PERPS_NOTIFICATION_ENVELOPE_VALUE
+          + (request.operation === 'modify' ? PERPS_ORACLE_REFRESH_VALUE + PERPS_RISK_ADMISSION_VALUE
+            : PERPS_CLOSE_ORACLE_VALUE + PERPS_CLOSE_PROCESSING_VALUE)) return null;
   const poolAddress = queued.order.pool;
   if (intake.after.markets.get(request.marketId)?.pool !== poolAddress || intake.before.markets.get(request.marketId)?.pool !== poolAddress) return null;
   const pulls = original.raw.outMessages.flatMap((message, index) => {
@@ -65,7 +68,7 @@ export async function readPerpsOracleExecution(input: {
     const message = node.raw.inMessage, wire = perpsOracleMessage(message);
     const isExpiry = wire?.opcode === PERPS_EXPIRE_ORDER;
     let exactMessage = Boolean(wire && wire.wireQueryId === queued.wireQueryId && wire.marketId === request.marketId && !message?.bounced && (
-      isExpiry ? node.raw.utime >= Number(queued.requestedAt) + 300 && BigInt(message?.value ?? '0') >= 300000000n :
+      isExpiry ? node.raw.utime >= Number(queued.requestedAt) + 300 && BigInt(message?.value ?? '0') >= PERPS_ORACLE_REFRESH_VALUE :
         pool && success(pool) && address(message?.source) === poolAddress &&
         pool.raw.outMessages.some((_, index) => receiptFor(pool, index)?.id === node.id) &&
         (wire.opcode === PERPS_ORACLE_FAILED || wire.opcode === PERPS_ORACLE_RESULT && wire.owner === owner && wire.requestHash === queued.requestHash)

@@ -123,7 +123,7 @@ Every page has `coverage.projectionScope`: a published owner projection contains
 `{ kind: "owner", owner, physicalAccounts }`, with canonical raw TON addresses and
 a sorted, unique list of the physical accounts represented by that projection,
 including the owner. The scope is persisted with the generation, included in its
-decoder `exact-ledger-v19` fingerprint, and preserved by older cursors. A scope
+decoder `exact-ledger-v20` fingerprint, and preserved by older cursors. A scope
 change creates a new generation even when both generations have no events.
 This describes represented accounts; it does not certify discovery of every
 owned asset or complete history. Published projections with explicit history or
@@ -191,7 +191,7 @@ physical proof is supported; retries cannot supply a candle output either.
 `minOut` is never execution output. Run `npx tsx src/scripts/ledger-settlement-test.ts`
 and `npx tsx src/scripts/market-candles-test.ts` for these boundaries; `npm test`
 includes both suites. This does not make candles exact historical tax valuations.
-The `exact-ledger-v19` projection fingerprint forces fresh decoder generations
+The `exact-ledger-v20` projection fingerprint forces fresh decoder generations
 on recheck, including quiet accounts, while preserving previous cursor snapshots.
 Run `npx tsx src/scripts/ledger-test.ts` for persisted decoder invalidation.
 
@@ -199,7 +199,10 @@ Run `npx tsx src/scripts/ledger-test.ts` for persisted decoder invalidation.
 
 `LEDGER_MARKET_BINDINGS_JSON` enables a separate durable DLMM market projection.
 Supply a JSON array whose entries have exactly `network`, `pool`, `poolCodeHash`,
-`walletCodeHash`, `tokenT`, `tokenX`, `tokenTCodeHash`, and `tokenXCodeHash`.
+`walletCodeHash`, `tokenT`, `tokenX`, `tokenTCodeHash`, `tokenXCodeHash`, `router`,
+and `routerCodeHash`. The router pair must both be null for direct-only markets,
+or both contain the qualified router address and code hash for routed markets.
+The same binding qualifies routed swaps in owner history.
 Addresses must use canonical raw TON
 form; code hashes must be deployment-qualified lowercase 64-character Cell
 hashes. The network must match `TON_NETWORK`. Empty/unset means no qualified
@@ -210,6 +213,17 @@ Use `INDEXER_DATABASE_URL` and the existing ledger database initialization. The
 canonical `sql/ledger.sql` also creates independent `market_heads`,
 `market_generations`, `market_observations`, `market_candidates`, and
 `market_root_archive_states` tables.
+Current single-pool RSWI swaps require the original payer transfer into the router,
+Router-to-pool wallet settlement and finalization, exact RPSX pool allocation,
+physical pool output and T3 protocol-fee delivery to the router, RPSC/RPCA
+completion, and the independent router-to-beneficiary wallet finalizer. The
+`routing` evidence keeps those intermediate custody legs separate from the user's
+payment and received output. Missing callbacks, archives, qualified router code,
+or incomplete chains leave explicit unresolved candidates. Limit orders, TWAP,
+and multihop routes are not inferred from the ordinary swap decoder. Run
+`npx tsx src/scripts/ledger-dlmm-routed-swap-test.ts` for real current-contract
+execution and adversarial evidence tests.
+
 Configured pools refresh through the durable account backfill every 30 seconds;
 work is serialized locally, coordinated by a PostgreSQL advisory lock, and
 published with an expected-generation fence. `LEDGER_MAX_RELATED_ACCOUNTS` and
@@ -298,7 +312,7 @@ exact amounts, missing evidence, quiet-chain freshness and route behavior.
 explicit 6/9 decimal content; the older fixtures remain unchanged and their
 malformed metadata remains unresolved. Its archive adapter uses simulated block
 sequence labels over original executor cells, not live masterchain proof.
-The owner decoder fingerprint is `exact-ledger-v19`; the separate market schema
+The owner decoder fingerprint is `exact-ledger-v20`; the separate market schema
 is `dlmm-market-ledger-v1`. Neither adds a backwards-compatibility decoder.
 LP deposits require both matched funding legs and an exact positive
 position delta at the applying pool transaction. LP withdrawals require the exact
@@ -895,7 +909,7 @@ Committed deposits decrease both bucket and aggregate locked/premium amounts
 without changing tracked balance. Orphan custody increases tracked balance by
 the exact principal and preserves the complete bucket dictionary and aggregate
 amounts. Missing fields are not a substitute for proof. Snapshot identity uses
-decoder `exact-ledger-v19`; consumers use this canonical format without an older
+decoder `exact-ledger-v20`; consumers use this canonical format without an older
 format adapter. A partial return records only its actual credit and leaves the purchase
 refund pending. A complete refund conserves the original gross funding exactly
 once, and replaces that request's incomplete acquisition event with the same
@@ -1001,7 +1015,7 @@ only its observed cash flow and owned physical transaction fees; the separately
 queued creator insurance return does not become the participant's refund.
 `npm run test:ledger:launchpad` runs configuration, storage/wire, projector, and
 graph discovery checks using a contract sandbox trace. No provider credentials or
-live transactions are needed. The decoder fingerprint is `exact-ledger-v19`, so
+live transactions are needed. The decoder fingerprint is `exact-ledger-v20`, so
 changed decoding or evidence publishes a fresh immutable generation instead of
 reusing earlier projections.
 
@@ -1146,7 +1160,7 @@ A failed token transfer instruction remains unconfirmed and does not create a
 settled token credit. Terminal status is specific to native movement evidence;
 shared historical transaction references and market evidence retain their own
 contracts. This does not infer beneficial ownership, tax classification or a
-deduction. Decoder `exact-ledger-v19` gives reprojected canonical records a new
+deduction. Decoder `exact-ledger-v20` gives reprojected canonical records a new
 fingerprint, without an old-format adapter.
 
 Run `npm run test:ledger:native-terminal`, `npm run test:ledger`, and `npm run build`.
@@ -1283,7 +1297,7 @@ Async perps debt conservation uses the exact callback before-market deficit as i
 starting balance. Its freshly authenticated callback market supplies execution
 price, funding and safety controls only. Accepted insolvent CLOSE execution can
 therefore prove the new protocol debt without reporting cash that was never paid.
-The `exact-ledger-v19` owner fingerprint and `perps-range-v3` range binding identify
+The `exact-ledger-v20` owner fingerprint and `perps-range-v3` range binding identify
 these corrected projections; no older state layout is decoded as a fallback.
 
 The current DLMM liquidity evidence ABI records one original notification per
@@ -1398,15 +1412,19 @@ refund publishes zero input consumption and its return, without an output receip
 refund fixtures plus public receipt-consumer regressions. Set
 `DLMM_SWAP_EVIDENCE_OUT` to write projected operations and check results locally.
 
-Current-source DLMM swap qualification reads the products cell and both mandatory
-wallet dictionaries. The checked-in full/partial/first-refund swap fixtures were
-regenerated from one frozen source closure; their gzip bytes and compiler hashes
-are pinned in `src/scripts/fixtures/dlmm-swap.provenance.json`. The current protocol
-fee is settlement kind 9, allocated after the payer refund/output. Its exact T3
-source, treasury destination, request hash, successor chain and reserves must
-agree. The fee allocation remains separate from payer cash finalization: a READY
-treasury liability cannot turn a fully received user swap into an unresolved
-receipt. These checks do not certify treasury delivery or routed swap execution.
+Current-source DLMM qualification requires the exact 608-bit guard containing
+reserve high-water and oracle-depth continuity, the fourth cumulative observation
+dictionary, mandatory products/provenance cells, and current wallet dictionaries.
+Direct swaps are zero-fee. Their allocation proof reserves 0.3 TON for processing
+before funding any output/refund journal. Fee-bearing execution uses the qualified
+router and the exact RSWI/RPSX/RPSC/RPCA chain; fee accrual is separate from the
+trader's physical output and any unused-input refund. Router history uses only
+RTR1, extras version 5 and the committed RSJ8 journal layout; missing or obsolete
+state remains unresolved. Current fixtures under
+`src/scripts/fixtures/dlmm-referral-{market,liquidity}-current` are regenerated
+from original canonical-v15 executions, including full router/referral custody
+for LP fees. Run `npm run test:ledger:market`, `npm run test:ledger:liquidity` and
+`npm run test:ledger` after changing these proofs.
 
 Launchpad first-release storage uses one shared settlement journal across fixed,
 bonding and auction sales. The decoder retains original referral terms, the
@@ -1452,7 +1470,13 @@ actual full bounce decoding and physical token edges. These captures do not
 substitute for deployment-qualified historical state or live-chain evidence.
 
 The current RiskVault payout journal contains the explicit native escrow reference
-before its route reference; omitted historical layouts are unsupported. Run
+before its route reference. Its containing journal has the mandatory funded ready FIFO (`head:uint64 tail:uint64 entries:dict64→256`); missing, noncontiguous or dangling queue entries are rejected. Omitted historical layouts are unsupported. Run
 `npm run test:ledger:native-funding` for original compiled wallet and RiskVault
 captures, including all seven RiskVault graph account balance boundaries. Current
 Mesh snapshots require exactly31 getter fields; no13/57-field fallback is accepted.
+
+Launchpad bonding participation verification uses the current cumulative linear
+curve cost `C(s + q) - C(s)`, including the contract's upward rounding, and checks
+that the accepted quantity is maximal for the physical payment. Spot price alone
+does not establish a fill. Run `npm run test:ledger:launchpad` to verify all three
+current model captures and their independent wallet/state evidence.

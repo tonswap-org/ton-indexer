@@ -117,7 +117,7 @@ for (const name of fixtureNames) {
       while (wire !== '0') {queued.add(wire); wire = after.settlements.get(wire)!.successorId;}
     }
     for (const record of after.settlements.values()) {
-      const required = (record.forwardTonAmountRaw !== '0' || record.forwardPayload.bits.length || record.forwardPayload.refs.length ? 160000000n : 140000000n) + BigInt(record.forwardTonAmountRaw) + 40000000n;
+      const required = (record.forwardTonAmountRaw !== '0' || record.forwardPayload.bits.length || record.forwardPayload.refs.length ? 420000000n : 400000000n) + BigInt(record.forwardTonAmountRaw) + 220000000n;
       // Constructed adversarial mutations of actual current ABI boundaries,
       // never replacement execution evidence or altered qualification inputs.
       if (!detachedQueueChecked && !queued.has(record.settlementId)) {

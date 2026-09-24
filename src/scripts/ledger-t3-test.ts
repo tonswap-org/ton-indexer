@@ -1,3 +1,4 @@
+import { writeCurrentJettonWalletStorage } from "../ledger/jettonWalletState";
 import assert from "node:assert/strict";
 import { Address, Cell, Dictionary, beginCell } from "@ton/core";
 import { createHash } from "node:crypto";
@@ -789,35 +790,17 @@ function recoveredRedeem(referrer: string | null = null) {
     status: number,
     balance = status ? f.n : f.n * 2n,
     journalQuery = status ? BigInt(query) : 0n,
-  ) =>
-    beginCell()
-      .storeCoins(balance)
-      .storeAddress(A(owner))
-      .storeAddress(A(root))
-      .storeCoins(0)
-      .storeCoins(0)
-      .storeAddress(null)
-      .storeUint(0, 96)
-      .storeCoins(0)
-      .storeRef(
-        beginCell()
-          .storeUint(status, 8)
-          .storeUint(journalQuery, 64)
-          .storeCoins(status ? f.n : 0n)
-          .storeUint(status ? BigInt("0x" + requestHash) : 0n, 256)
-          .storeAddress(status ? A(hub) : null),
-      )
-      .storeRef(
-        beginCell()
-          .storeUint(0, 8)
-          .storeUint(0, 64)
-          .storeUint(0, 64)
-          .storeCoins(0)
-          .storeUint(0, 256),
-      )
-      .storeDict(null)
-      .storeDict(null)
-      .endCell();
+  ) => writeCurrentJettonWalletStorage({
+    owner: A(owner), root: A(root), feeDelegate: null,
+    balance, lockedFees: 0n, borrowedFees: 0n,
+    lastBounceOpcode: 0, lastBounceQueryId: 0n, lastBounceAmount: 0n,
+    burnJournal: beginCell().storeUint(status, 8).storeUint(journalQuery, 64)
+      .storeCoins(status ? f.n : 0n).storeUint(status ? BigInt("0x" + requestHash) : 0n, 256)
+      .storeAddress(status ? A(hub) : null).endCell(),
+    mintJournal: beginCell().storeUint(0, 8).storeUint(0, 64).storeUint(0, 64)
+      .storeCoins(0).storeUint(0, 256).endCell(),
+    mintReceipts: null, referralNotifications: null,
+  });
   const hubState = (
     consumed: number | null,
     proofWire = wire,
@@ -1579,7 +1562,7 @@ async function main() {
   assert.equal((await projectOwnerLedger(referredBasket.input)).events.find(e => e.kind === "t3_mint")?.settlement?.t3?.referrer, other);
   const referredRedemption = recoveredRedeem(other);
   const referredRedeemEvent = (await projectOwnerLedger(referredRedemption.input)).events.find(e => e.kind === "t3_redeem")!;
-  assert.equal(referredRedeemEvent.settlement?.status, "confirmed");
+  assert.equal(referredRedeemEvent.settlement?.status, "confirmed", JSON.stringify(referredRedeemEvent));
   assert.equal(referredRedeemEvent.settlement?.t3?.referrer, other);
   const swappedInvitation = recoveredRedeem(other);
   swappedInvitation.boundary(hub, swappedInvitation.execute,

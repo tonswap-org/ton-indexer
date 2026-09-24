@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import type { Flow, Node, ProjectionInput } from "./project";
 import type { LedgerEvent, LedgerEvidenceRef, LedgerMovement } from "./types";
 import { canonicalLedgerAddress, canonicalLedgerHash } from "./normalize";
-import { NOTIFY, SETTLEMENT_INTERNAL, tokenWire, opcode } from "./wire";
+import { NOTIFY, SETTLEMENT_INTERNAL, tokenWire, opcode, businessOpcode } from "./wire";
 import {
   perpsControl,
   perpsMessage,
@@ -281,11 +281,11 @@ export async function decodePerps(
               position: perpsPosition(intakeStates.before, input.owner, request.marketId),
               pending: perpsPending(intakeStates.before, engine.ownerWallet) } };
           const vault = intakeStates.after.riskVault, controller = intakeStates.after.markets.get(request.marketId)?.riskPolicy?.controller;
-          const reservation = oracle.nodes.find(node => node.account === vault && opcode(node.raw.inMessage) === 0x52564c54);
-          const vaultResponse = oracle.nodes.find(node => node.account === engine.address && [0x5256414b, 0x52564e4b].includes(opcode(node.raw.inMessage) ?? 0));
+          const reservation = oracle.nodes.find(node => node.account === vault && businessOpcode(node.raw.inMessage) === 0x52564c54);
+          const vaultResponse = oracle.nodes.find(node => node.account === engine.address && [0x5256414b, 0x52564e4b].includes(businessOpcode(node.raw.inMessage) ?? 0));
           if (vault && controller && reservation && vaultResponse) {
-            const policyRequest = oracle.nodes.find(node => node.account === controller && opcode(node.raw.inMessage) === 0x52505251);
-            const policyResponse = oracle.nodes.find(node => node.account === engine.address && opcode(node.raw.inMessage) === 0x52505253);
+            const policyRequest = oracle.nodes.find(node => node.account === controller && businessOpcode(node.raw.inMessage) === 0x52505251);
+            const policyResponse = oracle.nodes.find(node => node.account === engine.address && businessOpcode(node.raw.inMessage) === 0x52505253);
             meta.oracleExecution.admission = { version: 'perps-funded-admission-v1', vault, controller,
               reservation: ref(reservation), vaultResponse: ref(vaultResponse),
               policyRequest: policyRequest ? ref(policyRequest) : null, policyResponse: policyResponse ? ref(policyResponse) : null };

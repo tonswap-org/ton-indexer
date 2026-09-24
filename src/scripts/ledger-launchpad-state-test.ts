@@ -152,7 +152,7 @@ test('failed claim changes exact entitlement and reserves refund separately from
 test('actual refund requires DELIVERED to FINAL with exact reserve decrease and physical accepted cash', () => {
   const deliveredBefore = parse(delivered.before), deliveredAfter = parse(delivered.after), before = parse(finalized.before), after = parse(finalized.after);
   assert.equal(deliveredBefore.journal.entries.get(refundWire)!.status, 2); assert.equal(deliveredAfter.journal.entries.get(refundWire)!.status, 3);
-  assert.equal(deliveredBefore.journal.entries.get(refundWire)!.finalizeReservedRaw, '40000000');
+  assert.equal(deliveredBefore.journal.entries.get(refundWire)!.finalizeReservedRaw, '220000000');
   assert.equal(deliveredAfter.journal.entries.get(refundWire)!.finalizeReservedRaw, '0');
   assert.equal(before.journal.entries.get(refundWire)!.state, 'delivered'); assert.equal(after.journal.entries.get(refundWire)!.state, 'final');
   assert.equal(BigInt(before.journal.reservedPaymentRaw) - BigInt(after.journal.reservedPaymentRaw), 4000000000n);

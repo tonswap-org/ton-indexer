@@ -2,6 +2,13 @@ import { Address, Cell, beginCell, contractAddress } from "@ton/core";
 import type { RawMessage } from "../data/dataSource";
 import { bodyCell, businessBodyCell } from "./wire";
 import { buildTonswapJettonWalletInitialData } from "../data/jettonAbi";
+// Exact first-release budget split persisted by the current engine. These
+// values bind a paid notification to its continuation; they are not gas quotes.
+export const PERPS_ORACLE_REFRESH_VALUE = 300_000_000n;
+export const PERPS_CLOSE_ORACLE_VALUE = 400_000_000n;
+export const PERPS_CLOSE_PROCESSING_VALUE = 400_000_000n;
+export const PERPS_RISK_ADMISSION_VALUE = 980_000_000n;
+export const PERPS_NOTIFICATION_ENVELOPE_VALUE = 20_000_000n;
 export const PERPS_OPEN = 0x4f50454e,
   PERPS_MODIFY = 0x4d444946,
   PERPS_CLOSE = 0x434c4f53,

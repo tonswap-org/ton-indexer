@@ -94,6 +94,8 @@ async function buildDiscovery(label: string, options: {missingRecipientWallet?: 
   const decoded = readDlmmMarketState(poolState.dataBoc!);
   const guard = Cell.fromBase64(poolState.dataBoc!).refs[2].beginParse();
   const guards = [guard.loadUintBig(128), guard.loadUintBig(128), guard.loadUintBig(16), guard.loadUintBig(16), guard.loadUintBig(128)];
+  assert.equal(guard.loadUintBig(128).toString(), decoded.binReserveHighWater);
+  assert.equal(guard.loadUintBig(64).toString(), decoded.oracleDepthHealthySince);
   assert.equal(guard.remainingBits, 0); assert.equal(guard.remainingRefs, 0);
   const addressItem = (value: string | null): TupleItem => ({type: 'slice', cell: beginCell().storeAddress(value ? Address.parse(value) : null).endCell()});
   const intItem = (value: bigint | number): TupleItem => ({type: 'int', value: BigInt(value)});

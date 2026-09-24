@@ -146,6 +146,7 @@ const start = async () => {
   const ledger = ledgerStore ? new LedgerService(config.network, ledgerStore, source, opcodes, logger, 2, {
     jettonRoots: jettonRoots.map(root => root.master),
     dlmmRegistry: registry.DlmmRegistry,
+    marketBindings: config.ledgerMarketBindings,
     optionFactory: registry.OptionFactory,
     optionVault: registry.OptionVault,
     optionCodeHashes: config.ledgerOptionsCodeHashes,

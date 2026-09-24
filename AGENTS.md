@@ -70,6 +70,11 @@ different layout when the qualified model parser rejects a state. Participation
 requires the exact original owner message, physical payment debit/credit and
 historical participant-entry change. Repeated query IDs are not deduplication
 identities; distinct original transactions can be accepted independently.
+Current sale roots require their exact SLF1, SLB1 or SLA1 model tag, nested
+configuration/metric cells and the bonding entry's bounded fill count. Older
+untagged or inline layouts are rejected. Bonding entitlements use exact cumulative
+linear-curve rounding and the maximal quantity for the physical payment, never
+spot-price division.
 Original contribution, historical entitlement and reserve changes, independent
 wallet delivery and sale finalization are required. A terminal journal status
 can also mean retired failure; never infer cash from it. Keep original purchase
@@ -79,7 +84,8 @@ from verified authority. Run `npm run test:ledger:launchpad` after changes.
 
 Historical DLMM execution observations use `LEDGER_MARKET_BINDINGS_JSON`: an
 array of exact `network`, `pool`, `poolCodeHash`, `walletCodeHash`, `tokenT`, and
-`tokenX`, `tokenTCodeHash`, and `tokenXCodeHash` deployment bindings. The pool-seeded graph reads durable physical account
+`tokenX`, `tokenTCodeHash`, `tokenXCodeHash`, and mandatory paired `router` /
+`routerCodeHash` deployment bindings (both null for direct-only markets). The pool-seeded graph reads durable physical account
 chains and qualified historical state; it never reuses an owner projection or
 float candles. Keep actual input consumption, unused-input refunds, output
 credits and finalization separate. A pool acknowledgement is not wallet receipt.
@@ -130,14 +136,16 @@ from their business query alone. Run `npm run test:ledger:liquidity`, the market
 suite and the full ledger suite after these decoder changes.
 
 The current DSJ1 fourth reference is the products cell: mandatory uint16
-`stableAmp`, then farming and router-operation references. Direct deployment
+`stableAmp`, then farming, router-operation and direct-swap receipt references. Direct deployment
 provenance includes its mandatory router-address reference. Canonical wallet
 state/address derivation includes both mint-receipt and referral-notification
 dictionaries after the burn/mint journals. Omitted products or dictionaries are
 unsupported; refresh fixtures with their source bindings rather than introducing
-old-layout readers. Direct swap kind 9 protocol-fee allocation is a separate T3
-treasury liability. Verify exact allocation/order/wallet/request/reserve evidence;
-only output and unused-input-refund settlements prove the payer's completed cash.
+old-layout readers. Fee-bearing swaps use the strict configured router proof. Direct swaps are
+zero-fee and reserve their explicit 0.3 TON processing allowance before funding
+output/refund journals. Verify the original routed request, independent pool
+completion, separate fee allocation and final trader cash; no acknowledgement
+alone proves wallet delivery.
 Run `src/scripts/ledger-dlmm-swap-test.ts` for the frozen current-source cases.
 
 The current oracle journal stores count:uint16, nextWireQueryId:uint64, an eligibility dictionary keyed by uint128 (eligibleAt<<64|wireQueryId), and owner receipts. Protected paid outcome1 records have no index entry. Terminal records have eligibleAt0; unpaid pending records have requestedAt+300. Reject count, unique nonce or index/receipt mismatches and obsolete ring layouts; no scan fallback.
@@ -153,3 +161,21 @@ and gas usage separately from typed infrastructure errors. Run `npm run test:adm
 and the complete `npm test`; the ordinary build must retain owned clean-dist cleanup.
 The native package is qualified and installed separately; the Linux Docker image
 does not provide it or support a registered perps engine.
+
+Current routed DLMM observations require strict RTR1/extras5/RSJ8 historical router
+state and the sole RSWI/RPSX/RPSC/RPCA ordinary single-pool wire. Payer funding,
+router input finalization, pool output and fee custody, pool completion ACK and
+final beneficiary wallet settlement remain independent facts. The protocol fee
+is not a second owner payment; intermediate router wallets are not the user's
+received output. Preserve explicit incomplete owner swaps and market candidates
+when any binding, historical state, callback or physical leg is unavailable. Run
+`src/scripts/ledger-dlmm-routed-swap-test.ts` and the full market suite.
+
+Current Router historical storage includes the mandatory fourth TWAP extras reference:
+a creation journal with exact receipt and immutable automation-owner dictionaries.
+The owner keys are domain-separated limit/TWAP business IDs; records retain the
+original owner, atomic query ID and fixed queue (nullable only for manual plans).
+Missing journal/owner dictionaries, mismatched receipt identities and trailing
+fields are not accepted as older layouts. Native TWAP browser completion uses the
+strict contract receipt plus physical wallet evidence; generic missing-plan reads
+are never settlement evidence.

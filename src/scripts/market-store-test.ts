@@ -11,7 +11,7 @@ import type { LedgerSqlPool, LedgerSqlClient } from '../ledger/store';
 
 function actualProjection(): MarketProjection {
   const f=JSON.parse(readFileSync(resolve(__dirname,'fixtures/dlmm-referral-market-current/dlmm-market-settlements.json'),'utf8'));
-  const binding:DlmmMarketBinding={network:'localnet',pool:f.accounts.pool,tokenT:f.accounts.tokenT,tokenX:f.accounts.tokenX, tokenTCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
+  const binding:DlmmMarketBinding={ router: null, routerCodeHash: null,network:'localnet',pool:f.accounts.pool,tokenT:f.accounts.tokenT,tokenX:f.accounts.tokenX, tokenTCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
     poolCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash,
     walletCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_wallet.tolk')).codeHash};
   const nodes:MarketNode[]=f.transactions.map((t:{account:string;raw:MarketNode['raw']})=>{

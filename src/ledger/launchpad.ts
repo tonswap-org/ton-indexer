@@ -67,7 +67,7 @@ function validateEnqueue(before: SaleState, after: SaleState, sale: LedgerLaunch
   const added = [...a.entries.values()].filter(record => !b.entries.has(record.settlementId));
   const record = one(added.filter(item => refundRecord(item, sale, owner, old.paymentAmountRaw)));
   requireEvidence(record && record.settlementId === b.nextSettlementId && record.predecessorId === '0' && record.status === 2 &&
-    record.deliveryReservedRaw === '0' && record.finalizeReservedRaw === '40000000' && b.currentPaymentId === '0' && b.tailPaymentId === '0', 'launchpad_refund_initial_record_unverified');
+    record.deliveryReservedRaw === '0' && record.finalizeReservedRaw === '220000000' && b.currentPaymentId === '0' && b.tailPaymentId === '0', 'launchpad_refund_initial_record_unverified');
   requireEvidence([...b.entries].every(([id, item]) => same(item, a.entries.get(id))) &&
     a.entries.size === b.entries.size + added.length && added.length >= 1 && added.length <= 2 &&
     BigInt(a.nextSettlementId) === BigInt(b.nextSettlementId) + BigInt(added.length) &&
@@ -89,7 +89,7 @@ function validateEnqueue(before: SaleState, after: SaleState, sale: LedgerLaunch
 function validateCallback(before: SaleState, after: SaleState, record: FixedSaleSettlement, phase: 'delivery' | 'finalization') {
   const b = before.journal, a = after.journal, old = b.entries.get(record.settlementId), next = a.entries.get(record.settlementId);
   const successor = old?.successorId && old.successorId !== '0' ? b.entries.get(old.successorId) : undefined;
-  const advanced = phase === 'finalization' && successor?.status === 1 && BigInt(successor.deliveryReservedRaw) > 0n && successor.finalizeReservedRaw === '40000000';
+  const advanced = phase === 'finalization' && successor?.status === 1 && BigInt(successor.deliveryReservedRaw) > 0n && successor.finalizeReservedRaw === '220000000';
   const changed = new Set([record.settlementId, ...(advanced ? [successor!.settlementId] : [])]);
   requireEvidence(old && next && immutableRecord(record, old, ['status', 'deliveryReservedRaw', 'finalizeReservedRaw']) &&
     immutableRecord(old, next, ['status', 'finalizeReservedRaw']) && old.deliveryReservedRaw === '0' && next.deliveryReservedRaw === '0' &&
@@ -98,8 +98,8 @@ function validateCallback(before: SaleState, after: SaleState, record: FixedSale
     a.currentSaleId === b.currentSaleId && a.tailSaleId === b.tailSaleId && a.reservedSaleRaw === b.reservedSaleRaw && b.currentPaymentId === record.settlementId,
     'launchpad_refund_callback_state_unverified');
   if (phase === 'delivery') {
-    requireEvidence(old.status === 2 && next.status === 3 && old.finalizeReservedRaw === '40000000' && next.finalizeReservedRaw === '0' &&
-      BigInt(b.reservedNativeRaw) - BigInt(a.reservedNativeRaw) === 40000000n &&
+    requireEvidence(old.status === 2 && next.status === 3 && old.finalizeReservedRaw === '220000000' && next.finalizeReservedRaw === '0' &&
+      BigInt(b.reservedNativeRaw) - BigInt(a.reservedNativeRaw) === 220000000n &&
       a.currentPaymentId === b.currentPaymentId && a.tailPaymentId === b.tailPaymentId && a.reservedPaymentRaw === b.reservedPaymentRaw,
       'launchpad_refund_delivery_delta_unverified');
   } else {

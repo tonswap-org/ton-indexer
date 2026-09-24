@@ -32,10 +32,12 @@ export function readLaunchpadRegistry(cell: Cell) {
 }
 /** Current configured envelope shared by all three models. No bootstrap or
  * superseded routing/header formats are admitted. */
-export function readLaunchpadEnvelope(dataBoc: string) {
+export function readLaunchpadEnvelope(dataBoc: string, model: 'fixed' | 'bonding' | 'auction') {
   const roots = Cell.fromBoc(Buffer.from(dataBoc, 'base64'));
   if (roots.length !== 1) throw Error('Launchpad state requires one root');
   const data = roots[0], s = data.beginParse();
+  const storageMagic = { fixed: 0x534c4631, bonding: 0x534c4231, auction: 0x534c4131 }[model];
+  if (s.remainingBits < 32 || s.loadUint(32) !== storageMagic) throw Error('Current Launchpad model storage required');
   if (s.remainingRefs !== 4) throw Error('Launchpad root reference layout');
   const registry = readLaunchpadRegistry(s.loadRef()), routing = s.loadRef().beginParse();
   const paymentRouting = readLaunchpadRouting(routing.loadRef()), saleRouting = readLaunchpadRouting(routing.loadRef()); end(routing);

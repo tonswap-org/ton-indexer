@@ -20,7 +20,7 @@ const f=JSON.parse(readFileSync(fixturePath,'utf8'));
 const source='contracts/shared/jetton/jetton_root.tolk';
 const rootCodeHash=f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName===source).codeHash;
 const walletCodeHash=f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton_wallet.tolk')).codeHash;
-const binding:DlmmMarketBinding={network:'localnet',pool:f.accounts.pool,tokenT:f.accounts.tokenT,tokenX:f.accounts.tokenX,tokenTCodeHash:rootCodeHash,tokenXCodeHash:rootCodeHash,walletCodeHash,poolCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash};
+const binding:DlmmMarketBinding={ router: null, routerCodeHash: null,network:'localnet',pool:f.accounts.pool,tokenT:f.accounts.tokenT,tokenX:f.accounts.tokenX,tokenTCodeHash:rootCodeHash,tokenXCodeHash:rootCodeHash,walletCodeHash,poolCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash};
 const rootState=(root:string)=>f.boundaries.filter((b:{account:string})=>b.account===root).at(-1).after as AccountStateResponse;
 const acceptance=f.transactions.find((t:{account:string;phase:string;raw:{inMessage?:{op?:number}}})=>t.account===binding.pool && t.phase==='full-t-to-x' && t.raw.inMessage?.op===0x7362d09c).raw;
 const execution={account:binding.pool,lt:acceptance.lt,hash:acceptance.hash,utime:acceptance.utime};
@@ -34,16 +34,16 @@ let checks=0;function test(name:string,fn:()=>void){fn();checks++;console.log('P
 test('authentic deployed root metadata explicitly records6 and9 with unchanged code and original state cells',()=>{
  assert.equal(readHistoricalPrecisionContent(readHistoricalJettonRoot(rootState(binding.tokenT).dataBoc!).content).decimals,6);
  assert.equal(readHistoricalPrecisionContent(readHistoricalJettonRoot(rootState(binding.tokenX).dataBoc!).content).decimals,9);
- let roots=0,unconfigured=0;
+ let roots=0;
  for(const row of f.transactions) {
   if(![binding.tokenT,binding.tokenX].includes(row.account))continue;const boundary=f.boundaries.find((b:{account:string;transactionHash:string})=>b.account===row.account&&b.transactionHash===row.raw.hash);
   const tx=loadTransaction(Cell.fromBase64(row.transactionBoc).beginParse());assert.equal(tx.hash().toString('hex'),row.raw.hash);
   const shard=loadShardAccount(Cell.fromBase64(boundary.after.shardAccountBoc).beginParse());assert.equal(Cell.fromBase64(boundary.after.shardAccountBoc).refs[0].hash().toString('hex'),tx.stateUpdate.newHash.toString('hex'));
   if(shard.account?.storage.state.type==='active') {assert.equal(shard.account.storage.state.state.code!.hash().toString('hex'),rootCodeHash);assert.equal(shard.account.storage.state.state.data!.hash().toString('hex'),Cell.fromBase64(boundary.after.dataBoc).hash().toString('hex'));}
   const data=Cell.fromBase64(boundary.after.dataBoc);
-  if(data.bits.length===32 && data.refs.length===4 && data.beginParse().preloadUint(32)===0x4a545253){readHistoricalJettonRoot(boundary.after.dataBoc);roots++;}
-  else {assert.throws(()=>readHistoricalJettonRoot(boundary.after.dataBoc));unconfigured++;}
- }assert(roots>=10);assert.equal(unconfigured,2,'initial deployment config is evidence, not an admitted execution-era writer layout');
+  assert.equal(data.bits.length,32);assert.equal(data.refs.length,4);assert.equal(data.beginParse().preloadUint(32),0x4a545253);
+  readHistoricalJettonRoot(boundary.after.dataBoc);roots++;
+ }assert(roots>=10,'fresh deployment and execution boundaries all use the sole current JTRS layout');
 });
 test('root code bindings are mandatory canonical deployment inputs',()=>{assert.deepEqual(parseLedgerMarketBindings(JSON.stringify([binding]),'localnet'),[binding]);for(const key of ['tokenTCodeHash','tokenXCodeHash'] as const){const missing={...binding} as Partial<DlmmMarketBinding>;delete missing[key];assert.throws(()=>parseLedgerMarketBindings(JSON.stringify([missing]),'localnet'));assert.throws(()=>parseLedgerMarketBindings(JSON.stringify([{...binding,[key]:'current-rpc'}]),'localnet'));}});
 test('explicit archived precision has source/content/field proof and does not require equality of cross-account logical times',()=>{

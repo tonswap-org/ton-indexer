@@ -13,12 +13,18 @@ async function main() {
   const provenance = JSON.parse(readFileSync(join(directory, 'provenance.json'), 'utf8'));
   const saved = JSON.parse(bytes.toString('utf8'));
   assert.equal(createHash('sha256').update(bytes).digest('hex'), provenance.sha256);
-  const expectedCode = '672adf0e4798430a169468e52d7665024f1ed6293958334a4fcfe32358e570a7';
+  const expectedCode = JSON.parse(readFileSync(join(__dirname,
+    'fixtures/perps-risk-admission-current/provenance.json'), 'utf8')).engineCodeHash;
   const code = Cell.fromBase64(saved.codeBoc), data = Cell.fromBase64(saved.dataBoc);
   assert.equal(code.hash().toString('hex'), expectedCode);
   assert.equal(saved.codeHash, expectedCode);
   assert.equal(provenance.engineCodeHash, expectedCode);
-  const market = readPerpsState(saved.dataBoc, expectedCode).markets.get(saved.marketId);
+  const currentAdmission = JSON.parse(readFileSync(join(__dirname,
+    'fixtures/perps-risk-admission-current/open-accepted.json'), 'utf8'));
+  const state = readPerpsState(saved.dataBoc, expectedCode);
+  assert.equal(state.walletCode.hash().toString('hex'), Cell.fromBase64(currentAdmission.walletCode).hash().toString('hex'),
+    'The actual checkpoint state must embed the same current immutable Wallet as the admission captures');
+  const market = state.markets.get(saved.marketId);
   assert(market);
   assert.equal(market.fundingIndexRaw, saved.fundingIndex);
   assert.equal(market.fundingRemainderRaw, '300');

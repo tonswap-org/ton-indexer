@@ -1,3 +1,4 @@
+import { DLMM_TRANSFER_DELIVERY_VALUE, DLMM_TRANSFER_NOTIFICATION_VALUE, DLMM_TRANSFER_CONTROL_VALUE } from './dlmmState';
 import { Address, Cell, beginCell } from '@ton/core';
 import type { RawMessage } from '../data/dataSource';
 import { canonicalLedgerAddress, canonicalLedgerHash } from './normalize';
@@ -156,7 +157,7 @@ export function createDlmmProofGraph(binding: DlmmProofBinding, supplied: readon
   function readyRotation(node: MarketNode, fresh: DlmmSettlementRecord) {
     const state = poolAt(node), prior = state.before.settlements.get(fresh.predecessorId);
     requireProof(successful(node) && prior && prior.status === 1 && !state.after.settlements.has(prior.settlementId) &&
-      !state.before.settlements.has(fresh.settlementId) && fresh.status === 2 && fresh.fundedRaw === '40000000' &&
+      !state.before.settlements.has(fresh.settlementId) && fresh.status === 2 && fresh.fundedRaw === DLMM_TRANSFER_CONTROL_VALUE.toString() &&
       fresh.recordedAt === node.raw.utime && fresh.successorId === prior.successorId &&
       BigInt(prior.settlementId) < BigInt(state.before.nextSettlementId) - 1n,
       'market_ready_rotation_state_invalid');
@@ -177,7 +178,7 @@ export function createDlmmProofGraph(binding: DlmmProofBinding, supplied: readon
       const request = bodyCell(node.raw.inMessage)!.beginParse();
       requireProof(request.remainingBits === 96 && request.remainingRefs === 0, 'market_ready_rotation_retry_invalid');
       request.skip(32); requireProof(request.loadUintBig(64).toString() === prior.settlementId, 'market_ready_rotation_retry_invalid');
-      const required = (prior.forwardTonAmountRaw !== '0' || prior.forwardPayload.bits.length || prior.forwardPayload.refs.length ? 160000000n : 140000000n) + BigInt(prior.forwardTonAmountRaw) + 40000000n;
+      const required = (prior.forwardTonAmountRaw !== '0' || prior.forwardPayload.bits.length || prior.forwardPayload.refs.length ? DLMM_TRANSFER_NOTIFICATION_VALUE : DLMM_TRANSFER_DELIVERY_VALUE) + BigInt(prior.forwardTonAmountRaw) + DLMM_TRANSFER_CONTROL_VALUE;
       requireProof(BigInt(node.raw.inMessage!.value ?? '0') >= required - BigInt(prior.fundedRaw) + 20000000n, 'market_ready_rotation_funding_invalid');
     } else {
       const tuple = perpsControl(node.raw.inMessage, 0x4a53464b);
@@ -230,9 +231,9 @@ export function createDlmmProofGraph(binding: DlmmProofBinding, supplied: readon
     const finalizeOrigin = origin(finalizer), acknowledged = finalizeOrigin.node, ack = poolAt(acknowledged), sent = ack.before.settlements.get(prior.settlementId), failed = ack.after.settlements.get(prior.settlementId);
     requireProof(acknowledged.account === binding.pool && control(acknowledged.raw.outMessages[finalizeOrigin.index], 0x4a53464e, prior) &&
       control(acknowledged.raw.inMessage, 0x4a544246, prior) && address(acknowledged.raw.inMessage?.source) === prior.sourceWallet &&
-      sameRecord(sent, prior) && sent!.status === 2 && sent!.fundedRaw === '40000000' && sameRecord(failed, prior) && failed!.status === 4 && failed!.fundedRaw === '0' &&
+      sameRecord(sent, prior) && sent!.status === 2 && sent!.fundedRaw === DLMM_TRANSFER_CONTROL_VALUE.toString() && sameRecord(failed, prior) && failed!.status === 4 && failed!.fundedRaw === '0' &&
       ack.before.reservedT === ack.after.reservedT && ack.before.reservedX === ack.after.reservedX &&
-      BigInt(ack.before.reservedNative) - BigInt(ack.after.reservedNative) === 40000000n,
+      BigInt(ack.before.reservedNative) - BigInt(ack.after.reservedNative) === DLMM_TRANSFER_CONTROL_VALUE,
       'market_negative_acknowledgement_invalid');
     laneHead(ack.before, sent!); laneHead(ack.after, failed!);
     const link = (receipt: MarketNode) => {
@@ -307,13 +308,25 @@ export function createDlmmProofGraph(binding: DlmmProofBinding, supplied: readon
       bodyCell(request.message)?.hash().toString('hex') === record.requestHash && wire.custom?.bits.length === 32 && !wire.custom.refs.length && wire.custom.beginParse().loadUint(32) === 0x4a535454,
       'market_settlement_request_invalid');
     const requestState = poolAt(request.node), sentRecord = requestState.after.settlements.get(record.settlementId);
-    requireProof(sameRecord(sentRecord, record) && sentRecord!.status === 2 && sentRecord!.fundedRaw === '40000000', 'market_settlement_send_state_unverified');
+    requireProof(sameRecord(sentRecord, record) && sentRecord!.status === 2 && sentRecord!.fundedRaw === DLMM_TRANSFER_CONTROL_VALUE.toString(), 'market_settlement_send_state_unverified');
     laneHead(requestState.after, sentRecord!);
     if (request.node !== acceptance && !rotations.some(r => r.transaction.hash === ref(request.node).hash)) {
       const prior = requestState.before.settlements.get(record.settlementId);
       requireProof(sameRecord(prior, record) && prior!.status === 1 && requestState.before.nextSettlementId === requestState.after.nextSettlementId, 'market_ready_dispatch_unverified');
       if (opcode(request.node.raw.inMessage) === 0x44535259) {
-        requireProof(requestState.before.reservedT === requestState.after.reservedT && requestState.before.reservedX === requestState.after.reservedX, 'market_ready_retry_unverified');
+        const retry = bodyCell(request.node.raw.inMessage)?.beginParse();
+        requireProof(retry && retry.remainingBits === 96 && retry.remainingRefs === 0, 'market_ready_retry_wire_invalid');
+        retry.skip(32);
+        requireProof(retry.loadUintBig(64).toString() === prior!.settlementId, 'market_ready_retry_nonce_invalid');
+        const required = (prior!.forwardTonAmountRaw !== '0' || prior!.forwardPayload.bits.length || prior!.forwardPayload.refs.length
+          ? DLMM_TRANSFER_NOTIFICATION_VALUE : DLMM_TRANSFER_DELIVERY_VALUE) + BigInt(prior!.forwardTonAmountRaw) + DLMM_TRANSFER_CONTROL_VALUE;
+        requireProof(BigInt(request.node.raw.inMessage!.value ?? '0') >= required - BigInt(prior!.fundedRaw) + 20000000n,
+          'market_ready_retry_funding_invalid');
+        requireProof(requestState.before.reservedT === requestState.after.reservedT && requestState.before.reservedX === requestState.after.reservedX &&
+          BigInt(requestState.after.reservedNative) - BigInt(requestState.before.reservedNative) === DLMM_TRANSFER_CONTROL_VALUE - BigInt(prior!.fundedRaw) &&
+          requestState.before.settlements.size === requestState.after.settlements.size &&
+          [...requestState.before.settlements].every(([id, value]) => id === prior!.settlementId || requestState.after.settlements.get(id)?.recordHash === value.recordHash),
+          'market_ready_retry_unverified');
       } else {
         // Qualified JSFK cleanup may automatically send the next queued head.
         const tuple = perpsControl(request.node.raw.inMessage, 0x4a53464b), previous = tuple && requestState.before.settlements.get(tuple.queryId);
@@ -348,7 +361,7 @@ export function createDlmmProofGraph(binding: DlmmProofBinding, supplied: readon
       control(recipientAck.node.raw.outMessages[recipientAck.index], 0x4a534143, record), 'market_recipient_acknowledgement_unverified');
     const ackState = poolAt(acknowledged), beforeAck = ackState.before.settlements.get(record.settlementId), afterAck = ackState.after.settlements.get(record.settlementId);
     requireProof(sameRecord(beforeAck, record) && sameRecord(afterAck, record) && beforeAck!.status === 2 && afterAck!.status === 3 &&
-      beforeAck!.fundedRaw === '40000000' && afterAck!.fundedRaw === '0' && BigInt(ackState.before.reservedNative) - BigInt(ackState.after.reservedNative) === 40000000n &&
+      beforeAck!.fundedRaw === DLMM_TRANSFER_CONTROL_VALUE.toString() && afterAck!.fundedRaw === '0' && BigInt(ackState.before.reservedNative) - BigInt(ackState.after.reservedNative) === DLMM_TRANSFER_CONTROL_VALUE &&
       ackState.before.reservedT === ackState.after.reservedT && ackState.before.reservedX === ackState.after.reservedX, 'market_pool_delivery_state_unverified');
     laneHead(ackState.before, beforeAck!); laneHead(ackState.after, afterAck!);
     const finalizers = acknowledged.raw.outMessages.map((message, index) => ({ message, index })).filter(({ message }) => control(message, 0x4a53464e, record));

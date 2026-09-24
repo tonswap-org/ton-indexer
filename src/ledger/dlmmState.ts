@@ -1,6 +1,10 @@
 import { Address, Cell, Dictionary, beginCell, type Slice, type DictionaryKeyTypes, type DictionaryKey, type DictionaryValue } from '@ton/core';
 import { readDlmmDirectSwaps } from './dlmmDirectSwapState';
 
+export const DLMM_TRANSFER_DELIVERY_VALUE = 400_000_000n;
+export const DLMM_TRANSFER_NOTIFICATION_VALUE = 420_000_000n;
+export const DLMM_TRANSFER_CONTROL_VALUE = 220_000_000n;
+export const DLMM_ADD_PROCESSING_VALUE = 300_000_000n;
 export const DLMM_SETTLEMENT_START = 0x4453000000000001n;
 const end = (slice: Slice) => { if (slice.remainingBits || slice.remainingRefs) throw new Error('dlmm_state_trailing_data'); };
 const hash = (value: bigint) => value.toString(16).padStart(64, '0');
@@ -21,6 +25,26 @@ export interface DlmmSettlementRecord {
   amountRaw: string; forwardTonAmountRaw: string; fundedRaw: string;
   sourceWallet: string; destinationOwner: string; destinationWallet: string;
   forwardPayload: Cell; recordHash: string;
+}
+
+export interface DlmmRouterOperation {
+  requestHash: string; settlementId: string; status: number; completionFunded: string;
+  feeSettlementId: string; feeDelivered: boolean; outputDelivered: boolean;
+  grossFeeT3: string; protocolFeeT3: string; request: Cell; completion: Cell;
+}
+export function readDlmmRouterOperation(cell: Cell): DlmmRouterOperation {
+  const s = cell.beginParse();
+  if (s.remainingRefs !== 2) throw new Error('dlmm_router_operation_layout_invalid');
+  const requestHash = hash(s.loadUintBig(256)), settlementId = s.loadUintBig(64).toString(), status = s.loadUint(8);
+  const completionFunded = s.loadCoins().toString(), feeSettlementId = s.loadUintBig(64).toString();
+  const feeDelivered = s.loadBoolean(), outputDelivered = s.loadBoolean();
+  const grossFeeT3 = s.loadCoins().toString(), protocolFeeT3 = s.loadCoins().toString();
+  const request = s.loadRef(), completion = s.loadRef(); end(s);
+  if (status > 2 || request.hash().toString('hex') !== requestHash || BigInt(protocolFeeT3) > BigInt(grossFeeT3) ||
+    [settlementId, feeSettlementId].some(id => id !== '0' && BigInt(id) < DLMM_SETTLEMENT_START) ||
+    (status > 0 && (!feeDelivered || !outputDelivered || completionFunded !== '0' || completion.bits.length === 0)))
+    throw new Error('dlmm_router_operation_fields_invalid');
+  return {requestHash, settlementId, status, completionFunded, feeSettlementId, feeDelivered, outputDelivered, grossFeeT3, protocolFeeT3, request, completion};
 }
 
 /** Current DLRF binds a returned token leg to its original notification. A
@@ -63,16 +87,23 @@ export function readDlmmSettlementRecord(cell: Cell): DlmmSettlementRecord {
  * and transaction-boundary qualification belong to the caller. */
 export function readDlmmMarketState(boc: string) {
   const cell = Cell.fromBase64(boc); completeCell(cell); const root = cell.beginParse();
-  const tokenT = address(root), tokenX = address(root), treasury = root.loadMaybeAddress()?.toRawString() ?? null;
+  if (root.remainingBits !== 953 || root.remainingRefs !== 4 || root.loadUint(32) !== 0x444c5031) throw new Error('dlmm_pool_layout_invalid');
+  const tokenT = address(root), tokenX = address(root), treasury = address(root);
   const poolKind = root.loadUint(8), binSpacing = root.loadInt(32), activeBinId = root.loadInt(32), feePips = root.loadUint(32), impactCapBps = root.loadUint(16);
-  if (tokenT === tokenX || root.remainingRefs !== 4) throw new Error('dlmm_pool_layout_invalid');
+  if (tokenT === tokenX || (poolKind !== 2 && poolKind !== 4) || root.remainingRefs !== 4) throw new Error('dlmm_pool_layout_invalid');
   const bins = root.loadRef(), observations = root.loadRef(), guard = root.loadRef(), meta = root.loadRef().beginParse(); end(root);
-  if (bins.bits.length !== 512 || bins.refs.length !== 1 || observations.bits.length !== 112 || observations.refs.length !== 1 || guard.bits.length !== 416 || guard.refs.length)
+  if (bins.bits.length !== 512 || bins.refs.length !== 1 || observations.bits.length !== 112 || observations.refs.length !== 1 || guard.bits.length !== 608 || guard.refs.length)
     throw new Error('dlmm_pool_structures_invalid');
-  const governance = meta.loadMaybeAddress()?.toRawString() ?? null, controlSeqno = meta.loadUintBig(64).toString(), lastUpdate = meta.loadUintBig(64).toString();
+  const guardSlice = guard.beginParse();
+  const minTReserve = guardSlice.loadUintBig(128).toString(), minXReserve = guardSlice.loadUintBig(128).toString();
+  guardSlice.skip(32); const binLiquidityCap = guardSlice.loadUintBig(128), binReserveHighWater = guardSlice.loadUintBig(128).toString(), oracleDepthHealthySince = guardSlice.loadUintBig(64).toString(); end(guardSlice);
+  if (binLiquidityCap === 0n || BigInt(binReserveHighWater) > binLiquidityCap) throw new Error('dlmm_guard_reserve_cap_invalid');
+  const guardConfigurationHash = beginCell().storeBits(guard.bits.substring(0, 416)).endCell().hash().toString('hex');
+  if (meta.remainingBits !== 651 || meta.remainingRefs !== 4) throw new Error('dlmm_pool_metadata_invalid');
+  const governance = address(meta), controlSeqno = meta.loadUintBig(64).toString(), lastUpdate = meta.loadUintBig(64).toString();
   const feeClaimedT = meta.loadUintBig(128).toString(), feeClaimedX = meta.loadUintBig(128).toString();
-  if (meta.remainingRefs !== 3 && meta.remainingRefs !== 4) throw new Error('dlmm_pool_metadata_invalid');
-  const walletCode = meta.loadRef(), positions = meta.loadRef().beginParse(), accrual = meta.loadRef(), provenance = meta.remainingRefs ? meta.loadRef() : null; end(meta);
+  if (meta.remainingRefs !== 4) throw new Error('dlmm_pool_metadata_invalid');
+  const walletCode = meta.loadRef(), positions = meta.loadRef().beginParse(), accrual = meta.loadRef(), provenance = meta.loadRef(); end(meta);
   if (positions.remainingBits || positions.remainingRefs !== 4 || accrual.bits.length !== 8 || accrual.refs.length !== 4 || accrual.beginParse().loadUint(8) !== 0xac)
     throw new Error('dlmm_pool_positions_invalid');
   const positionCell = positions.loadRef(), pendingCell = positions.loadRef(), withdrawalsCell = positions.loadRef(), journalCell = positions.loadRef(); end(positions);
@@ -92,12 +123,13 @@ export function readDlmmMarketState(boc: string) {
     const initialObservations = os.loadInt(32) === activeBinId && os.loadUintBig(64) === 0n && os.loadUint(16) === 0;
     if (!zeroGrowth || !initialObservations || !empty(bins.refs[0]) || !empty(positionCell) || !empty(pendingCell) || !empty(withdrawalsCell) ||
       accrual.refs.some(c => !empty(c)) || controlSeqno !== '0' || lastUpdate !== '0' || feeClaimedT !== '0' || feeClaimedX !== '0' ||
-      empty(walletCode) || ring.bits.length || ring.refs.length !== 3)
+      empty(walletCode) || ring.bits.length || ring.refs.length !== 4)
       throw new Error('dlmm_constructor_state_invalid');
     const constructorDicts = [
       dict(ring.refs[0], Dictionary.Keys.Uint(16), Dictionary.Values.Uint(32)),
       dict(ring.refs[1], Dictionary.Keys.Uint(16), Dictionary.Values.BigUint(64)),
-      dict(ring.refs[2], Dictionary.Keys.Uint(16), Dictionary.Values.BigUint(128))
+      dict(ring.refs[2], Dictionary.Keys.Uint(16), Dictionary.Values.BigUint(128)),
+      dict(ring.refs[3], Dictionary.Keys.Uint(16), Dictionary.Values.BigInt(64))
     ];
     if (constructorDicts.some(d => d.size)) throw new Error('dlmm_constructor_observations_invalid');
   } else {
@@ -117,6 +149,11 @@ export function readDlmmMarketState(boc: string) {
     stableAmp = products.loadUint(16); farmingCell = products.loadRef(); routerOperations = products.loadRef(); directSwapsCell = products.loadRef(); end(products);
     if (poolKind === 2 ? stableAmp === 0 || activeBinId !== 0 || binSpacing !== 1 : stableAmp !== 0) throw new Error('dlmm_stable_configuration_invalid');
     if (!empty(routerOperations)) dict(routerOperations, Dictionary.Keys.BigUint(64), Dictionary.Values.Cell());
+  }
+  const routerOperationRecords = new Map<string, DlmmRouterOperation>();
+  if (!empty(routerOperations)) for (const [key, cell] of dict(routerOperations, Dictionary.Keys.BigUint(64), Dictionary.Values.Cell())) {
+    if (key === 0n) throw new Error('dlmm_router_operation_identity_invalid');
+    routerOperationRecords.set(key.toString(), readDlmmRouterOperation(cell));
   }
   const withdrawalIds = new Set([...withdrawals.keys()].map(id => id.toString()));
   let nextCampaignId = 1n, farmEscrowT = 0n, farmEscrowX = 0n;
@@ -141,8 +178,8 @@ export function readDlmmMarketState(boc: string) {
   const queuedIds = new Set<string>();
   const directSwaps = readDlmmDirectSwaps(directSwapsCell, nextSettlementId, settlements);
   const requiredFunding = (record: DlmmSettlementRecord) =>
-    (record.forwardTonAmountRaw !== '0' || record.forwardPayload.bits.length || record.forwardPayload.refs.length ? 160000000n : 140000000n) +
-    BigInt(record.forwardTonAmountRaw) + 40000000n;
+    (record.forwardTonAmountRaw !== '0' || record.forwardPayload.bits.length || record.forwardPayload.refs.length ? DLMM_TRANSFER_NOTIFICATION_VALUE : DLMM_TRANSFER_DELIVERY_VALUE) +
+    BigInt(record.forwardTonAmountRaw) + DLMM_TRANSFER_CONTROL_VALUE;
   for (const [queueKey, cell] of queues) {
     const queue = cell.beginParse();
     if (queue.remainingBits !== 128 || queue.remainingRefs) throw new Error('dlmm_queue_layout_invalid');
@@ -185,7 +222,7 @@ export function readDlmmMarketState(boc: string) {
   }
   // Both bootstrap and direct-deployment metadata are emitted by current code.
   // Preserve their cells without interpreting registration as verified authority.
-  return { storageForm, tokenT, tokenX, treasury, router, stableAmp, routerOperationsHash: routerOperations.hash().toString('hex'), directSwaps, poolKind, binSpacing, activeBinId, feePips, impactCapBps,
+  return { minTReserve, minXReserve, binReserveHighWater, oracleDepthHealthySince, guardConfigurationHash, storageForm, tokenT, tokenX, treasury, router, stableAmp, routerOperations: routerOperationRecords, routerOperationsHash: routerOperations.hash().toString('hex'), directSwaps, poolKind, binSpacing, activeBinId, feePips, impactCapBps,
     governance, controlSeqno, lastUpdate, feeClaimedT, feeClaimedX, walletCode, walletCodeHash: walletCode.hash().toString('hex'),
     nextSettlementId: nextSettlementId.toString(), reservedT, reservedX, reservedNative, settlements, lanes, queues,
     farmingHash: farmingCell.hash().toString('hex'), nextCampaignId: nextCampaignId.toString(), farmEscrowT: farmEscrowT.toString(), farmEscrowX: farmEscrowX.toString(),

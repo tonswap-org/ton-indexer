@@ -1,7 +1,7 @@
 {
   "source": "tonswap_tolk/tests/perps/PerpsRiskAdmission.spec.ts Sandbox raw transactions and exact storage boundaries",
-  "engineCodeHash": "672adf0e4798430a169468e52d7665024f1ed6293958334a4fcfe32358e570a7",
-  "capturedOn": "2026-09-20",
+  "engineCodeHash": "806cd1dfeeb953afbbe44803c28c3e787e51b544f1570ec4f64162d39bbc2b6a",
+  "capturedOn": "2026-09-23",
   "cases": {
     "open-accepted": "reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880",
     "vault-rejected": "refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880",
@@ -11,42 +11,63 @@
     "gap-close": "caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close",
     "failed-close": "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close"
   },
-  "poolCodeHash": "583d8fdd3b13388e4bbf63def6c0e44e0da2ed15b7cf50bbe040df1d33d68b90",
+  "poolCodeHash": "4c5a57c698bd0085a8dc54329b9b009d1e2f4d80df131c10f7646dc4f63e0207",
   "artifacts": [
     {
       "relative": "open-accepted.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880.json",
-      "sha256": "73296e0371fd90de528531ee4da3086aa23a8f97a854097b9d586b53f3c06c67"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880.json",
+      "sha256": "151a79952676be2e4888f81089053c97625f2d5d028cc19df5c7a0efe004b1d0",
+      "bytes": 858332
     },
     {
       "relative": "vault-rejected.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880.json",
-      "sha256": "acb5d6cde6da0e84e3defad6a0d3fdf3ba5860e3cf5528394d99ed9435159a04"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880.json",
+      "sha256": "3f0bb126a5fbe4acabbe216b90764e0e7d1d69199c91f048e2ff071285e68ab4",
+      "bytes": 1038304
     },
     {
       "relative": "policy-rejected.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/releases-an-accepted-reservation-and-refunds-when-the-policy-budget-is-insufficient-open-880.json",
-      "sha256": "0051c99c309c0a7985234b79f3a888abc7578e179fa8458c8d9c1b352a678aff"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/releases-an-accepted-reservation-and-refunds-when-the-policy-budget-is-insufficient-open-880.json",
+      "sha256": "4933c59caddad643575c9eabd8b797b5462154e97a27b7d95b810b8d37997674",
+      "bytes": 1090684
     },
     {
       "relative": "modify-accepted.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify.json",
-      "sha256": "6cec337ecfda4a3e39ddf8477bcca27d2d2a95941d00696b650603ded3f76a6b"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify.json",
+      "sha256": "a3a438163b53501eebb17feaef1cd4529f806173ef455ffd0ce27a7607c237ba",
+      "bytes": 909908
     },
     {
       "relative": "profitable-close.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close.json",
-      "sha256": "bb48c908230996d19b05ef8b89cd58b9715886f1750ca873c15b33da2675f824"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close.json",
+      "sha256": "48c3f51acee8b4dd9bd490f4c6e1fc26f7ada630baddd98afe34378be53a9a0c",
+      "bytes": 1103422
     },
     {
       "relative": "gap-close.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close.json",
-      "sha256": "6f4c9c27e28670b440d8a561987a640ee0543044dbbe5e43b486131c3482fbeb"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close.json",
+      "sha256": "24fbef33f28a864c6b939a696eb65516b242c701e37542c4fa8eac4a9180242f",
+      "bytes": 1089590
     },
     {
       "relative": "failed-close.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/perps-risk-fixtures/release-current-20260920-final/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close.json",
-      "sha256": "3439a08cecad4a4f6b79ad450cf3dc3b4803dcbd48297b35c90ce740f69d90ee"
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close.json",
+      "sha256": "d365fd185f8784eb613956b74e09318580ca646574ddece18db0734e3c6cf0e8",
+      "bytes": 633143
     }
-  ]
+  ],
+  "walletCodeHash": "c6a2543ca7ee992bc0a90e84586fdd8c1bb1bf3afbe031a6a0c1325a91554ddf",
+  "validation": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/producer.log",
+    "sha256": "52bd6ebe0121b73aba6748d9effe1165f87785c50aad7a2b3810d2b2e4a0bb3e",
+    "bytes": 2547,
+    "passed": 44,
+    "skipped": 0,
+    "scope": "Complete current PerpsRiskAdmission.spec.ts VM15 producer suite with independently compiled current Pool and PerpsEngine artifacts."
+  },
+  "sourceBinding": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/source-binding.json",
+    "sha256": "a080b88c7d97d3ab0d7eaea9eb785bb3bb1ba0047b5ce484da64cc3921e97e2a",
+    "bytes": 5734
+  }
 }
