@@ -1174,7 +1174,14 @@ export class IndexerService {
     const signature = entryAfterRead?.balance === updated
       ? this.getBalanceAccountSignature(entryAfterRead)
       : null;
-    this.setCached(this.balanceCache, address, response, signature, this.config.balanceCacheTtlMs);
+    // A missing wallet is an unavailable read, never evidence that the asset
+    // disappeared. Do not make the next poll reuse that omission after the
+    // source has recovered; successful concurrent reads still share one request.
+    if (response.confirmed) {
+      this.setCached(this.balanceCache, address, response, signature, this.config.balanceCacheTtlMs);
+    } else {
+      this.balanceCache.delete(address);
+    }
     return response;
   }
 

@@ -160,11 +160,30 @@ const testFreshMetadataWithCachingDisabled = async () => {
   assert.equal(metadataCalls, 2, 'A zero metadata TTL still includes fresh metadata and revalidates');
 };
 
+const testPartialJettonReadCanRetry = async () => {
+  let calls = 0;
+  const service = new IndexerService(config, new MemoryStore(config), sourceWith({
+    async getJettonBalance() {
+      calls += 1;
+      return calls === 1 ? null : { wallet, balance: '1234567' };
+    },
+  }), loadOpcodes(undefined), [{ master, symbol: 'UNKNOWN' }]);
+  const partial = await service.getBalances(owner);
+  assert.equal(partial.confirmed, false);
+  assert.equal(partial.assets.filter((asset) => asset.kind === 'jetton').length, 0);
+  const recovered = await service.getBalances(owner);
+  assert.equal(recovered.confirmed, true,
+    'An unavailable wallet must be retried instead of caching the missing asset for the balance TTL');
+  assert.equal(recovered.assets.find((asset) => asset.kind === 'jetton')?.balance_raw, '1234567');
+  assert.equal(calls, 2);
+};
+
 Promise.all([
   testConcurrentReadsAndMetadataEnrichment(),
   testColdNativeReadsDoNotWaitForHistory(),
   testFailedNativeReadCanRetry(),
   testFreshMetadataWithCachingDisabled(),
+  testPartialJettonReadCanRetry(),
 ]).then(() => console.log('balance latency ok')).catch((error) => {
   console.error('balance latency test failed', error);
   process.exit(1);

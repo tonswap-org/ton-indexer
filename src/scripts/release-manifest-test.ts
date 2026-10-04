@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   linkSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -12,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   buildRegistryBundle,
   hashReleaseManifest,
@@ -416,6 +419,52 @@ try {
   assert.equal(plain.metadata.releaseId, null);
   assert.equal(plain.metadata.releaseManifestHash, null);
   assert.equal(plain.metadata.registryHash, hashRegistry(contracts));
+
+  const testnetManifest = writeManifest('sync-testnet.json', { network: 'ton:testnet' });
+  mkdirSync(join(root, 'registry'));
+  const registryPath = join(root, 'registry/testnet.json');
+  const syncCommand = resolve(__dirname, 'refresh-registry.ts');
+  const tsx = resolve(__dirname, '../../node_modules/tsx/dist/cli.mjs');
+  const sync = (...args: string[]) => spawnSync(process.execPath, [tsx, syncCommand, ...args], {
+    cwd: root, encoding: 'utf8', timeout: 15_000,
+    env: { ...process.env, INDEXER_RELEASE_MANIFEST_PATH: '' },
+  });
+  const exactRegistry = JSON.stringify(contracts, null, 2) + '\n';
+  writeFileSync(registryPath, exactRegistry);
+  const checked = sync('--check', testnetManifest);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(JSON.parse(checked.stdout).mode, 'check');
+  assert.equal(readFileSync(registryPath, 'utf8'), exactRegistry);
+  assert.deepEqual(readdirSync(join(root, 'registry')), ['testnet.json']);
+
+  const { T3Root: _omitted, ...missingRole } = contracts;
+  for (const [label, registry] of Object.entries({
+    changedAddress: { ...contracts, T3Root: addressA },
+    missingRole,
+    extraRole: { ...contracts, UnreviewedContract: addressA },
+  })) {
+    const retained = JSON.stringify(registry) + '\n';
+    writeFileSync(registryPath, retained);
+    const result = sync('--check', testnetManifest);
+    assert.equal(result.status, 1, label);
+    assert.match(result.stderr, /Registry\/release manifest (key|address) mismatch/, label);
+    assert.equal(readFileSync(registryPath, 'utf8'), retained, `${label}: check must not write`);
+    assert.deepEqual(readdirSync(join(root, 'registry')), ['testnet.json']);
+  }
+  writeFileSync(registryPath, exactRegistry);
+  for (const args of [
+    ['--check', path], ['--check', tamperedPath], ['--check'],
+    ['--unknown', testnetManifest], ['--check', testnetManifest, 'extra'],
+  ]) {
+    assert.equal(sync(...args).status, 1, JSON.stringify(args));
+    assert.equal(readFileSync(registryPath, 'utf8'), exactRegistry);
+  }
+  writeFileSync(registryPath, JSON.stringify(missingRole));
+  const synced = sync(testnetManifest);
+  assert.equal(synced.status, 0, synced.stderr);
+  assert.equal(JSON.parse(synced.stdout).mode, 'sync');
+  assert.deepEqual(JSON.parse(readFileSync(registryPath, 'utf8')), contracts);
+  assert.equal(sync('--check', testnetManifest).status, 0);
 
   process.stdout.write('release manifest registry parity ok\n');
 } finally {
