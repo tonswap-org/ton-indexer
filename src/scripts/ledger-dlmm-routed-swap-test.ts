@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Cell, loadTransaction } from '@ton/core';
+import { Address, Cell, Dictionary, beginCell, loadTransaction } from '@ton/core';
+import { readDlmmRouterSettlementGroup } from '../ledger/dlmmRouterState';
 import { createDlmmProofGraph } from '../ledger/dlmmProof';
 import { verifyDlmmRoutedSwapExecution } from '../ledger/dlmmRoutedSwapProof';
 import { opcode } from '../ledger/wire';
@@ -30,6 +31,9 @@ for (const observation of projected.observations) {
     assert.equal(new Set(observation.fees.map(f => `${f.transaction.account}:${f.transaction.lt}:${f.transaction.hash}`)).size, observation.fees.length);
     assert.notEqual(observation.routing!.terminalSettlement.credit.account, observation.settlements[0].credit.account);
     assert.equal(observation.routing!.protocolFeeSettlement!.amountRaw, observation.paidInputRaw === '100003' ? '51' : '77');
+    assert.equal(observation.routing!.directFeeSettlement!.amountRaw, observation.routing!.protocolFeeSettlement!.amountRaw);
+    assert.equal(observation.routing!.directFeeSettlement!.kind, 15);
+    assert.notEqual(observation.routing!.directFeeSettlement!.destinationOwner, binding.router);
     for (const fee of observation.fees)
         assert.equal(fee.nativeAmountRaw, nodes.find(n => n.account === fee.transaction.account && n.raw.lt === fee.transaction.lt)!.raw.totalFeesRaw);
     for (const mutate of [
@@ -37,6 +41,13 @@ for (const observation of projected.observations) {
         (o: typeof observation) => { o.routing!.terminalSettlement.destinationOwner = binding.pool; },
         (o: typeof observation) => { o.routing!.inputSettlement.boundaries = []; },
         (o: typeof observation) => { o.routing!.protocolFeeSettlement!.kind = 1; },
+        (o: typeof observation) => { o.routing!.directFeeSettlement = null; },
+        (o: typeof observation) => { o.routing!.directFeeSettlement!.amountRaw = '1'; },
+        (o: typeof observation) => { o.routing!.directFeeSettlement!.destinationOwner = binding.router!; },
+        (o: typeof observation) => { o.routing!.directFeeSettlement!.destinationOwner = fixture.accounts.payer; },
+        (o: typeof observation) => { o.routing!.directFeeSettlement!.amountRaw = '1'; o.routing!.protocolFeeSettlement!.amountRaw = '1'; },
+        (o: typeof observation) => { o.routing!.directFeeSettlement!.kind = 8; },
+        (o: typeof observation) => { Reflect.deleteProperty(o.routing!, 'directFeeSettlement'); },
         (o: typeof observation) => { o.fees.push(o.fees[0]); },
     ]) {
         const malformed = structuredClone(projected);
@@ -44,12 +55,95 @@ for (const observation of projected.observations) {
         assert.throws(() => validateMarketProjection(malformed));
     }
 }
+// Each metadata leg is bound to the unmodified canonical transfer fields.
+// Keep the real VM fixtures unchanged and mutate only the published evidence.
+for (const observation of projected.observations) for (const name of ['inputSettlement', 'terminalSettlement', 'protocolFeeSettlement', 'directFeeSettlement'] as const) {
+    for (const field of ['query', 'amount', 'owner', 'response', 'marker', 'trailing', 'tep74', 'coin-width', 'base64', 'oversize'] as const) {
+        const malformed = structuredClone(projected), leg = malformed.observations.find(o => o.id === observation.id)!.routing![name]!;
+        const s = Cell.fromBase64(leg.requestBodyBoc).beginParse(); s.loadUint(32);
+        const query = s.loadUintBig(64), amount = s.loadCoins(), owner = s.loadAddress(), response = s.loadAddress();
+        const marker = s.loadRef(), forward = s.loadCoins(), payload = s.loadRef(); s.endParse();
+        const b = beginCell().storeUint(0x0f8a7ea5, 32).storeUint(field === 'query' ? query + 1n : query, 64);
+        if (field === 'coin-width') b.storeUint(15, 4).storeUint(amount, 120);
+        else b.storeCoins(field === 'amount' ? amount + 1n : amount);
+        b.storeAddress(field === 'owner' ? Address.parse(binding.tokenT) : owner)
+            .storeAddress(field === 'response' ? Address.parse(fixture.accounts.payer) : response);
+        if (field === 'tep74') b.storeMaybeRef(marker); else b.storeRef(field === 'marker' ? Cell.EMPTY : marker);
+        b.storeCoins(forward); if (field === 'tep74') b.storeBit(true); b.storeRef(payload);
+        if (field === 'trailing') b.storeBit(true);
+        const body = b.endCell(); leg.requestBodyBoc = body.toBoc().toString('base64'); leg.requestBodyHash = body.hash().toString('hex');
+        if (field === 'base64') leg.requestBodyBoc = '\n' + leg.requestBodyBoc;
+        if (field === 'oversize') leg.requestBodyBoc = 'AAAA'.repeat(16385);
+        assert.throws(() => validateMarketProjection(malformed), /Invalid market projection/, `${name} ${field}`);
+    }
+    const malformed = structuredClone(projected), leg = malformed.observations.find(o => o.id === observation.id)!.routing![name]!;
+    leg.settlementId = (BigInt(leg.settlementId) + 1n).toString();
+    assert.throws(() => validateMarketProjection(malformed), /Invalid market projection/, `${name} metadata query`);
+}
+for (const observation of projected.observations) for (const name of ['protocolFeeSettlement', 'directFeeSettlement'] as const) {
+    const malformed = structuredClone(projected), o = malformed.observations.find(v => v.id === observation.id)!, r = o.routing!, leg = r[name]!;
+    const original = leg.sourceWallet;
+    const other = name === 'directFeeSettlement'
+        ? (original === r.inputSettlement.sourceWallet ? r.terminalSettlement.sourceWallet : r.inputSettlement.sourceWallet)
+        : (original === r.inputSettlement.destinationWallet ? o.settlements[0].sourceWallet : r.inputSettlement.destinationWallet);
+    leg.sourceWallet = other;
+    for (const ref of [leg.debit, leg.walletFinalized, ...leg.boundaries.map(b => b.transaction)]) if (ref.account === original) ref.account = other;
+    assert.throws(() => validateMarketProjection(malformed), /Invalid market projection/, `${name} wrong token source`);
+}
+const replaceRef = (cell: Cell, index: number, ref: Cell) => {
+    const builder = beginCell().storeBits(cell.bits); cell.refs.forEach((value, i) => builder.storeRef(i === index ? ref : value));
+    return builder.endCell();
+};
+// Preserve the real surrounding transaction/archive and mutate only the fee
+// context or queue state. The qualified proof must reject the substituted fact.
+for (const observation of projected.observations) {
+    const completion = observation.routing!.completion;
+    for (const mutation of ['completion-context', 'context-configuration', 'group-refund-owner'] as const) {
+        const altered = structuredClone(nodes), node = altered.find(n => n.account === completion.account && n.raw.lt === completion.lt)!;
+        const root = Cell.fromBase64(node.after!.state.dataBoc!), extras = root.refs[3], tail = extras.refs[3], durable = tail.refs[3], journal = durable.refs[1];
+        const primary = journal.refs[0].beginParse(), entries = primary.loadDict(Dictionary.Keys.BigUint(64), Dictionary.Values.Cell());
+        const groups = primary.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell()), locks = primary.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.BigUint(256));
+        const fee = [...groups].find(([, value]) => readDlmmRouterSettlementGroup(value).kind === 10 &&
+            readDlmmRouterSettlementGroup(value).finalized === 0)!;
+        assert(fee); let cell = fee[1];
+        if (mutation === 'group-refund-owner') {
+            const builder = beginCell().storeBits(cell.bits.substring(0, cell.bits.length - 267)).storeAddress(null);
+            cell.refs.forEach(ref => builder.storeRef(ref)); cell = builder.endCell();
+        } else {
+            const context = cell.refs[0];
+            if (mutation === 'context-configuration') cell = replaceRef(cell, 0, replaceRef(context, 0, Cell.EMPTY));
+            else {
+                const cursor = context.beginParse(); const amount = cursor.loadCoins(); cursor.loadUintBig(256);
+                const forged = beginCell().storeCoins(amount).storeUint(0, 256).storeSlice(cursor).endCell();
+                cell = replaceRef(cell, 0, forged);
+            }
+        }
+        groups.set(fee[0], cell);
+        const changedPrimary = beginCell().storeDict(entries).storeDict(groups).storeDict(locks).endCell();
+        node.after!.state.dataBoc = replaceRef(root, 3, replaceRef(extras, 3, replaceRef(tail, 3, replaceRef(durable, 1, replaceRef(journal, 0, changedPrimary))))).toBoc().toString('base64');
+        const acceptance = altered.find(n => n.account === binding.pool && n.raw.lt === observation.acceptance.lt)!;
+        assert.throws(() => verifyDlmmRoutedSwapExecution(binding, createDlmmProofGraph(binding, altered), acceptance), /market_router_direct_fee_allocation_invalid/);
+    }
+    const fee = observation.routing!.directFeeSettlement!, terminal = observation.routing!.terminalSettlement;
+    if (fee.sourceWallet === terminal.sourceWallet) {
+        assert.equal(terminal.request.lt, fee.routerFinalized.lt);
+        for (const mutation of ['source-wallet', 'query', 'amount'] as const) {
+            const altered = structuredClone(nodes), dispatch = altered.find(n => n.account === terminal.request.account && n.raw.lt === terminal.request.lt)!;
+            if (mutation === 'source-wallet') dispatch.raw.inMessage!.source = binding.pool;
+            else dispatch.raw.inMessage!.body = beginCell().storeUint(0x4a53464b, 32).storeUint(mutation === 'query' ? 1n : BigInt(fee.settlementId), 64)
+                .storeCoins(mutation === 'amount' ? 1n : BigInt(fee.amountRaw)).storeAddress(Address.parse(fee.destinationWallet)).endCell().toBoc().toString('base64');
+            const acceptance = altered.find(n => n.account === binding.pool && n.raw.lt === observation.acceptance.lt)!;
+            assert.throws(() => verifyDlmmRoutedSwapExecution(binding, createDlmmProofGraph(binding, altered), acceptance));
+        }
+    } else assert.equal(terminal.request.lt, completion.lt);
+}
 for (const target of projected.observations) {
     const routing = target.routing!;
     for (const [label, transaction] of Object.entries({ original: target.input.request, payerDebit: target.input.debit, payerCredit: target.input.credit, routerAcceptance: routing.routerAcceptance,
         routerInputDebit: routing.inputSettlement.debit, routerInputCredit: routing.inputSettlement.credit, routerInputFinalizer: routing.inputSettlement.routerFinalized,
         poolOutputCredit: target.settlements[0].credit, poolOutputFinalizer: target.settlements[0].poolFinalized,
         poolFeeCredit: routing.protocolFeeSettlement!.credit, poolFeeFinalizer: routing.protocolFeeSettlement!.poolFinalized,
+        directFeeCredit: routing.directFeeSettlement!.credit, directFeeFinalizer: routing.directFeeSettlement!.routerFinalized,
         completion: routing.completion, completionAck: routing.completionAcknowledged, beneficiaryCredit: routing.terminalSettlement.credit, terminalFinalizer: routing.terminalSettlement.routerFinalized })) {
         const matches = (n: MarketNode) => n.account === transaction.account && n.raw.lt === transaction.lt;
         const missing = projectDlmmMarket(binding, nodes.filter(n => !matches(n)), dependencies);

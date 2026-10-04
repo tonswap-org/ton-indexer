@@ -1,26 +1,38 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { Address, Cell } from '@ton/core';
 import { Blockchain, createShardAccount } from '@ton/sandbox';
 import { readPerpsState } from '../ledger/perpsState';
 import { accruePerpsFunding } from '../ledger/perpsEconomics';
+import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
+import { assertPerpsProducerReceipt, producerSha256, assertPerpsStressChainConfig } from './perps-fixture-producer';
 
 async function main() {
-  const directory = join(__dirname, 'fixtures/perps-funding-checkpoint-current');
+  const directory = process.env.TONSWAP_PERPS_FUNDING_FIXTURE_DIR ??
+    join(__dirname, 'fixtures/perps-funding-checkpoint-current');
   const bytes = readFileSync(join(directory, 'funding-remainder.json'));
   const provenance = JSON.parse(readFileSync(join(directory, 'provenance.json'), 'utf8'));
+  if (provenance.qualification !== 'qualified-after-native-source-lock' &&
+      process.env.TONSWAP_ALLOW_PROVISIONAL_PERPS_FIXTURE !== '1') {
+    throw Error('Perps funding VM fixture is stale or provisional; recapture after native source lock');
+  }
   const saved = JSON.parse(bytes.toString('utf8'));
+  assertPerpsStressChainConfig(saved.chainConfig);
+  if(provenance.qualification==='qualified-after-native-source-lock'){
+    assertPerpsProducerReceipt(provenance.producerReceipt,'funding',resolve(__dirname,'../../../tonswap_tolk'),
+      dirname(provenance.originalCapture),Buffer.from(provenance.producerLog??''));
+    assert.equal(producerSha256(bytes),provenance.producerReceipt.artifacts[basename(provenance.originalCapture)]);
+  }
   assert.equal(createHash('sha256').update(bytes).digest('hex'), provenance.sha256);
-  const expectedCode = JSON.parse(readFileSync(join(__dirname,
-    'fixtures/perps-risk-admission-current/provenance.json'), 'utf8')).engineCodeHash;
+  const riskDirectory = perpsRiskFixtureFolder;
+  const expectedCode = readPerpsRiskFixtureProvenance().engineCodeHash;
   const code = Cell.fromBase64(saved.codeBoc), data = Cell.fromBase64(saved.dataBoc);
   assert.equal(code.hash().toString('hex'), expectedCode);
   assert.equal(saved.codeHash, expectedCode);
   assert.equal(provenance.engineCodeHash, expectedCode);
-  const currentAdmission = JSON.parse(readFileSync(join(__dirname,
-    'fixtures/perps-risk-admission-current/open-accepted.json'), 'utf8'));
+  const currentAdmission = JSON.parse(readFileSync(join(riskDirectory, 'open-accepted.json'), 'utf8'));
   const state = readPerpsState(saved.dataBoc, expectedCode);
   assert.equal(state.walletCode.hash().toString('hex'), Cell.fromBase64(currentAdmission.walletCode).hash().toString('hex'),
     'The actual checkpoint state must embed the same current immutable Wallet as the admission captures');
@@ -35,7 +47,7 @@ async function main() {
 
   // Execute only a read-only getter over the original compiled code and data.
   // This synthetic account envelope is not a claim of deployment or history.
-  const chain = await Blockchain.create(), address = Address.parse(saved.engine);
+  const chain = await Blockchain.create({config: Cell.fromBase64(saved.chainConfig)}), address = Address.parse(saved.engine);
   await chain.setShardAccount(address, createShardAccount({ address, code, data, balance: 1_000_000_000n }));
   const result = await chain.runGetMethod(address, 'funding_accrual_state', [{ type: 'int', value: BigInt(saved.marketId) }]);
   assert.equal(result.stackReader.remaining, 6);

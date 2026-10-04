@@ -47,7 +47,8 @@ test('all ten real wallet addresses derive from current unchanged code, root and
       assert.equal(state.lockedFeesRaw, '0'); assert.equal(state.borrowedFeesRaw, '0'); states++;
     }
   }
-  assert.equal(addresses, 10); assert.equal(states, 91);
+  // Both protected Pool wallets now have an additional activation transaction.
+  assert.equal(addresses, 10); assert.equal(states, 95);
 });
 
 test('seven authentic JSTT starts debit exact token amounts and replace only the permitted source tuple', () => {

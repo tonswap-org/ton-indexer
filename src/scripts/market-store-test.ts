@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { Address, beginCell, Cell } from '@ton/core';
 import { PGlite } from '@electric-sql/pglite';
 import { Pool } from 'pg';
 import { PostgresMarketStore, MarketCursorError, MarketPublicationConflict, marketProjectionFingerprint, validateMarketProjection } from '../ledger/marketStore';
@@ -62,6 +63,18 @@ function badProjectionCases(p:MarketProjection) {
     ['noncanonical LT',q=>{q.observations[0].input.credit.lt='01';}],
     ['settlement amount mismatch',q=>{q.observations[0].settlements[0].amountRaw='9996';}],
     ['request body mismatch',q=>{q.observations[0].settlements[0].requestBodyHash='0'.repeat(64);}],
+    ['metadata and ratio contradict actual request',q=>{const o=q.observations[0];o.outputRaw='1';o.ratio={...o.ratio,numerator:'1',denominator:o.consumedInputRaw};for(const leg of o.settlements)if(leg.kind==='swap_output')leg.amountRaw='1';}],
+    ['metadata query contradicts actual request',q=>{q.observations[0].settlements[0].settlementId='1';}],
+    ...(['query','amount','owner','response','marker','trailing','tep74','coin-width'] as const).map(field=>['canonical pool transfer '+field,(q:MarketProjection)=>{
+      const leg=q.observations[0].settlements[0],s=Cell.fromBase64(leg.requestBodyBoc).beginParse();s.loadUint(32);
+      const query=s.loadUintBig(64),amount=s.loadCoins(),owner=s.loadAddress(),response=s.loadAddress(),marker=s.loadRef(),forward=s.loadCoins(),payload=s.loadRef();s.endParse();
+      const b=beginCell().storeUint(0x0f8a7ea5,32).storeUint(field==='query'?query+1n:query,64);
+      if(field==='coin-width')b.storeUint(15,4).storeUint(amount,120);else b.storeCoins(field==='amount'?amount+1n:amount);
+      b.storeAddress(field==='owner'?Address.parse(q.binding.pool):owner).storeAddress(field==='response'?Address.parse(q.observations[0].payer):response);
+      if(field==='tep74')b.storeMaybeRef(marker);else b.storeRef(field==='marker'?Cell.EMPTY:marker);
+      b.storeCoins(forward);if(field==='tep74')b.storeBit(true);b.storeRef(payload);if(field==='trailing')b.storeBit(true);
+      const body=b.endCell();leg.requestBodyBoc=body.toBoc().toString('base64');leg.requestBodyHash=body.hash().toString('hex');
+    }] as [string,(q:MarketProjection)=>void]),
     ['unknown settlement',q=>{q.observations[0].settlements[0].kind='income' as never;}],
     ['wrong recipient',q=>{q.observations[0].settlements[0].destinationOwner=q.binding.pool;}],
     ['missing dependency',q=>{q.dependencies=q.dependencies.filter(d=>d.account!==q.observations[0].input.debit.account);}],

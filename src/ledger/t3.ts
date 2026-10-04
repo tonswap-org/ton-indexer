@@ -18,6 +18,7 @@ export type LedgerT3Hub = {
   reserveRoots: string[];
   vaults: string[];
   receiver?: string;
+  refunds?: Map<string, LedgerT3Refund>;
   redemptions: Map<
     string,
     {
@@ -27,6 +28,27 @@ export type LedgerT3Hub = {
       getter: NonNullable<LedgerMovement["evidence"]["getter"]>;
     }
   >;
+};
+export type LedgerT3Refund = {
+  kind: 3 | 5;
+  businessQueryId: string;
+  payoutId: string;
+  token: number;
+  amountRaw: string;
+  basketRaw: string[];
+  identityEvidence: NonNullable<LedgerMovement["evidence"]["getter"]>;
+  queueEvidence?: NonNullable<LedgerMovement["evidence"]["getter"]>;
+  payoutEvidence?: NonNullable<LedgerMovement["evidence"]["getter"]>;
+  payout?: {
+    phase: number;
+    activeToken: number;
+    wireId: string;
+    amountRaw: string;
+    routeEpoch: number;
+    receiverWallet: string | null;
+    sourceAccepted: boolean;
+    receiverCredited: boolean;
+  };
 };
 export type T3LedgerOperation = {
   anchor: Node;
@@ -238,7 +260,50 @@ export async function decodeT3(
       const credit = creditCandidates.sort((a, b) =>
         BigInt(a.node.raw.lt) < BigInt(b.node.raw.lt) ? -1 : 1,
       )[0];
-      const ds = deposits.filter((f) => f.wire.queryId === r.queryId),
+      const roots = credit ? nodes
+        .filter((n) => n.account === hub.root && ok(n))
+        .flatMap((n) => {
+          const start = w.mintStart(n.raw.inMessage);
+          return start &&
+            addr(n.raw.inMessage?.source) === hub.address &&
+            start.response === hub.address &&
+            start.queryId === credit.v.queryId &&
+            start.amountRaw === credit.v.amountRaw &&
+            start.recipient === input.owner &&
+            start.forwardTonRaw === credit.v.forwardTonRaw &&
+            start.forward.hash().equals(credit.v.forward.hash()) &&
+            n.raw.outMessages.some((_, i) => receiptFor(n, i)?.id === credit.node.id)
+            ? [{ node: n, start }] : [];
+        }) : [],
+        root = one(roots),
+        originCandidate = root ? one(nodes.filter((n) =>
+          n.account === hub.address && ok(n) &&
+          n.raw.outMessages.some((_, i) => receiptFor(n, i)?.id === root.node.id))) : null;
+      // A caller may reuse the same query after the first mint. Bind a direct
+      // mint to the exact Hub notification that sent its Root request, and a
+      // staged mint only to notifications consumed before that request.
+      const directNote = originCandidate ? tokenWire(originCandidate.raw.inMessage) : null;
+      const isDirect = directNote?.op === NOTIFY &&
+        w.depositNote(directNote.forward)?.flags === 1;
+      const candidates = deposits.filter((f) => f.wire.queryId === r.queryId)
+        .flatMap((flow) => {
+          const notice = one(notifications(flow, hub.address));
+          return notice && originCandidate &&
+            BigInt(notice.node.raw.lt) <= BigInt(originCandidate.raw.lt)
+            ? [{ flow, notice }] : [];
+        })
+        .sort((a, b) => BigInt(a.notice.node.raw.lt) < BigInt(b.notice.node.raw.lt) ? -1 :
+          BigInt(a.notice.node.raw.lt) > BigInt(b.notice.node.raw.lt) ? 1 : 0);
+      const remaining = r.basketRaw.map(BigInt),
+        ds: Flow[] = [];
+      for (const { flow, notice } of candidates) {
+        if (isDirect && notice.node.id !== originCandidate?.id) continue;
+        const token = hub.reserveRoots.indexOf(flow.sourceAsset.master!);
+        if (token < 0 || BigInt(flow.wire.amountRaw) > remaining[token]) continue;
+        remaining[token] -= BigInt(flow.wire.amountRaw);
+        ds.push(flow);
+      }
+      const
         anchor = ds[0]?.source ?? credit?.node ?? receipt.node;
       if (!anchor?.event) continue;
       if (seen.has(key)) {
@@ -277,25 +342,6 @@ export async function decodeT3(
         input.wallets.get(credit.node.account)?.master === hub.root
       ) {
         ns.push(...creditCandidates.map((c) => c.node));
-        const roots = nodes
-            .filter((n) => n.account === hub.root && ok(n))
-            .flatMap((n) => {
-              const start = w.mintStart(n.raw.inMessage);
-              return start &&
-                addr(n.raw.inMessage?.source) === hub.address &&
-                start.response === hub.address &&
-                start.queryId === credit.v.queryId &&
-                start.amountRaw === credit.v.amountRaw &&
-                start.recipient === input.owner &&
-                start.forwardTonRaw === credit.v.forwardTonRaw &&
-                start.forward.hash().equals(credit.v.forward.hash()) &&
-                n.raw.outMessages.some(
-                  (_, i) => receiptFor(n, i)?.id === credit.node.id,
-                )
-                ? [{ node: n, start }]
-                : [];
-            }),
-          root = one(roots);
         const ack = one(
           edge(
             credit.node,
@@ -349,17 +395,7 @@ export async function decodeT3(
           );
         if (root && ack && successEdge && final && finalized) {
           ns.push(root.node, ack.node, final.node, finalized.node);
-          origin =
-            one(
-              nodes.filter(
-                (n) =>
-                  n.account === hub.address &&
-                  ok(n) &&
-                  n.raw.outMessages.some(
-                    (_, i) => receiptFor(n, i)?.id === root.node.id,
-                  ),
-              ),
-            ) ?? undefined;
+          origin = originCandidate ?? undefined;
           if (origin) ns.push(origin);
           proved = true;
         }
@@ -474,38 +510,109 @@ export async function decodeT3(
             : issue;
       finish(anchor, ns, "t3_mint", meta, proved, issue || undefined);
     }
-    // Deposits without a completed mint retain their gross debit and fees with an explicit pending settlement.
+    // A rejected auto-mint keeps the gross owner debit until the immutable
+    // refund identity and physical Receiver credit are proved separately.
     for (const d of deposits)
       if (!usedFlows.has(d.id)) {
         usedFlows.add(d.id);
-        const ns = [
-          d.source,
-          d.recipient,
-          ...notifications(d, hub.address).map((e) => e.node),
-        ];
+        const notification = one(notifications(d, hub.address));
+        const ns = [d.source, d.recipient,
+          ...(notification ? [notification.node] : [])];
+        const basketRaw = hub.reserveRoots.map((r) =>
+          r === d.sourceAsset.master ? d.wire.amountRaw : "0");
+        const refund = notification?.node && hub.refunds?.get(notification.node.raw.lt);
+        const meta: NonNullable<NonNullable<LedgerEvent["settlement"]>["t3"]> = {
+          hub: hub.address,
+          root: hub.root,
+          owner: input.owner,
+          recipient: input.owner,
+          queryId: d.wire.queryId,
+          amountRaw: null,
+          referrer: w.depositNote(d.wire.forward)?.referrer ?? null,
+          stage: "unresolved",
+          reserveRoots: hub.reserveRoots,
+          basketRaw,
+          deliveredRaw: zeros(),
+          feeBreakdown: "unavailable",
+          localNetworkFees: [],
+        };
+        let issue = "t3_mint_settlement_unconfirmed";
+        if (refund && notification && refund.amountRaw === d.wire.amountRaw &&
+            equal(refund.basketRaw, basketRaw) &&
+            refund.token === hub.reserveRoots.indexOf(d.sourceAsset.master!)) {
+          meta.receiver = hub.receiver;
+          meta.refund = { kind: refund.kind, businessQueryId: refund.businessQueryId,
+            payoutId: refund.payoutId, token: refund.token, amountRaw: refund.amountRaw,
+            phase: refund.payout?.phase ?? null,
+            ...(refund.payout ? { sourceAccepted: refund.payout.sourceAccepted,
+              receiverCredited: refund.payout.receiverCredited } : {}),
+            identityEvidence: refund.identityEvidence,
+            ...(refund.queueEvidence ? { queueEvidence: refund.queueEvidence } : {}),
+            ...(refund.payoutEvidence ? { payoutEvidence: refund.payoutEvidence } : {}),
+            ...(refund.payout && refund.payout.wireId !== "0" ? {
+              routeEpoch: refund.payout.routeEpoch,
+              wireId: refund.payout.wireId,
+              ...(refund.payout.receiverWallet ? { receiverWallet: refund.payout.receiverWallet } : {}),
+            } : {}),
+          };
+          if (refund.queueEvidence) {
+            meta.stage = "refund_queued";
+            issue = "t3_mint_refund_queued";
+          } else if (refund.payoutEvidence) {
+            meta.stage = "refund_dispatching";
+            issue = "t3_mint_refund_dispatching";
+          }
+          if (hub.receiver && !refund.queueEvidence) {
+            const credits = flows.flatMap(f => {
+              const payout = w.receiverPayout(f.wire.forward);
+              return payout && payout.hub === hub.address &&
+                payout.controller === input.owner && payout.receiver === hub.receiver &&
+                payout.payoutId === refund.payoutId && payout.token === refund.token &&
+                payout.wireId === f.wire.queryId && payout.amountRaw === f.wire.amountRaw &&
+                f.source.account === hub.vaults[refund.token] &&
+                f.sourceAsset.master === hub.reserveRoots[refund.token] &&
+                f.recipientAsset.owner === hub.receiver &&
+                f.recipientAsset.controller === input.owner &&
+                f.recipientAsset.master === hub.reserveRoots[refund.token]
+                ? [{ flow: f, payout }] : [];
+            });
+            const credited = credits.flatMap(({ flow, payout }) => {
+              const notice = one(notifications(flow, hub.receiver!));
+              return notice && complete([flow.source, flow.recipient, notice.node])
+                ? [{ flow, payout, notice: notice.node }] : [];
+            });
+            if (credited.length === 1 && credited[0].payout.amountRaw === refund.amountRaw &&
+                credits.length === 1) {
+              const { flow, payout, notice } = credited[0];
+              usedFlows.add(flow.id);
+              ns.push(flow.source, flow.recipient, notice);
+              const movement = flow.recipient.event?.movements.find(v => v.id === `${flow.id}:in`);
+              if (movement && movement.evidence.kind !== "native_message" &&
+                  movement.evidence.kind !== "transaction_fee" &&
+                  movement.evidence.kind !== "message_forward_fee") {
+                const tokenEvidence: Omit<typeof movement.evidence, "transactionStatus"> = movement.evidence;
+                movement.purpose = "t3_refund";
+                movement.evidence = { ...tokenEvidence, kind: "t3_refund",
+                  getter: refund.identityEvidence,
+                  transactions: [ref(flow.source), ref(flow.recipient), ref(notice)] };
+              }
+              meta.stage = "receiver_credited";
+              meta.deliveredRaw[refund.token] = refund.amountRaw;
+              meta.refund.routeEpoch = payout.routeEpoch;
+              meta.refund.wireId = payout.wireId;
+              meta.refund.receiverWallet = flow.recipient.account;
+              meta.refund.creditEvidence = [ref(flow.source), ref(flow.recipient), ref(notice)];
+              issue = "";
+            }
+          }
+        }
         finish(
           d.source,
           ns,
           "t3_mint",
-          {
-            hub: hub.address,
-            root: hub.root,
-            owner: input.owner,
-            recipient: input.owner,
-            queryId: d.wire.queryId,
-            amountRaw: null,
-            referrer: w.depositNote(d.wire.forward)?.referrer ?? null,
-            stage: "unresolved",
-            reserveRoots: hub.reserveRoots,
-            basketRaw: hub.reserveRoots.map((r) =>
-              r === d.sourceAsset.master ? d.wire.amountRaw : "0",
-            ),
-            deliveredRaw: zeros(),
-            feeBreakdown: "unavailable",
-            localNetworkFees: [],
-          },
+          meta,
           false,
-          "t3_mint_settlement_unconfirmed",
+          issue || undefined,
         );
       }
     const successfulBurn = (n: Node) => {

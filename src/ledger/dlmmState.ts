@@ -18,6 +18,36 @@ const dict = <K extends DictionaryKeyTypes, V>(cell: Cell, key: DictionaryKey<K>
   const slice = cell.beginParse(), result = slice.loadDict(key, value); end(slice); return result;
 };
 
+/** The current pool stores the option-expiry registry in the guard's sole
+ * reference. Validate its exact layout instead of treating a new reference as
+ * ignorable metadata: it is part of the pool's risk state. */
+function readOptionExpiryRegistry(cell: Cell) {
+  const s = cell.beginParse();
+  if (s.loadUint(32) !== 0x4f455043) throw new Error('dlmm_option_expiry_registry_invalid');
+  const registrar = s.loadMaybeAddress();
+  const entries = s.loadDict(Dictionary.Keys.Uint(8), Dictionary.Values.Cell());
+  const retiredCount = s.loadUint(8);
+  const retired = s.loadDict(Dictionary.Keys.Address(), Dictionary.Values.Cell()); end(s);
+  if (entries.size > 2 || retiredCount > 16 || retired.size !== retiredCount)
+    throw new Error('dlmm_option_expiry_registry_invalid');
+  const seen = new Set<string>();
+  for (const [slot, cell] of entries) {
+    const row = cell.beginParse();
+    if (slot > 1 || row.remainingBits !== 339 || row.remainingRefs !== 1) throw new Error('dlmm_option_expiry_checkpoint_invalid');
+    const expiry = row.loadUintBig(64), status = row.loadUint(8), option = row.loadAddress(), safety = row.loadRef(); end(row);
+    if (expiry === 0n || status < 1 || status > 3 || (status === 2) !== (safety.bits.length !== 0 || safety.refs.length !== 0) || seen.has(option.toRawString()))
+      throw new Error('dlmm_option_expiry_checkpoint_invalid');
+    seen.add(option.toRawString());
+  }
+  for (const [, cell] of retired) {
+    const row = cell.beginParse();
+    if (row.remainingBits !== 336 || row.remainingRefs !== 0) throw new Error('dlmm_option_expiry_retirement_invalid');
+    const expiry = row.loadUintBig(64), safetyHash = row.loadUintBig(256), terminal = row.loadUint(8), phase = row.loadUint(8); end(row);
+    if (expiry === 0n || safetyHash === 0n || terminal > 1 || phase > 1) throw new Error('dlmm_option_expiry_retirement_invalid');
+  }
+  return { registrar: registrar?.toRawString() ?? null, hash: cell.hash().toString('hex') };
+}
+
 export interface DlmmSettlementRecord {
   settlementId: string; requestHash: string; businessQueryId: string;
   predecessorId: string; successorId: string; recordedAt: number;
@@ -92,16 +122,18 @@ export function readDlmmMarketState(boc: string) {
   const poolKind = root.loadUint(8), binSpacing = root.loadInt(32), activeBinId = root.loadInt(32), feePips = root.loadUint(32), impactCapBps = root.loadUint(16);
   if (tokenT === tokenX || (poolKind !== 2 && poolKind !== 4) || root.remainingRefs !== 4) throw new Error('dlmm_pool_layout_invalid');
   const bins = root.loadRef(), observations = root.loadRef(), guard = root.loadRef(), meta = root.loadRef().beginParse(); end(root);
-  if (bins.bits.length !== 512 || bins.refs.length !== 1 || observations.bits.length !== 112 || observations.refs.length !== 1 || guard.bits.length !== 608 || guard.refs.length)
+  if (bins.bits.length !== 512 || bins.refs.length !== 1 || observations.bits.length !== 112 || observations.refs.length !== 1 || guard.bits.length !== 608 || guard.refs.length !== 1)
     throw new Error('dlmm_pool_structures_invalid');
   const guardSlice = guard.beginParse();
   const minTReserve = guardSlice.loadUintBig(128).toString(), minXReserve = guardSlice.loadUintBig(128).toString();
-  guardSlice.skip(32); const binLiquidityCap = guardSlice.loadUintBig(128), binReserveHighWater = guardSlice.loadUintBig(128).toString(), oracleDepthHealthySince = guardSlice.loadUintBig(64).toString(); end(guardSlice);
+  guardSlice.skip(32); const binLiquidityCap = guardSlice.loadUintBig(128), binReserveHighWater = guardSlice.loadUintBig(128).toString(), oracleDepthHealthySince = guardSlice.loadUintBig(64).toString();
+  const optionRegistry = readOptionExpiryRegistry(guardSlice.loadRef()); end(guardSlice);
   if (binLiquidityCap === 0n || BigInt(binReserveHighWater) > binLiquidityCap) throw new Error('dlmm_guard_reserve_cap_invalid');
   const guardConfigurationHash = beginCell().storeBits(guard.bits.substring(0, 416)).endCell().hash().toString('hex');
-  if (meta.remainingBits !== 651 || meta.remainingRefs !== 4) throw new Error('dlmm_pool_metadata_invalid');
+  if (meta.remainingBits !== 653 || meta.remainingRefs !== 4) throw new Error('dlmm_pool_metadata_invalid');
   const governance = address(meta), controlSeqno = meta.loadUintBig(64).toString(), lastUpdate = meta.loadUintBig(64).toString();
   const feeClaimedT = meta.loadUintBig(128).toString(), feeClaimedX = meta.loadUintBig(128).toString();
+  const protectedWalletMask = meta.loadUint(2);
   if (meta.remainingRefs !== 4) throw new Error('dlmm_pool_metadata_invalid');
   const walletCode = meta.loadRef(), positions = meta.loadRef().beginParse(), accrual = meta.loadRef(), provenance = meta.loadRef(); end(meta);
   if (positions.remainingBits || positions.remainingRefs !== 4 || accrual.bits.length !== 8 || accrual.refs.length !== 4 || accrual.beginParse().loadUint(8) !== 0xac)
@@ -123,7 +155,7 @@ export function readDlmmMarketState(boc: string) {
     const initialObservations = os.loadInt(32) === activeBinId && os.loadUintBig(64) === 0n && os.loadUint(16) === 0;
     if (!zeroGrowth || !initialObservations || !empty(bins.refs[0]) || !empty(positionCell) || !empty(pendingCell) || !empty(withdrawalsCell) ||
       accrual.refs.some(c => !empty(c)) || controlSeqno !== '0' || lastUpdate !== '0' || feeClaimedT !== '0' || feeClaimedX !== '0' ||
-      empty(walletCode) || ring.bits.length || ring.refs.length !== 4)
+      protectedWalletMask !== 0 || empty(walletCode) || ring.bits.length || ring.refs.length !== 4)
       throw new Error('dlmm_constructor_state_invalid');
     const constructorDicts = [
       dict(ring.refs[0], Dictionary.Keys.Uint(16), Dictionary.Values.Uint(32)),
@@ -222,8 +254,8 @@ export function readDlmmMarketState(boc: string) {
   }
   // Both bootstrap and direct-deployment metadata are emitted by current code.
   // Preserve their cells without interpreting registration as verified authority.
-  return { minTReserve, minXReserve, binReserveHighWater, oracleDepthHealthySince, guardConfigurationHash, storageForm, tokenT, tokenX, treasury, router, stableAmp, routerOperations: routerOperationRecords, routerOperationsHash: routerOperations.hash().toString('hex'), directSwaps, poolKind, binSpacing, activeBinId, feePips, impactCapBps,
-    governance, controlSeqno, lastUpdate, feeClaimedT, feeClaimedX, walletCode, walletCodeHash: walletCode.hash().toString('hex'),
+  return { minTReserve, minXReserve, binReserveHighWater, oracleDepthHealthySince, guardConfigurationHash, optionRegistryHash: optionRegistry.hash, optionRegistrar: optionRegistry.registrar, storageForm, tokenT, tokenX, treasury, router, stableAmp, routerOperations: routerOperationRecords, routerOperationsHash: routerOperations.hash().toString('hex'), directSwaps, poolKind, binSpacing, activeBinId, feePips, impactCapBps,
+    governance, controlSeqno, lastUpdate, feeClaimedT, feeClaimedX, protectedWalletMask, walletCode, walletCodeHash: walletCode.hash().toString('hex'),
     nextSettlementId: nextSettlementId.toString(), reservedT, reservedX, reservedNative, settlements, lanes, queues,
     farmingHash: farmingCell.hash().toString('hex'), nextCampaignId: nextCampaignId.toString(), farmEscrowT: farmEscrowT.toString(), farmEscrowX: farmEscrowX.toString(),
     binsHash: bins.hash().toString('hex'), observationsHash: observations.hash().toString('hex'), guardHash: guard.hash().toString('hex'),

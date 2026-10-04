@@ -48,15 +48,15 @@ export function readDlmmRouterSettlementRecord(cell:Cell):RouterSettlementRecord
 }
 export interface RouterSettlementGroup {
   kind:number;businessId:string;snapshotHash:string;intentHash:string;pendingLegs:number;totalLegs:number;finalized:number;
-  nativeRequired:string;nativeFunded:string;completionData:Cell;nativeActions:Cell;replayState:Cell;groupHash:string;
+  nativeRequired:string;nativeFunded:string;completionData:Cell;nativeActions:Cell;replayState:Cell;refundOwner:string|null;groupHash:string;
 }
 export function readDlmmRouterSettlementGroup(cell:Cell):RouterSettlementGroup {
   const s=cell.beginParse();
   const kind=s.loadUint(8),businessId=id(s),snapshotHash=hex(s),intentHash=hex(s),pendingLegs=s.loadUint(8),totalLegs=s.loadUint(8),finalized=s.loadUint(8);
-  const nativeRequired=coins(s),nativeFunded=coins(s),completionData=s.loadRef(),nativeActions=s.loadRef(),replayState=s.loadRef();end(s);
+  const nativeRequired=coins(s),nativeFunded=coins(s),completionData=s.loadRef(),nativeActions=s.loadRef(),replayState=s.loadRef(),refundOwner=maybeRaw(s);end(s);
   const replay=replayState.beginParse();coins(replay);coins(replay);const inFlight=replay.loadUint(8),awaitingSurplus=replay.loadUint(8);maybeRaw(replay);end(replay);
   if(kind<1||kind>10||pendingLegs>totalLegs||finalized>2||inFlight>1||awaitingSurplus>1)throw Error('routed_group_fields');
-  return {kind,businessId,snapshotHash,intentHash,pendingLegs,totalLegs,finalized,nativeRequired,nativeFunded,completionData,nativeActions,replayState,groupHash:cell.hash().toString('hex')};
+  return {kind,businessId,snapshotHash,intentHash,pendingLegs,totalLegs,finalized,nativeRequired,nativeFunded,completionData,nativeActions,replayState,refundOwner,groupHash:cell.hash().toString('hex')};
 }
 export interface RouterSwapReceipt {firstSettlementId:string;groupKey:string;notification:Cell}
 export function readDlmmRouterSwapReceipt(cell:Cell):RouterSwapReceipt {
@@ -103,7 +103,7 @@ export function readDlmmRouterState(boc:string) {
   for(const receipt of twapCreationReceipts.values())if(receipt.planId!=='0'&&!automationOwners.has(((1n<<62n)|BigInt(receipt.planId)).toString()))throw Error('routed_twap_creation_identity');
   if(twap.loadUintBig(64)===0n)throw Error('routed_plan_counter');maybeRaw(twap);end(twap);
   dictCell(swap.loadRef());const nextUserSwapId=id(swap);if(nextUserSwapId==='0')throw Error('routed_swap_counter');end(swap);
-  const telemetry=durable.loadRef(),journal=durable.loadRef().beginParse(),referral=durable.loadRef().beginParse(),walletCode=durable.loadRef();end(durable);dictCell(telemetry);
+  const telemetry=durable.loadRef(),journal=durable.loadRef().beginParse(),referral=durable.loadRef().beginParse(),walletCode=durable.loadRef(),canaryOwner=maybeRaw(durable);end(durable);dictCell(telemetry);
   if(walletCode.bits.length===0&&walletCode.refs.length===0)throw Error('routed_wallet_code_missing');
   if(journal.loadUint(32)!==0x52534a38)throw Error('routed_journal_version');
   const nextSettlementId=id(journal),reservedTokens=coins(journal),reservedNative=coins(journal),layoutHash=hex(journal);
@@ -121,7 +121,7 @@ export function readDlmmRouterState(boc:string) {
   const completionDict=u256Values(referral),swapDict=u256Cells(referral);end(referral);
   const completions=new Map([...completionDict].map(([key,value])=>[hexKey(key),hexKey(value)]));
   const swapReceipts=new Map<string,RouterSwapReceipt>();for(const[key,value]of swapDict){const receipt=readDlmmRouterSwapReceipt(value);if(!groups.has(receipt.groupKey))throw Error('routed_swap_group_missing');swapReceipts.set(hexKey(key),receipt);}
-  return {dataHash:cell.hash().toString('hex'),walletCodeHash:walletCode.hash().toString('hex'),walletCode,governance,enabled,withdrawalsOnly,riskController,riskSourceId,
+  return {dataHash:cell.hash().toString('hex'),walletCodeHash:walletCode.hash().toString('hex'),walletCode,governance,canaryOwner,enabled,withdrawalsOnly,riskController,riskSourceId,
     settlements,groups,swapReceipts,twapCreationReceipts,automationOwners,completions,reservedTokens,reservedNative,nextSettlementId,sourceLanes,sourceQueues,nextUserSwapId,layoutHash,
     businessLocks:new Map([...locks].map(([key,value])=>[hexKey(key),hexKey(value)])),executionReceipts:new Map([...receipts].map(([key,value])=>[hexKey(key),value.toString()])),
     poolGroupsByRequestTag:new Map([...poolGroups].map(([key,value])=>[hexKey(key),hexKey(value)])),moduleKey,referralReservedNative,referralConfig,referralOutbox};

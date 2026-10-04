@@ -8,6 +8,8 @@ import {
   MarketCandleInterval
 } from '../indexerService';
 import type { RegistryMetadata } from '../config/releaseManifest';
+import type { Network } from '../config';
+import { matchesPublicRpcNetwork } from './rpcNetwork';
 import { MetricsService } from '../metrics';
 import { SnapshotService } from '../snapshotService';
 import { DebugService } from '../debugService';
@@ -50,7 +52,7 @@ type ToncenterStackEntry = [string, unknown];
 type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; error: string; code?: number };
 
 type RoutesConfig = {
-  network?: string;
+  network: Network;
   serviceId?: string;
   publicBaseUrl?: string;
   pageSize?: number;
@@ -340,6 +342,10 @@ export const registerRoutes = (
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata
 ) => {
+  const network = config.network;
+  if (network !== 'mainnet' && network !== 'testnet' && network !== 'localnet') {
+    throw new Error('Routes require an explicit mainnet, testnet, or localnet network.');
+  }
   const activeBalanceStreams = new Set<() => void>();
   let closing = false;
   // Hijacked SSE responses must end before Fastify waits for HTTP connections.
@@ -377,13 +383,6 @@ export const registerRoutes = (
     }
     return null;
   };
-  const requestedNetwork = String(config.network || 'mainnet').toLowerCase();
-  const network =
-    requestedNetwork === 'mainnet'
-      ? 'mainnet'
-      : requestedNetwork === 'localnet'
-        ? 'localnet'
-        : 'testnet';
   const serviceId = config.serviceId?.trim() || 'ti.soramitsu.io';
   const publicBaseUrl = config.publicBaseUrl?.trim() || 'https://ti.soramitsu.io';
   const serviceIdentity = {
@@ -521,13 +520,11 @@ export const registerRoutes = (
     if (discoveredRpcProxyEndpoints) return discoveredRpcProxyEndpoints;
     if (rpcEndpointDiscoveryPromise) return rpcEndpointDiscoveryPromise;
 
-    const rpcNetwork = String(config.network || 'testnet').toLowerCase();
-    if (rpcNetwork === 'localnet') {
+    if (network === 'localnet') {
       discoveredRpcProxyEndpoints = [];
       return discoveredRpcProxyEndpoints;
     }
-    const tonAccessNetwork = rpcNetwork === 'mainnet' ? 'mainnet' : 'testnet';
-    rpcEndpointDiscoveryPromise = getHttpEndpoints({ network: tonAccessNetwork })
+    rpcEndpointDiscoveryPromise = getHttpEndpoints({ network })
       .then((endpoints) => uniqueRpcEndpoints(endpoints ?? []))
       .catch(() => [])
       .then((endpoints) => {
@@ -710,9 +707,30 @@ export const registerRoutes = (
       code: 502,
       error: 'Upstream RPC unavailable.'
     };
+    const rejectedEndpoints = new Set<string>();
 
     for (let attempt = 0; attempt < retryAttempts; attempt += 1) {
       for (const endpoint of endpoints) {
+        if (rejectedEndpoints.has(endpoint)) continue;
+        if (network !== 'localnet') {
+          // Validate the actual selected upstream on every request. Discovery and
+          // configured URLs are both routing hints, and may change their backend.
+          const identity = await callRpcEndpoint(
+            endpoint, 'getMasterchainInfo', method === 'getMasterchainInfo' ? params : {}, id
+          );
+          if (!identity.ok) {
+            lastError = identity;
+            if (!isRetryableRpcFailure(identity)) return identity;
+            continue;
+          }
+          if (!matchesPublicRpcNetwork(identity.result, network)) {
+            lastError = { ok: false, code: 502, error: `Upstream RPC network identity does not match ${network}.` };
+            rejectedEndpoints.add(endpoint);
+            app.log.warn({ network, method }, 'Rejected RPC upstream with missing or mismatched network identity');
+            continue;
+          }
+          if (method === 'getMasterchainInfo') return identity;
+        }
         const result = await callRpcEndpoint(endpoint, method, params, id);
         if (result.ok) return result;
         lastError = result;
@@ -720,6 +738,7 @@ export const registerRoutes = (
           return result;
         }
       }
+      if (rejectedEndpoints.size === endpoints.length) break;
       if (attempt < retryAttempts - 1 && retryDelayMs > 0) {
         // Linear backoff to keep submit latency bounded but robust to short provider outages.
         // eslint-disable-next-line no-await-in-loop

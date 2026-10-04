@@ -47,7 +47,7 @@ function recordCell(change: Partial<Omit<FixedSaleSettlement, 'status' | 'route'
     .storeUint(r.status, 8).storeUint(r.deployRequired, 8).storeCoins(BigInt(r.deliveryReservedRaw)).storeCoins(BigInt(r.finalizeReservedRaw))
     .storeUint(BigInt(r.predecessorId), 64).storeInt(BigInt(r.recordedAt), 64)
     .storeRef(beginCell().storeAddress(A(r.tokenRoot)).storeAddress(A(r.sourceWallet)).endCell())
-    .storeRef(beginCell().storeAddress(A(r.destinationWallet)).storeAddress(A(r.recipientOwner)).endCell()).storeRef(Cell.fromBase64(r.forwardPayloadBoc));
+    .storeRef(beginCell().storeAddress(A(r.destinationWallet)).storeAddress(A(r.recipientOwner)).storeAddress(r.nativeRefundOwner ? A(r.nativeRefundOwner) : null).endCell()).storeRef(Cell.fromBase64(r.forwardPayloadBoc));
   extra?.(b); return b.endCell();
 }
 function replaceRef(cell: Cell, index: number, replacement: Cell) {
@@ -74,7 +74,7 @@ function wallet(snapshot: Snapshot) {
 }
 
 test('authentic untransformed fixed-sale refund has exact physical transaction and message identities', () => {
-  assert.equal(fixture.schema, 'launchpad-fixed-sandbox-v1'); assert.equal(fixture.environment, 'sandbox-production-code');
+  assert.equal(fixture.schema, 'launchpad-fixed-sandbox-v1'); assert.equal(fixture.environment, 'sandbox-canonical-vm15-gas400-production-code');
   assert.equal(fixture.originalTest, 'tests/launchpad/LaunchpadFixedSale.spec.ts:1000-1091');
   assert(fixture.transactions.length > 50); assert.equal(fixture.boundaries.length, fixture.transactions.length);
   for (const saved of fixture.transactions) {
@@ -99,7 +99,7 @@ test('authentic untransformed fixed-sale refund has exact physical transaction a
     }
   }
 });
-test('strict current storage parses all 24 configured before/after boundaries with qualified code and routing', () => {
+test('strict current storage parses all configured before/after boundaries with qualified code and routing', () => {
   assert(saleBoundaries.length > 8);
   for (const boundary of saleBoundaries) for (const snapshot of [boundary.before, boundary.after]) {
     const state = parse(snapshot);
@@ -107,8 +107,8 @@ test('strict current storage parses all 24 configured before/after boundaries wi
     assert.equal(state.registry.governance, a.creator); assert.equal(state.registry.enabled, 1);
     assert.equal(state.paymentRouting.tokenRoot, a.paymentRoot); assert.equal(state.paymentRouting.wallet, a.paymentSaleWallet);
     assert.equal(state.saleRouting.tokenRoot, a.saleRoot); assert.equal(state.saleRouting.wallet, a.saleWallet);
-    assert.equal(Cell.fromBase64(snapshot.codeBoc!).hash().toString('hex'), fixture.compiler[0].codeHash);
-    assert.equal(state.paymentRouting.walletCodeHash, fixture.compiler[2].codeHash);
+    assert.equal(Cell.fromBase64(snapshot.codeBoc!).hash().toString('hex'), fixture.compiler.find(c=>c.entrypointFileName==='contracts/launchpad/sale_fixed.tolk')!.codeHash);
+    assert.equal(state.paymentRouting.walletCodeHash, fixture.compiler.find(c=>c.entrypointFileName==='contracts/shared/jetton/jetton_wallet.tolk')!.codeHash);
     assert.equal(state.t3Root, a.paymentRoot); assert.equal(state.t3WalletCodeHash, state.paymentRouting.walletCodeHash);
     assert.equal(state.config.priceRaw, '1000000000000000000000000000'); assert.equal(state.config.softCapRaw, '10000000000');
     assert.equal(state.config.insuranceTargetRaw, '1000000000');
@@ -218,7 +218,9 @@ test('zero identities amounts and invalid predecessor ordering are rejected', ()
 test('trailing record bits and references and shared journal layout are rejected', () => {
   assert.throws(() => readFixedSaleSettlementRecord(recordCell({}, b => b.storeBit(1))), /Trailing/);
   assert.throws(() => readFixedSaleSettlementRecord(recordCell({}, b => b.storeRef(Cell.EMPTY))), /reference/);
-  const shared = replaceRef(recordCell(), 1, beginCell().storeAddress(A(a.ownerPaymentWallet)).storeAddress(A(a.owner)).storeBit(1).endCell());
+  const omittedOwner = replaceRef(recordCell(), 1, beginCell().storeAddress(A(a.ownerPaymentWallet)).storeAddress(A(a.owner)).endCell());
+  assert.throws(() => readFixedSaleSettlementRecord(omittedOwner), 'Native refund owner is mandatory');
+  const shared = replaceRef(recordCell(), 1, beginCell().storeAddress(A(a.ownerPaymentWallet)).storeAddress(A(a.owner)).storeAddress(A(a.owner)).storeBit(1).endCell());
   assert.throws(() => readFixedSaleSettlementRecord(shared), /Trailing/);
 });
 test('journal rejects mismatched keys next IDs and dangling route lanes', () => {

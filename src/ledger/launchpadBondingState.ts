@@ -1,5 +1,5 @@
 import { Cell, Dictionary, type Slice } from '@ton/core';
-import { end, flag, maybeAddress, raw, readLaunchpadEnvelope, readLaunchpadFills, readLaunchpadReferralTerms } from './launchpadStateCommon';
+import { end, flag, maybeAddress, raw, readLaunchpadDirectFeeConfig, readLaunchpadEnvelope, readLaunchpadFills, readLaunchpadReferralTerms } from './launchpadStateCommon';
 import { readLaunchpadSharedJournal } from './launchpadSharedJournal';
 
 export type BondingSaleContribution = {
@@ -36,7 +36,7 @@ export function readBondingSaleState(dataBoc: string) {
   const f = s.loadRef().beginParse(), feeRecipient = maybeAddress(f), feeBps = f.loadUint(16), totalFeesRaw = raw(f); end(f);
   const journal = readLaunchpadSharedJournal(s.loadRef());
   const finalized = s.loadBoolean(), successful = s.loadBoolean(), escrowBalanceRaw = raw(s), pendingEscrowReturnRaw = raw(s), pendingEscrowQueryId = s.loadUintBig(64).toString();
-  const referral = { registry: maybeAddress(s), key: s.loadUint(32) }; end(s);
+  const referral = readLaunchpadDirectFeeConfig(s); end(s);
   if (headerFeeRecipient !== feeRecipient || headerFeeBps !== feeBps) throw Error('Bonding fee configuration mismatch');
   return { layout: 'bonding-v1' as const, ...envelope, config, metrics: { ...runtime, finalized, successful, feeRecipient, feeBps, totalFeesRaw,
     escrowBalanceRaw, pendingEscrowReturnRaw, pendingEscrowQueryId }, contributions, referral, journal };

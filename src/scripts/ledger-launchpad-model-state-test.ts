@@ -136,16 +136,16 @@ test('bonding: each participant-local acceptance pushes exact cumulative-curve f
     for (const [owner, entry] of before.contributions) if (owner !== intent.requester) assert.deepEqual(after.contributions.get(owner), entry);
   }
   const b = acceptance(bonding, 'owner-second-same-query');
-  assert.equal(readBondingSaleState(b.before.dataBoc!).metrics.currentPriceRaw, '3000000000000000000000000000');
+  assert.equal(readBondingSaleState(b.before.dataBoc!).metrics.currentPriceRaw, '2500000000000000000000000000');
 });
 test('bonding: real partial refund pops latest fill while later identical request creates new provenance', () => {
   const b = boundaries(bonding, 'owner-partial-refund')[0], before = readBondingSaleState(b.before.dataBoc!), after = readBondingSaleState(b.after.dataBoc!);
   const old = before.contributions.get(bonding.accounts.owner)!, next = after.contributions.get(bonding.accounts.owner)!;
-  assert.deepEqual(old.fills.map(f => f.paymentAmountRaw), ['3500000000', '1500000000']);
-  assert.deepEqual(next.fills, old.fills.slice(1)); assert.equal(next.paymentAmountRaw, '1500000000');
+  assert.deepEqual(old.fills.map(f => f.paymentAmountRaw), ['3000000000', '1000000000']);
+  assert.deepEqual(next.fills, old.fills.slice(1)); assert.equal(next.paymentAmountRaw, '1000000000');
   assert.equal(next.fillsHash, old.fills[0].previousHash);
   const followup = acceptance(bonding, 'owner-third-identical-body');
-  assert.equal(readBondingSaleState(followup.before.dataBoc!).contributions.get(bonding.accounts.owner)!.paymentAmountRaw, '1500000000');
+  assert.equal(readBondingSaleState(followup.before.dataBoc!).contributions.get(bonding.accounts.owner)!.paymentAmountRaw, '1000000000');
 });
 test('auction: repeated bids retain a single limit price and add exact commitment/quantity/fill', () => {
   for (const intent of auction.intents.filter(i => i.expectedAcceptance)) {
@@ -170,7 +170,7 @@ function sharedRecord(changes: Partial<Omit<LaunchpadSharedSettlement, 'status' 
   return beginCell().storeUint(BigInt(r.referralOperationId), 64).storeUint(r.accountingAck, 8).storeUint(BigInt(r.successorId), 64).storeUint(BigInt(r.settlementId), 64).storeUint(BigInt(`0x${r.requestHash}`), 256).storeCoins(BigInt(r.amountRaw)).storeCoins(BigInt(r.forwardTonAmountRaw))
     .storeUint(r.route, 8).storeUint(r.kind, 8).storeUint(r.status, 8).storeUint(r.deployRequired, 8).storeCoins(BigInt(r.deliveryReservedRaw)).storeCoins(BigInt(r.finalizeReservedRaw))
     .storeUint(BigInt(r.predecessorId), 64).storeInt(BigInt(r.recordedAt), 64).storeRef(beginCell().storeAddress(A(r.tokenRoot)).storeAddress(A(r.sourceWallet)).endCell())
-    .storeRef(beginCell().storeAddress(A(r.destinationWallet)).storeAddress(A(r.recipientOwner)).endCell()).storeRef(Cell.fromBase64(r.forwardPayloadBoc)).endCell();
+    .storeRef(beginCell().storeAddress(A(r.destinationWallet)).storeAddress(A(r.recipientOwner)).storeAddress(r.nativeRefundOwner ? A(r.nativeRefundOwner) : null).endCell()).storeRef(Cell.fromBase64(r.forwardPayloadBoc)).endCell();
 }
 test('shared settlement parser preserves complete records and raw FINAL/negative states without claiming payment', () => {
   assert.deepEqual(readLaunchpadSharedSettlement(sharedRecord()), specimen);

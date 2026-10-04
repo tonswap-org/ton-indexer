@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Address, Cell, Dictionary, beginCell, loadShardAccount, loadTransaction } from '@ton/core';
-import { readPerpsOracleRefreshes, readPerpsState } from '../ledger/perpsState';
-import { PERPS_CLOSE, PERPS_OPEN } from '../ledger/perpsWire';
+import { perpsOracleTradeTransition, readPerpsOracleRefreshes, readPerpsState } from '../ledger/perpsState';
+import { PERPS_CLAIM, PERPS_CLOSE, PERPS_OPEN } from '../ledger/perpsWire';
+import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
 
 const owner = Address.parse(`0:${'a'.repeat(64)}`);
 const hash = 'b'.repeat(64);
@@ -85,8 +86,8 @@ const openRequest = beginCell().storeUint(PERPS_OPEN, 32).storeUint(7, 64).store
 const notification = (request = openRequest, fundingOwner = owner, forwardTon = 2080000000n) => beginCell()
   .storeUint(0x7362d09c, 32).storeUint(99, 64).storeCoins(16).storeAddress(fundingOwner).storeAddress(requestedPool)
   .storeCoins(forwardTon).storeRef(request).endCell();
-const tradeOrder = (request = closeRequest, funding = empty, outcome = 2, reason = 0, pool: Address | null = requestedPool) => beginCell()
-  .storeRef(request).storeRef(funding).storeCoins(800000000n).storeUint(outcome, 8).storeUint(reason, 8).storeUint(request.equals(openRequest) && outcome === 2 ? 2 : 0, 8).storeAddress(pool).storeRef(empty).endCell();
+const tradeOrder = (request = closeRequest, funding = empty, outcome = 2, reason = 0, pool: Address | null = requestedPool, previous = empty) => beginCell()
+  .storeRef(request).storeRef(funding).storeCoins(800000000n).storeUint(outcome, 8).storeUint(reason, 8).storeUint(request.equals(openRequest) && outcome === 2 ? 2 : 0, 8).storeAddress(pool).storeRef(previous).endCell();
 const tradeReceipt = (order = tradeOrder(), requestHash = closeRequest.hash(), status = 2) => {
   const source = receipt({ status, ...(status === 1 ? { completedAt: 0n, mark: 0n, markTs: 0n } : {}) }).beginParse();
   const prefix = source.loadBits(128); source.skip(256);
@@ -118,6 +119,38 @@ for (const invalid of [
   tradeReceipt(tradeOrder(closeRequest, empty, 2, 1)),
 ]) assert.throws(() => readPerpsOracleRefreshes(records(invalid)));
 
+// Managed exits store a position commitment and original native sponsor;
+// these are neither a MODIFY's whole position nor an ordinary CLOSE's empty cell.
+const nativeSponsor = (refundKind = 0, moduleId = 0, refundTo: Address | null = requestedPool) => beginCell()
+  .storeUint(99, 64).storeUint(refundKind, 8).storeUint(moduleId, 32).storeAddress(refundTo).endCell();
+const positionContext = (sponsor = nativeSponsor()) => beginCell().storeUint(123, 256).storeRef(sponsor).endCell();
+const claimRequest = beginCell().storeUint(PERPS_CLAIM, 32).storeUint(7, 64).storeUint(1, 32).endCell();
+for (const [request, kind] of [[closeRequest, 1], [claimRequest, 2]] as const) {
+  for (const [outcome, reason, status] of [[1, kind, 1], [2, 0, 2], [3, 2, 2], [3, 3, 4]] as const) {
+    const managed = readPerpsOracleRefreshes(records(tradeReceipt(
+      tradeOrder(request, empty, outcome, reason, requestedPool, positionContext()), request.hash(), status))).get(owner.toRawString())!;
+    assert.equal(managed.order?.positionOracleContext?.positionHash, '7b'.padStart(64, '0'));
+    assert.equal(managed.order?.positionOracleContext?.sponsor.refundTo, requestedPool.toRawString());
+    assert.equal(managed.order?.positionOracleContext?.sponsor.correlationId, '99');
+  }
+  for (const wrongKind of [0, kind === 1 ? 2 : 1, 3]) assert.throws(() => readPerpsOracleRefreshes(records(tradeReceipt(
+    tradeOrder(request, empty, 1, wrongKind, requestedPool, positionContext()), request.hash(), 1))));
+}
+assert.throws(() => readPerpsOracleRefreshes(records(tradeReceipt(tradeOrder(claimRequest), claimRequest.hash()))));
+for (const context of [
+  beginCell().storeUint(123, 255).storeRef(nativeSponsor()).endCell(),
+  beginCell().storeUint(123, 257).storeRef(nativeSponsor()).endCell(),
+  beginCell().storeUint(123, 256).endCell(),
+  beginCell().storeUint(123, 256).storeRef(nativeSponsor()).storeRef(empty).endCell(),
+  positionContext(nativeSponsor(2)), positionContext(nativeSponsor(0, 405)),
+  positionContext(nativeSponsor(1, 0)), positionContext(nativeSponsor(0, 0, null)),
+  positionContext(beginCell().storeSlice(nativeSponsor().beginParse()).storeBit(false).endCell()),
+  positionContext(beginCell().storeSlice(nativeSponsor().beginParse()).storeRef(empty).endCell()),
+]) assert.throws(() => readPerpsOracleRefreshes(records(tradeReceipt(
+  tradeOrder(closeRequest, empty, 1, 1, requestedPool, context), closeRequest.hash(), 1))));
+assert.throws(() => readPerpsOracleRefreshes(records(tradeReceipt(
+  tradeOrder(openRequest, notification(), 2, 0, requestedPool, positionContext()), notification().hash()))));
+
 const archive = loadShardAccount(Cell.fromBoc(readFileSync(join(__dirname, 'fixtures/perps-intermediate-state/predecessor.boc')))[0].beginParse());
 assert.equal(archive.account?.storage.state.type, 'active');
 const state = archive.account!.storage.state;
@@ -132,12 +165,96 @@ const withRefs = (cell: Cell, refs: readonly Cell[]) => {
   for (const ref of refs) builder.storeRef(ref);
   return builder.endCell();
 };
-const currentFixture = JSON.parse(readFileSync(join(__dirname, 'fixtures/perps-risk-admission-current/open-accepted.json'), 'utf8'));
+readPerpsRiskFixtureProvenance();
+const maintenanceFixture = JSON.parse(readFileSync(join(perpsRiskFixtureFolder, 'maintenance-close.json'), 'utf8'));
+const maintenanceEngine = BigInt('0x' + Address.parse(maintenanceFixture.engine).hash.toString('hex'));
+const maintenanceCodeHash = Cell.fromBase64(maintenanceFixture.engineCode).hash().toString('hex');
+let managedBoundaries = 0, acceptedMaintenance: any = null;
+for (const row of maintenanceFixture.transactions) {
+  const tx = loadTransaction(Cell.fromBase64(row.transaction).beginParse());
+  if (tx.address !== maintenanceEngine || !row.oldStorage || !row.newStorage) continue;
+  const before = readPerpsState(row.oldStorage, maintenanceCodeHash), after = readPerpsState(row.newStorage, maintenanceCodeHash);
+  for (const [marketId, owners] of after.oracleRefreshes) {
+    const next = owners.get(maintenanceFixture.owner);
+    if (!next?.order?.positionOracleContext) continue;
+    managedBoundaries++;
+    const prior = before.oracleRefreshes.get(marketId)?.get(maintenanceFixture.owner);
+    if (prior?.order?.outcome === 1 && next.order.outcome === 2) {
+      assert(tx.description.type === 'generic' && !tx.description.aborted);
+      const transition = perpsOracleTradeTransition(before, after, maintenanceFixture.owner, next.order.request);
+      assert(transition, 'Actual funded maintenance must retain its exact position and sponsor across execution');
+      assert.equal(prior.order.reason, 1);
+      assert.equal(next.order.reason, 0);
+      assert.equal(next.order.positionOracleContext.sponsor.refundKind, 1);
+      assert.equal(next.order.positionOracleContext.sponsor.moduleId, 405);
+      acceptedMaintenance = { row, before, after, next, prior, marketId };
+    }
+  }
+}
+assert(managedBoundaries >= 2 && acceptedMaintenance, 'Current producer must contain the real managed close transition');
+const managed = acceptedMaintenance;
+const replaceContext = (boc: string, transform: (context: Cell) => Cell): string => {
+  const data = Cell.fromBase64(boc), maps = data.refs[1];
+  const markets = maps.refs[0].beginParse().loadDict(Dictionary.Keys.Uint(32), raw);
+  const market = markets.get(managed.marketId)!, stats = market.refs[1], journal = stats.refs[2], s = journal.beginParse();
+  const count = s.loadUint(16), nextWire = s.loadUintBig(64);
+  const eligibility = s.loadDict(Dictionary.Keys.BigUint(128), raw), entries = s.loadDict(Dictionary.Keys.Address(), raw);
+  const wires = s.loadDict(Dictionary.Keys.BigUint(64), Dictionary.Values.Address()); s.endParse();
+  const trader = Address.parse(maintenanceFixture.owner), receipt = entries.get(trader)!, order = receipt.refs[0];
+  entries.set(trader, withRefs(receipt, [withRefs(order, [order.refs[0], order.refs[1], transform(order.refs[2])])]));
+  const changedJournal = beginCell().storeUint(count, 16).storeUint(nextWire, 64).storeDict(eligibility).storeDict(entries).storeDict(wires).endCell();
+  markets.set(managed.marketId, withRefs(market, [market.refs[0], withRefs(stats, [stats.refs[0], stats.refs[1], changedJournal, stats.refs[3]])]));
+  return withRefs(data, [data.refs[0], withRefs(maps, [beginCell().storeDict(markets).endCell(), ...maps.refs.slice(1)]), ...data.refs.slice(2)]).toBoc().toString('base64');
+};
+for (const sponsor of [nativeSponsor(1, 404), nativeSponsor(1, 405, owner)]) {
+  const wrongSponsor = replaceContext(managed.row.newStorage, context => beginCell().storeBits(context.bits).storeRef(sponsor).endCell());
+  assert.throws(() => readPerpsState(wrongSponsor, maintenanceCodeHash), /position oracle sponsor/);
+}
+const changedHash = (context: Cell) => beginCell().storeUint(123, 256).storeRef(context.refs[0]).endCell();
+const changedSponsor = (context: Cell) => beginCell().storeBits(context.bits).storeRef(nativeSponsor()).endCell();
+for (const transform of [changedHash, changedSponsor]) {
+  const alteredAfter = readPerpsState(replaceContext(managed.row.newStorage, transform), maintenanceCodeHash);
+  assert.equal(perpsOracleTradeTransition(managed.before, alteredAfter, maintenanceFixture.owner, managed.next.order.request), null,
+    'The terminal continuation cannot replace either the position commitment or original sponsor');
+}
+const wrongBefore = readPerpsState(replaceContext(managed.row.oldStorage, changedHash), maintenanceCodeHash);
+const wrongAfter = readPerpsState(replaceContext(managed.row.newStorage, changedHash), maintenanceCodeHash);
+assert.equal(perpsOracleTradeTransition(wrongBefore, wrongAfter, maintenanceFixture.owner, managed.next.order.request), null,
+  'Even an unchanged arbitrary commitment cannot prove an accepted close of another position');
+const currentFixture = JSON.parse(readFileSync(join(perpsRiskFixtureFolder, 'open-accepted.json'), 'utf8'));
 const currentCodeHash = Cell.fromBase64(currentFixture.engineCode).hash().toString('hex');
 const engineAccount = BigInt('0x' + Address.parse(currentFixture.engine).hash.toString('hex'));
 const currentStorage = currentFixture.transactions.filter((saved: any) =>
   loadTransaction(Cell.fromBase64(saved.transaction).beginParse()).address === engineAccount).at(-1).newStorage;
 const currentData = Cell.fromBase64(currentStorage);
+// The final Engine carries distinct funding/control collectors. Reject an
+// otherwise authentic state if either identity is duplicated or reuses the
+// GasVault itself: both defects would misattribute returned native funds.
+const currentRegistry = currentData.refs[0];
+const currentConfig = currentRegistry.refs[1];
+const currentRouter = currentConfig.refs[0];
+const routerSlice = currentRouter.beginParse();
+routerSlice.loadMaybeAddress();
+const currentGasVault = routerSlice.loadMaybeAddress();
+routerSlice.loadMaybeAddress();
+const currentExtras = routerSlice.loadRef();
+assert(currentGasVault && (currentExtras.beginParse().loadUint(8) & 64));
+const collectorSlice = currentExtras.refs[0].beginParse();
+const fundingCollector = collectorSlice.loadAddress();
+const controlCollector = collectorSlice.loadAddress();
+assert(!fundingCollector.equals(controlCollector));
+const withCollectors = (first: Address, second: Address) => {
+  const collectors = beginCell().storeAddress(first).storeAddress(second).endCell();
+  const extras = withRefs(currentExtras, [collectors, ...currentExtras.refs.slice(1)]);
+  const router = withRefs(currentRouter, [extras, ...currentRouter.refs.slice(1)]);
+  const config = withRefs(currentConfig, [router, ...currentConfig.refs.slice(1)]);
+  const registry = withRefs(currentRegistry, [currentRegistry.refs[0], config, ...currentRegistry.refs.slice(2)]);
+  return withRefs(currentData, [registry, ...currentData.refs.slice(1)]).toBoc().toString('base64');
+};
+for (const malformed of [withCollectors(fundingCollector, fundingCollector),
+  withCollectors(currentGasVault, controlCollector)]) {
+  assert.throws(() => readPerpsState(malformed, currentCodeHash), /Perps return collector identities/);
+}
 for (const queueRefs of [currentData.refs[2].refs.slice(0, 2), [...currentData.refs[2].refs, Cell.EMPTY]]) {
   const obsoleteQueue = withRefs(currentData.refs[2], queueRefs);
   const obsoleteState = withRefs(currentData, [currentData.refs[0], currentData.refs[1], obsoleteQueue, currentData.refs[3]]);
@@ -192,4 +309,4 @@ assert.throws(() => readPerpsOracleRefreshes(records(pendingPaid, { extraOwner: 
 const obsoleteOwners = Dictionary.empty(Dictionary.Keys.Uint(16), Dictionary.Values.Address()).set(0, owner);
 const obsoleteEntries = Dictionary.empty(Dictionary.Keys.Address(), raw).set(owner, receipt());
 assert.throws(() => readPerpsOracleRefreshes(beginCell().storeUint(1, 16).storeUint(4n, 64).storeDict(obsoleteOwners).storeDict(obsoleteEntries).endCell()));
-console.log('Perps oracle receipts: exact eligibility index, protected paid orders and rejection of obsolete layouts passed');
+console.log('Perps oracle receipts: exact eligibility, managed position/sponsor commitments, native maintenance continuation and obsolete-layout rejection passed');

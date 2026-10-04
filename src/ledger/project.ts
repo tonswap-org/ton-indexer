@@ -530,7 +530,7 @@ export async function projectOwnerLedger(
           .map(value=>({...value,hash:canonicalLedgerHash(value.hash)})));
         if(!evidence.every(value=>chains.get(value.account)?.historyComplete))throw Error('routed_swap_history_incomplete');
         for(const value of evidence) {const member=nodes.find(n=>n.account===value.account&&n.raw.lt===value.lt&&canonicalLedgerHash(n.raw.hash)===value.hash);if(member)attach(inputFlow.source,member);}
-        for(const leg of [proof.routing.inputSettlement,terminal,...proof.settlements,...(proof.routing.protocolFeeSettlement?[proof.routing.protocolFeeSettlement]:[])])for(const flow of matching(leg.debit,leg.credit,leg.amountRaw))usedFlows.add(flow.id);
+        for(const leg of [proof.routing.inputSettlement,terminal,...proof.settlements,...(proof.routing.protocolFeeSettlement?[proof.routing.protocolFeeSettlement]:[]),...(proof.routing.directFeeSettlement?[proof.routing.directFeeSettlement]:[])])for(const flow of matching(leg.debit,leg.credit,leg.amountRaw))usedFlows.add(flow.id);
         operation.pool=pool.address;operation.confirmed=true;operation.evidence=evidence;operation.issue=undefined;
         operation.settlement={status:'confirmed',protocol:'dlmm',operation:'swap',pool:pool.address,queryId:proof.notice.queryId,evidence,
           dlmmSwap:{poolCodeHash:pool.codeHash,paidInputRaw:proof.paid.toString(),consumedInputRaw:proof.consumed.toString(),returnedInputRaw:proof.returned.toString(),outputRaw:proof.output.toString(),
@@ -898,7 +898,7 @@ export async function projectOwnerLedger(
           (groupOps.some(
             (op) => op.kind === "t3_mint" || op.kind === "t3_redeem",
           ) &&
-            T3_OPS.has(opcode(msg)!)) ||
+            T3_OPS.has(businessOpcode(msg)!)) ||
           (groupOps.length > 0 &&
             [REMOVE, COLLECT, COLLECT_TO, WITHDRAW_COMPLETE].includes(opcode(msg)!)) ||
           (groupOps.some((op) =>

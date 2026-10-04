@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { Address, Cell, Dictionary, beginCell, loadTransaction } from '@ton/core';
 import { PGlite } from '@electric-sql/pglite';
 import { qualifyPerpsRangeWallet } from '../ledger/perpsRangeWallet';
@@ -14,6 +14,7 @@ import type { TonDataSource, AccountStateResponse, RawTransaction } from '../dat
 import { perpsWalletAddress } from '../ledger/perpsWire';
 import { loadOpcodes } from '../utils/opcodes';
 import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
+import { assertPerpsProducerReceipt, assertPerpsStressChainConfig } from './perps-fixture-producer';
 
 const fixture = (name: string) => JSON.parse(readFileSync(join(__dirname, 'fixtures', name), 'utf8'));
 const hash = (boc: string) => Cell.fromBase64(boc).hash().toString('hex');
@@ -27,6 +28,7 @@ export async function testPerpsRangeWalletIdentity() {
     assert.throws(() => readT3RecoveryWallet(account.dataBoc), 'the immutable earlier testnet layout is unsupported');
   }
   const parallelCapture = fixture('perps-range-funded-current/current-wallets.json');
+  assertPerpsStressChainConfig(parallelCapture.chainConfig);
   for (const account of parallelCapture.wallets) {
     assert.equal(hash(account.codeBoc), account.codeHash); assert.equal(hash(account.dataBoc), account.dataHash);
     const decoded = readT3RecoveryWallet(account.dataBoc);
@@ -34,9 +36,19 @@ export async function testPerpsRangeWalletIdentity() {
   }
   const folder = 'perps-range-funded-current';
   const provenance = fixture(`${folder}/provenance.json`);
+  assert.equal(provenance.qualification,'qualified-after-native-source-lock');
+  for(const producer of ['risk','wallets'] as const){
+    const receipt=provenance.producerReceipts?.[producer];
+    assertPerpsProducerReceipt(receipt,producer,resolve(__dirname,'../../../tonswap_tolk'),
+      receipt?.captureDirectory,Buffer.from(provenance.producerLogs?.[producer]??''));
+  }
   for (const artifact of provenance.artifacts) {
     const bytes = readFileSync(join(__dirname, 'fixtures', folder, artifact.relative));
+    assertPerpsStressChainConfig(JSON.parse(bytes.toString('utf8')).chainConfig);
     assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256);
+    const receipt=provenance.producerReceipts[artifact.relative==='current-wallets.json'?'wallets':'risk'];
+    assert.equal(dirname(artifact.source),receipt.captureDirectory);
+    assert.equal(artifact.sha256,receipt.artifacts[basename(artifact.source)]);
   }
   const open = fixture(`${folder}/open.json`), close = fixture(`${folder}/close.json`);
   const range = fixture(`${folder}/range.json`);

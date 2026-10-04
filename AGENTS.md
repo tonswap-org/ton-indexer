@@ -17,6 +17,12 @@ This repository contains a **TypeScript TONSWAP indexer service** plus the desig
 
 ## What This Repo Is (and Isn’t)
 
+T3 discovery requires the sole current 18-field `vault_routes` getter: epoch,
+receiver code, wallet code, then the three five-field reserve routes. Root slots
+are 3, 8 and 13. Recovery bindings authenticate both code cells; the old 17-field
+layout is unsupported. Receiver discovery failures remain custody gaps without
+hiding independently verified mint hub/root identities.
+
 Option lifecycle qualification uses `LEDGER_OPTIONS_CODE_HASHES_JSON` with exactly the current factory, vault, Shout, Outperformance and wallet Cell hashes. Registry identities and historical state must match. Exercise right retirement, actual holder payout and RiskVault reimbursement are separate facts. `ReleaseCollateral` never supplies a cash refund. An early OCRC receipt never proves a completed claim. Preserve raw fees and explicit archive/related-history gaps; owner-OBAR unwind requires original funding, historical cancellation and exact independent factory/vault cash finalizers. Initial BOYR/BBUY bounce recovery additionally requires the actual qualified failed product transaction, exact standard VM bounce, historical series/index unwind and independent physical factory return. Other automatic abort/retry recovery and expiry-only paths remain unsupported and must not fabricate payouts.
 - **Is**: a runnable indexer service with in-memory storage and background workers, plus registry data.
 - **Isn’t**: a production-hardened indexer yet (liteserver pool adapter and full swap/LP decoding remain partial).
@@ -36,6 +42,15 @@ Option lifecycle qualification uses `LEDGER_OPTIONS_CODE_HASHES_JSON` with exact
   second market-stats reference. Older layouts are unsupported, including when
   their archived code can be replayed. Historical replay verifies commitments;
   it never authorizes an obsolete business-state decoder.
+  Every position counterparty reference contains exactly four coins in order:
+  reserved, pendingFunding, collectedLoss, remainingEntitlement. No three-coin
+  fallback is supported. Physical LP backing is 2N and cumulative gross positive
+  price/funding entitlement starts at actual fill N; funding cancellation consumes
+  entitlement, partial exits retire its closed share, and only actual new gross
+  fills add it. Bind the fourth coin into oracle position commitments and expose
+  mandatory remainingEntitlementRaw. Margin deposits cannot reset it and withdrawals
+  retain entry principal N. Pure synthetic vectors never replace current native
+  fixture provenance or establish a universal LP zero-loss guarantee.
   Every receipt has the mandatory current order reference. Paid linear OPEN/CLOS
   stores the original request, full OPEN notification or empty CLOSE notification,
   native budget, terminal outcome/reason and originally requested pool. Intake
@@ -179,3 +194,13 @@ Missing journal/owner dictionaries, mismatched receipt identities and trailing
 fields are not accepted as older layouts. Native TWAP browser completion uses the
 strict contract receipt plus physical wallet evidence; generic missing-plan reads
 are never settlement evidence.
+
+Current Pool metadata is exactly 653 bits with the mandatory two-bit protected
+wallet acknowledgement mask after feeClaimedX; constructor mask is zero.
+Router durable storage includes the mandatory nullable canary owner, and each
+settlement group includes its mandatory refund owner. Direct-fee routed swaps
+allocate both the beneficiary and the exact zero-reward RFFL FeeRouter transfer.
+When both use the T3 wallet, beneficiary dispatch follows the fee's authenticated
+finalization through the source queue. Preserve both physical fee legs and that
+queue transition; never count two allocations as a second user payment or accept
+an old one-record/immediate-dispatch layout.

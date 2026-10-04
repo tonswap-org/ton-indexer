@@ -18,6 +18,7 @@ import {
 import { TonDataSource } from '../data/dataSource';
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
+import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 import { loadOpcodes } from '../utils/opcodes';
 
 const owner = Address.parse(`0:${'1'.repeat(64)}`);
@@ -30,9 +31,9 @@ const walletCode = beginCell().storeUint(0x74, 8).endCell();
 const wrongCode = beginCell().storeUint(0x75, 8).endCell();
 const content = beginCell().storeUint(0, 8).endCell();
 const EXPECTED_INITIAL_DATA_HASH =
-  'db838c715172ef794539a28db01ec0151ad53daf099f6d5fe4193522b24d2f9e';
+  'd7e720c832bdfe441d7de7dbbe53d599cd243b4ca84f7dabd0bb6f0ccd404b2c';
 const EXPECTED_INITIAL_WALLET_ADDRESS =
-  '0:ad4304430e859464b8abfd3941f775e3732d275c655caa0da8f3e4059762b8f2';
+  '0:6ac6c72fe979ea516f27ad14da65077c6a5a33df956ec11a5b327043d1a24cb6';
 
 const addressItem = (address: Address): TupleItem => ({
   type: 'slice',
@@ -105,6 +106,49 @@ const legacyWalletInitialData = () =>
 
 const assertCanonicalInitialWalletLayout = () => {
   const data = buildTonswapJettonWalletInitialData(owner, root);
+  const current = readCurrentJettonWalletStorage(data);
+  assert.equal(current.protectedT3Epoch, 0);
+  assert.equal(current.protectedRiskVaultEpoch, 0);
+  assert.equal(current.protectedPoolEpoch, 0);
+  assert.equal(current.protectedPoolRouter, null);
+  assert.equal(current.protectedPoolQuarantine, 0n);
+  assert.equal(current.protectedApplicationKind, 0);
+  assert.equal(current.protectedApplicationEpoch, 0);
+  assert.equal(current.protectedApplicationQuarantine, 0n);
+  const withPolicy = (policy: Cell) => beginCell().storeUint(0x4a545731, 32)
+    .storeUint(0, 32).storeUint(0, 32).storeRef(data.refs[0])
+    .storeRef(data.refs[1]).storeRef(data.refs[2]).storeRef(policy).endCell();
+  const policy = (kind: number, epoch: number, quarantine: bigint) => beginCell()
+    .storeUint(0, 32).storeAddress(null).storeCoins(0n).storeUint(kind, 8)
+    .storeUint(epoch, 32).storeCoins(quarantine);
+  for (const kind of [1, 2]) {
+    const protectedState = writeCurrentJettonWalletStorage({ ...current, balance: 10n,
+      protectedApplicationKind: kind, protectedApplicationEpoch: 1, protectedApplicationQuarantine: 7n });
+    const parsed = readCurrentJettonWalletStorage(protectedState);
+    assert.equal(parsed.protectedApplicationKind, kind);
+    assert.equal(parsed.protectedApplicationEpoch, 1);
+    assert.equal(parsed.protectedApplicationQuarantine, 7n);
+    assert.throws(() => writeCurrentJettonWalletStorage({ ...parsed, protectedT3Epoch: 1 }), /mixed/);
+    assert.throws(() => writeCurrentJettonWalletStorage({ ...parsed, protectedRiskVaultEpoch: 1 }), /mixed/);
+    assert.throws(() => writeCurrentJettonWalletStorage({ ...parsed, protectedPoolEpoch: 1 }), /mixed/);
+  }
+  for (const [kind, epoch, quarantine] of [[3, 1, 0n], [0, 1, 0n], [1, 0, 0n], [0, 0, 1n], [1, 1, 1n]] as const) {
+    assert.throws(() => readCurrentJettonWalletStorage(withPolicy(policy(kind, epoch, quarantine).endCell())), /application/);
+  }
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(
+    beginCell().storeUint(0, 32).storeAddress(null).storeCoins(0n).endCell())));
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(policy(0, 0, 0n).storeBit(0).endCell())), /Trailing/);
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(policy(0, 0, 0n).storeRef(Cell.EMPTY).endCell())), /Trailing/);
+  const noncanonicalQuarantine = beginCell().storeUint(0, 32).storeAddress(null).storeCoins(0n)
+    .storeUint(1, 8).storeUint(1, 32).storeUint(1, 4).storeUint(0, 8).endCell();
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(noncanonicalQuarantine)), /Noncanonical/);
+  const attested = writeCurrentJettonWalletStorage({ ...current,
+    protectedT3Epoch: 7, protectedRiskVaultEpoch: 9 });
+  assert.equal(readCurrentJettonWalletStorage(attested).protectedT3Epoch, 7);
+  assert.equal(readCurrentJettonWalletStorage(attested).protectedRiskVaultEpoch, 9);
+  const obsolete = beginCell().storeUint(0x4a545731, 32).storeUint(0, 32);
+  data.refs.forEach(ref => obsolete.storeRef(ref));
+  assert.throws(() => readCurrentJettonWalletStorage(obsolete.endCell()), /Current JTW1/);
   assert.equal(data.hash().toString('hex'), EXPECTED_INITIAL_DATA_HASH);
   assert.equal(
     contractAddress(0, { code: walletCode, data }).toRawString(),
@@ -113,11 +157,14 @@ const assertCanonicalInitialWalletLayout = () => {
 
   const storage = data.beginParse();
   assert.equal(storage.loadUint(32), 0x4a545731);
+  assert.equal(storage.loadUint(32), 0);
+  assert.equal(storage.loadUint(32), 0);
   assert.equal(storage.remainingBits, 0);
-  assert.equal(storage.remainingRefs, 3);
+  assert.equal(storage.remainingRefs, 4);
   const identity = storage.loadRef().beginParse();
   const accounting = storage.loadRef().beginParse();
   const journals = storage.loadRef().beginParse();
+  const poolPolicy = storage.loadRef().beginParse();
   assert.equal(identity.loadInt(8), owner.workChain);
   assert.equal(identity.loadUintBig(256), BigInt(`0x${owner.hash.toString('hex')}`));
   assert.equal(identity.loadInt(8), root.workChain);
@@ -157,6 +204,14 @@ const assertCanonicalInitialWalletLayout = () => {
   assert.equal(journals.loadBit(), false, "Initial referral notification map must be empty.");
   assert.equal(journals.remainingBits, 0);
   assert.equal(journals.remainingRefs, 0);
+  assert.equal(poolPolicy.loadUint(32), 0);
+  assert.equal(poolPolicy.loadMaybeAddress(), null);
+  assert.equal(poolPolicy.loadCoins(), 0n);
+  assert.equal(poolPolicy.loadUint(8), 0);
+  assert.equal(poolPolicy.loadUint(32), 0);
+  assert.equal(poolPolicy.loadCoins(), 0n);
+  assert.equal(poolPolicy.remainingBits, 0);
+  assert.equal(poolPolicy.remainingRefs, 0);
 
   const legacyData = legacyWalletInitialData();
   assert.notEqual(legacyData.hash().toString('hex'), EXPECTED_INITIAL_DATA_HASH);

@@ -1,115 +1,127 @@
 {
-  "poolCodeHash": "4c1a96d9872851bbc47fba64ba4bcff0cb5efc0c2172d1d20ba712d4bcdc44c2",
-  "sourceDirectory": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1",
-  "scope": "Actual canonical-v15 current-source execution. Original raw transactions, messages and before/after boundaries; full router/referral fee path for LP accrual, independent direct zero-fee path for direct swaps.",
+  "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b",
+  "sourceDirectory": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02",
+  "scope": "Current-source canonical VM15 Sandbox execution; original transactions and account boundaries. Public caller-funded routing with direct FeeRouter settlement; no referral reward fanout. Local proof, not deployed testnet evidence.",
   "files": [
     {
       "file": "dlmm-liquidity-settlements.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-indexer-current/liquidity/dlmm-liquidity-settlements.json",
-      "sha256": "1aa5274c8cb2ff84b467967fe10c7c5aaef2822040be8f33e5120da4eab1022c",
-      "transactions": 480,
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/liquidity/dlmm-liquidity-settlements.json",
+      "sha256": "225a1a06aabf76bc898aa6f6dadddaa581185c7981427646f75b4b850d3a946a",
+      "transactions": 337,
       "compressed": false,
-      "poolCodeHash": "4c1a96d9872851bbc47fba64ba4bcff0cb5efc0c2172d1d20ba712d4bcdc44c2"
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "dlmm-zero-payout-settlements.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-indexer-current/zero-payout/dlmm-zero-payout-settlements.json",
-      "sha256": "00f1f0d8e289b9ef583f70e90f6d72c684843b24fbc00b687ac4700fd5b16e41",
-      "transactions": 221,
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/zero-payout/dlmm-zero-payout-settlements.json",
+      "sha256": "6ea0bf52233b91a64f1b948f240e93571047336ae8727b474d2a92e2356b0a3f",
+      "transactions": 227,
       "compressed": false,
-      "poolCodeHash": "4c1a96d9872851bbc47fba64ba4bcff0cb5efc0c2172d1d20ba712d4bcdc44c2"
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "dlmm-liquidity-reused-query.json.gz",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-indexer-current/reused-query/dlmm-liquidity-settlements.json",
-      "sha256": "2c0447f780d555b44a497f8c51617aab3d95aba33372e7f5c78232c97655300a",
-      "transactions": 480,
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/reused-query/dlmm-liquidity-settlements.json",
+      "sha256": "06655486c64bde025f14ed3d6db896d5ebae67aa24aa0712fc66eb15398414ec",
+      "transactions": 337,
       "compressed": true,
-      "poolCodeHash": "4c1a96d9872851bbc47fba64ba4bcff0cb5efc0c2172d1d20ba712d4bcdc44c2"
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-destination-pending.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-destination-pending.json",
-      "sha256": "e872635176610d34554c49fb917131409ca4a8a9d839475ed58780234d375a77",
-      "transactions": 45,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-destination-pending.json",
+      "sha256": "de0446c50b0ac3e02f4170e75b006185baa3b9a78ebac84fcbf99aa420b51961",
+      "transactions": 49,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-destination-recovered.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-destination-recovered.json",
-      "sha256": "6791867db04b1b358cd5a7c7a93d1a9924a4edffd282ecab706e5a8d1dbca1d0",
-      "transactions": 55,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-destination-recovered.json",
+      "sha256": "d6f4758a5ea2f12ce1911629c8d1c6510d9983bafd76c2d9b0aa5fdd36460923",
+      "transactions": 59,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-duplicate-side.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-duplicate-side.json",
-      "sha256": "a972fbacb0ee16152d1460dace60f0c09ff1f7fe9359d0fd02dea7a89c6af66f",
-      "transactions": 58,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-duplicate-side.json",
+      "sha256": "70cc650f59158bd549a23f7e2a815ff4dd784b38985ea90a1805106c5881539f",
+      "transactions": 62,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-final-receipt-pending.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-final-receipt-pending.json",
-      "sha256": "0a6a6d2161d152e37f571a43077aeaffbd99b36fc5f65cfe5ebf56bb84b805d5",
-      "transactions": 46,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-final-receipt-pending.json",
+      "sha256": "35469cd300a703eeb4bb5cc8525b905b2c7f3cf6662cf10712a8b177b9beb378",
+      "transactions": 50,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-final-receipt-recovered.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-final-receipt-recovered.json",
-      "sha256": "455605d0545fa9939d65d488caae2166b2944bbebdaea73431d6a532572006d1",
-      "transactions": 51,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-final-receipt-recovered.json",
+      "sha256": "8cc5cca15de77a0316a318d18b501c7b69eacc39d4c29193345512979ae819d7",
+      "transactions": 55,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-finalized.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-finalized.json",
-      "sha256": "e80caf4d4093246f74ac0363656e18775f3323ceee36b5687e5b0293f2b05ea3",
-      "transactions": 46,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-finalized.json",
+      "sha256": "e15cadfad1a877ec1b9567301f0910e39595a73285046b18397561567d96ec53",
+      "transactions": 50,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-finalizer-pending.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-finalizer-pending.json",
-      "sha256": "c0358c7edcb184fb9d537dff66b6d4c657bb437e3d88ca49dc64997321cbe1c4",
-      "transactions": 46,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-finalizer-pending.json",
+      "sha256": "5c128ca763feb81d55403ab576def5cb3ec75c9d9c3ef294d1ebffaa9c11c286",
+      "transactions": 50,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-finalizer-recovered.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-finalizer-recovered.json",
-      "sha256": "ca921c5a3845bd8d08251f1b62557a938f019d7c61e58562f041faa6af005c77",
-      "transactions": 51,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-finalizer-recovered.json",
+      "sha256": "d3f5a676ef39b74c9ae01ad346b093e3699463380a5b5c96bb65ed7708c7ddc4",
+      "transactions": 55,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-outcome-pending.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-outcome-pending.json",
-      "sha256": "55000d1f4acc3461c78cf49a42706519bdf3e121dc5016f441e7657668dab9da",
-      "transactions": 44,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-outcome-pending.json",
+      "sha256": "b432cd6fcf91a0068b97eb5f9718fd647cce060fa40a4d47d86c0b78a30e20f6",
+      "transactions": 48,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-outcome-recovered.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-outcome-recovered.json",
-      "sha256": "07d5d8303a4b62f3c748fb07c9aa9be9d09131ff65f43d6330ec12485630371d",
-      "transactions": 51,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-outcome-recovered.json",
+      "sha256": "496767d31fe2da17104e4458607b4f4cccc9453c9fd8a4d0120a35b72aa2522d",
+      "transactions": 55,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-source-pending.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-source-pending.json",
-      "sha256": "e3ea59d53b80eb477820cf028ca021a8c6f36ad6198f81ea600f49b152b908f2",
-      "transactions": 41,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-source-pending.json",
+      "sha256": "84e6479973bf2c62d0dce9e64cc65ead8550b1a55ff9db12dffa49915aa717be",
+      "transactions": 45,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     },
     {
       "file": "refunds/refund-source-recovered.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-refund-fixtures/refund-source-recovered.json",
-      "sha256": "288b3e158f849ec1dfde6cf5770b3d158763c98201098d733564c0c79a499c13",
-      "transactions": 51,
-      "compressed": false
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/refunds/refund-source-recovered.json",
+      "sha256": "1ce6345462a47fc5a80908c3d378026b57d85e16c8b6a3dfa3912d34f1407252",
+      "transactions": 55,
+      "compressed": false,
+      "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
     }
   ]
 }

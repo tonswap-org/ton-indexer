@@ -24,9 +24,9 @@ const routedSettlement = (finalizer: "routerFinalized" | "poolFinalized") => ({
 });
 const routedSwapEvidence = {
   type:"object",additionalProperties:false,
-  required:["router","businessId","requestHash","completionHash","routerAcceptance","completion","completionAcknowledged","inputSettlement","terminalSettlement","protocolFeeSettlement","boundaries"],
+  required:["router","businessId","requestHash","completionHash","routerAcceptance","completion","completionAcknowledged","inputSettlement","terminalSettlement","protocolFeeSettlement","directFeeSettlement","boundaries"],
   properties:{router:{type:"string"},businessId:rawAmount,requestHash:{type:"string"},completionHash:{type:"string"},routerAcceptance:evidenceRef,completion:evidenceRef,completionAcknowledged:evidenceRef,
-    inputSettlement:routedSettlement("routerFinalized"),terminalSettlement:routedSettlement("routerFinalized"),protocolFeeSettlement:{anyOf:[{type:"null"},routedSettlement("poolFinalized")]},boundaries:{type:"array",minItems:1,items:routedBoundary}},
+    inputSettlement:routedSettlement("routerFinalized"),terminalSettlement:routedSettlement("routerFinalized"),protocolFeeSettlement:{anyOf:[{type:"null"},routedSettlement("poolFinalized")]},directFeeSettlement:{anyOf:[{type:"null"},routedSettlement("routerFinalized")]},boundaries:{type:"array",minItems:1,items:routedBoundary}},
   description:"Qualified current Router custody: original payer funding, input wallet finalization, physical pool output and protocol fee, RPSC/RPCA completion, and independent final beneficiary settlement. The protocol fee is not counted as another user payment.",
 };
 const signedRaw = { type: "string", pattern: "^-?(0|[1-9][0-9]*)$" };
@@ -61,8 +61,8 @@ const perpsSnapshot = {
         lastFundingIndexRaw: signedRaw,
         counterparty: {
           type: "object", additionalProperties: false,
-          required: ["reservedRaw", "pendingFundingRaw", "collectedLossRaw"],
-          properties: { reservedRaw: rawAmount, pendingFundingRaw: rawAmount, collectedLossRaw: rawAmount },
+          required: ["reservedRaw", "pendingFundingRaw", "collectedLossRaw", "remainingEntitlementRaw"],
+          properties: { reservedRaw: rawAmount, pendingFundingRaw: rawAmount, collectedLossRaw: rawAmount, remainingEntitlementRaw: rawAmount },
         },
       },
     },
@@ -325,6 +325,17 @@ export const ledgerSchemas = {
   DlmmDepositMetadata: dlmmDeposit,
   DlmmLiquidityReceipt: dlmmReceipt,
   DlmmLiquidityMetadata: dlmmLiquidity,
+  LedgerT3RefundGetter: {
+    type: "object",
+    required: ["account", "method", "args", "result", "observedAt"],
+    properties: {
+      account: { type: "string" },
+      method: { type: "string", enum: ["vault_payout_identity", "refund_queue_item", "vault_payout_state"] },
+      args: { type: "array", items: { type: "string" } },
+      result: { type: "array", items: { type: "string" } },
+      observedAt: { type: "string", format: "date-time" },
+    },
+  },
   LedgerT3BurnRecovery: {
     type: "object",
     description:
@@ -447,6 +458,7 @@ export const ledgerSchemas = {
           "t3_mint",
           "t3_burn",
           "t3_payout",
+          "t3_refund",
           "perps_collateral",
           "perps_funding",
           "perps_payout",
@@ -484,6 +496,7 @@ export const ledgerSchemas = {
               "t3_mint",
               "t3_burn",
               "t3_payout",
+              "t3_refund",
               "perps_account_delta",
               "perps_payout",
             ],
@@ -546,7 +559,7 @@ export const ledgerSchemas = {
               account: { type: "string" },
               method: {
                 type: "string",
-                enum: ["redemption_identity"],
+                enum: ["redemption_identity", "vault_payout_identity", "refund_queue_item", "vault_payout_state"],
               },
               args: { type: "array", items: { type: "string" } },
               result: { type: "array", items: { type: "string" } },
@@ -1122,13 +1135,35 @@ export const ledgerSchemas = {
               referrer: { type: ["string", "null"], description: "Original inviter from the strict mint/deposit or redemption request; null means no inviter supplied." },
               stage: {
                 type: "string",
-                enum: ["minted", "redeemed", "unresolved"],
+                enum: ["minted", "redeemed", "refund_queued", "refund_dispatching", "receiver_credited", "unresolved"],
               },
               rootQueryId: rawAmount,
               wireId: rawAmount,
               requestHash: { type: "string" },
               payoutId: rawAmount,
               receiver: { type: "string" },
+              refund: {
+                type: "object",
+                required: ["kind", "businessQueryId", "payoutId", "token", "amountRaw", "phase", "identityEvidence"],
+                description: "A durable failed-mint refund. Receiver credit proves claimable custody, not a withdrawal into the owner's wallet.",
+                properties: {
+                  kind: { type: "integer", enum: [3, 5] },
+                  businessQueryId: rawAmount,
+                  payoutId: rawAmount,
+                  token: { type: "integer", minimum: 0, maximum: 2 },
+                  amountRaw: rawAmount,
+                  phase: { type: ["integer", "null"] },
+                  sourceAccepted: { type: "boolean" },
+                  receiverCredited: { type: "boolean" },
+                  routeEpoch: { type: "integer", minimum: 0 },
+                  wireId: rawAmount,
+                  receiverWallet: { type: "string" },
+                  identityEvidence: { $ref: "#/components/schemas/LedgerT3RefundGetter" },
+                  queueEvidence: { $ref: "#/components/schemas/LedgerT3RefundGetter" },
+                  payoutEvidence: { $ref: "#/components/schemas/LedgerT3RefundGetter" },
+                  creditEvidence: { type: "array", items: evidenceRef },
+                },
+              },
               reserveRoots: {
                 type: "array",
                 minItems: 3,

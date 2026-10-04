@@ -27,7 +27,7 @@ export type PerpsPosition = {
   marginRaw: string;
   entryNotionalRaw: string;
   lastFundingIndexRaw: string;
-  counterparty: { reservedRaw: string; pendingFundingRaw: string; collectedLossRaw: string };
+  counterparty: { reservedRaw: string; pendingFundingRaw: string; collectedLossRaw: string; remainingEntitlementRaw: string };
 };
 
 export function readPerpsPosition(cell: Cell): PerpsPosition {
@@ -36,12 +36,16 @@ export function readPerpsPosition(cell: Cell): PerpsPosition {
     owner: s.loadAddress().toRawString(), marketId: s.loadUint(32), sizeRaw: s.loadIntBig(128).toString(),
     marginRaw: s.loadCoins().toString(), entryNotionalRaw: s.loadCoins().toString(),
     lastFundingIndexRaw: s.loadIntBig(128).toString(),
-    counterparty: { reservedRaw: '0', pendingFundingRaw: '0', collectedLossRaw: '0' },
+    counterparty: { reservedRaw: '0', pendingFundingRaw: '0', collectedLossRaw: '0', remainingEntitlementRaw: '0' },
   };
   const counterparty = s.loadRef().beginParse();
   position.counterparty = { reservedRaw: counterparty.loadCoins().toString(),
-    pendingFundingRaw: counterparty.loadCoins().toString(), collectedLossRaw: counterparty.loadCoins().toString() };
+    pendingFundingRaw: counterparty.loadCoins().toString(), collectedLossRaw: counterparty.loadCoins().toString(),
+    remainingEntitlementRaw: counterparty.loadCoins().toString() };
   end(counterparty); end(s);
+  if (BigInt(position.counterparty.remainingEntitlementRaw) > BigInt(position.counterparty.reservedRaw)
+      || BigInt(position.counterparty.pendingFundingRaw) > BigInt(position.counterparty.remainingEntitlementRaw))
+    throw Error('Unreachable perps counterparty state');
   return position;
 }
 export type PerpsPending = {
@@ -110,8 +114,19 @@ export type PerpsOracleTradeOrder = {
   reason: number;
   admissionPhase: number;
   previousPosition: Cell;
+  positionOracleContext: { positionHash: string; sponsor: NativeFundingContext } | null;
   pool: string;
 };
+
+function positionCommitment(position: PerpsPosition): string {
+  const counterparty = beginCell().storeCoins(BigInt(position.counterparty.reservedRaw))
+    .storeCoins(BigInt(position.counterparty.pendingFundingRaw)).storeCoins(BigInt(position.counterparty.collectedLossRaw))
+    .storeCoins(BigInt(position.counterparty.remainingEntitlementRaw)).endCell();
+  return beginCell().storeAddress(Address.parse(position.owner)).storeUint(position.marketId, 32)
+    .storeInt(BigInt(position.sizeRaw), 128).storeCoins(BigInt(position.marginRaw))
+    .storeCoins(BigInt(position.entryNotionalRaw)).storeInt(BigInt(position.lastFundingIndexRaw), 128)
+    .storeRef(counterparty).endCell().hash().toString('hex');
+}
 
 export function readPerpsOracleRefreshes(cell: Cell): Map<string, PerpsOracleRefreshReceipt> {
   const receipts = new Map<string, PerpsOracleRefreshReceipt>();
@@ -161,13 +176,28 @@ export function readPerpsOracleRefreshes(cell: Cell): Map<string, PerpsOracleRef
       end(value);
       const request = perpsRequest(requestCell), funding = perpsOpenNotification(notification);
       const hasNotification = notification.bits.length !== 0 || notification.refs.length !== 0;
+      let positionOracleContext: PerpsOracleTradeOrder['positionOracleContext'] = null;
       if (request?.operation === 'modify') {
         const previous = readPerpsPosition(previousPosition);
         if (previous.owner !== owner.toRawString() || previous.marketId !== request.marketId || previous.sizeRaw === '0')
           throw Error('Perps modify prior position is not its exact owner and market');
+      } else if ((request?.operation === 'close' || request?.operation === 'claim') &&
+          (previousPosition.bits.length || previousPosition.refs.length)) {
+        if (previousPosition.isExotic || previousPosition.bits.length !== 256 || previousPosition.refs.length !== 1)
+          throw Error('Invalid perps position oracle context');
+        const context = previousPosition.beginParse();
+        const positionHash = context.loadUintBig(256).toString(16).padStart(64, '0');
+        const sponsorCell = context.loadRef();
+        if (sponsorCell.isExotic) throw Error('Invalid perps position oracle sponsor');
+        const sponsor = decodeNativeFundingContext(sponsorCell);
+        end(context);
+        positionOracleContext = { positionHash, sponsor };
       } else end(previousPosition.beginParse());
-      if (!request || !['open', 'modify', 'close'].includes(request.operation) || request.queryId !== queryId ||
+      const positionRequest = request?.operation === 'close' || request?.operation === 'claim';
+      const pendingReason = positionOracleContext ? (request?.operation === 'claim' ? 2 : 1) : 0;
+      if (!request || !['open', 'modify', 'close', 'claim'].includes(request.operation) || request.queryId !== queryId ||
           (request.operation === 'close' && (request.sizeRaw !== '0' || hasNotification || admissionPhase !== 0)) ||
+          (request.operation === 'claim' && (!positionOracleContext || hasNotification || admissionPhase !== 0)) ||
           (request.operation === 'open' && !hasNotification) ||
           (request.operation === 'modify' && (BigInt(request.marginRaw!) > 0n) !== hasNotification) ||
           (hasNotification ? !funding || funding.owner !== owner.toRawString() ||
@@ -175,14 +205,15 @@ export function readPerpsOracleRefreshes(cell: Cell): Map<string, PerpsOracleRef
             BigInt(funding.forwardTonRaw) !== BigInt(nativeBudgetRaw) + PERPS_ORACLE_REFRESH_VALUE + PERPS_RISK_ADMISSION_VALUE
             : requestCell.hash().toString('hex') !== requestHash) ||
           admissionPhase > 2 || ![1, 2, 3].includes(outcome) ||
-          (outcome === 1 && (reason !== 0 || (admissionPhase === 0 ? status !== 1 : status !== 2))) ||
-          (outcome === 2 && (status !== 2 || reason !== 0 || (request.operation !== 'close' && admissionPhase !== 2))) ||
+          (outcome === 1 && (reason !== pendingReason || (admissionPhase === 0 ? status !== 1 : status !== 2))) ||
+          (outcome === 2 && (status !== 2 || reason !== 0 || (!positionRequest && admissionPhase !== 2))) ||
           (outcome === 3 && !((status === 2 && [2, 5, 6, 8].includes(reason)) ||
             (status === 3 && [1, 7, 8].includes(reason)) || (status === 4 && [3, 7, 8].includes(reason)))) ||
           (reason === 8 && admissionPhase === 0)) {
         throw Error('Invalid perps paid oracle order');
       }
-      order = { request, requestCell, notification, funding, nativeBudgetRaw, outcome, reason, admissionPhase, previousPosition, pool };
+      order = { request, requestCell, notification, funding, nativeBudgetRaw, outcome, reason, admissionPhase,
+        previousPosition, positionOracleContext, pool };
     }
     const key = order?.outcome === 1 ? null :
       ((status === 1 ? BigInt(requestedAt) + 300n : 0n) << 64n) | BigInt(wireQueryId);
@@ -212,6 +243,10 @@ export function perpsOracleTradeTransition(before: PerpsState, after: PerpsState
       prior.order.nativeBudgetRaw !== next.order.nativeBudgetRaw ||
       prior.order.pool !== next.order.pool ||
       JSON.stringify(next.order.request) !== JSON.stringify(request)) return null;
+  if (prior.order.positionOracleContext && next.order.outcome === 2) {
+    const position = perpsPosition(before, owner, request.marketId);
+    if (!position || positionCommitment(position) !== prior.order.positionOracleContext.positionHash) return null;
+  }
   return { before: prior, after: next };
 }
 
@@ -221,6 +256,7 @@ export type PerpsState = {
   feeBps: number;
   feeTreasury: string | null;
   router: string | null;
+  walletIngressProtection: { epoch: number; ready: boolean; quarantinedRaw: string };
   riskVault: string | null;
   riskVaultBucketId: number;
   risk: { oracleDegraded: boolean; tvlDegraded: boolean; oracleDriftLevel: number };
@@ -228,6 +264,7 @@ export type PerpsState = {
   riskActions: Map<string, PerpsRiskAction>;
   nativeSettlement: { funding: NativeFundingContext; queryId: string; amountRaw: string;
     recipient: string; requestHash: string; remainingRaw: string } | null;
+  directFeeEscrow: { funding: NativeFundingContext; budgetRaw: string } | null;
   counterpartyMaintenance: { cursor: string; sequence: string; positionCount: number };
   configHash: string;
   dataHash: string;
@@ -298,20 +335,39 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
   cfg.loadRef();
   if (cfg.loadUint(32) !== 1) throw Error("Perps config version");
   end(cfg);
-  const r = routerCell.beginParse(),
-    router = r.loadMaybeAddress()?.toRawString() ?? null;
-  r.loadMaybeAddress();
+  const r = routerCell.beginParse();
+  if (r.remainingRefs !== 2) throw Error('Perps canonical public router and wallet protection references');
+  const router = r.loadMaybeAddress()?.toRawString() ?? null;
+  const gasVaultOverride = r.loadMaybeAddress();
   const feeTreasury = r.loadMaybeAddress()?.toRawString() ?? null,
     extras = r.loadRef().beginParse();
+  const protection = r.loadRef().beginParse();
+  const epoch = protection.loadUintBig(64), ready = protection.loadBoolean(), quarantined = protection.loadCoins();
+  end(protection);
+  if (epoch > 1n || (ready && epoch !== 1n) || (epoch === 0n && quarantined !== 0n))
+    throw Error('Perps canonical wallet ingress protection');
+  const walletIngressProtection = {epoch:Number(epoch),ready,quarantinedRaw:quarantined.toString()};
   end(r);
   const mask = extras.loadUint(8);
-  if (mask & 96) throw Error("Perps unsupported registration hints");
+  if (mask & 32) throw Error("Perps unsupported pending risk policy journal");
   if (mask & 1 || !(mask & 128)) throw Error("Perps configured collateral");
   if (mask & 2) extras.loadMaybeAddress();
   if (mask & 4) extras.skip(32);
   const riskVault =
     mask & 8 ? (extras.loadMaybeAddress()?.toRawString() ?? null) : null;
   const riskVaultBucketId = mask & 16 ? extras.loadUint(16) : 0;
+  let controlReturnCollector: string | null = null;
+  if (mask & 64) {
+    const collectors = extras.loadRef().beginParse();
+    const fundingCollector = collectors.loadAddress();
+    const controlCollector = collectors.loadAddress();
+    controlReturnCollector = controlCollector.toRawString();
+    end(collectors);
+    if (fundingCollector.equals(controlCollector) ||
+        (gasVaultOverride && (fundingCollector.equals(gasVaultOverride) || controlCollector.equals(gasVaultOverride)))) {
+      throw Error("Perps return collector identities");
+    }
+  }
   const token = extras.loadRef().beginParse(),
     root = token.loadAddress().toRawString(),
     walletCode = token.loadRef();
@@ -401,8 +457,13 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
       throw Error('Invalid perps funding accrual remainder');
     if (BigInt(lastFundingTs) < 0n || oracleMarkTs < 0n || BigInt(fundingValidUntil) < 0n)
       throw Error('Invalid perps funding checkpoint timestamp');
-    for (const receipt of refreshes.values()) if (receipt.order && receipt.order.request.marketId !== key)
-      throw Error('Perps paid order belongs to another market');
+    for (const receipt of refreshes.values()) {
+      if (receipt.order && receipt.order.request.marketId !== key)
+        throw Error('Perps paid order belongs to another market');
+      const sponsor = receipt.order?.positionOracleContext?.sponsor;
+      if (sponsor?.refundKind === 1 && (!gasVaultOverride || sponsor.moduleId !== 405 ||
+          sponsor.refundTo !== controlReturnCollector)) throw Error('Perps position oracle sponsor differs from configured Mesh collector');
+    }
     oracleRefreshes.set(key, refreshes);
     extra.skip(32 * 3);
     const controlFeeDeltaBps = extra.loadInt(32),
@@ -470,6 +531,8 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
   // EngineProtocolJournal stores its trailing `cell` as one exact reference,
   // including the canonical empty settlement cell. No inline/omitted fallback
   // is accepted for retired layouts.
+  if (protocol.remainingBits !== 0 || protocol.remainingRefs !== 2)
+    throw Error('Perps canonical protocol journal layout');
   const nativeCell = protocol.loadRef();
   let nativeSettlement: PerpsState['nativeSettlement'] = null;
   if (nativeCell.bits.length || nativeCell.refs.length) {
@@ -480,6 +543,16 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
     const remainingRaw = native.loadCoins().toString(); end(native);
     if (queryId === '0' || amountRaw === '0') throw Error('Invalid perps native settlement identity');
     nativeSettlement = { funding, queryId, amountRaw, recipient, requestHash, remainingRaw };
+  }
+  const directFeeCell = protocol.loadRef();
+  let directFeeEscrow: PerpsState['directFeeEscrow'] = null;
+  if (directFeeCell.bits.length || directFeeCell.refs.length) {
+    const fee = directFeeCell.beginParse();
+    const funding = decodeNativeFundingContext(fee.loadRef());
+    const budgetRaw = fee.loadCoins().toString();
+    end(fee);
+    if (budgetRaw === '0') throw Error('Invalid perps direct-fee native escrow');
+    directFeeEscrow = { funding, budgetRaw };
   }
   end(protocol);
   const pending = new Map<string, PerpsPending>();
@@ -505,12 +578,14 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
     feeBps,
     router,
     feeTreasury,
+    walletIngressProtection,
     riskVault,
     riskVaultBucketId,
     risk,
     riskNonce,
     riskActions,
     nativeSettlement,
+    directFeeEscrow,
     counterpartyMaintenance,
     configHash: config.hash().toString("hex"),
     dataHash: cell.hash().toString("hex"),

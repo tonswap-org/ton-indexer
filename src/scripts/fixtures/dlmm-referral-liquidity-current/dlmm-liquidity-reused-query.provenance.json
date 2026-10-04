@@ -1,8 +1,8 @@
 {
   "file": "dlmm-liquidity-reused-query.json.gz",
-  "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/dlmm-indexer-current/reused-query/dlmm-liquidity-settlements.json",
-  "sha256": "2c0447f780d555b44a497f8c51617aab3d95aba33372e7f5c78232c97655300a",
-  "transactions": 480,
+  "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/reused-query/dlmm-liquidity-settlements.json",
+  "sha256": "06655486c64bde025f14ed3d6db896d5ebae67aa24aa0712fc66eb15398414ec",
+  "transactions": 337,
   "compressed": true,
-  "poolCodeHash": "4c1a96d9872851bbc47fba64ba4bcff0cb5efc0c2172d1d20ba712d4bcdc44c2"
+  "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
 }

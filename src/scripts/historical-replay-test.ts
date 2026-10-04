@@ -39,6 +39,37 @@ async function main() {
     assert.equal(snapshots.get(cursor.lt)!.lastTxHash, Buffer.from(cursor.hash, 'hex').toString('base64'));
     assert.equal(snapshots.get(cursor.lt)!.accountState, 'active');
   });
+  await check('retained boundary uses the final predecessor and complete authenticated Account commitments', async () => {
+    let previous = predecessor;
+    for (let i = 0; i < steps.length; i++) {
+      const snapshot = snapshots.get(lts[i])!;
+      const boundary = snapshot.replayBoundary;
+      assert.ok(boundary);
+      assert.ok(Object.isFrozen(snapshot));
+      assert.ok(Object.isFrozen(boundary));
+      const oldAccount = Cell.fromBase64(boundary.beforeShardAccountBoc);
+      const newAccount = Cell.fromBase64(boundary.afterShardAccountBoc);
+      const originalTx = Cell.fromBase64(boundary.transactionBoc);
+      const tx = loadTransaction(originalTx.beginParse());
+      assert.ok(oldAccount.equals(previous));
+      assert.ok(oldAccount.refs[0].hash().equals(tx.stateUpdate.oldHash));
+      assert.ok(newAccount.refs[0].hash().equals(tx.stateUpdate.newHash));
+      assert.ok(originalTx.equals(steps[i].transaction));
+      assert.ok(Cell.fromBase64(boundary.blockBoc).equals(steps[i].block));
+      assert.ok(Cell.fromBase64(boundary.configBoc).equals(steps[i].config));
+      const account = loadShardAccount(newAccount.beginParse());
+      assert.equal(account.lastTransactionLt.toString(), snapshot.lastTxLt);
+      assert.equal(account.lastTransactionHash.toString(16).padStart(64, '0'), originalTx.hash().toString('hex'));
+      assert.equal(account.account!.storage.balance.coins.toString(), snapshot.balance);
+      assert.ok(account.account!.addr.equals(address));
+      const active = account.account!.storage.state;
+      assert.equal(active.type, 'active');
+      if (active.type !== 'active') throw Error('fixture inactive');
+      assert.ok(active.state.code!.equals(Cell.fromBase64(snapshot.codeBoc!)));
+      assert.ok(active.state.data!.equals(Cell.fromBase64(snapshot.dataBoc!)));
+      previous = newAccount;
+    }
+  });
   await check('wrong original cursor cannot admit authentic state from a different transaction', async () => {
     await assert.rejects(replayHistoricalAccount({ ...input, cursor: { ...cursor, hash: '00'.repeat(32) } }, executor), /cursor mismatch/);
   });

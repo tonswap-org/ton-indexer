@@ -44,7 +44,16 @@ export async function readPerpsOracleExecution(input: {
       JSON.stringify(perpsPosition(intake.before, owner, request.marketId)) !== JSON.stringify(perpsPosition(intake.after, owner, request.marketId)) ||
       JSON.stringify(perpsPending(intake.before, ownerWallet)) !== JSON.stringify(perpsPending(intake.after, ownerWallet))) return null;
   const old = intake.before.oracleRefreshes.get(request.marketId)?.get(owner);
-  if (old && (old.wireQueryId === queued.wireQueryId || old.queryId === queued.queryId || old.order?.outcome === 1)) return null;
+  const replacesMaintenance = request.operation === 'close' && old?.status === 1 && old.order?.outcome === 1 &&
+    old.order.reason === 1 && old.order.request.operation === 'close' && old.order.positionOracleContext !== null;
+  if (old && (old.wireQueryId === queued.wireQueryId || !replacesMaintenance &&
+      (old.queryId === queued.queryId || old.order?.outcome === 1))) return null;
+  // A direct funding claim persists the original payer's exact native context.
+  // Maintenance CLOSE uses a different sponsor and is not an owner request.
+  const context = queued.order.positionOracleContext;
+  if (request.operation === 'claim' ? !context || context.sponsor.refundKind !== 0 ||
+      context.sponsor.moduleId !== 0 || context.sponsor.refundTo !== owner ||
+      context.sponsor.correlationId !== original.raw.lt : context !== null) return null;
   if (queued.order.funding ? queued.order.funding.senderWallet !== ownerWallet :
       address(original.raw.inMessage?.source) !== owner || BigInt(original.raw.inMessage?.value ?? '0') !==
         BigInt(queued.order.nativeBudgetRaw) + PERPS_NOTIFICATION_ENVELOPE_VALUE
@@ -102,6 +111,7 @@ export async function readPerpsOracleExecution(input: {
     if (!transition || transition.before.wireQueryId !== queued.wireQueryId || transition.before.requestHash !== queued.requestHash ||
         transition.before.requestedAt !== queued.requestedAt || !transition.before.order!.notification.hash().equals(queued.order.notification.hash()) ||
         !transition.before.order!.requestCell.hash().equals(queued.order.requestCell.hash()) ||
+        !transition.before.order!.previousPosition.hash().equals(queued.order.previousPosition.hash()) ||
         transition.before.order!.pool !== poolAddress ||
         transition.before.order!.nativeBudgetRaw !== queued.order.nativeBudgetRaw || transition.after.completedAt !== String(node.raw.utime) ||
         states.before.markets.get(request.marketId)?.pool !== states.after.markets.get(request.marketId)?.pool) continue;

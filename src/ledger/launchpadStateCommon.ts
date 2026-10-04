@@ -43,9 +43,9 @@ export function readLaunchpadEnvelope(dataBoc: string, model: 'fixed' | 'bonding
   const paymentRouting = readLaunchpadRouting(routing.loadRef()), saleRouting = readLaunchpadRouting(routing.loadRef()); end(routing);
   const configCell = s.loadRef(), stateCell = s.loadRef();
   const saleId = s.loadUintBig(64).toString(), deploymentSalt = s.loadUint(32), t3Root = address(s), t3WalletCodeHash = hex(s.loadUintBig(256));
-  const headerFeeRecipient = maybeAddress(s), headerFeeBps = s.loadUint(16); end(s);
+  const headerFeeRecipient = maybeAddress(s), headerFeeBps = s.loadUint(16), activated = s.loadBoolean(); end(s);
   return { dataHash: hash(data), registry, paymentRouting, saleRouting, configCell, stateCell, saleId, deploymentSalt,
-    t3Root, t3WalletCodeHash, headerFeeRecipient, headerFeeBps };
+    t3Root, t3WalletCodeHash, headerFeeRecipient, headerFeeBps, activated };
 }
 export type LaunchpadFill = { tokenAmountRaw: string; paymentAmountRaw: string; hash: string; previousHash: string | null };
 /** Current LIFO fill list, preserving every original cell identity. */
@@ -65,5 +65,12 @@ export function readLaunchpadFills(cell: Cell) {
 
 export function readLaunchpadReferralTerms(cell: Cell) {
   const s = cell.beginParse(), feePaidRaw = raw(s), referrer = maybeAddress(s); end(s);
+  if (referrer !== null) throw Error('Current Launchpad participant cannot have a referrer');
   return { feePaidRaw, referrer };
+}
+
+export function readLaunchpadDirectFeeConfig(s: Slice) {
+  const registry = maybeAddress(s), key = s.loadUint(32);
+  if (registry !== null || key !== 0) throw Error('Current Launchpad requires direct fees with null referral registry and zero module key');
+  return { registry, key };
 }

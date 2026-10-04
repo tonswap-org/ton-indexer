@@ -75,7 +75,8 @@ const sameAddress = (left: Address, right: Address) => left.equals(right);
  * TEP-74 does not standardize wallet storage, so this helper must only be used
  * for TONSWAP roots whose getter address is independently checked against the
  * resulting StateInit. JTW1 stores bounded identity, accounting and journal
- * groups in three references; those references are part of the wallet address.
+ * groups and the protected Pool/application policies in four references; those references
+ * are part of the wallet address.
  */
 export const buildTonswapJettonWalletInitialData = (
   owner: Address,
@@ -97,6 +98,14 @@ export const buildTonswapJettonWalletInitialData = (
     .endCell();
 
   return writeCurrentJettonWalletStorage({
+    protectedT3Epoch: 0,
+    protectedRiskVaultEpoch: 0,
+    protectedPoolEpoch: 0,
+    protectedPoolRouter: null,
+    protectedPoolQuarantine: 0n,
+    protectedApplicationKind: 0,
+    protectedApplicationEpoch: 0,
+    protectedApplicationQuarantine: 0n,
     owner,
     root,
     feeDelegate: null,

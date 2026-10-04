@@ -4,7 +4,7 @@ export function routingEvidenceRefs(routing: MarketRoutingEvidence | null): Ledg
     if (!routing)
         return [];
     return [routing.routerAcceptance, routing.completion, routing.completionAcknowledged, ...routing.boundaries.map(b => b.transaction),
-        ...[routing.inputSettlement, routing.terminalSettlement].flatMap(s => [s.request, s.debit, s.credit, s.acknowledged, s.walletFinalized, s.routerFinalized, ...s.boundaries.map(b => b.transaction)]),
+        ...[routing.inputSettlement, routing.terminalSettlement, ...(routing.directFeeSettlement ? [routing.directFeeSettlement] : [])].flatMap(s => [s.request, s.debit, s.credit, s.acknowledged, s.walletFinalized, s.routerFinalized, ...s.boundaries.map(b => b.transaction)]),
         ...(routing.protocolFeeSettlement ? [routing.protocolFeeSettlement].flatMap(s => [s.request, s.debit, s.credit, s.acknowledged, s.walletFinalized, s.poolFinalized, ...s.boundaries.map(b => b.transaction)]) : [])];
 }
 /** Owner ledger evidence uses canonical base64 transaction hashes; Cell hashes

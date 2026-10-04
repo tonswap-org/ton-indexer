@@ -1,5 +1,5 @@
 import { Cell, Dictionary, type Slice } from '@ton/core';
-import { address, end, flag, maybeAddress, raw, readLaunchpadEnvelope, readLaunchpadFills, readLaunchpadReferralTerms } from './launchpadStateCommon';
+import { address, end, flag, maybeAddress, raw, readLaunchpadDirectFeeConfig, readLaunchpadEnvelope, readLaunchpadFills, readLaunchpadReferralTerms } from './launchpadStateCommon';
 import { readLaunchpadSharedJournal } from './launchpadSharedJournal';
 
 export type AuctionSaleBid = {
@@ -38,7 +38,7 @@ export function readAuctionSaleState(dataBoc: string) {
   const journal = readLaunchpadSharedJournal(s.loadRef());
   const feeRecipient = s.loadBoolean() ? address(s) : null, feeBps = s.loadUint(16), totalFeesRaw = raw(s);
   const escrowBalanceRaw = raw(s), pendingEscrowReturnRaw = raw(s), pendingEscrowQueryId = s.loadUintBig(64).toString();
-  const referral = { registry: maybeAddress(s), key: s.loadUint(32) }; end(s);
+  const referral = readLaunchpadDirectFeeConfig(s); end(s);
   if (headerFeeRecipient !== feeRecipient || headerFeeBps !== feeBps) throw Error('Auction fee configuration mismatch');
   return { layout: 'auction-v1' as const, ...envelope, config, metrics: { ...runtime, feeRecipient, feeBps, totalFeesRaw, escrowBalanceRaw, pendingEscrowReturnRaw, pendingEscrowQueryId },
     bids, referral, journal };

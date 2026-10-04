@@ -45,6 +45,12 @@ async function main() {
     const projection = projectDlmmMarket(binding, graph.nodes, graph.dependencies);
     assert.equal(projection.observations.length, 2, JSON.stringify(projection.candidates));
     assert.equal(projection.historyComplete, true, JSON.stringify(projection.issues));
+    const feeWallets = projection.observations.map(observation => {
+        const fee = observation.routing?.directFeeSettlement;
+        assert.ok(fee, 'The current public trade must include physical protocol-fee custody');
+        assert.ok(calls.has(fee.destinationWallet), 'Market collection must load the FeeRouter wallet');
+        return fee.destinationWallet;
+    });
     const publication = await market.publish(projection, null), page = await market.page('localnet', binding.pool);
     assert.equal(page.coverage?.generation, publication.generation);
     assert.equal(page.observations.length, 2);
@@ -67,6 +73,7 @@ async function main() {
     const ownerGraph = await build();
     assert.ok(ownerGraph.chains.has(binding.router!));
     assert.ok(ownerGraph.pools.has(binding.pool));
+    for (const feeWallet of feeWallets) assert.ok(ownerGraph.chains.has(feeWallet), 'Owner collection must load the FeeRouter wallet');
     const owner = await projectOwnerLedger({ network: 'localnet', owner: f.accounts.payer, opcodes, ...ownerGraph });
     const trades = owner.events.filter(e => e.kind === 'swap');
     assert.equal(trades.length, 2);

@@ -10,8 +10,8 @@ import { readBondingSaleState } from "./launchpadBondingState";
 import { readAuctionSaleState } from "./launchpadAuctionState";
 import { readPerpsState } from "./perpsState";
 import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress } from "./perpsWire";
-import { type LedgerT3Hub } from "./t3";
-import { receiverAddress, t3State, burnRequest, MINT_INTERNAL } from "./t3Wire";
+import { type LedgerT3Hub, type LedgerT3Refund } from "./t3";
+import { receiverAddress, t3State, burnRequest, depositNote, mintStart, refundPayloadHash, MINT_INTERNAL } from "./t3Wire";
 import { optionBuyForward, type LedgerOptionFactory } from "./options";
 import { optionExercise, optionVaultPayout } from "./optionLifecycleWire";
 import { optionOwnerAbort } from "./optionAbortWire";
@@ -582,7 +582,7 @@ export class LedgerGraphBuilder {
       let relevant = [...chains.values()].some(
         (chain) => (chain.role === "owner" || chain.role === "owned_jetton_wallet") &&
           chain.transactions.some((tx) => [tx.inMessage, ...tx.outMessages].some(
-            (message) => burnRequest(message) || opcode(message) === MINT_INTERNAL ||
+            (message) => burnRequest(message) || businessOpcode(message) === MINT_INTERNAL ||
               tokenWire(message)?.owner === t3Address ||
               addr(message?.destination) === t3Address,
           )),
@@ -598,13 +598,14 @@ export class LedgerGraphBuilder {
           );
         if (
           routes?.exitCode !== 0 ||
-          routes.stack.length !== 17 ||
+          routes.stack.length !== 18 ||
           routes.stack[1].type !== "cell" ||
+          routes.stack[2].type !== "cell" ||
           vaultResult?.exitCode !== 0 ||
           vaultResult.stack.length !== 3
         )
           throw Error("T3 routes");
-        const reserveRoots = [2, 7, 12].map((i) =>
+        const reserveRoots = [3, 8, 13].map((i) =>
             stackAddress(routes.stack[i]),
           ),
           vaults = vaultResult.stack.map(stackAddress);
@@ -641,11 +642,12 @@ export class LedgerGraphBuilder {
             reserveRoots: reserveRoots as string[],
             vaults: vaults as string[],
             redemptions: new Map(),
+            refunds: new Map(),
           };
           const binding=this.t3RedemptionBinding;
           if(binding){
             const rootState=await this.source.getAccountState(t3Root);
-            if(binding.network!==this.network||binding.hub!==t3Address||binding.root!==t3Root||binding.hubCodeHash!==hub.codeHash||!rootState.codeBoc||Cell.fromBase64(rootState.codeBoc).hash().toString('hex')!==binding.rootCodeHash||routes.stack[1].cell.hash().toString('hex')!==binding.receiverCodeHash||binding.reserveRoutes.some((r,i)=>r.root!==hub.reserveRoots[i]||r.vault!==hub.vaults[i]||r.discovery!==r.root))issues.add('t3_recovery_binding_mismatch');
+            if(binding.network!==this.network||binding.hub!==t3Address||binding.root!==t3Root||binding.hubCodeHash!==hub.codeHash||!rootState.codeBoc||Cell.fromBase64(rootState.codeBoc).hash().toString('hex')!==binding.rootCodeHash||routes.stack[1].cell.hash().toString('hex')!==binding.receiverCodeHash||routes.stack[2].cell.hash().toString('hex')!==binding.walletCodeHash||binding.reserveRoutes.some((r,i)=>r.root!==hub.reserveRoots[i]||r.vault!==hub.vaults[i]||r.discovery!==r.root))issues.add('t3_recovery_binding_mismatch');
             else hub.redemptionBinding=binding;
           }
           await load(t3Address, "counterparty");
@@ -658,66 +660,73 @@ export class LedgerGraphBuilder {
           }
           if (!receiverState) issues.add("t3_receiver_state_unavailable");
           if (receiverState?.accountState === "active") {
-            const identity = await this.source.runGetMethod(
-              receiver,
-              "receiver_identity",
-            );
-            if (
-              !receiverState.codeBoc ||
-              !Cell.fromBase64(receiverState.codeBoc)
-                .hash()
-                .equals(routes.stack[1].cell.hash()) ||
-              identity?.exitCode !== 0 ||
-              identity.stack.length !== 3 ||
-              identity.stack[0].type !== "int" ||
-              identity.stack[0].value !== 1n ||
-              stackAddress(identity.stack[1]) !== t3Address ||
-              stackAddress(identity.stack[2]) !== owner
-            )
-              throw Error("T3 receiver identity");
-            hub.receiver = receiver;
-            await load(receiver, "controlled_contract");
-            for (const root of hub.reserveRoots) {
-              const b = await this.source
-                .getJettonBalance(receiver, root)
-                .catch(() => null);
-              if (b) {
-                const a = await wallet(b.wallet, "owned_jetton_wallet");
-                if (a?.owner !== receiver || a.master !== root)
-                  throw Error("T3 receiver wallet identity");
-                wallets.set(a.wallet!, {
-                  ...a,
-                  controller: owner,
-                  custody: "t3_receiver",
-                });
-              } else {
-                const derived = await this.source.runGetMethod(
-                  root,
-                  "get_wallet_address",
-                  [
-                    {
-                      type: "slice",
-                      cell: beginCell()
-                        .storeAddress(Address.parse(receiver))
-                        .endCell(),
-                    },
-                  ],
-                );
-                const address =
-                  derived?.exitCode === 0 && derived.stack.length === 1
-                    ? stackAddress(derived.stack[0])
+            try {
+              const identity = await this.source.runGetMethod(
+                receiver,
+                "receiver_identity",
+              );
+              if (
+                !receiverState.codeBoc ||
+                !Cell.fromBase64(receiverState.codeBoc)
+                  .hash()
+                  .equals(routes.stack[1].cell.hash()) ||
+                identity?.exitCode !== 0 ||
+                identity.stack.length !== 3 ||
+                identity.stack[0].type !== "int" ||
+                identity.stack[0].value !== 1n ||
+                stackAddress(identity.stack[1]) !== t3Address ||
+                stackAddress(identity.stack[2]) !== owner
+              )
+                throw Error("T3 receiver identity");
+              hub.receiver = receiver;
+              await load(receiver, "controlled_contract");
+              for (const root of hub.reserveRoots) {
+                const b = await this.source
+                  .getJettonBalance(receiver, root)
+                  .catch(() => null);
+                if (b) {
+                  const a = await wallet(b.wallet, "owned_jetton_wallet");
+                  if (a?.owner !== receiver || a.master !== root)
+                    throw Error("T3 receiver wallet identity");
+                  wallets.set(a.wallet!, {
+                    ...a,
+                    controller: owner,
+                    custody: "t3_receiver",
+                  });
+                } else {
+                  const derived = await this.source.runGetMethod(
+                    root,
+                    "get_wallet_address",
+                    [
+                      {
+                        type: "slice",
+                        cell: beginCell()
+                          .storeAddress(Address.parse(receiver))
+                          .endCell(),
+                      },
+                    ],
+                  );
+                  const address =
+                    derived?.exitCode === 0 && derived.stack.length === 1
+                      ? stackAddress(derived.stack[0])
+                      : null;
+                  const state = address
+                    ? await this.source.getAccountState(address)
                     : null;
-                const state = address
-                  ? await this.source.getAccountState(address)
-                  : null;
-                if (
-                  !address ||
-                  state?.accountState !== "uninitialized" ||
-                  (state.lastTxLt && state.lastTxLt !== "0")
-                )
-                  issues.add("t3_receiver_wallet_discovery_unresolved");
-                else await load(address, "owned_jetton_wallet");
+                  if (
+                    !address ||
+                    state?.accountState !== "uninitialized" ||
+                    (state.lastTxLt && state.lastTxLt !== "0")
+                  )
+                    issues.add("t3_receiver_wallet_discovery_unresolved");
+                  else await load(address, "owned_jetton_wallet");
+                }
               }
+            } catch {
+              // Receiver custody is a redemption proof. A missing or invalid
+              // receiver identity must not discard the independently qualified
+              // hub/root and thereby hide a delivered mint from the ledger.
+              issues.add("t3_receiver_identity_or_custody_unresolved");
             }
           }
           for (const c of chains.values())
@@ -778,6 +787,95 @@ export class LedgerGraphBuilder {
                   },
                 });
               }
+          // The immutable payout identity binds a rejected deposit to its
+          // original physical Hub notification. A repeat uses that Hub LT as
+          // its distinct business ID; caller-chosen TEP-74 queries can collide.
+          const standardRefunds = new Set<string>();
+          let refundObservations = 0;
+          // Query IDs are caller-chosen. The first rejected notification owns
+          // the kind-3 identity; later collisions use their Hub LT (kind 5).
+          // Raw account history is commonly newest-first, so order it here.
+          for (const tx of [...(chains.get(t3Address)?.transactions ?? [])]
+            .sort((a, b) => BigInt(a.lt) < BigInt(b.lt) ? -1 : BigInt(a.lt) > BigInt(b.lt) ? 1 : 0)) {
+            const wire = tokenWire(tx.inMessage);
+            const token = vaults.indexOf(addr(tx.inMessage?.source) ?? "");
+            const note = wire ? depositNote(wire.forward) : null;
+            if (token < 0 || wire?.op !== NOTIFY || wire.owner !== owner ||
+                !note || note.kind !== 1 || !(note.flags & 1) ||
+                !/^(0|[1-9][0-9]*)$/.test(wire.amountRaw) ||
+                BigInt(wire.amountRaw) === 0n ||
+                tx.status === "failed" || tx.success === false || tx.inMessage?.bounced) continue;
+            if (++refundObservations > 128) {
+              issues.add("t3_refund_observation_limit_reached");
+              break;
+            }
+            const basket = ["0", "0", "0"];
+            basket[token] = wire.amountRaw;
+            const admitted = tx.outMessages.some(message =>
+              addr(message.destination) === t3Root && mintStart(message));
+            const observedAt = new Date().toISOString();
+            const read = async (method: string, args: any[]) => {
+              const result = await this.source.runGetMethod(t3Address, method, args).catch(() => null);
+              return result?.exitCode === 0 ? result.stack : null;
+            };
+            const ownerArg = { type: "slice" as const,
+              cell: beginCell().storeAddress(Address.parse(owner)).endCell() };
+            const identityFor = async (kind: 3 | 5, businessQueryId: string) => {
+              const stack = await read("vault_payout_identity", [
+                { type: "int", value: BigInt(kind) }, ownerArg,
+                { type: "int", value: BigInt(businessQueryId) },
+              ]);
+              if (!stack || stack.length !== 3 || stack.some(item => item.type !== "int")) return null;
+              const values = stack.map(item => item.type === "int" ? item.value : 0n);
+              if (values[0] !== 1n || values[1] < 1n << 63n || values[1] >= 1n << 64n ||
+                  values[2].toString() !== refundPayloadHash(kind, owner, basket)) return null;
+              return { kind, businessQueryId, payoutId: values[1].toString(),
+                identityEvidence: { account: t3Address, method: "vault_payout_identity" as const,
+                  args: [String(kind), owner, businessQueryId], result: values.map(String), observedAt } };
+            };
+            const repeatId = BigInt(tx.lt) > 0n && BigInt(tx.lt) < 1n << 64n
+              ? await identityFor(5, tx.lt) : null;
+            const standardKey = `${owner}:${wire.queryId}`;
+            const standardId = !repeatId && !admitted && wire.queryId !== "0" &&
+              !standardRefunds.has(standardKey)
+              ? await identityFor(3, wire.queryId) : null;
+            const identity = repeatId ?? standardId;
+            if (!identity) continue;
+            if (identity.kind === 3) standardRefunds.add(standardKey);
+            const refund: LedgerT3Refund = { ...identity, token,
+              amountRaw: wire.amountRaw, basketRaw: basket };
+            const queue = await read("refund_queue_item", [
+              { type: "int", value: BigInt(identity.kind) }, ownerArg,
+              { type: "int", value: BigInt(identity.businessQueryId) },
+            ]);
+            if (queue?.length === 4 && queue.every(item => item.type === "int")) {
+              const values = queue.map(item => item.type === "int" ? item.value : 0n);
+              if (values[0] === 1n && values.slice(1).map(String).every((v, i) => v === basket[i]))
+                refund.queueEvidence = { account: t3Address, method: "refund_queue_item",
+                  args: [String(identity.kind), owner, identity.businessQueryId],
+                  result: values.map(String), observedAt };
+            }
+            const payout = await read("vault_payout_state", [
+              { type: "int", value: BigInt(identity.payoutId) },
+            ]);
+            if (payout?.length === 20 && payout[0].type === "int" && payout[0].value === 1n) {
+              const value = (index: number) => payout[index].type === "int" ? payout[index].value : -1n;
+              const recipient = stackAddress(payout[1]);
+              const receiverWallet = stackAddress(payout[10]);
+              if (recipient === owner && [3, 4, 5].every((index, i) => value(index).toString() === basket[i]) &&
+                  value(2) >= 0n && value(2) <= 255n && value(7) >= 0n && value(7) <= 2n &&
+                  [18, 19].every(index => [0n, 1n].includes(value(index)))) {
+                refund.payout = { phase: Number(value(2)), activeToken: Number(value(7)),
+                  wireId: value(8).toString(), amountRaw: value(9).toString(),
+                  routeEpoch: Number(value(14)), receiverWallet,
+                  sourceAccepted: value(18) === 1n, receiverCredited: value(19) === 1n };
+                refund.payoutEvidence = { account: t3Address, method: "vault_payout_state",
+                  args: [identity.payoutId], result: payout.map(item =>
+                    item.type === "int" ? item.value.toString() : stackAddress(item) ?? ""), observedAt };
+              }
+            }
+            hub.refunds!.set(tx.lt, refund);
+          }
           t3Hubs.set(t3Address, hub);
           await inspectOwned();
         }
@@ -904,7 +1002,7 @@ export class LedgerGraphBuilder {
             for (const root of [binding.tokenT, binding.tokenX])
               needed.add(perpsWalletAddress(state.walletCode, root, account));
             for (const record of state.settlements.values()) {
-              if (account === router && ![7, 8, 12].includes(record.kind)) continue;
+              if (account === router && ![7, 8, 12, 15].includes(record.kind)) continue;
               needed.add(record.sourceWallet);
               needed.add(record.destinationWallet);
               if (record.destinationOwner) needed.add(record.destinationOwner);

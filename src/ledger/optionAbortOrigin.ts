@@ -149,7 +149,10 @@ export async function proveOptionAbortOrigin(
       state.before.claimIndex.has(BigInt("0x" + ingress.physicalIdentity)) ||
       state.after.claimIndex.get(BigInt("0x" + ingress.physicalIdentity)) !== 0n ||
       state.before.ingressReceipts.has(ingress.logicalIdentity) ||
-      state.after.ingressReceipts.get(ingress.logicalIdentity)?.accepted !== true) return null;
+      state.after.ingressReceipts.get(ingress.logicalIdentity)?.accepted !== true ||
+      state.after.ingressReceipts.get(ingress.logicalIdentity)?.buyKey !==
+        ((BigInt(payload.seriesId) << 64n) | BigInt(buy.positionId)) ||
+      state.after.ingressReceipts.get(ingress.logicalIdentity)?.acceptedAmountRaw !== flow.wire.amountRaw) return null;
   const before = optionPositionAt(
       state.beforeBoc,
       payload.seriesId,

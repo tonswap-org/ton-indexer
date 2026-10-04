@@ -1,29 +1,51 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { Address, Cell, loadTransaction } from '@ton/core';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { projectOwnerLedger, type ProjectionInput, type LedgerChain } from '../ledger/project';
 import { canonicalLedgerHash } from '../ledger/normalize';
 import { loadOpcodes } from '../utils/opcodes';
 import { perpsWalletAddress } from '../ledger/perpsWire';
+import { assertPerpsStressChainConfig, producerSha256, readPerpsProducerReceipt } from './perps-fixture-producer';
 
 // Replay only original current Sandbox bytes. The producer and all supplied
 // before/after boundaries remain separate from live archive-range qualification.
-const captureRoot=process.env.BROWSER_CAPTURE_ROOT!;
-assert(captureRoot && process.env.BROWSER_CAPTURE_PROVENANCE, 'Explicit current capture directory and provenance are required');
-const provenance = JSON.parse(readFileSync(process.env.BROWSER_CAPTURE_PROVENANCE!, 'utf8'));
+const captureRoot=process.argv[2], output=process.argv[3];
+assert(captureRoot && resolve(captureRoot)===captureRoot && output && resolve(output)===output && !existsSync(output) && !process.argv[4],
+  'Usage: export-perps-browser-evidence.ts <absolute-qualified-browser-producer> <new-absolute-projection-directory>');
+assert.equal(process.version,'v26.5.1'); assert(process.execArgv.includes('--no-turbo-fast-api-calls'));
+assert(!process.env.NODE_OPTIONS);
+const receipt=readPerpsProducerReceipt(captureRoot,'browser',resolve(__dirname,'../../../tonswap_tolk'));
+const indexerRoot=resolve(__dirname,'../..');
+const inventory=()=>{
+ const files:Record<string,string>={};
+ const visit=(folder:string)=>{for(const entry of readdirSync(folder,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){
+  const path=join(folder,entry.name);if(entry.isDirectory())visit(path);
+  else if(entry.isFile()&&path.endsWith('.ts'))files[relative(indexerRoot,path)]=producerSha256(readFileSync(path));
+ }};
+ visit(join(indexerRoot,'src'));
+ for(const name of ['package.json','package-lock.json','tsconfig.json'])files[name]=producerSha256(readFileSync(join(indexerRoot,name)));
+ return files;
+};
+const sourceBefore=inventory();
+const provenance={engineCodeHash:receipt.compiled.PerpsEngine.codeHash,poolCodeHash:receipt.compiled.DlmmPool.codeHash,
+ walletCodeHash:receipt.compiled.JettonWallet.codeHash,riskVaultCodeHash:receipt.compiled.RiskVault.codeHash,
+ riskControllerCodeHash:receipt.compiled.RiskController.codeHash};
+mkdirSync(output,{mode:0o700});
 
 
 // Unmodified raw transactions and before/after storage emitted by the actual
 // Tolk engine, DLMM, RiskVault, RiskController and owner/product T3 wallets.
 function fixture(name: string) {
-  const bytes = readFileSync(join(captureRoot, 'raw-qualified', `${name}.json`));
-  const original = provenance.artifacts.find((entry: { relative: string }) => entry.relative === `${name}.json`);
-  assert(original, 'Every execution case identifies its unchanged original capture');
-  assert.equal(createHash('sha256').update(bytes).digest('hex'), original.sha256);
+  const bytes = readFileSync(join(captureRoot, `${name}.json`));
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), receipt.artifacts[`${name}.json`],
+    'Every execution case identifies its unchanged original capture');
   const f = JSON.parse(bytes.toString('utf8'));
+  assertPerpsStressChainConfig(f.chainConfig);
+  assert.equal(Cell.fromBase64(f.riskVaultCode).hash().toString('hex'),provenance.riskVaultCodeHash);
+  assert.equal(Cell.fromBase64(f.riskControllerCode).hash().toString('hex'),provenance.riskControllerCodeHash);
   for (const key of ['engine', 'owner', 'pool', 'root', 'riskVault', 'riskController']) f[key] = Address.parse(f[key]).toRawString();
   f.ownerWallet = perpsWalletAddress(Cell.fromBase64(f.walletCode), f.root, f.owner);
   f.engineWallet = perpsWalletAddress(Cell.fromBase64(f.walletCode), f.root, f.engine);
@@ -82,7 +104,8 @@ function fixture(name: string) {
 }
 async function main() {
  const summaries:any[]=[];
- for(const name of (process.env.BROWSER_CAPTURE_CASES?.split(',') ?? ['open-rejected','open-expired','close-rejected','close-accepted','open-fee-excess'])){
+ const files:Record<string,string>={}, staged=new Map<string,Buffer>();
+ for(const name of ['open-rejected','open-expired','close-rejected','close-accepted','open-fee-excess']){
   const {f,input,rows,engineCodeHash}=fixture(name);
   const result=await projectOwnerLedger(input);
   const events=result.events.filter(e=>e.kind==='perps_operation');
@@ -119,10 +142,27 @@ async function main() {
     assert.equal(debits.reduce((sum,m)=>sum+BigInt(m.amountRaw),0n).toString(),meta.depositRaw);
    }
   }
-  writeFileSync(join(captureRoot,'projected',name+'-ledger.json'),JSON.stringify({...f,events:result.events},null,2),{flag:'wx'});
+  const filename=name+'-ledger.json',bytes=Buffer.from(JSON.stringify({...f,events:result.events},null,2)+'\n');
+  writeFileSync(join(output,filename),bytes,{flag:'wx'});
+  files[filename]=producerSha256(bytes);staged.set(filename,bytes);
   summaries.push({name,originalTransactions:rows.length,fromUtime:Math.min(...rows.map((r:any)=>r.raw.utime)),toUtime:Math.max(...rows.map((r:any)=>r.raw.utime))+1,engineCodeHash,txId:event.txId,outcome:meta.outcome,reason:meta.oracleExecution.reason,depositRaw:meta.depositRaw,payout:{status:meta.payout.status,amountRaw:meta.payout.amountRaw},economics:meta.economics,positionBefore:meta.before?.position,positionAfter:meta.after?.position,admission:meta.oracleExecution.admission,issues:event.issues});
   console.log('PASS',name,JSON.stringify(summaries.at(-1)));
  }
- writeFileSync(join(captureRoot,process.env.BROWSER_CAPTURE_SUMMARY??'projected-summary.json'),JSON.stringify(summaries,null,2),{flag:'wx'});
+ assert.deepEqual(inventory(),sourceBefore,'Indexer source changed during projection; recapture');
+ assert.deepEqual(readPerpsProducerReceipt(captureRoot,'browser',resolve(__dirname,'../../../tonswap_tolk')),receipt);
+ const summary=Buffer.from(JSON.stringify(summaries,null,2)+'\n');
+ writeFileSync(join(output,'projected-summary.json'),summary,{flag:'wx'});
+ const producerLog=readFileSync(captureRoot+'.log');
+ staged.set('producer.log',producerLog);staged.set('projected-summary.json',summary);
+ staged.set('provenance.json',Buffer.from(JSON.stringify({
+  kind:'Source-bound current VM15 stress400 original transactions and strict indexer projection; local evidence, not live history',
+  scopeLimit:'Bounded original Sandbox account chains; no claim of native historical boundary or complete account-history coverage',
+  producer:'tonswap_tolk/tests/perps/PerpsBrowserEvidence.spec.ts',projector:'ton-indexer/src/scripts/export-perps-browser-evidence.ts',
+  ...provenance,files,producerReceipt:receipt,producerLogSha256:producerSha256(producerLog),
+  projectedSummarySha256:producerSha256(summary),projectorSource:sourceBefore,
+ },null,2)+'\n'));
+ const target=resolve(__dirname,'../../../tonswap_web/tests/fixtures/perps-browser-current');
+ mkdirSync(target,{recursive:true});for(const [name,bytes] of staged)writeFileSync(join(target,name),bytes);
+ console.log('Adopted five qualified current Perps browser operation graphs');
 }
 main().catch(error=>{console.error(error);process.exitCode=1});

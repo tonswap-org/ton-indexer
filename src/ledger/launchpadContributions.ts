@@ -16,9 +16,13 @@ import { readAuctionSaleState, type AuctionSaleBid } from './launchpadAuctionSta
 import { launchpadCommand } from './launchpadWire';
 
 import { readLaunchpadRequests, type LaunchpadOriginalRequest } from './launchpadRequests';
+export type LaunchpadBondingCurveEvidence = {
+  curveKind: 1; basePriceRaw: string; slopeNumeratorRaw: string; slopeDenominatorRaw: string;
+  maxSupplyRaw: string; totalSoldBeforeRaw: string; totalSoldAfterRaw: string; currentPriceAfterRaw: string;
+};
 export type LaunchpadParticipationEntitlement =
   | { model: 'fixed'; before: FixedSaleContribution | null; after: FixedSaleContribution; paymentDeltaRaw: string; tokenDeltaRaw: string; priceRaw: string }
-  | { model: 'bonding'; before: BondingSaleContribution | null; after: BondingSaleContribution; paymentDeltaRaw: string; tokenDeltaRaw: string; priceRaw: string }
+  | { model: 'bonding'; before: BondingSaleContribution | null; after: BondingSaleContribution; paymentDeltaRaw: string; tokenDeltaRaw: string; priceRaw: string; curve: LaunchpadBondingCurveEvidence }
   | { model: 'auction'; before: AuctionSaleBid | null; after: AuctionSaleBid; commitmentDeltaRaw: string; quantityDeltaRaw: string; maxPriceRaw: string };
 export type LaunchpadAcceptanceEvidence = {
   purpose: 'acceptance' | 'payment-debit' | 'payment-credit'; transaction: LedgerEvidenceRef;
@@ -49,7 +53,7 @@ const except = (object: object, fields: string[]) => Object.fromEntries(Object.e
 const sameOtherEntries = <T>(before: Map<string, T>, after: Map<string, T>, changed: string) =>
   [...before].every(([key, value]) => key === changed || same(value, after.get(key))) && [...after.keys()].every(key => key === changed || before.has(key));
 type Identity = {
-  dataHash: string; saleId: string; registry: { factory: string | null }; paymentRouting: { tokenRoot: string; wallet: string; walletCodeHash: string };
+  dataHash: string; saleId: string; activated: boolean; registry: { factory: string | null }; paymentRouting: { tokenRoot: string; wallet: string; walletCodeHash: string };
 };
 async function archiveBoundary(input: ProjectionInput, node: Node, codeHash: string) {
   requireEvidence(ok(node) && node.raw.prevTransactionLt && node.raw.prevTransactionHash && node.raw.prevTransactionLt !== '0', 'launchpad_state_unavailable');
@@ -65,7 +69,7 @@ async function archiveBoundary(input: ProjectionInput, node: Node, codeHash: str
 export async function readLaunchpadBoundary<T extends Identity>(input: ProjectionInput, node: Node, sale: LedgerLaunchpadSale, parse: (boc: string) => T) {
   requireEvidence(node.account === sale.address, 'launchpad_sale_identity_unverified');
   const snapshots = await archiveBoundary(input, node, sale.saleCodeHash), before = parse(snapshots.before.state.dataBoc!), after = parse(snapshots.after.state.dataBoc!);
-  for (const state of [before, after]) requireEvidence(state.registry.factory === sale.factory && state.paymentRouting.tokenRoot === sale.paymentRoot &&
+  for (const state of [before, after]) requireEvidence(state.activated && state.registry.factory === sale.factory && state.paymentRouting.tokenRoot === sale.paymentRoot &&
     state.paymentRouting.wallet === sale.paymentWallet && state.paymentRouting.walletCodeHash === sale.paymentWalletCode.hash().toString('hex') &&
     perpsWalletAddress(sale.paymentWalletCode, sale.paymentRoot, sale.address) === sale.paymentWallet, 'launchpad_historical_identity_unverified');
   requireEvidence(['saleId', 'deploymentSalt', 't3Root', 't3WalletCodeHash', 'registry', 'paymentRouting', 'saleRouting', 'config']
@@ -126,7 +130,7 @@ function feeJournal(before: FeeState, after: FeeState) {
 }
 function referralTerms(before: { feePaidRaw: string; referrer: string | null } | null,
   after: { feePaidRaw: string; referrer: string | null }, requested: string | null, fee: bigint) {
-  requireEvidence(after.referrer === (before ? before.referrer : requested) &&
+  requireEvidence(requested === null && after.referrer === null && (before?.referrer ?? null) === null &&
     BigInt(after.feePaidRaw) - BigInt(before?.feePaidRaw ?? '0') === fee, 'launchpad_participant_referral_terms_unverified');
 }
 function appendedFill(before:{fillsHash:string;fills:{hash:string}[]}|null,after:{fills:{tokenAmountRaw:string;paymentAmountRaw:string;hash:string;previousHash:string|null}[]},tokens:bigint,amount:bigint) {
@@ -159,7 +163,8 @@ function bondingEntitlement(boundary:Awaited<ReturnType<typeof readBondingBounda
   const sold = BigInt(a.metrics.totalSoldRaw), maxSupply = BigInt(b.config.maxSupplyRaw);
   const tokens = BigInt(after.tokenAmountRaw) - BigInt(before?.tokenAmountRaw ?? '0');
   requireEvidence(denominator > 0n && basePrice > 0n && numerator >= 0n && soldBefore >= 0n &&
-    tokens > 0n && soldBefore + tokens <= maxSupply && price === basePrice + numerator * soldBefore / denominator,
+    tokens > 0n && soldBefore + tokens <= maxSupply && price === basePrice + numerator * soldBefore / denominator &&
+    numerator * (soldBefore + tokens) <= denominator * (LAUNCHPAD_MAX_PRICE - basePrice),
     'launchpad_bonding_price_unverified');
   const curveDenominator = 2n * denominator * LAUNCHPAD_PRICE_SCALE;
   const cumulative = (quantity: bigint) => (quantity * (2n * denominator * basePrice + numerator * quantity) +
@@ -179,7 +184,14 @@ function bondingEntitlement(boundary:Awaited<ReturnType<typeof readBondingBounda
     BigInt(a.metrics.totalFeesRaw)-BigInt(b.metrics.totalFeesRaw)===amount*BigInt(b.metrics.feeBps)/10000n&&same(b.referral,a.referral)&&
     same(except(b.metrics,['totalRaisedRaw','totalSoldRaw','lastPriceRaw','currentPriceRaw','totalFeesRaw']),except(a.metrics,['totalRaisedRaw','totalSoldRaw','lastPriceRaw','currentPriceRaw','totalFeesRaw'])),
     'launchpad_bonding_delta_unverified');feeJournal(b,a);
-  return {model:'bonding',before,after,paymentDeltaRaw:amount.toString(),tokenDeltaRaw:tokens.toString(),priceRaw:price.toString()};
+  // Preserve the authenticated global curve boundary. A participant's prior
+  // balance or the marginal price alone cannot verify cumulative curve fills,
+  // including flat-price rounding plateaus after other buyers' purchases.
+  return {model:'bonding',before,after,paymentDeltaRaw:amount.toString(),tokenDeltaRaw:tokens.toString(),priceRaw:price.toString(),
+    curve:{curveKind:b.config.curveKind,basePriceRaw:b.config.basePriceRaw,
+      slopeNumeratorRaw:b.config.slopeNumeratorRaw,slopeDenominatorRaw:b.config.slopeDenominatorRaw,
+      maxSupplyRaw:b.config.maxSupplyRaw,totalSoldBeforeRaw:b.metrics.totalSoldRaw,
+      totalSoldAfterRaw:a.metrics.totalSoldRaw,currentPriceAfterRaw:a.metrics.currentPriceRaw}};
 }
 function auctionEntitlement(boundary:Awaited<ReturnType<typeof readAuctionBoundary>>,sale:Extract<LedgerLaunchpadSale,{model:'auction'}>,owner:string,amount:bigint,command:Extract<NonNullable<ReturnType<typeof launchpadCommand>>,{kind:'bid'}>,utime:number):LaunchpadParticipationEntitlement {
   const b=boundary.before,a=boundary.after,before=b.bids.get(owner)??null,after=a.bids.get(owner),quantity=BigInt(command.quantityRaw),price=BigInt(command.maxPriceRaw);

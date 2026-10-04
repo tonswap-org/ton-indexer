@@ -8,6 +8,7 @@ import { beginCell } from '@ton/core';
 import fastify from 'fastify';
 import { loadConfig } from '../config';
 import { registerRoutes } from '../api/routes';
+import { PUBLIC_RPC_ZERO_STATES } from '../api/rpcNetwork';
 import { setCorsHeaders } from '../api/cors';
 import { RateLimiter } from '../api/rateLimit';
 import { MemoryStore } from '../store/memoryStore';
@@ -1412,9 +1413,11 @@ const testOperationalRoutesRequireAdminAndPublicReadsStayOpen = async () => {
 const testWriteRpcRelayIsPublicWhenExplicitlyEnabled = async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
-  (globalThis as any).fetch = async () => {
+  (globalThis as any).fetch = async (_url: unknown, init: RequestInit) => {
     calls += 1;
-    return new Response(JSON.stringify({ ok: true, result: 'hash' }), {
+    const method = JSON.parse(String(init.body)).method;
+    const result = method === 'getMasterchainInfo' ? { init: PUBLIC_RPC_ZERO_STATES.testnet } : 'hash';
+    return new Response(JSON.stringify({ ok: true, result }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
@@ -1422,6 +1425,7 @@ const testWriteRpcRelayIsPublicWhenExplicitlyEnabled = async () => {
   const app = fastify({ logger: false });
   try {
     const config = testConfig({
+      network: 'testnet',
       enableWriteRpc: true,
       rpcProxyEndpoint: 'https://example.invalid/jsonRPC',
       rpcProxyEndpoints: ['https://example.invalid/jsonRPC'],
@@ -1436,7 +1440,7 @@ const testWriteRpcRelayIsPublicWhenExplicitlyEnabled = async () => {
     });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().ok, true);
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
   } finally {
     globalThis.fetch = originalFetch;
     await app.close();

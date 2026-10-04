@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { Address } from '@ton/core';
+import { Address, Cell, beginCell, loadTransaction, storeTransaction, storeMessage, loadShardAccount, Transaction } from '@ton/core';
+import { createHash } from 'node:crypto';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { loadConfig } from '../config';
 import { RawTransaction, TonDataSource } from '../data/dataSource';
 import { IndexerService } from '../indexerService';
@@ -716,103 +721,332 @@ const testSnapshotGenerationInvalidatesCapturedFollowerBatches = async () => {
   assert.deepEqual(store.listWatchlist().map((entry) => entry.address), [replacementAddress]);
 };
 
-const testRejectedInitialForkDoesNotMutatePoolTracker = async () => {
-  const factory = `0:${'2'.repeat(64)}`;
-  const discoveredPool = `0:${'3'.repeat(64)}`;
-  const tracker = new PoolTracker({ DlmmPoolFactory: factory });
-  const stale = forkRange('stale', 3, 1);
-  stale[0] = {
-    ...stale[0]!,
-    inMessage: { destination: factory, op: 0x444c4350 },
-    outMessages: [{ destination: discoveredPool }],
+type FactoryCapture = {
+  name: string; factory: string; pool: string;
+  accepted: { account: string; boc: string; hash: string; before: { originalShardAccount: string; codeBoc: string }; after: { originalShardAccount: string; codeBoc: string } };
+  emitter: FactoryCapture['accepted']; attempt: FactoryCapture['accepted'];
+};
+// These are the five exact canonical compiler entrypoints used by the retained
+// producer. In the authenticated canonical mode each renderer returns the
+// original source unchanged. Verify that recorded derivation without importing
+// native modules, running their setup side effects or selecting executable code
+// from fixture metadata. Any changed input or mode must match a fresh capture.
+const factoryEntrypoints = [
+  { source: 'contracts/dlmm/pool_factory.tolk', module: 'dlmmPoolFactoryEntrypoint', role: 'DlmmPoolFactory', banner: '' },
+  { source: 'contracts/dlmm/pool.tolk', module: 'dlmmPoolEntrypoint', role: 'DlmmPool', banner: 'canonical TVM-v15' },
+  { source: 'contracts/dlmm/seeding_executor.tolk', module: 'dlmmSeedingExecutorEntrypoint', role: 'DlmmSeedingExecutor', banner: '' },
+  { source: 'contracts/shared/jetton/jetton_root.tolk', module: 'jettonRootEntrypoint', role: 'JettonRoot', banner: 'default' },
+  { source: 'contracts/shared/jetton/jetton_wallet.tolk', module: 'jettonWalletEntrypoint', role: 'JettonWallet', banner: 'default' },
+] as const;
+const factoryGeneratedPaths = factoryEntrypoints.map(row => row.source.replace('.tolk', '.generated.tolk')).sort();
+const factoryNativeRoot = resolve(__dirname, '../../../tonswap_tolk');
+const factorySourceHash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+const factoryCompilerRoles = [
+  'DlmmPoolFactory', 'DlmmPool', 'DlmmRegistry', 'JettonWallet', 'DlmmSeedingExecutor',
+  'GasVault', 'NativeReturnCollector', 'LpVault', 'JettonRoot',
+] as const;
+// This fixed, reviewed helper authenticates the current deployment artifacts and
+// source graph. Fixture metadata cannot select a build root or executable module.
+// It reads build evidence only; it does not execute native renderers or compilers.
+const factoryBuildAuthority = require(resolve(factoryNativeRoot, 'scripts/release/firstReleaseFixturePreflight.ts')) as {
+  readFirstReleaseFixtureBuildAuthority(root: string): { codes: ReadonlyMap<string, string>; toolchain: {
+    root: string; bytes: Buffer; sha256: string; identity: Readonly<Record<string, string>> } };
+  assertFirstReleaseFixtureBuildAuthority(root: string, authority: { codes: ReadonlyMap<string, string>; toolchain: {
+    root: string; bytes: Buffer; sha256: string; identity: Readonly<Record<string, string>> } }): void;
+  assertFirstReleaseFactoryExecutedImports(root: string, value: unknown, declared: Record<string, string>): void;
+  assertFirstReleaseFixtureCodes(value: unknown, roles: readonly string[], build: ReadonlyMap<string, string>): void;
+};
+const factorySourceAuthority = require(resolve(factoryNativeRoot, 'scripts/release/fixtureRefresh/factory-source-inventory.cjs')) as {
+  factorySourceInventory(root: string, snapshot: { root: string; bytes: Buffer; sha256: string; identity: Readonly<Record<string, string>> }): Record<string, string>;
+};
+let factoryBuild: ReturnType<typeof factoryBuildAuthority.readFirstReleaseFixtureBuildAuthority> | undefined;
+const currentFactoryBuild = () => {
+  factoryBuild ??= factoryBuildAuthority.readFirstReleaseFixtureBuildAuthority(factoryNativeRoot);
+  // A replaced manifest never inherits the former authentication or cached codes.
+  factoryBuildAuthority.assertFirstReleaseFixtureBuildAuthority(factoryNativeRoot, factoryBuild);
+  return factoryBuild;
+};
+const assertFactoryCompilerCodes = (compiler: unknown) => {
+  // Keep build authority independent of the temporary source-only root used
+  // below to verify declared inputs without generated entrypoint files.
+  const authority = currentFactoryBuild();
+  factoryBuildAuthority.assertFirstReleaseFixtureCodes(compiler, factoryCompilerRoles, authority.codes);
+  for (const role of factoryCompilerRoles) {
+    const code = (compiler as Record<string, { codeHash: string; boc: string }>)[role]!;
+    assert.equal(typeof code.boc, 'string', `${role}: retained independent compiler BOC required`);
+    const cells = Cell.fromBoc(Buffer.from(code.boc, 'base64'));
+    assert(cells.length === 1 && !cells[0]!.isExotic, `${role}: one ordinary compiler code Cell required`);
+    assert.equal(cells[0]!.hash().toString('hex'), code.codeHash, `${role}: retained independent compiler BOC`);
+  }
+};
+const assertFactoryNativeSources = (sources: Record<string, string>, nativeRoot: string): void => {
+  assert(sources && typeof sources === 'object' && !Array.isArray(sources));
+  const paths = Object.keys(sources).sort();
+  // The maintained producer and current build select this complete potential
+  // closure. The fixture cannot select seeds or widen it using executed paths.
+  // The same already-authenticated build authority is used by all of this
+  // process's original callback and tamper checks; derive current inputs anew.
+  const authority = currentFactoryBuild();
+  const expected = factorySourceAuthority.factorySourceInventory(factoryNativeRoot, authority.toolchain);
+  assert.deepEqual(paths, Object.keys(expected).sort(), 'Factory declared source inventory changed');
+  assert.deepEqual(sources, expected, 'Factory declared source bytes changed');
+  assert.deepEqual(paths.filter(path => path.endsWith('.generated.tolk')), factoryGeneratedPaths);
+  const root = realpathSync(nativeRoot), authenticated = new Map<string, string>();
+  for (const filename of paths) {
+    assert.match(filename, /^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+$/);
+    assert(!filename.split('/').some(part => part === '.' || part === '..'));
+    assert.match(sources[filename], /^[0-9a-f]{64}$/);
+    if (factoryGeneratedPaths.includes(filename)) continue;
+    const path = join(root, filename);
+    assert.equal(realpathSync(path), path, `Factory input must not traverse a symlink: ${filename}`);
+    assert(lstatSync(path).isFile(), `Factory input must be a physical file: ${filename}`);
+    const bytes = readFileSync(path);
+    assert.equal(factorySourceHash(bytes), sources[filename], filename);
+    authenticated.set(filename, bytes.toString('utf8'));
+  }
+  // The source, generator definitions, descriptors and their imports have all
+  // been authenticated. Derive the exact retained compiler input in memory;
+  // even the canonical comment banner is covered by its captured SHA-256.
+  for (const entry of factoryEntrypoints) {
+    const modulePath = `wrappers/${entry.module}.ts`, descriptorPath = `wrappers/${entry.role}.compile.ts`;
+    assert(authenticated.has(modulePath) && authenticated.has(descriptorPath) && authenticated.has(entry.source));
+    const rendered = authenticated.get(entry.source)!;
+    const banner = entry.banner ? `// Auto-generated from ${entry.source}\n// Mode: ${entry.banner}\n\n` : '';
+    const generated = entry.source.replace('.tolk', '.generated.tolk');
+    assert.equal(factorySourceHash(banner + rendered), sources[generated], generated);
+  }
+  factoryBuildAuthority.assertFirstReleaseFixtureBuildAuthority(factoryNativeRoot, authority);
+};
+
+const factoryEvidence = (nativeRoot = factoryNativeRoot) => {
+  const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/pool-factory-current-transactions.json'), 'utf8'));
+  assert.equal(fixture.schema, 'tonswap-pool-tracker-original-factory-v2');
+  assert.equal(fixture.nativeSourceInventoryModel, 'current-declared-potential-inputs-v1');
+  assertFactoryCompilerCodes(fixture.compiler);
+  assertFactoryNativeSources(fixture.nativeSources, nativeRoot);
+  factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(nativeRoot, fixture.executedNativeSources, fixture.nativeSources);
+  const original = (row: FactoryCapture['accepted'], codeHash: string) => {
+    const cell = Cell.fromBase64(row.boc), parsed = loadTransaction(cell.beginParse());
+    assert.equal(cell.hash().toString('hex'), row.hash);
+    assert.equal(parsed.stateUpdate.oldHash.toString('hex'), Cell.fromBase64(row.before.originalShardAccount).refs[0]!.hash().toString('hex'));
+    assert.equal(parsed.stateUpdate.newHash.toString('hex'), Cell.fromBase64(row.after.originalShardAccount).refs[0]!.hash().toString('hex'));
+    for (const boundary of [row.before, row.after]) {
+      const account = loadShardAccount(Cell.fromBase64(boundary.originalShardAccount).beginParse()).account;
+      assert.equal(account?.storage.state.type, 'active');
+      if (account?.storage.state.type !== 'active') throw new Error('Expected actual active contract boundary');
+      assert.equal(account.storage.state.state.code?.hash().toString('hex'), codeHash);
+    }
+    assert.equal(Cell.fromBase64(row.before.codeBoc).hash().toString('hex'), codeHash);
+    assert.equal(Cell.fromBase64(row.after.codeBoc).hash().toString('hex'), codeHash);
+    return { cell, parsed, raw: decodeOriginalTransaction(cell, Address.parse(row.account)) };
   };
-  const store = new MemoryStore(config);
-  const queued: string[] = [];
-  const source = makeSource({
-    async getTransactions() {
-      return stale;
-    },
-    async getAccountState() {
-      return { balance: '1', lastTxLt: '3', lastTxHash: forkHash('current', 3) };
-    },
+  const cases = (fixture.cases as FactoryCapture[]).map(capture => {
+    const ack = original(capture.accepted, fixture.compiler.DlmmPoolFactory.codeHash);
+    const emitter = original(capture.emitter, fixture.compiler.DlmmPool.codeHash);
+    const attempt = original(capture.attempt, fixture.compiler.DlmmPoolFactory.codeHash);
+    assert.equal(ack.raw.success, true);
+    assert.equal(emitter.raw.success, true);
+    assert.equal(ack.raw.inMessage!.source && Address.parse(ack.raw.inMessage!.source).toRawString(), capture.pool);
+    const normalizedMessage = (message: NonNullable<Transaction['inMessage']>) => beginCell().store(storeMessage(message, { forceRef: true })).endCell();
+    assert.ok([...emitter.parsed.outMessages.values()].some(message => normalizedMessage(message).equals(normalizedMessage(ack.parsed.inMessage!))), 'Actual Pool emitter and Factory receiver carry the same message fields');
+    return { capture, ...ack, attempt: attempt.raw };
   });
-  const service = new IndexerService(
-    config,
-    store,
-    source,
-    opcodes,
-    [],
-    undefined,
-    tracker
-  );
+  assert.deepEqual(cases.map(c => c.capture.name), ['direct', 'public', 'launch']);
+  return { fixture, cases };
+};
+
+const testFactoryEvidenceWithoutGeneratedEntrypoints = () => {
+  const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/pool-factory-current-transactions.json'), 'utf8'));
+  const sources = fixture.nativeSources as Record<string, string>;
+  assertFactoryNativeSources(sources, factoryNativeRoot);
+  const cleanRoot = mkdtempSync(join(tmpdir(), 'tonswap-factory-source-'));
+  try {
+    for (const filename of Object.keys(sources)) {
+      if (factoryGeneratedPaths.includes(filename)) continue;
+      const target = join(cleanRoot, filename);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(join(factoryNativeRoot, filename), target);
+    }
+    const assertAbsent = () => factoryGeneratedPaths.forEach(filename => assert.equal(existsSync(join(cleanRoot, filename)), false));
+    assertAbsent();
+    const shadow = join(cleanRoot, 'wrappers/entrypointWriter.js');
+    writeFileSync(shadow, 'globalThis.__factoryUnboundShadowExecuted = true; throw new Error("unbound renderer dependency");');
+    assert.equal(factoryEvidence(cleanRoot).cases.length, 3, 'Original accepted callbacks verify in a clean source-only workspace');
+    assert.equal((globalThis as Record<string, unknown>).__factoryUnboundShadowExecuted, undefined, 'The fixed build helper and source-only validation execute no native renderer or ambient shadow');
+    rmSync(shadow);
+    assertAbsent();
+    let rejected = 0;
+    const rejects = (fn: () => void) => { assert.throws(fn); rejected++; };
+    for (const role of factoryCompilerRoles) {
+      const omitted = { ...fixture.compiler }; delete omitted[role];
+      rejects(() => assertFactoryCompilerCodes(omitted));
+    }
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, UnknownCode: fixture.compiler.DlmmPoolFactory }));
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: fixture.compiler.DlmmPool }));
+    const arbitraryCode = beginCell().storeUint(0, 1).endCell();
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: {
+      codeHash: arbitraryCode.hash().toString('hex'), boc: arbitraryCode.toBoc().toString('base64'),
+    } }));
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: {
+      ...fixture.compiler.DlmmPoolFactory, boc: arbitraryCode.toBoc().toString('base64'),
+    } }));
+    const withoutBoc = { ...fixture.compiler.DlmmPoolFactory }; delete withoutBoc.boc;
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: withoutBoc }));
+    for (const entry of factoryEntrypoints) {
+      for (const filename of [entry.source, `wrappers/${entry.module}.ts`, `wrappers/${entry.role}.compile.ts`]) {
+        const path = join(cleanRoot, filename), original = readFileSync(path);
+        try {
+          writeFileSync(path, Buffer.concat([original, Buffer.from('\n// tampered input\n')]));
+          rejects(() => assertFactoryNativeSources(sources, cleanRoot));
+        } finally { writeFileSync(path, original); }
+      }
+      const generated = entry.source.replace('.tolk', '.generated.tolk');
+      rejects(() => assertFactoryNativeSources({ ...sources, [generated]: '0'.repeat(64) }, cleanRoot));
+    }
+    for (const filename of ['contracts/shared/math/integer.tolk', 'wrappers/entrypointWriter.ts', ...factoryGeneratedPaths]) {
+      const omitted = { ...sources }; delete omitted[filename];
+      rejects(() => assertFactoryNativeSources(omitted, cleanRoot));
+    }
+    rejects(() => assertFactoryNativeSources({ ...sources, 'contracts/unknown.generated.tolk': '0'.repeat(64) }, cleanRoot));
+    rejects(() => assertFactoryNativeSources({ ...sources, '../outside.tolk': '0'.repeat(64) }, cleanRoot));
+    const executed = fixture.executedNativeSources as Record<string, string>;
+    factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot, executed, sources);
+    const unknown = 'wrappers/unmodeledDynamicImport.ts';
+    writeFileSync(join(cleanRoot, unknown), 'export const rogue = true;\n');
+    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot,
+      { ...executed, [unknown]: factorySourceHash(readFileSync(join(cleanRoot, unknown))) }, sources));
+    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot,
+      { ...executed, '../outside.ts': '0'.repeat(64) }, sources));
+    const changedExecuted = { ...executed, 'tests/dlmm/DlmmPoolFactory.spec.ts': '0'.repeat(64) };
+    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot, changedExecuted, sources));
+    const missingTest = { ...executed }; delete missingTest['tests/dlmm/DlmmPoolFactory.spec.ts'];
+    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot, missingTest, sources));
+    rmSync(join(cleanRoot, unknown));
+    const physicalSource = join(cleanRoot, 'contracts/shared/math/integer.tolk');
+    const retainedSource = readFileSync(physicalSource);
+    rmSync(physicalSource);
+    symlinkSync(join(factoryNativeRoot, 'contracts/shared/math/integer.tolk'), physicalSource);
+    rejects(() => assertFactoryNativeSources(sources, cleanRoot));
+    rmSync(physicalSource); writeFileSync(physicalSource, retainedSource);
+    assertAbsent();
+    // Even a leftover file with wrong bytes cannot become compiler authority.
+    for (const filename of factoryGeneratedPaths) writeFileSync(join(cleanRoot, filename), 'stale ambient compiler input');
+    assertFactoryNativeSources(sources, cleanRoot);
+    for (const filename of factoryGeneratedPaths) assert.equal(readFileSync(join(cleanRoot, filename), 'utf8'), 'stale ambient compiler input');
+    console.log(`Factory provenance: clean workspace, five in-memory renders and ${rejected} tamper checks passed`);
+  } finally { rmSync(cleanRoot, { recursive: true, force: true }); }
+};
+
+const testRejectedInitialForkDoesNotMutatePoolTracker = async () => {
+  const { capture, raw } = factoryEvidence().cases[0]!;
+  const factory = capture.factory;
+  const positiveControl = new PoolTracker({ DlmmPoolFactory: factory });
+  positiveControl.observeTransactions([raw]);
+  assert.equal(positiveControl.getPoolCount(), 1, 'Rejected branch contains a genuinely discoverable accepted callback');
+  const tracker = new PoolTracker({ DlmmPoolFactory: factory });
+  const store = new MemoryStore(config), queued: string[] = [];
+  const source = makeSource({
+    async getTransactions() { return [raw]; },
+    async getAccountState() { return { balance: '1', lastTxLt: raw.lt, lastTxHash: forkHash('current', 3) }; },
+  });
+  const service = new IndexerService(config, store, source, opcodes, [], undefined, tracker);
   service.setBackfillEnqueue((queuedAddress) => queued.push(queuedAddress));
-
-  await service.ensureInitialTransactions(address);
-
+  await service.ensureInitialTransactions(factory);
   assert.equal(tracker.getPoolCount(), 0);
-  assert.equal(store.get(address)?.txs.length, 0);
-  assert.deepEqual(queued, [address]);
+  assert.equal(store.get(factory)?.txs.length, 0);
+  assert.deepEqual(queued, [factory]);
 };
 
 const testPoolTrackerNormalizesAndFiltersFactoryMessages = () => {
-  const factory = `0:${'4'.repeat(64)}`;
-  const registry = `0:${'5'.repeat(64)}`;
-  const pool = `0:${'6'.repeat(64)}`;
-  const secondPool = `0:${'7'.repeat(64)}`;
-  const friendlyFactory = Address.parse(factory).toString({ urlSafe: true, bounceable: true });
-  const friendlyPool = Address.parse(pool).toString({ urlSafe: true, bounceable: false });
-  const friendlySecondPool = Address.parse(secondPool).toString({ urlSafe: true, bounceable: true });
-  const tracker = new PoolTracker({ DlmmPoolFactory: factory, DlmmRegistry: registry });
-
-  tracker.observeTransactions([{
-    ...linkedTx(1),
-    inMessage: { destination: friendlyFactory, op: 0x444c4350 },
-    outMessages: [
-      { destination: registry, op: 0x53504f4c },
-      { destination: friendlyPool },
-      { destination: `0:${'8'.repeat(64)}`, op: 0x12345678 },
-    ],
-  }]);
-  tracker.observeTransactions([{
-    ...linkedTx(1),
-    inMessage: {
-      source: friendlySecondPool,
-      destination: friendlyFactory,
-      op: 0x4c50000a,
-    },
-    outMessages: [],
-  }]);
-  tracker.observeTransactions([{
-    ...linkedTx(1),
-    success: false,
-    status: 'failed',
-    inMessage: {
-      source: `0:${'9'.repeat(64)}`,
-      destination: friendlyFactory,
-      op: 0x4c50000a,
-    },
-    outMessages: [],
-  }]);
-
-  assert.equal(tracker.getFactoryCount(), 1);
-  assert.equal(tracker.getPoolCount(), 2);
-
-  // Unknown deployment opcodes and ambiguous direct deployments cannot
-  // expand the current DLMM pool inventory.
-  tracker.observeTransactions([{
-    ...linkedTx(2),
-    inMessage: { destination: factory, op: 0x44504f4c },
-    outMessages: [{ destination: `0:${'a'.repeat(64)}` }],
-  }, {
-    ...linkedTx(3),
-    inMessage: { destination: factory, op: 0x444c4350 },
-    outMessages: [
-      { destination: `0:${'b'.repeat(64)}` },
-      { destination: `0:${'c'.repeat(64)}` },
-    ],
-  }]);
-  assert.equal(tracker.getPoolCount(), 2);
-  assert.equal(new PoolTracker({ UnrelatedPoolFactory: factory }).getFactoryCount(), 0);
+  const { fixture, cases } = factoryEvidence();
+  let checks = 0;
+  const test = (name: string, fn: () => void) => { fn(); checks++; console.log('PASS PoolTracker:', name); };
+  test('only current registry pool roles count, and friendly/raw aliases deduplicate', () => {
+    const pool = cases[0]!.capture.pool, factory = cases[0]!.capture.factory;
+    const alias = Address.parse(pool).toString({ bounceable: false });
+    const tracker = new PoolTracker({ DlmmPoolFactory: factory, DlmmPool: pool, Market0Pool: alias, Market0PerpsPool: pool, Spot0Pool: alias, LaunchpadFixedPool: pool,
+      UnrelatedPoolFactory: factory, PoolRegistry: factory, PoolHelper: factory, StrangePool: factory, Market01Pool: factory, Spot0PoolHelper: factory,
+      Market1Pool: 'invalid', Market2Pool: 'REPLACE_WITH_POOL' });
+    assert.equal(tracker.getFactoryCount(), 1); assert.equal(tracker.getPoolCount(), 1);
+    tracker.observeTransactions([cases[0]!.raw]); assert.equal(tracker.getPoolCount(), 1);
+  });
+  for (const { capture, raw, attempt } of cases) {
+    test(`${capture.name}: actual current Factory acceptance, normalized identity and duplicate delivery`, () => {
+      const friendlyFactory = Address.parse(capture.factory).toString({ bounceable: false });
+      const tracker = new PoolTracker({ DlmmPoolFactory: friendlyFactory });
+      tracker.observeTransactions([attempt]);
+      assert.equal(tracker.getPoolCount(), 0, 'Creation/public/retry or typed deployment attempt is not an accepted Pool');
+      tracker.observeTransactions([{ ...raw, inMessage: { ...raw.inMessage, destination: friendlyFactory } }, raw, raw]);
+      assert.equal(tracker.getPoolCount(), 1);
+      assert.equal(tracker.getFactoryCount(), 1);
+    });
+  }
+  const { capture, raw, parsed } = cases[0]!;
+  const rejected = (candidate: RawTransaction, registry = { DlmmPoolFactory: capture.factory }) => {
+    const tracker = new PoolTracker(registry); tracker.observeTransactions([candidate]); assert.equal(tracker.getPoolCount(), 0);
+  };
+  // These are deliberately synthetic negative transaction boundaries. Positive
+  // cases above retain the actual native BOCs, account boundaries and emitter.
+  const changed = (edit: (tx: Transaction) => void) => {
+    const tx = loadTransaction(Cell.fromBase64(raw.rawBoc!).beginParse()); edit(tx);
+    const cell = beginCell().store(storeTransaction(tx)).endCell();
+    return decodeOriginalTransaction(cell, Address.parse(capture.factory));
+  };
+  test('missing original evidence and mismatched original transaction identities are unresolved', () => {
+    for (const change of [{ rawBoc: undefined }, { rawBoc: 'invalid' }, { hash: hash(99) }, { lt: '1' }, { prevTransactionHash: hash(99) }]) rejected({ ...raw, ...change });
+  });
+  test('failed native Factory callbacks cannot be promoted by success summaries', () => {
+    const failed = fixture.rejected.map((row: FactoryCapture['accepted']) => decodeOriginalTransaction(Cell.fromBase64(row.boc), Address.parse(row.account)));
+    assert.ok(failed.length > 0);
+    for (const tx of failed) { assert.equal(tx.success, false); rejected({ ...tx, success: true, status: 'success' }, { DlmmPoolFactory: Address.parse(tx.inMessage!.destination!).toRawString() }); }
+  });
+  test('actual VM and action failures remain failures despite successful summaries', () => {
+    for (const field of ['compute', 'action']) {
+      const failed = changed(tx => {
+        if (tx.description.type !== 'generic' || tx.description.computePhase.type !== 'vm' || !tx.description.actionPhase) throw new Error('Expected VM/action boundary');
+        if (field === 'compute') { tx.description.computePhase.success = false; tx.description.computePhase.exitCode = 3107; }
+        else { tx.description.actionPhase.success = false; tx.description.actionPhase.resultCode = 37; }
+      });
+      rejected({ ...failed, success: true, status: 'success' });
+    }
+  });
+  test('unregistered Factory and Factory-as-sender do not authenticate the receiver', () => {
+    rejected(raw, { DlmmPoolFactory: `0:${'9'.repeat(64)}` });
+    const unrelated = new PoolTracker({ UnrelatedPoolFactory: capture.factory });
+    unrelated.observeTransactions([raw]); assert.equal(unrelated.getFactoryCount(), 0); assert.equal(unrelated.getPoolCount(), 0);
+    const receiver = decodeOriginalTransaction(Cell.fromBase64(cases[0]!.capture.emitter.boc), Address.parse(capture.pool));
+    rejected({ ...receiver, inMessage: { ...receiver.inMessage, source: capture.factory, destination: capture.factory } });
+  });
+  test('forged summary opcode, sender and body cannot alter the original callback', () => {
+    const fake = { ...cases[0]!.attempt, inMessage: { ...raw.inMessage } };
+    rejected(fake);
+    const tracker = new PoolTracker({ DlmmPoolFactory: capture.factory });
+    tracker.observeTransactions([{ ...raw, inMessage: { ...raw.inMessage, op: 0, source: `0:${'9'.repeat(64)}`, body: '' } }]);
+    assert.equal(tracker.getPoolCount(), 1, 'Original message remains authoritative');
+  });
+  test('bounced, wrong actor/factory, noncanonical, missing and trailing current body fields fail closed', () => {
+    rejected(changed(tx => { if (tx.inMessage!.info.type === 'internal') tx.inMessage!.info.bounced = true; }));
+    const body = parsed.inMessage!.body;
+    const actors = body.refs[1]!, stranger = Address.parse(`0:${'a'.repeat(64)}`);
+    const wrongActors = [beginCell().storeAddress(stranger).storeAddress(Address.parse(capture.factory)).endCell(),
+      beginCell().storeAddress(Address.parse(capture.pool)).storeAddress(stranger).endCell(),
+      beginCell().storeAddress(null).storeAddress(Address.parse(capture.factory)).endCell()];
+    const zeroQuery = beginCell().storeUint(0x44504441, 32).storeUint(0, 64).storeSlice(body.beginParse().skip(96)).endCell();
+    const malformed = [zeroQuery, beginCell().endCell(), beginCell().storeUint(0x12345678,32).endCell(),
+      beginCell().storeSlice(body.beginParse()).storeBit(true).endCell(),
+      beginCell().storeBits(body.bits).storeRef(body.refs[0]!).endCell(),
+      beginCell().storeSlice(body.beginParse()).storeRef(beginCell().endCell()).endCell(),
+      ...wrongActors.map(actors => beginCell().storeBits(body.bits).storeRef(body.refs[0]!).storeRef(actors).endCell()),
+      beginCell().storeBits(body.bits).storeRef(beginCell().storeAddress(stranger).storeAddress(stranger).endCell()).storeRef(actors).endCell()];
+    for (const body of malformed) rejected(changed(tx => { tx.inMessage!.body = body; }));
+  });
+  test('an obsolete empty-body or ambiguous deployment attempt never increases inventory', () => {
+    for (const op of [0x444c4350, 0x444c5043, 0x4c500001, 0x44504f4c]) {
+      rejected({ ...linkedTx(3), inMessage: { destination: capture.factory, op },
+        outMessages: [{ destination: `0:${'b'.repeat(64)}` }, { destination: `0:${'c'.repeat(64)}` }] });
+    }
+  });
+  console.log(`PoolTracker: ${checks} boundary checks passed`);
 };
 
 const run = async () => {
@@ -832,6 +1066,7 @@ const run = async () => {
   await testFollowerRefreshAndCatchUpAreAtomicAgainstQueuedInitialRead();
   await testFollowerCountsActualProgressAcrossShortPages();
   await testSnapshotGenerationInvalidatesCapturedFollowerBatches();
+  testFactoryEvidenceWithoutGeneratedEntrypoints();
   await testRejectedInitialForkDoesNotMutatePoolTracker();
   testPoolTrackerNormalizesAndFiltersFactoryMessages();
   process.stdout.write('history integrity ok\n');

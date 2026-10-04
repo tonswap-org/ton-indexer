@@ -119,3 +119,19 @@ assert.equal(healthProps.serviceId?.enum?.[0], 'ti.soramitsu.io');
 assert.equal(healthProps.ecosystem?.enum?.[0], 'ton');
 
 console.log('openapi ok');
+
+// Every exposed current position carries the fourth counterparty coin. No
+// optional field could certify a historical three-coin layout as current.
+let counterpartySchemas = 0;
+function checkCounterpartySchemas(value: unknown): void {
+  if (!value || typeof value !== 'object') return;
+  const node = value as { required?: string[]; properties?: Record<string, unknown> };
+  if (Array.isArray(node.required) && node.required.includes('reservedRaw') && node.required.includes('collectedLossRaw')) {
+    assert(node.required.includes('remainingEntitlementRaw'));
+    assert(node.properties?.remainingEntitlementRaw);
+    counterpartySchemas++;
+  }
+  for (const child of Object.values(value)) checkCounterpartySchemas(child);
+}
+checkCounterpartySchemas(spec);
+assert(counterpartySchemas > 0);

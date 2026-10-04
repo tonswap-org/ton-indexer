@@ -52,39 +52,56 @@ export type CounterpartyCapital = {
     reserved: bigint;
     pendingFunding: bigint;
     collectedLoss: bigint;
+    remainingEntitlement: bigint;
 };
 const ceil = (a: bigint, b: bigint) => { if (a < 0n || b <= 0n)
     throw Error("Invalid ceiling"); return (a + b - 1n) / b; };
 const capital = (p: PerpsPosition): CounterpartyCapital => ({ reserved: BigInt(p.counterparty.reservedRaw),
-    pendingFunding: BigInt(p.counterparty.pendingFundingRaw), collectedLoss: BigInt(p.counterparty.collectedLossRaw) });
+    pendingFunding: BigInt(p.counterparty.pendingFundingRaw), collectedLoss: BigInt(p.counterparty.collectedLossRaw), remainingEntitlement: BigInt(p.counterparty.remainingEntitlementRaw) });
 const storeCapital = (p: PerpsPosition, c: CounterpartyCapital) => {
     p.counterparty = {
-        reservedRaw: c.reserved.toString(), pendingFundingRaw: c.pendingFunding.toString(), collectedLossRaw: c.collectedLoss.toString()
+        reservedRaw: c.reserved.toString(), pendingFundingRaw: c.pendingFunding.toString(), collectedLossRaw: c.collectedLoss.toString(), remainingEntitlementRaw: c.remainingEntitlement.toString()
     };
 };
+/** Physical reserve and cumulative gross entitlement are independent rails. */
+export function counterpartyShouldLiquidate(c: CounterpartyCapital, fullPnl: bigint, minimum: bigint) {
+    if (minimum < 0n || Object.values(c).some(v => v < 0n)) throw Error("Invalid isolated capital");
+    const liability = max(fullPnl, 0n) + c.pendingFunding;
+    return c.reserved <= liability + minimum || min(c.reserved, c.remainingEntitlement) <= liability;
+}
 export function counterpartyClose(c: CounterpartyCapital, fullPnl: bigint, closed: bigint, size: bigint, cash: bigint, minimum: bigint, fundingDebt: bigint) {
     if (size <= 0n || closed <= 0n || closed > size || cash < 0n || minimum < 0n || fundingDebt < 0n || Object.values(c).some(v => v < 0n))
         throw Error("Invalid isolated capital");
-    let forced = fundingDebt > 0n || c.reserved <= max(fullPnl, 0n) + c.pendingFunding + minimum;
-    if (forced)
-        closed = size;
-    let remaining = 0n;
+    let forced = fundingDebt > 0n || counterpartyShouldLiquidate(c, fullPnl, minimum);
+    if (forced) closed = size;
+    const fundingClaim = min(c.pendingFunding, min(c.reserved, c.remainingEntitlement));
+    let remaining = 0n, remainingEntitlement = 0n, closedEntitlement = c.remainingEntitlement - fundingClaim;
     if (!forced && closed < size) {
-        remaining = ceil((c.reserved - c.pendingFunding) * (size - closed), size);
+        remaining = ceil((c.reserved - fundingClaim) * (size - closed), size);
         if (remaining <= ceil(minimum * (size - closed), size)) {
             forced = true;
             closed = size;
             remaining = 0n;
+        } else {
+            closedEntitlement = tvmDiv((c.remainingEntitlement - fundingClaim) * closed, size);
+            remainingEntitlement = c.remainingEntitlement - fundingClaim - closedEntitlement;
         }
     }
-    const pnl = tvmDiv(fullPnl * closed, size), claim = min(c.reserved, c.pendingFunding + max(pnl, 0n)), loss = max(-pnl, 0n) + fundingDebt;
+    const pnl = tvmDiv(fullPnl * closed, size);
+    // Cap before opposite losses; a partial close cannot spend retained cash
+    // or the surviving quantity's share of the cumulative entitlement.
+    const claim = min(c.reserved - remaining, min(fundingClaim + max(pnl, 0n), fundingClaim + closedEntitlement));
+    const loss = max(-pnl, 0n) + fundingDebt;
     const profit = max(claim - loss, 0n), debit = min(max(loss - claim, 0n), cash), unpaid = max(loss - claim, 0n) - debit;
     const released = c.reserved - remaining - profit;
-    if (released < 0n)
-        throw Error("Position capital overdraw");
-    return { state: { reserved: remaining, pendingFunding: 0n, collectedLoss: c.collectedLoss + debit }, forced, closed, pnl, profit, debit, unpaid, released };
+    if (released < 0n || claim > c.remainingEntitlement) throw Error("Position capital overdraw");
+    return { state: { reserved: remaining, pendingFunding: 0n, collectedLoss: c.collectedLoss + debit, remainingEntitlement }, forced, closed, pnl, profit, debit, unpaid, released };
 }
-function initialReserve(state: PerpsState, m: PerpsMarket, size: bigint, notional: bigint) {
+/** Current immutable LP admission backing, independent of trader margin policy. */
+export function initialCounterpartyReserve(entryNotional: bigint) {
+    return ceil(entryNotional * 20000n, 10000n);
+}
+function initialMargin(state: PerpsState, m: PerpsMarket, size: bigint, notional: bigint) {
     if (m.maxLeverageBps <= 0)
         throw Error("No margin policy");
     const units = BigInt(m.depthRaw) === 0n ? 11n : abs(tvmDiv(size * 1000000000n, BigInt(m.depthRaw))) / 1000000000n;
@@ -184,7 +201,7 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
         const result: PerpsEconomics = { outcome: 'accepted', fundingRaw: '0', realizedPnlRaw: '0', tradeFeeRaw: '0', depositCollateralRaw: '0', excessRaw: '0',
             payoutContributionRaw: '0', adlAbsorbedRaw: '0', badDebtRaw: '0', tradedNotionalRaw: '0', executedSizeRaw: '0', counterpartyProfitRaw: '0',
             counterpartyLossRaw: '0', uncollectedLossRaw: '0', counterpartySettlement: null };
-        if (r.operation === 'close' && oracle?.after.order?.outcome === 3 && deposit === 0n && same(ba, aa) && same(bp, ap) && payoutDelta === 0n)
+        if (['close', 'modify', 'claim'].includes(r.operation) && oracle?.after.order?.outcome === 3 && deposit === 0n && same(ba, aa) && same(bp, ap) && payoutDelta === 0n)
             return { ...result, outcome: 'rejected' };
         if (deposit > 0n && same(ba, aa) && same(bp, ap) && payoutDelta === deposit)
             return { ...result, outcome: 'rejected', excessRaw: depositRaw, payoutContributionRaw: depositRaw };
@@ -204,7 +221,7 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
             const size = BigInt(position.sizeRaw), c = capital(position);
             funding = clamp128(tvmDiv(BigInt(position.entryNotionalRaw) * (BigInt(pricing.fundingIndexRaw) - BigInt(position.lastFundingIndexRaw)) * (size > 0n ? -1n : size < 0n ? 1n : 0n), 10000n));
             if (funding > 0n) {
-                const claim = min(c.reserved, c.pendingFunding + funding);
+                const claim = min(min(c.reserved, c.remainingEntitlement), c.pendingFunding + funding);
                 funding = claim - c.pendingFunding;
                 c.pendingFunding = claim;
                 pending += funding;
@@ -212,6 +229,8 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
             if (funding < 0n) {
                 const canceled = min(c.pendingFunding, -funding);
                 c.pendingFunding -= canceled;
+                c.remainingEntitlement -= canceled;
+                if (c.remainingEntitlement < 0n) throw Error("Overdrawn funding entitlement");
                 pending -= canceled;
                 const owed = -funding - canceled;
                 const available = min(collateral, BigInt(position.marginRaw));
@@ -274,6 +293,7 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
                 return null;
             const f = fill(pricing, BigInt(r.sizeRaw!));
             traded = f.notional;
+            if (f.notional < 750000000n) return null;
             const bps = BigInt(Math.max(0, Math.min(10000, before.feeBps + pricing.controlFeeDeltaBps)));
             fee = tvmDiv(traded * bps, 10000n);
             depositCollateral = BigInt(r.marginRaw!);
@@ -283,12 +303,14 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
             collateral += depositCollateral;
             count++;
             payout = excess;
-            const reserve = initialReserve(after, pricing, BigInt(r.sizeRaw!), f.notional);
-            if (depositCollateral < reserve)
+            const reserve = initialCounterpartyReserve(f.notional);
+            if (depositCollateral < initialMargin(after, pricing, BigInt(r.sizeRaw!), f.notional))
                 return null;
             position = { owner, marketId: r.marketId, sizeRaw: r.sizeRaw!, marginRaw: r.marginRaw!, entryNotionalRaw: f.notional.toString(), lastFundingIndexRaw: pricing.fundingIndexRaw,
-                counterparty: { reservedRaw: reserve.toString(), pendingFundingRaw: '0', collectedLossRaw: '0' } };
-            if (reserve <= max(pricePnl(position, BigInt(pricing.markRaw)), 0n) + ceil(f.notional * 1500n, 10000n)) return null;
+                counterparty: { reservedRaw: reserve.toString(), pendingFundingRaw: '0', collectedLossRaw: '0', remainingEntitlementRaw: f.notional.toString() } };
+            if (clamp128(depositCollateral + pricePnl(position, BigInt(pricing.markRaw)))
+                < initialMargin(after, pricing, BigInt(r.sizeRaw!), f.notional)) return null;
+            if (counterpartyShouldLiquidate(capital(position), pricePnl(position, BigInt(pricing.markRaw)), ceil(f.notional * 1500n, 10000n))) return null;
         }
         else if (r.operation === 'modify') {
             if (!position)
@@ -305,6 +327,11 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
             else if (deposit > 0n)
                 return null;
             settle(false);
+            const originalSize = BigInt(position.sizeRaw), projectedSize = originalSize + BigInt(r.sizeRaw!);
+            const requiresAdmission = projectedSize !== 0n && (change < 0n || originalSize === 0n ||
+                (originalSize > 0n) !== (projectedSize > 0n) || abs(projectedSize) > abs(originalSize));
+            if (requiresAdmission && counterpartyShouldLiquidate(capital(position), pricePnl(position, BigInt(pricing.markRaw)),
+                ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n))) return null;
             let remaining = BigInt(r.sizeRaw!), released = 0n;
             for (let i = 0; remaining !== 0n && i < 2; i++) {
                 const current = BigInt(position.sizeRaw);
@@ -323,6 +350,11 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
                     position.entryNotionalRaw = (BigInt(position.entryNotionalRaw) + f.notional).toString();
                 }
                 else {
+                    // A booked LP funding claim is not trader margin. Mirror
+                    // the native whole-position check before realizing only a
+                    // fraction of its price loss and paying that entire claim.
+                    if (abs(chunk) < abs(current) && BigInt(position.marginRaw) + pricePnl(position, BigInt(pricing.markRaw)) < maintenance(before, pricing, position))
+                        return null;
                     const margin = BigInt(position.marginRaw), notional = BigInt(position.entryNotionalRaw), share = tvmDiv(margin * abs(chunk), abs(current)), basis = tvmDiv(notional * abs(chunk), abs(current));
                     const plan = close(abs(chunk), f.price, ceil(notional * 1500n, 10000n));
                     released += max(0n, share - plan.debit);
@@ -335,15 +367,23 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
                     }
                 }
                 position.lastFundingIndexRaw = pricing.fundingIndexRaw;
+                if (position.sizeRaw !== '0') {
+                    const increased = abs(BigInt(position.sizeRaw)) > abs(current);
+                    const markNotional = tvmDiv(abs(BigInt(position.sizeRaw)) * BigInt(pricing.markRaw), 1000000000n);
+                    if (increased && BigInt(position.marginRaw) < initialMargin(before, pricing, BigInt(position.sizeRaw), markNotional)) return null;
+                    if ((increased || change < 0n) && BigInt(position.marginRaw) < maintenance(before, pricing, position)) return null;
+                }
                 remaining -= chunk;
             }
             if (remaining !== 0n)
                 return null;
             if (grossNew > 0n) {
                 const c = capital(position);
-                c.reserved = max(c.reserved, initialReserve(after, pricing, BigInt(position.sizeRaw), BigInt(position.entryNotionalRaw)));
+                c.reserved = max(c.reserved, initialCounterpartyReserve(BigInt(position.entryNotionalRaw)));
+                c.remainingEntitlement += grossNew;
+                if (c.remainingEntitlement > c.reserved) return null;
                 storeCapital(position, c);
-                if (c.reserved <= max(pricePnl(position, BigInt(pricing.markRaw)), 0n) + c.pendingFunding + ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n)) return null;
+                if (counterpartyShouldLiquidate(c, pricePnl(position, BigInt(pricing.markRaw)), ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n))) return null;
             }
             const liveMargin = BigInt(position.marginRaw);
             assess(position.sizeRaw === '0', min(collateral, liveMargin + released));
@@ -358,10 +398,28 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
                 } else {
                     if (BigInt(position.marginRaw) < -change) return null;
                     position.marginRaw = (BigInt(position.marginRaw) + change).toString();
+                    if (BigInt(position.marginRaw) < BigInt(position.entryNotionalRaw)) return null;
                 }
                 collateral += change;
                 payout = -change;
             }
+            if (position.sizeRaw !== '0') {
+                if (BigInt(r.sizeRaw!) !== 0n && BigInt(position.entryNotionalRaw) < 750000000n) return null;
+                const finalSize = BigInt(position.sizeRaw), margin = BigInt(position.marginRaw);
+                if (grossNew > 0n && margin < BigInt(position.entryNotionalRaw)) return null;
+                const increased = abs(finalSize) > abs(originalSize), directionChanged = originalSize !== 0n && (finalSize > 0n) !== (originalSize > 0n);
+                if (increased || directionChanged || change < 0n) {
+                    const markNotional = tvmDiv(abs(finalSize) * BigInt(pricing.markRaw), 1000000000n);
+                    const required = initialMargin(before, pricing, finalSize, markNotional);
+                    if (margin < required || clamp128(margin + pricePnl(position, BigInt(pricing.markRaw))) < required) return null;
+                }
+                if ((increased || change < 0n) && margin < maintenance(before, pricing, position)) return null;
+            }
+            // Execution impact, fees and explicit margin movement must not
+            // leave a surviving reduction due for trader liquidation.
+            if (position.sizeRaw !== '0' && abs(BigInt(position.sizeRaw)) < abs(BigInt(bp!.sizeRaw)) &&
+                BigInt(position.marginRaw) + pricePnl(position, BigInt(pricing.markRaw)) < maintenance(before, pricing, position))
+                return null;
             const release = min(released, collateral);
             collateral -= release;
             payout += release + excess;
@@ -389,11 +447,18 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
             if (!position || deposit)
                 return null;
             settle(false);
+            if (counterpartyShouldLiquidate(capital(position), pricePnl(position, BigInt(pricing.markRaw)),
+                ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n))) return null;
             const amount = BigInt(r.marginRaw!);
             if (amount <= 0n || collateral < amount || BigInt(position.marginRaw) < amount)
                 return null;
             collateral -= amount;
             position.marginRaw = (BigInt(position.marginRaw) - amount).toString();
+            const margin = BigInt(position.marginRaw), size = BigInt(position.sizeRaw);
+            const markNotional = tvmDiv(abs(size) * BigInt(pricing.markRaw), 1000000000n);
+            const required = initialMargin(before, pricing, size, markNotional);
+            if (margin < BigInt(position.entryNotionalRaw) || margin < required ||
+                clamp128(margin + pricePnl(position, BigInt(pricing.markRaw))) < required || margin < maintenance(before, pricing, position)) return null;
             payout = amount;
             flushLoss();
         }
@@ -404,11 +469,13 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
             if (r.operation === 'claim') {
                 const c = capital(position);
                 if (fundingDebt > 0n || BigInt(position.marginRaw) + pricePnl(position, BigInt(pricing.markRaw)) < maintenance(before, pricing, position)
-                    || c.reserved <= max(pricePnl(position, BigInt(pricing.markRaw)), 0n) + c.pendingFunding + ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n))
+                    || counterpartyShouldLiquidate(c, pricePnl(position, BigInt(pricing.markRaw)), ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n)))
                     fullClose();
                 else {
                     if (c.pendingFunding <= 0n || bt) return null;
                     lpProfit = c.pendingFunding;
+                    if (lpProfit > c.remainingEntitlement) return null;
+                    c.remainingEntitlement -= lpProfit;
                     c.reserved -= lpProfit;
                     c.pendingFunding = 0n;
                     pending -= lpProfit;
@@ -421,7 +488,7 @@ export function perpsEconomics(before: PerpsState, after: PerpsState, owner: str
                     return null;
                 if (r.operation === 'adl') {
                     const c = capital(position);
-                    if (fundingDebt === 0n && c.reserved > max(pricePnl(position, BigInt(pricing.markRaw)), 0n) + c.pendingFunding + ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n))
+                    if (fundingDebt === 0n && !counterpartyShouldLiquidate(c, pricePnl(position, BigInt(pricing.markRaw)), ceil(BigInt(position.entryNotionalRaw) * 1500n, 10000n)))
                         return null;
                 }
                 fullClose();

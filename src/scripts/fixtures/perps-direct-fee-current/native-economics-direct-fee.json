@@ -1,0 +1,1984 @@
+{
+  "environment": "VM15 local Sandbox execution; not live",
+  "priceScenario": "stress-400-nanotons-per-gas",
+  "source": "tests/referral/PerpsTradeReferralPayout.spec.ts",
+  "engineCodeHash": "7cb945ded54aaca9793cd34d9822371abfad78f4b10fb7150ce9918f7cce4fb3",
+  "nativeEconomics": [
+    {
+      "action": "Bob-open",
+      "quoteNano": "3140000000",
+      "traderNetSpentNano": "1283774624",
+      "engineNativeDeltaNano": "0",
+      "directEngineRefundNano": "1605018183",
+      "feeAccounting": "vm15-closed-internal-graph-v1",
+      "feeConfigHash": "6afa8bd6ae1aaf8d918b8a6461666601c151d14270d81efddf0f602042c842e6",
+      "feeRoot": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|194000000:cc1150085e544fca2b982b52f3f99daed0d6b813e4dc4e4a089489b22f7005d0",
+      "transactionCollectedFeesNano": "1107491120",
+      "remainingForwardFeesNano": "18555374",
+      "networkFeesNano": "1126046494",
+      "feeGraph": {
+        "transactions": [
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "194000000:cc1150085e544fca2b982b52f3f99daed0d6b813e4dc4e4a089489b22f7005d0",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "1052045",
+            "remainingForwardFeesNano": "117557",
+            "derivedNativeDeltaNano": "-3141169602",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "1937",
+              "gasFeesNano": "774800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "176334",
+              "totalActionFeesNano": "58777"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb",
+            "txId": "195000000:93bea45e40245146c90e92e7d3dd2d3720ed997b47231aa5a868a101fb66b35e",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "20928492",
+            "remainingForwardFeesNano": "8271576",
+            "derivedNativeDeltaNano": "120799932",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "41982",
+              "gasFeesNano": "16792800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "12407268",
+              "totalActionFeesNano": "4135692"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "196000000:8697545b9b7acb260d43249afcfc00445f21bd46a357da88b37451e5e29daee3",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "22905532",
+            "remainingForwardFeesNano": "166270",
+            "derivedNativeDeltaNano": "36928198",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "57056",
+              "gasFeesNano": "22822400"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "249402",
+              "totalActionFeesNano": "83132"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "197000000:7548593dd5bf5fae906905fb8dc7064bb066ab7e0561a380f5efd85cfcbc93f5",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "87501176",
+            "remainingForwardFeesNano": "132759",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "218587",
+              "gasFeesNano": "87434800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "199135",
+              "totalActionFeesNano": "66376"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "198000000:345bb7b7d2da6b60499b899a03199e80bd12a8c05d66ed017b1e3946d5b23dc5",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "19876400",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+            "txId": "199000000:cea9f7cc0b5647b008baaf462c5bb76782661d7cbf41d4580a036fe4dcef46ba",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "62439309",
+            "remainingForwardFeesNano": "201025",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "155847",
+              "gasFeesNano": "62338800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "301534",
+              "totalActionFeesNano": "100509"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "200000000:115aaef1748797226aa360171ea4d7dae40689afb336f36e1b8de0015e1ef3b9",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "92242465",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "201000000:90c94ccb36a3b365b899a3c7a5c6105898f394b27ca0ef213448821728058bb5",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "231528909",
+            "remainingForwardFeesNano": "146626",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "578639",
+              "gasFeesNano": "231455600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "219935",
+              "totalActionFeesNano": "73309"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4",
+            "txId": "202000000:5df2594d361083c33b94701fb6b104c3d2c01c56eb52f7d12a82d0c5cebc6702",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "62714421",
+            "remainingForwardFeesNano": "122447",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "156633",
+              "gasFeesNano": "62653200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "183668",
+              "totalActionFeesNano": "61221"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "203000000:ea2f5294bed7aee0111e515a43c22828a8b21e0359088712481f9a46b44db922",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "105560531",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "204000000:73036fcb05243626079492f5638a155c2aabf04d59516cd0790ed7ef950c9531",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "99528332",
+            "remainingForwardFeesNano": "131870",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "248656",
+              "gasFeesNano": "99462400"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "197802",
+              "totalActionFeesNano": "65932"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:395f669c44a4ccb09c2d097cc962b9281c0d08a29c88866aea310bd5f5ec73f5",
+            "txId": "205000000:0d2639924792802b4395bbf8ead02f6cada3c4fb688434e2d2da27483d315add",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "40228243",
+            "remainingForwardFeesNano": "154092",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "100378",
+              "gasFeesNano": "40151200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "231135",
+              "totalActionFeesNano": "77043"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "206000000:707841423bc80341ee8ed78983a663b304036a6e5dceffbb017ba6a0b76529c4",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "77379330",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "207000000:f965eb47f95aff95bf3ec75d52c663b2677723de934643e71124ae0316d1031c",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "216716243",
+            "remainingForwardFeesNano": "167692",
+            "derivedNativeDeltaNano": "220133468",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "541581",
+              "gasFeesNano": "216632400"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "251535",
+              "totalActionFeesNano": "83843"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "208000000:ee04b694de6fbc420dcec65a95339af680314fa2fad7e9b85656f3a7b8253a89",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "179494065",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "209000000:836c423b5344a1e30c40a3ff98fc7efa64925c7ae3630e97077017057fd573a2",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "26437025",
+            "remainingForwardFeesNano": "8315844",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "55698",
+              "gasFeesNano": "22279200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "12473669",
+              "totalActionFeesNano": "4157825"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "210000000:bdf9f5a145c5af79349f03ea43e3502c7e43650ce5af78994691dc398ade5ff9",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "962858997",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef",
+            "txId": "211000000:2560d156006dcb6b28dc615b7b0324668f73d8a3577ec6ee407e53869b0017e7",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "22266731",
+            "remainingForwardFeesNano": "195871",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "55422",
+              "gasFeesNano": "22168800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "293802",
+              "totalActionFeesNano": "97931"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "212000000:c141957504ca9c7fa5f6244e099c4640a7acf275d4a731b5c0f60e261d84396f",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "25123531",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e",
+            "txId": "213000000:e5ef5fae4b80c8128dec799d8acba0b76d55c9fd62990f4710487733e02104d0",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "41197066",
+            "remainingForwardFeesNano": "54935",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "102924",
+              "gasFeesNano": "41169600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "82401",
+              "totalActionFeesNano": "27466"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "214000000:3e27a2a02c3cfe1e654d7a4070c0fe273e0af829fc78a91e59139a8bf1d551d1",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "14874488",
+            "remainingForwardFeesNano": "88980",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "37075",
+              "gasFeesNano": "14830000"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "133468",
+              "totalActionFeesNano": "44488"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "215000000:33fe9e599c17ebfd48443f8446467b3135c39d16829169ebee5ce4d52b28d529",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "28624399",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "216000000:e314fba1ee2dfa265414cb1f165dec2236f4f550bb0bad18ca3a206f7340e68b",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "64455154",
+            "remainingForwardFeesNano": "143915",
+            "derivedNativeDeltaNano": "-220133468",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "160958",
+              "gasFeesNano": "64383200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "215869",
+              "totalActionFeesNano": "71954"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "217000000:8f4606a3607618692bd306e35cab7ee0bb389c85dc61a930464b09405820c6a1",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "14759688",
+            "remainingForwardFeesNano": "88980",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "36788",
+              "gasFeesNano": "14715200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "133468",
+              "totalActionFeesNano": "44488"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "218000000:2fe7cd20c90b82cf4cf331604e14dbe14720a5351765e1ea300a4ee8088f8c0c",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "237984729",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "219000000:a728e6429838394481bb45f4133361858c76d81b55e0ccc86d31747687a1e105",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "76722266",
+            "remainingForwardFeesNano": "54935",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "191737",
+              "gasFeesNano": "76694800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "82401",
+              "totalActionFeesNano": "27466"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "220000000:6a6c7ab44cd12a114b3c94f4daf1c1115af8b518a31aa1a1d87332d839ec9769",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "128250531",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          }
+        ],
+        "internalEdges": [
+          {
+            "messageHash": "c41a5bff348c4cbb7fd26668a0f0eb6ec2d27ce8f5835e1ac15cf91887c6554a",
+            "parent": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|194000000:cc1150085e544fca2b982b52f3f99daed0d6b813e4dc4e4a089489b22f7005d0",
+            "child": "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb|195000000:93bea45e40245146c90e92e7d3dd2d3720ed997b47231aa5a868a101fb66b35e",
+            "valueNano": "3140000000",
+            "remainingForwardFeeNano": "117557",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "cd0c1b1f03d874e16d1e89297da2a249ea2a58c00b7da063f87962bff30609c6",
+            "parent": "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb|195000000:93bea45e40245146c90e92e7d3dd2d3720ed997b47231aa5a868a101fb66b35e",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|196000000:8697545b9b7acb260d43249afcfc00445f21bd46a357da88b37451e5e29daee3",
+            "valueNano": "2990000000",
+            "remainingForwardFeeNano": "8271576",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "ff42687ca9a8d38d2fda84e33ccb04f3bd5508bee2611f6abd88ea14da00bc1b",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|196000000:8697545b9b7acb260d43249afcfc00445f21bd46a357da88b37451e5e29daee3",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|197000000:7548593dd5bf5fae906905fb8dc7064bb066ab7e0561a380f5efd85cfcbc93f5",
+            "valueNano": "2910000000",
+            "remainingForwardFeeNano": "113113",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "7ae08212e91a39dd0ca60e817b372bde0bb407505600ae92765d7c74ad53f5db",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|196000000:8697545b9b7acb260d43249afcfc00445f21bd46a357da88b37451e5e29daee3",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|198000000:345bb7b7d2da6b60499b899a03199e80bd12a8c05d66ed017b1e3946d5b23dc5",
+            "valueNano": "20000000",
+            "remainingForwardFeeNano": "53157",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "3bb206c38331c78070beac9d73140ad610e0fbe4797cf48f03f426e85140b7b7",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|197000000:7548593dd5bf5fae906905fb8dc7064bb066ab7e0561a380f5efd85cfcbc93f5",
+            "child": "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1|199000000:cea9f7cc0b5647b008baaf462c5bb76782661d7cbf41d4580a036fe4dcef46ba",
+            "valueNano": "2730000000",
+            "remainingForwardFeeNano": "77824",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "17099179a450b1fe1710f6881eab24f1447b9f25a4f1ca997b6b0a9d3e3ba7c8",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|197000000:7548593dd5bf5fae906905fb8dc7064bb066ab7e0561a380f5efd85cfcbc93f5",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|200000000:115aaef1748797226aa360171ea4d7dae40689afb336f36e1b8de0015e1ef3b9",
+            "valueNano": "92366065",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "bf0981c872d0cafea25143ee0a1a71ebcf5806a89fd5dfd36fec89f5c78e0b93",
+            "parent": "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1|199000000:cea9f7cc0b5647b008baaf462c5bb76782661d7cbf41d4580a036fe4dcef46ba",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|201000000:90c94ccb36a3b365b899a3c7a5c6105898f394b27ca0ef213448821728058bb5",
+            "valueNano": "2667359666",
+            "remainingForwardFeeNano": "201025",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "e5164a6db346c1870e98570ac480b3ccb0d7ca2a6181f57aee44a928a5ad3f9a",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|201000000:90c94ccb36a3b365b899a3c7a5c6105898f394b27ca0ef213448821728058bb5",
+            "child": "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4|202000000:5df2594d361083c33b94701fb6b104c3d2c01c56eb52f7d12a82d0c5cebc6702",
+            "valueNano": "2330000000",
+            "remainingForwardFeeNano": "91691",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "381d1ec8878e86500dda5398b5f40cbe22f2ccd5c28f90f7ae61d9d2cd09638c",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|201000000:90c94ccb36a3b365b899a3c7a5c6105898f394b27ca0ef213448821728058bb5",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|203000000:ea2f5294bed7aee0111e515a43c22828a8b21e0359088712481f9a46b44db922",
+            "valueNano": "105684131",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "607c9465e1f2bbae76f42beb11cab5bed36869f9da4ffd9209b825738f9aab24",
+            "parent": "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4|202000000:5df2594d361083c33b94701fb6b104c3d2c01c56eb52f7d12a82d0c5cebc6702",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|204000000:73036fcb05243626079492f5638a155c2aabf04d59516cd0790ed7ef950c9531",
+            "valueNano": "2267163132",
+            "remainingForwardFeeNano": "122447",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "029b349dda4a004ab9b3305074c2216e19dc7770599c7b80a22c2efa976e9208",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|204000000:73036fcb05243626079492f5638a155c2aabf04d59516cd0790ed7ef950c9531",
+            "child": "0:395f669c44a4ccb09c2d097cc962b9281c0d08a29c88866aea310bd5f5ec73f5|205000000:0d2639924792802b4395bbf8ead02f6cada3c4fb688434e2d2da27483d315add",
+            "valueNano": "2090000000",
+            "remainingForwardFeeNano": "76935",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "4f15395b25419650ca0452715afa8470323cce3f72baa97156ac759ed68dbf6d",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|204000000:73036fcb05243626079492f5638a155c2aabf04d59516cd0790ed7ef950c9531",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|206000000:707841423bc80341ee8ed78983a663b304036a6e5dceffbb017ba6a0b76529c4",
+            "valueNano": "77502930",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "db9e906aa4d906cfd476a41361897166d7f08e75855abfecdc96d8819a770ebf",
+            "parent": "0:395f669c44a4ccb09c2d097cc962b9281c0d08a29c88866aea310bd5f5ec73f5|205000000:0d2639924792802b4395bbf8ead02f6cada3c4fb688434e2d2da27483d315add",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|207000000:f965eb47f95aff95bf3ec75d52c663b2677723de934643e71124ae0316d1031c",
+            "valueNano": "1870000000",
+            "remainingForwardFeeNano": "99157",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "c1c44e2d16fc287a9537ff435eabb24cc4d73b687710f1ebac6b32a6acae647e",
+            "parent": "0:395f669c44a4ccb09c2d097cc962b9281c0d08a29c88866aea310bd5f5ec73f5|205000000:0d2639924792802b4395bbf8ead02f6cada3c4fb688434e2d2da27483d315add",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|208000000:ee04b694de6fbc420dcec65a95339af680314fa2fad7e9b85656f3a7b8253a89",
+            "valueNano": "179617665",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "bb1171e17e5abbdd216a6fc66db2dae08914b583f0c81d5c66463c271787f2bd",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|207000000:f965eb47f95aff95bf3ec75d52c663b2677723de934643e71124ae0316d1031c",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|209000000:836c423b5344a1e30c40a3ff98fc7efa64925c7ae3630e97077017057fd573a2",
+            "valueNano": "470000000",
+            "remainingForwardFeeNano": "112757",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "91599fec0cc57d85d39ad396c777b7871ecb5eed618d08aef0f3498971718b8e",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|207000000:f965eb47f95aff95bf3ec75d52c663b2677723de934643e71124ae0316d1031c",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|210000000:bdf9f5a145c5af79349f03ea43e3502c7e43650ce5af78994691dc398ade5ff9",
+            "valueNano": "962982597",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "7b1bc974ad01e59b3ffe890ecbe771bc5250b713e4b74073c4b2e9a12d773748",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|209000000:836c423b5344a1e30c40a3ff98fc7efa64925c7ae3630e97077017057fd573a2",
+            "child": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef|211000000:2560d156006dcb6b28dc615b7b0324668f73d8a3577ec6ee407e53869b0017e7",
+            "valueNano": "410000000",
+            "remainingForwardFeeNano": "8260909",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "4a342b9f7d0f2c3c190634146f01a87fd507489179d58bb51c6a4d29b4686074",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|209000000:836c423b5344a1e30c40a3ff98fc7efa64925c7ae3630e97077017057fd573a2",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|212000000:c141957504ca9c7fa5f6244e099c4640a7acf275d4a731b5c0f60e261d84396f",
+            "valueNano": "25247131",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "1bf56a71b3c6a72b5f1f7cf6c11e64dbcc82c91a6a19c6e36e7c487d2fc0eedd",
+            "parent": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef|211000000:2560d156006dcb6b28dc615b7b0324668f73d8a3577ec6ee407e53869b0017e7",
+            "child": "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e|213000000:e5ef5fae4b80c8128dec799d8acba0b76d55c9fd62990f4710487733e02104d0",
+            "valueNano": "70000000",
+            "remainingForwardFeeNano": "106891",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "85f8897a87d9304b47765b43e6d51a648c59ee3f439adbc45a6961e76edc58f8",
+            "parent": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef|211000000:2560d156006dcb6b28dc615b7b0324668f73d8a3577ec6ee407e53869b0017e7",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|214000000:3e27a2a02c3cfe1e654d7a4070c0fe273e0af829fc78a91e59139a8bf1d551d1",
+            "valueNano": "317537398",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "8a75f8e5e0de4ae2ef7563ae65285b88ad9ab8b15dec00cb7045161d3b6f5407",
+            "parent": "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e|213000000:e5ef5fae4b80c8128dec799d8acba0b76d55c9fd62990f4710487733e02104d0",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|215000000:33fe9e599c17ebfd48443f8446467b3135c39d16829169ebee5ce4d52b28d529",
+            "valueNano": "28747999",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "0d4c90953b747f6c851a8a6ebc0bd22f18a3d9df8c179ef8e8bc4ee7feec14dd",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|214000000:3e27a2a02c3cfe1e654d7a4070c0fe273e0af829fc78a91e59139a8bf1d551d1",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|216000000:e314fba1ee2dfa265414cb1f165dec2236f4f550bb0bad18ca3a206f7340e68b",
+            "valueNano": "302573930",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "65a2df18ce85c2c898bbf4d14a3c25539b7d47d1f6c8d5fe13bbcca441b36f3d",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|216000000:e314fba1ee2dfa265414cb1f165dec2236f4f550bb0bad18ca3a206f7340e68b",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|217000000:8f4606a3607618692bd306e35cab7ee0bb389c85dc61a930464b09405820c6a1",
+            "valueNano": "220000000",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "99bef21efabe021808dd352db4b0e27664affc7b608699aba23f2e45fce3b78d",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|216000000:e314fba1ee2dfa265414cb1f165dec2236f4f550bb0bad18ca3a206f7340e68b",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|218000000:2fe7cd20c90b82cf4cf331604e14dbe14720a5351765e1ea300a4ee8088f8c0c",
+            "valueNano": "238108329",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "43473861de7def862811b5bf265ec705260ced9f69a57b58cfdd2b750f03e6b2",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|217000000:8f4606a3607618692bd306e35cab7ee0bb389c85dc61a930464b09405820c6a1",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|219000000:a728e6429838394481bb45f4133361858c76d81b55e0ccc86d31747687a1e105",
+            "valueNano": "205151332",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "2fcde0b05c8f4e39cf2994d240eecc35fade0e03c7d92354f55cdfc0849cf577",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|219000000:a728e6429838394481bb45f4133361858c76d81b55e0ccc86d31747687a1e105",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|220000000:6a6c7ab44cd12a114b3c94f4daf1c1115af8b518a31aa1a1d87332d839ec9769",
+            "valueNano": "128374131",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          }
+        ],
+        "externalOut": [],
+        "derivedNativeAccountDeltas": {
+          "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef": "0",
+          "0:395f669c44a4ccb09c2d097cc962b9281c0d08a29c88866aea310bd5f5ec73f5": "0",
+          "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4": "0",
+          "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e": "0",
+          "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02": "0",
+          "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349": "36928198",
+          "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": "0",
+          "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871": "-1283774624",
+          "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb": "120799932"
+        }
+      },
+      "feeRouterT3DeltaNano": "22500000"
+    },
+    {
+      "action": "Bob-close",
+      "quoteNano": "3110000000",
+      "traderNetSpentNano": "1182347562",
+      "engineNativeDeltaNano": "0",
+      "directEngineRefundNano": "1852205645",
+      "feeAccounting": "vm15-closed-internal-graph-v1",
+      "feeConfigHash": "6afa8bd6ae1aaf8d918b8a6461666601c151d14270d81efddf0f602042c842e6",
+      "feeRoot": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|221000000:1a915011375659f3852f894349f162a0ae734cb1f912317daa0e27b7d61472e5",
+      "transactionCollectedFeesNano": "1163654096",
+      "remainingForwardFeesNano": "18693466",
+      "networkFeesNano": "1182347562",
+      "feeGraph": {
+        "transactions": [
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "221000000:1a915011375659f3852f894349f162a0ae734cb1f912317daa0e27b7d61472e5",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "925422",
+            "remainingForwardFeesNano": "44446",
+            "derivedNativeDeltaNano": "-3110969868",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "1937",
+              "gasFeesNano": "774800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "66667",
+              "totalActionFeesNano": "22221"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "222000000:0ed1d6b8e59363e3d27d3c5ac60d9092d1448288400291c1a23c45522fb170e6",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "78225976",
+            "remainingForwardFeesNano": "132759",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "195399",
+              "gasFeesNano": "78159600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "199135",
+              "totalActionFeesNano": "66376"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+            "txId": "223000000:b294c0eb7f963a2d4cc42694ab243d54b01538ae1ae7067ac2176f4c2fa3d848",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "62439309",
+            "remainingForwardFeesNano": "201025",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "155847",
+              "gasFeesNano": "62338800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "301534",
+              "totalActionFeesNano": "100509"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "224000000:4d2ad555b52867f3460a41027fc30d5e1ef8d9df7ef47fbe04c4fa24afcc0992",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "81517665",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "225000000:0312e6cfb74064bd0dafa15bb602555182a9853f3339753c7e2ae06e080a70d2",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "336631997",
+            "remainingForwardFeesNano": "303206",
+            "derivedNativeDeltaNano": "950134001",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "841201",
+              "gasFeesNano": "336480400"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "454803",
+              "totalActionFeesNano": "151597"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "226000000:f1f03cf99cc3aa0e089189295eda7b17829c1c5efa048f71b38657d593cc0254",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "27530092",
+            "remainingForwardFeesNano": "8314777",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "58432",
+              "gasFeesNano": "23372800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "12472069",
+              "totalActionFeesNano": "4157292"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4",
+            "txId": "227000000:138cdaf968ef98f01d568bdea0f6c6186ec0bb81b662baec946b428a4d53f30d",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "67405843",
+            "remainingForwardFeesNano": "118891",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "168366",
+              "gasFeesNano": "67346400"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "178334",
+              "totalActionFeesNano": "59443"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "228000000:71329b60769463ca06dbeda86564d91aae4874b631f9e99e25ca6415b5573c23",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "920166862",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb",
+            "txId": "229000000:6ba7a830092078de6fac29a6ec7e95ac008b144d49664ca0a9972b359b1fba11",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "19569066",
+            "remainingForwardFeesNano": "89335",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "48811",
+              "gasFeesNano": "19524400"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "134001",
+              "totalActionFeesNano": "44666"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "230000000:744bce29aa2b545113a70b6cd94d18ac85cf1b2b478d2c4ce0ff0327631f3ebd",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "24031531",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "231000000:1119fd24fcc0a1e7c7cf3f8ba8e2f4b9518aac32c78f68cbdcc64f7f7d64758b",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "79339466",
+            "remainingForwardFeesNano": "54935",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "198280",
+              "gasFeesNano": "79312000"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "82401",
+              "totalActionFeesNano": "27466"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "232000000:46e36539a0790c8deb25678ff654c26fb0696f8ddc8a1b119c2292f67180b7be",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "14874666",
+            "remainingForwardFeesNano": "89335",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "37075",
+              "gasFeesNano": "14830000"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "134001",
+              "totalActionFeesNano": "44666"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "233000000:2ad2092c491fb08d26b237aa372e799c14b28b4d77d1be7d9cabb6313bb32d7c",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "132957265",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "234000000:531a7fc7e01bf9a351659eabccfe1c9dce18bccc9812255bba07f3ed375f9ce2",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "64709332",
+            "remainingForwardFeesNano": "144270",
+            "derivedNativeDeltaNano": "-220134001",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "161593",
+              "gasFeesNano": "64637200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "216402",
+              "totalActionFeesNano": "72132"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "235000000:29e2304d0473a157929aa7f5d3a70fe1ea3c494cc53cecd09ea7d8eacdc1e817",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "14759866",
+            "remainingForwardFeesNano": "89335",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "36788",
+              "gasFeesNano": "14715200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "134001",
+              "totalActionFeesNano": "44666"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "236000000:749a2832bd3cee6dd57925706d3fdb31d77031ce3d4d73c875621762a624c1da",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "240534397",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "237000000:528cd6ae9ea81e968ff561a7165648a7ab644669f47d7ee0961abcffe2a1ad49",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "134948243",
+            "remainingForwardFeesNano": "167692",
+            "derivedNativeDeltaNano": "-509866532",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "337161",
+              "gasFeesNano": "134864400"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "251535",
+              "totalActionFeesNano": "83843"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "238000000:e854ad6e837193333d6cb6a152332b27d189ea907acdfec6b4341089f51d5d4c",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "26934625",
+            "remainingForwardFeesNano": "8315844",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "56942",
+              "gasFeesNano": "22776800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "12473669",
+              "totalActionFeesNano": "4157825"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "239000000:4b16eea30f3a765f448f19623a69ac5f5a088423e11cdaee30487b0ad0c52bc6",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "109777796",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef",
+            "txId": "240000000:cbb55060f8a5d6d419b360dd33e3bd459e86f7c5ffadf42c33b798ab6bc38dd7",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "22357931",
+            "remainingForwardFeesNano": "195871",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "55650",
+              "gasFeesNano": "22260000"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "293802",
+              "totalActionFeesNano": "97931"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "241000000:1b0db69ce35ad92cab79b38f69c9ba47f0a78818a0e875600dd8faa6c36f7db7",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "24625931",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e",
+            "txId": "242000000:c860aaa6d2eea6d5650e6eec090896d04b26a5cb7482dff045c3ce1ee49c3803",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "41197066",
+            "remainingForwardFeesNano": "54935",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "102924",
+              "gasFeesNano": "41169600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "82401",
+              "totalActionFeesNano": "27466"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "243000000:ad37bae60e68a008f578ad21b2438948d8d8f1762d889ae145f1ccc4451d4326",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "14783288",
+            "remainingForwardFeesNano": "88980",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "36847",
+              "gasFeesNano": "14738800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "133468",
+              "totalActionFeesNano": "44488"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "244000000:58c122410c0fe6c3a8c9e127a9160a6d512ce19b35ef036822ae78a1c66142dd",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "28624399",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "245000000:7c3d242dfce2582d00be9a5c8dadecac285e6ee6d275a82727e8b85c5b579631",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "64425154",
+            "remainingForwardFeesNano": "143915",
+            "derivedNativeDeltaNano": "-220133468",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "160883",
+              "gasFeesNano": "64353200"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "215869",
+              "totalActionFeesNano": "71954"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349",
+            "txId": "246000000:a671d2be63afe3e46a18451cfeec2d118d3adcfdf65c1f3fdf81ba95c1427236",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "14668488",
+            "remainingForwardFeesNano": "88980",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "36560",
+              "gasFeesNano": "14624000"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "133468",
+              "totalActionFeesNano": "44488"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "247000000:3a818cfadf3ba898e5dce6690b9d906686c2c7e9e419d58a71b69e1a99c92a1b",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "238014729",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02",
+            "txId": "248000000:662740b98db05ff227184c981409b8cf19709b06b0ca0322f610d7f29845d520",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "76692266",
+            "remainingForwardFeesNano": "54935",
+            "derivedNativeDeltaNano": "0",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "191662",
+              "gasFeesNano": "76664800"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": "82401",
+              "totalActionFeesNano": "27466"
+            },
+            "bounce": null
+          },
+          {
+            "address": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871",
+            "txId": "249000000:a4c8a0b0ab34d279a3b52bad5c3d8247437afe31db3af5cfbe30fbd26399d088",
+            "aborted": false,
+            "destroyed": false,
+            "transactionCollectedFeesNano": "123600",
+            "remainingForwardFeesNano": "0",
+            "derivedNativeDeltaNano": "128371731",
+            "compute": {
+              "type": "vm",
+              "success": true,
+              "exitCode": 0,
+              "gasUsed": "309",
+              "gasFeesNano": "123600"
+            },
+            "action": {
+              "success": true,
+              "valid": true,
+              "noFunds": false,
+              "resultCode": 0,
+              "totalFwdFeesNano": null,
+              "totalActionFeesNano": null
+            },
+            "bounce": null
+          }
+        ],
+        "internalEdges": [
+          {
+            "messageHash": "60331f4a96e927e4588ffa140853ac54f374bd7b4e30e3a70b908ae0e74204b0",
+            "parent": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|221000000:1a915011375659f3852f894349f162a0ae734cb1f912317daa0e27b7d61472e5",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|222000000:0ed1d6b8e59363e3d27d3c5ac60d9092d1448288400291c1a23c45522fb170e6",
+            "valueNano": "3110000000",
+            "remainingForwardFeeNano": "44446",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "6fdd627d14753794db2448fa2ba7720110e58ea76ef48693ea02ad13ec28d6d3",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|222000000:0ed1d6b8e59363e3d27d3c5ac60d9092d1448288400291c1a23c45522fb170e6",
+            "child": "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1|223000000:b294c0eb7f963a2d4cc42694ab243d54b01538ae1ae7067ac2176f4c2fa3d848",
+            "valueNano": "2950000000",
+            "remainingForwardFeeNano": "77824",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "db697063ab02ea730fb1f48ec1c4ab0b50f26930ccf1aeaf49dc0caf2c4bf148",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|222000000:0ed1d6b8e59363e3d27d3c5ac60d9092d1448288400291c1a23c45522fb170e6",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|224000000:4d2ad555b52867f3460a41027fc30d5e1ef8d9df7ef47fbe04c4fa24afcc0992",
+            "valueNano": "81641265",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "48915a3b47824c25f720daa12ab13b8bde873eac2309dcc65c4a7cbbc76a9924",
+            "parent": "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1|223000000:b294c0eb7f963a2d4cc42694ab243d54b01538ae1ae7067ac2176f4c2fa3d848",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|225000000:0312e6cfb74064bd0dafa15bb602555182a9853f3339753c7e2ae06e080a70d2",
+            "valueNano": "2887359666",
+            "remainingForwardFeeNano": "201025",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "a6c88c6d7b698887bec9fadf8d436ea0f24ee1fbc2ff76e6caaf078a5fb4ad7e",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|225000000:0312e6cfb74064bd0dafa15bb602555182a9853f3339753c7e2ae06e080a70d2",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|226000000:f1f03cf99cc3aa0e089189295eda7b17829c1c5efa048f71b38657d593cc0254",
+            "valueNano": "400000000",
+            "remainingForwardFeeNano": "111691",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "c577709e8a1553757362840a6e859308c4ac7f3ecdb90cb1e8750ad64cd632ad",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|225000000:0312e6cfb74064bd0dafa15bb602555182a9853f3339753c7e2ae06e080a70d2",
+            "child": "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4|227000000:138cdaf968ef98f01d568bdea0f6c6186ec0bb81b662baec946b428a4d53f30d",
+            "valueNano": "280000000",
+            "remainingForwardFeeNano": "136580",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "1d7811cfda62dc4e28c142487df03eca59dbcc41dc4498211db5a083593a5883",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|225000000:0312e6cfb74064bd0dafa15bb602555182a9853f3339753c7e2ae06e080a70d2",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|228000000:71329b60769463ca06dbeda86564d91aae4874b631f9e99e25ca6415b5573c23",
+            "valueNano": "920290462",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "26527fcfada184fff897dadaffe449fe510139b9e038477763465bc36f71447f",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|226000000:f1f03cf99cc3aa0e089189295eda7b17829c1c5efa048f71b38657d593cc0254",
+            "child": "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb|229000000:6ba7a830092078de6fac29a6ec7e95ac008b144d49664ca0a9972b359b1fba11",
+            "valueNano": "340000000",
+            "remainingForwardFeeNano": "8259842",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "6fbf4793c1bab9d7337e263e692446160753a865c13374b8ca6e9b4625a37da3",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|226000000:f1f03cf99cc3aa0e089189295eda7b17829c1c5efa048f71b38657d593cc0254",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|230000000:744bce29aa2b545113a70b6cd94d18ac85cf1b2b478d2c4ce0ff0327631f3ebd",
+            "valueNano": "24155131",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "f54b6c19835cec39c464b920a440ee6007163140a209a64c406501c5c401d621",
+            "parent": "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4|227000000:138cdaf968ef98f01d568bdea0f6c6186ec0bb81b662baec946b428a4d53f30d",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|231000000:1119fd24fcc0a1e7c7cf3f8ba8e2f4b9518aac32c78f68cbdcc64f7f7d64758b",
+            "valueNano": "212475266",
+            "remainingForwardFeeNano": "118891",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "39f87410b075b5631bd7fb1601bcfaba48fecf8e5a4d396ad3efb3bb00b21a84",
+            "parent": "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb|229000000:6ba7a830092078de6fac29a6ec7e95ac008b144d49664ca0a9972b359b1fba11",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|232000000:46e36539a0790c8deb25678ff654c26fb0696f8ddc8a1b119c2292f67180b7be",
+            "valueNano": "320341599",
+            "remainingForwardFeeNano": "89335",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "7bb4848dea2bdb54ffd57d1f248341ee87d801bbb9915cf0e3aa8e36eae6e308",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|231000000:1119fd24fcc0a1e7c7cf3f8ba8e2f4b9518aac32c78f68cbdcc64f7f7d64758b",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|233000000:2ad2092c491fb08d26b237aa372e799c14b28b4d77d1be7d9cabb6313bb32d7c",
+            "valueNano": "133080865",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "a2e7ef26e6353b1d68fe4b72a04f99a9145404e7212d1ae6aab51291340515dc",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|232000000:46e36539a0790c8deb25678ff654c26fb0696f8ddc8a1b119c2292f67180b7be",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|234000000:531a7fc7e01bf9a351659eabccfe1c9dce18bccc9812255bba07f3ed375f9ce2",
+            "valueNano": "305377598",
+            "remainingForwardFeeNano": "89335",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "cd6ffe3c571aaf41b4ea265d75db452be068db0462854f4a9dc60e2bac60ee59",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|234000000:531a7fc7e01bf9a351659eabccfe1c9dce18bccc9812255bba07f3ed375f9ce2",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|235000000:29e2304d0473a157929aa7f5d3a70fe1ea3c494cc53cecd09ea7d8eacdc1e817",
+            "valueNano": "220000000",
+            "remainingForwardFeeNano": "89335",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "48fc065f431040a825d069a998819bbcd5ddc81016c80a61f6fcfd04e1f45f14",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|234000000:531a7fc7e01bf9a351659eabccfe1c9dce18bccc9812255bba07f3ed375f9ce2",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|236000000:749a2832bd3cee6dd57925706d3fdb31d77031ce3d4d73c875621762a624c1da",
+            "valueNano": "240657997",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "110a94ec45a3f156915d33d7d345e3e42a21e046efab64b6d3dcbf6678a1570f",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|235000000:29e2304d0473a157929aa7f5d3a70fe1ea3c494cc53cecd09ea7d8eacdc1e817",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|237000000:528cd6ae9ea81e968ff561a7165648a7ab644669f47d7ee0961abcffe2a1ad49",
+            "valueNano": "205150799",
+            "remainingForwardFeeNano": "89335",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "087215d6b40693444cdae09d13cd2a1e9791b6bcdaafd8dff88126694e5141cb",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|237000000:528cd6ae9ea81e968ff561a7165648a7ab644669f47d7ee0961abcffe2a1ad49",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|238000000:e854ad6e837193333d6cb6a152332b27d189ea907acdfec6b4341089f51d5d4c",
+            "valueNano": "470000000",
+            "remainingForwardFeeNano": "112757",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "7f476039f975a19bd58c9e992e6ffbd207afbe3c2462c7de48c65e85a654ee7c",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|237000000:528cd6ae9ea81e968ff561a7165648a7ab644669f47d7ee0961abcffe2a1ad49",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|239000000:4b16eea30f3a765f448f19623a69ac5f5a088423e11cdaee30487b0ad0c52bc6",
+            "valueNano": "109901396",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "0ae0d1e9fec1e43233265250083c6ec06bfa48f69d0a1a340a52e73c19732246",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|238000000:e854ad6e837193333d6cb6a152332b27d189ea907acdfec6b4341089f51d5d4c",
+            "child": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef|240000000:cbb55060f8a5d6d419b360dd33e3bd459e86f7c5ffadf42c33b798ab6bc38dd7",
+            "valueNano": "410000000",
+            "remainingForwardFeeNano": "8260909",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "abfd007454bbc223a8083ac176df23c0639b2b15a4c0ccaac67824b0a5e0fb6f",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|238000000:e854ad6e837193333d6cb6a152332b27d189ea907acdfec6b4341089f51d5d4c",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|241000000:1b0db69ce35ad92cab79b38f69c9ba47f0a78818a0e875600dd8faa6c36f7db7",
+            "valueNano": "24749531",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "5a4b18175b2d642b4f22142cb89c9c4fd3b648c0727aaa48a60f22b563d08061",
+            "parent": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef|240000000:cbb55060f8a5d6d419b360dd33e3bd459e86f7c5ffadf42c33b798ab6bc38dd7",
+            "child": "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e|242000000:c860aaa6d2eea6d5650e6eec090896d04b26a5cb7482dff045c3ce1ee49c3803",
+            "valueNano": "70000000",
+            "remainingForwardFeeNano": "106891",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "93bfe8b311e9be2ee2bee60873ca362736fa43b92bd3ee0b81114aeaaff773f4",
+            "parent": "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef|240000000:cbb55060f8a5d6d419b360dd33e3bd459e86f7c5ffadf42c33b798ab6bc38dd7",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|243000000:ad37bae60e68a008f578ad21b2438948d8d8f1762d889ae145f1ccc4451d4326",
+            "valueNano": "317446198",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "d12ee38ac37250423076e8c83611af2cc50583e32a1c5ff2894c49c03cc67f20",
+            "parent": "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e|242000000:c860aaa6d2eea6d5650e6eec090896d04b26a5cb7482dff045c3ce1ee49c3803",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|244000000:58c122410c0fe6c3a8c9e127a9160a6d512ce19b35ef036822ae78a1c66142dd",
+            "valueNano": "28747999",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "7054579f757acd77cadf47c1bea74e8eb62f8fc44764384c32fc41ae61645ef5",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|243000000:ad37bae60e68a008f578ad21b2438948d8d8f1762d889ae145f1ccc4451d4326",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|245000000:7c3d242dfce2582d00be9a5c8dadecac285e6ee6d275a82727e8b85c5b579631",
+            "valueNano": "302573930",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "1509b4888a86faef570e6143cff6537880dc03fb98dffa0a380f02e17656453b",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|245000000:7c3d242dfce2582d00be9a5c8dadecac285e6ee6d275a82727e8b85c5b579631",
+            "child": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|246000000:a671d2be63afe3e46a18451cfeec2d118d3adcfdf65c1f3fdf81ba95c1427236",
+            "valueNano": "220000000",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "e423d4d96ec7b4aa26dc07cb594565871bc6f18922abde0d50ef76f2332fced6",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|245000000:7c3d242dfce2582d00be9a5c8dadecac285e6ee6d275a82727e8b85c5b579631",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|247000000:3a818cfadf3ba898e5dce6690b9d906686c2c7e9e419d58a71b69e1a99c92a1b",
+            "valueNano": "238138329",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          },
+          {
+            "messageHash": "6d8ff001880c21679a2a14d7bf010ef513283c1398760b18e9084ddf46712239",
+            "parent": "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349|246000000:a671d2be63afe3e46a18451cfeec2d118d3adcfdf65c1f3fdf81ba95c1427236",
+            "child": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|248000000:662740b98db05ff227184c981409b8cf19709b06b0ca0322f610d7f29845d520",
+            "valueNano": "205242532",
+            "remainingForwardFeeNano": "88980",
+            "rawExtraFlags": "3",
+            "bounced": false
+          },
+          {
+            "messageHash": "e8010c86aa16cc964146fb93608792953d4d7710319722e52b9ccdd9a44c6b82",
+            "parent": "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02|248000000:662740b98db05ff227184c981409b8cf19709b06b0ca0322f610d7f29845d520",
+            "child": "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871|249000000:a4c8a0b0ab34d279a3b52bad5c3d8247437afe31db3af5cfbe30fbd26399d088",
+            "valueNano": "128495331",
+            "remainingForwardFeeNano": "54935",
+            "rawExtraFlags": "0",
+            "bounced": false
+          }
+        ],
+        "externalOut": [],
+        "derivedNativeAccountDeltas": {
+          "0:29ce7ce0d6bc9010e90cdead78479e39feffedab02b5de2a1121e7b3c61cd7ef": "0",
+          "0:555ee2ec731dd8522e857749cd50d86e4e5e83a27e1da04653939805b2a68fe4": "0",
+          "0:76b8330b4a1ee5631353a37fb64d968db0f14290858c7fa0c631e127033f0a3e": "0",
+          "0:7f5f70fa5a8793dd62bc1d47afc4051cef4af403f44c33cb7a135975c7f40a02": "0",
+          "0:98223ce22f7a14f0b785ee0f5ba34c749c9da43415713747c28e700d7b46a349": "0",
+          "0:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": "0",
+          "0:eb27229efea758098d531a03eb1f518ebd71e26ba615464eb6cee41f289b8871": "-1182347562",
+          "0:eb90d3590b58cdcec90776c642075e1ccb16c86bc67bd9ffaee717fe4cc97dbb": "0"
+        }
+      },
+      "feeRouterT3DeltaNano": "22500000"
+    }
+  ],
+  "roundTripNetNano": "2466122186",
+  "protectedProtocolNativeDeltas": {
+    "open": {
+      "engine": "0",
+      "pool": "0",
+      "riskVault": "0",
+      "riskController": "0",
+      "feeRouter": "0",
+      "engineWallet": "36928198",
+      "feeRouterWallet": "0",
+      "riskVaultWallet": "0"
+    },
+    "close": {
+      "engine": "0",
+      "pool": "0",
+      "riskVault": "0",
+      "riskController": "0",
+      "feeRouter": "0",
+      "engineWallet": "0",
+      "feeRouterWallet": "0",
+      "riskVaultWallet": "0"
+    }
+  },
+  "nativeProcessingSelfFunded": true,
+  "maximumQualifiedOpenInterestT3Nano": "22500000000",
+  "qualifiedGramT3Conversion": null,
+  "commercialViabilityQualified": false
+}

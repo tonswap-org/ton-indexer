@@ -233,6 +233,12 @@ async function adverseCases() {
     ["funding was never transferred", (f) => {f.input.chains.get(ownerWallet)!.transactions.find((t) => t.inMessage === f.request)!.outMessages = [];}],
     ["missing physical acceptance tombstone", (f) => rewriteFactory(f, "origin", {state: {physicalTombstones: []}})],
     ["missing logical acceptance receipt", (f) => rewriteFactory(f, "origin", {state: {ingressReceipts: []}})],
+    ["logical acceptance points to another position", (f) => rewriteFactory(f, "origin", {state: {
+      ingressReceipts: f.ingressState.ingressReceipts!.map(r => ({ ...r, buyKey: r.buyKey + 1n })),
+    }})],
+    ["logical acceptance has another payment amount", (f) => rewriteFactory(f, "origin", {state: {
+      ingressReceipts: f.ingressState.ingressReceipts!.map(r => ({ ...r, acceptedAmount: r.acceptedAmount + 1n })),
+    }})],
     ["preexisting accepted business cannot allocate twice", (f) => rewriteFactory(f, "initial", {state: f.ingressState})],
     ["previously refunded business cannot allocate", (f) => rewriteFactory(f, "initial", {state: {ingressReceipts: f.ingressState.ingressReceipts!.map((r) => ({...r, accepted: false}))}})],
     ["changed original notification created_lt", (f) => { f.origin.inMessage!.createdLt = String(BigInt(f.origin.inMessage!.createdLt!) + 1n); }],

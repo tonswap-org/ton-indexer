@@ -9,7 +9,7 @@ export type LaunchpadSharedSettlement = {
   route: 1 | 2; kind: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   status: LaunchpadSettlementStatus; state: typeof states[LaunchpadSettlementStatus]; deployRequired: 0 | 1;
   deliveryReservedRaw: string; finalizeReservedRaw: string; predecessorId: string; recordedAt: string;
-  tokenRoot: string; sourceWallet: string; destinationWallet: string; recipientOwner: string;
+  tokenRoot: string; sourceWallet: string; destinationWallet: string; recipientOwner: string; nativeRefundOwner: string | null;
   forwardPayloadBoc: string; forwardPayloadHash: string; recordHash: string;
 };
 /** All first-release sale models use this exact record. FINAL may also retire a
@@ -25,11 +25,11 @@ export function readLaunchpadSharedSettlement(cell: Cell): LaunchpadSharedSettle
   if (predecessorId === settlementId || successorId === settlementId) throw Error('Invalid shared Launchpad lane link');
   if (s.remainingRefs !== 3) throw Error('Shared Launchpad settlement reference layout');
   const source = s.loadRef().beginParse(), tokenRoot = address(source), sourceWallet = address(source); end(source);
-  const destination = s.loadRef().beginParse(), destinationWallet = address(destination), recipientOwner = address(destination); end(destination);
+  const destination = s.loadRef().beginParse(), destinationWallet = address(destination), recipientOwner = address(destination), nativeRefundOwner = maybeAddress(destination); end(destination);
   const payload = s.loadRef(); end(s);
   return { referralOperationId, accountingAck, successorId, settlementId, requestHash, amountRaw, forwardTonAmountRaw, route: route as 1 | 2,
     kind: kind as LaunchpadSharedSettlement['kind'], status: status as LaunchpadSettlementStatus, state: states[status as LaunchpadSettlementStatus], deployRequired,
-    deliveryReservedRaw, finalizeReservedRaw, predecessorId, recordedAt, tokenRoot, sourceWallet, destinationWallet, recipientOwner,
+    deliveryReservedRaw, finalizeReservedRaw, predecessorId, recordedAt, tokenRoot, sourceWallet, destinationWallet, recipientOwner, nativeRefundOwner,
     forwardPayloadBoc: payload.toBoc().toString('base64'), forwardPayloadHash: hash(payload), recordHash: hash(cell) };
 }
 function readReferralContext(cell: Cell) {
@@ -42,11 +42,13 @@ function readReferralContext(cell: Cell) {
 function readReferralCredit(s: Slice) {
   const status = s.loadUint(8), attempts = s.loadUint(8), registry = address(s), requestHash = hex(s.loadUintBig(256));
   const totalRewardedRaw = raw(s), actualReferrer = maybeAddress(s), body = s.loadRef(), context = readReferralContext(s.loadRef()); end(s);
-  const b = body.beginParse(); if (b.loadUint(32) !== 0x43524544) throw Error('Invalid Launchpad referral credit opcode');
-  const operationId = b.loadUintBig(64).toString(), key = b.loadUint(32), user = address(b), amountRaw = raw(b), referrer = maybeAddress(b); end(b);
-  if (status > 4 || !BigInt(operationId) || !key || amountRaw !== context.amountRaw || BigInt(totalRewardedRaw) > BigInt(amountRaw) || hash(body) !== requestHash)
-    throw Error('Invalid Launchpad referral credit identity or amount');
-  return { status, attempts, registry, requestHash, totalRewardedRaw, actualReferrer, operationId, key, user, amountRaw, referrer, context, bodyBoc: body.toBoc().toString('base64') };
+  const b = body.beginParse(); if (b.loadUint(32) !== 0x5246464c) throw Error('Current Launchpad direct fee RFFL required');
+  const operationId = b.loadUintBig(64).toString(), creditId = hex(b.loadUintBig(256)), rewardRaw = raw(b); end(b);
+  if (![0, 3, 4].includes(status) || !BigInt(operationId) || !BigInt(`0x${creditId}`) || registry !== context.feeRouter ||
+    totalRewardedRaw !== '0' || rewardRaw !== '0' || actualReferrer !== null || hash(body) !== requestHash)
+    throw Error('Invalid Launchpad direct fee identity or reward');
+  return { status, attempts, registry, requestHash, totalRewardedRaw, actualReferrer, operationId, creditId,
+    amountRaw: context.amountRaw, context, bodyBoc: body.toBoc().toString('base64') };
 }
 export function readLaunchpadReferralCredits(cell: Cell) {
   const s = cell.beginParse(), nonce = s.loadUintBig(64).toString(), cursor = s.loadUintBig(64).toString();

@@ -103,6 +103,7 @@ export type LedgerMovement = {
     | "t3_mint"
     | "t3_burn"
     | "t3_payout"
+    | "t3_refund"
     | "perps_collateral"
     | "perps_funding"
     | "perps_payout"
@@ -135,7 +136,7 @@ export type LedgerMovement = {
     };
     getter?: {
       account: string;
-      method: "redemption_identity";
+      method: "redemption_identity" | "vault_payout_identity" | "refund_queue_item" | "vault_payout_state";
       args: string[];
       result: string[];
       observedAt: string;
@@ -169,6 +170,7 @@ export type LedgerMovement = {
       | "t3_mint"
       | "t3_burn"
       | "t3_payout"
+      | "t3_refund"
       | "perps_account_delta"
       | "perps_payout";
   });
@@ -297,12 +299,29 @@ export type LedgerEvent = {
       amountRaw: string | null;
       mintedRaw?: string;
       referrer?: string | null;
-      stage: "minted" | "redeemed" | "unresolved";
+      stage: "minted" | "redeemed" | "refund_queued" | "refund_dispatching" | "receiver_credited" | "unresolved";
       rootQueryId?: string;
       wireId?: string;
       requestHash?: string;
       payoutId?: string;
       receiver?: string;
+      refund?: {
+        kind: 3 | 5;
+        businessQueryId: string;
+        payoutId: string;
+        token: number;
+        amountRaw: string;
+        phase: number | null;
+        sourceAccepted?: boolean;
+        receiverCredited?: boolean;
+        routeEpoch?: number;
+        wireId?: string;
+        receiverWallet?: string;
+        identityEvidence: NonNullable<LedgerMovement["evidence"]["getter"]>;
+        queueEvidence?: NonNullable<LedgerMovement["evidence"]["getter"]>;
+        payoutEvidence?: NonNullable<LedgerMovement["evidence"]["getter"]>;
+        creditEvidence?: LedgerEvidenceRef[];
+      };
       reserveRoots: string[];
       basketRaw: string[];
       deliveredRaw: string[];

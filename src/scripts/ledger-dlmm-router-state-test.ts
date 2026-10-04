@@ -11,14 +11,18 @@ const replace=(cell:Cell,index:number,value:Cell)=>{const b=beginCell().storeBit
 const tail=(cell:Cell)=>{const b=beginCell().storeBits(cell.bits).storeBit(0);cell.refs.forEach(ref=>b.storeRef(ref));return b.endCell();};
 let checks=0;const test=(name:string,fn:()=>void)=>{fn();checks++;console.log('PASS',name);};
 test('all exact current routed historical boundaries parse their immutable code, custody journals and receipts',()=>{
-  assert(states.length>50);let settlements=0,groups=0,receipts=0;
+  const historical=fixture.boundaries.filter((b:any)=>b.account===fixture.accounts.router);
+  const initialized=historical.flatMap((b:any)=>[b.before,b.after]).filter((s:any)=>s.dataBoc);
+  const bootstrap=initialized.filter((s:any)=>Cell.fromBase64(s.dataBoc).beginParse().preloadUint(32)===0x44524231);
+  assert.equal(bootstrap.length,2);assert.equal(states.length,initialized.length-bootstrap.length);
+  assert(states.length>0);let settlements=0,groups=0,receipts=0;
   for(const cell of states){const s=readDlmmRouterState(boc(cell));assert.equal(s.dataHash,cell.hash().toString('hex'));
     settlements+=s.settlements.size;groups+=s.groups.size;receipts+=s.swapReceipts.size;
     assert.equal(s.walletCodeHash,fixture.compiler.find((c:any)=>c.entrypointFileName.endsWith('/jetton_wallet.tolk')).codeHash);
   }assert(settlements>0&&groups>0&&receipts>0);
 });
 const current=states.at(-1)!;
-for(const mutation of ['root-tail','extras-version','missing-wallet','missing-referral','journal-tag','journal-hash','journal-tail','primary-tail','secondary-tail'] as const)test('rejects '+mutation,()=>{
+for(const mutation of ['root-tail','extras-version','missing-wallet','missing-referral','missing-canary-owner','durable-tail','journal-tag','journal-hash','journal-tail','primary-tail','secondary-tail'] as const)test('rejects '+mutation,()=>{
   const extras=current.refs[3],tailCell=extras.refs[3],durable=tailCell.refs[3],journal=durable.refs[1];let changed=current;
   if(mutation==='root-tail')changed=tail(current);
   else if(mutation==='extras-version'){
@@ -27,6 +31,8 @@ for(const mutation of ['root-tail','extras-version','missing-wallet','missing-re
     let changedDurable=durable;
     if(mutation==='missing-wallet')changedDurable=replace(durable,3,Cell.EMPTY);
     else if(mutation==='missing-referral')changedDurable=replace(durable,2,Cell.EMPTY);
+    else if(mutation==='missing-canary-owner') {const b=beginCell();durable.refs.forEach(ref=>b.storeRef(ref));changedDurable=b.endCell();}
+    else if(mutation==='durable-tail')changedDurable=tail(durable);
     else{
       let j=journal;
       if(mutation==='journal-tag') {const b=beginCell().storeUint(0x52534a37,32).storeBits(j.bits.substring(32,j.bits.length-32));j.refs.forEach(ref=>b.storeRef(ref));j=b.endCell();}
@@ -56,7 +62,11 @@ test('record, group and original receipt reject tailed custody encodings',()=>{
   const primary=journal.loadRef().beginParse();
   const records=primary.loadDict(Dictionary.Keys.BigUint(64),Dictionary.Values.Cell()),groups=primary.loadDict(Dictionary.Keys.BigUint(256),Dictionary.Values.Cell());
   for(const cell of records.values()){readDlmmRouterSettlementRecord(cell);assert.throws(()=>readDlmmRouterSettlementRecord(tail(cell)));}
-  for(const cell of groups.values()){readDlmmRouterSettlementGroup(cell);assert.throws(()=>readDlmmRouterSettlementGroup(tail(cell)));}
+  for(const cell of groups.values()){
+    const group=readDlmmRouterSettlementGroup(cell);assert.throws(()=>readDlmmRouterSettlementGroup(tail(cell)));
+    const missingOwner=beginCell().storeBits(cell.bits.substring(0,cell.bits.length-(group.refundOwner===null?2:267)));
+    cell.refs.forEach(ref=>missingOwner.storeRef(ref));assert.throws(()=>readDlmmRouterSettlementGroup(missingOwner.endCell()));
+  }
   const referral=durable.refs[2].beginParse();referral.loadUint(32);referral.loadCoins();referral.loadRef();referral.loadRef();referral.loadDict(Dictionary.Keys.BigUint(256),Dictionary.Values.BigUint(256));
   const swaps=referral.loadDict(Dictionary.Keys.BigUint(256),Dictionary.Values.Cell());assert(swaps.size>0);
   for(const cell of swaps.values()){readDlmmRouterSwapReceipt(cell);assert.throws(()=>readDlmmRouterSwapReceipt(tail(cell)));}

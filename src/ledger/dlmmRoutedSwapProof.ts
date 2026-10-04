@@ -31,7 +31,7 @@ export function verifyDlmmRoutedSwapExecution(binding: DlmmMarketBinding, proof:
         requireProof(value.before.walletCodeHash === binding.walletCodeHash && value.after.walletCodeHash === binding.walletCodeHash, 'market_router_wallet_code_invalid');
         for (const state of [value.before, value.after])
             requireProof([...state.settlements.values()].filter(r => ![4, 5].includes(r.status)).reduce((n, r) => n + BigInt(r.amountRaw), 0n) === BigInt(state.reservedTokens), 'market_router_token_reserve_invalid');
-        requireProof(['governance', 'enabled', 'withdrawalsOnly', 'riskController', 'riskSourceId', 'moduleKey'].every(k => value.before[k as keyof typeof value.before] === value.after[k as keyof typeof value.after]) && value.before.referralConfig.hash().equals(value.after.referralConfig.hash()), 'market_router_configuration_changed');
+        requireProof(['governance', 'canaryOwner', 'enabled', 'withdrawalsOnly', 'riskController', 'riskSourceId', 'moduleKey'].every(k => value.before[k as keyof typeof value.before] === value.after[k as keyof typeof value.after]) && value.before.referralConfig.hash().equals(value.after.referralConfig.hash()), 'market_router_configuration_changed');
         return value;
     }
     const routerAt = (node: MarketNode) => { let value = routerCache.get(key(node)); if (!value) {
@@ -44,8 +44,25 @@ export function verifyDlmmRoutedSwapExecution(binding: DlmmMarketBinding, proof:
             .every(field => a[field as keyof Record] === b[field as keyof Record]) && a.forwardPayload.hash().equals(b.forwardPayload.hash());
     const control = (node: MarketNode, op: number, record: Record) => { const v = perpsControl(node.raw.inMessage, op); return v?.queryId === record.settlementId && v.amountRaw === record.amountRaw && v.destination === record.destinationWallet; };
     const routerNodes = nodes.filter(node => node.account === router);
-    function routerSettle(record: Record, root: string, request: MarketNode): RouterSettlementEvidence {
+    function routerSettle(record: Record, root: string, allocation: MarketNode, predecessor?: RouterSettlementEvidence): RouterSettlementEvidence {
+        const allocated = routerAt(allocation).after.settlements.get(record.settlementId);
+        requireProof(sameRecord(allocated, record) && (allocated!.status === 1 || allocated!.status === 2), 'market_router_allocation_state_invalid');
+        const request = one(routerNodes.filter(node => BigInt(node.raw.lt) >= BigInt(allocation.raw.lt) && node.raw.outMessages.some(message => {
+            const wire = tokenWire(message); return wire?.op === TRANSFER && wire.queryId === record.settlementId;
+        })), 'market_router_dispatch_missing_or_repeated');
         const sent = routerAt(request), sentRecord = sent.after.settlements.get(record.settlementId);
+        if (allocated!.status === 1) {
+            const queued = sent.before.settlements.get(record.settlementId);
+            requireProof(predecessor && key(request) === `${predecessor.routerFinalized.account}:${predecessor.routerFinalized.lt}:${predecessor.routerFinalized.hash}` &&
+                predecessor.sourceWallet === record.sourceWallet && predecessor.kind === 15 && sameRecord(queued, record) && queued!.status === 1 &&
+                sent.before.settlements.get(predecessor.settlementId)?.nextSourceSettlementId === record.settlementId &&
+                sent.before.sourceQueues.get(record.sourceWallet)?.head === predecessor.settlementId &&
+                sent.before.sourceQueues.get(record.sourceWallet)?.tail === record.settlementId &&
+                sent.before.sourceLanes.get(record.sourceWallet) === predecessor.settlementId &&
+                sent.after.sourceLanes.get(record.sourceWallet) === record.settlementId &&
+                sent.after.sourceQueues.get(record.sourceWallet)?.head === record.settlementId,
+                'market_router_queued_dispatch_invalid');
+        } else requireProof(request === allocation, 'market_router_immediate_dispatch_invalid');
         requireProof(sameRecord(sentRecord, record) && sentRecord!.status === 2 && sentRecord!.fundedRaw === '0' && sentRecord!.finalizeFundedRaw === '220000000', 'market_router_dispatch_state_invalid');
         requireProof(record.sourceWallet === perpsWalletAddress(walletCode, root, router) && record.destinationWallet === perpsWalletAddress(walletCode, root, record.destinationOwner), 'market_router_settlement_wallet_invalid');
         const outbound = one(request.raw.outMessages.map((message, index) => ({ message, index })).filter(({ message }) => tokenWire(message)?.op === TRANSFER && tokenWire(message)?.queryId === record.settlementId), 'market_router_transfer_missing_or_repeated');
@@ -166,10 +183,35 @@ export function verifyDlmmRoutedSwapExecution(binding: DlmmMarketBinding, proof:
     const routerTerminal = terminalIndex ? completionState.after.settlements.get(BigInt('0x' + terminalIndex).toString()) : undefined;
     requireProof(!completionState.before.completions.has(terminalKey) && routerTerminal && routerTerminal.kind === (output > 0n ? 8 : 7) && routerTerminal.amountRaw === terminalRecord.amountRaw && routerTerminal.destinationOwner === (output > 0n ? intent.recipient : intent.refundOwner), 'market_routed_terminal_identity_invalid');
     const terminalGroup=completionState.after.groups.get(routerTerminal.groupKey);
-    requireProof(!completionState.before.settlements.has(routerTerminal.settlementId) && [...completionState.after.settlements.keys()].filter(id=>!completionState.before.settlements.has(id)).length===1 &&
-      BigInt(completionState.after.reservedTokens)-BigInt(completionState.before.reservedTokens)===BigInt(routerTerminal.amountRaw) && terminalGroup && terminalGroup.kind===4 && terminalGroup.businessId===execute.businessId && terminalGroup.finalized===0,
+    const allocations = [...completionState.after.settlements.values()].filter(record => !completionState.before.settlements.has(record.settlementId));
+    const directFeeAmount = BigInt(operation.protocolFeeT3);
+    let directFeeSettlement: RouterSettlementEvidence | null = null;
+    if (directFeeAmount > 0n) {
+        const config = completionState.after.referralConfig.beginParse();
+        requireProof(config.loadUint(2) === 0 && completionState.after.moduleKey === 0, 'market_router_direct_fee_configuration_invalid');
+        const feeRouter = config.loadAddress().toRawString(), feeRoot = config.loadAddress().toRawString(), feeWalletCode = config.loadRef();
+        requireProof(!config.remainingBits && !config.remainingRefs && feeRoot === binding.tokenT && feeWalletCode.hash().equals(walletCode.hash()), 'market_router_direct_fee_configuration_invalid');
+        const fee = one(allocations.filter(record => record.kind === 15), 'market_router_direct_fee_allocation_invalid');
+        const feeGroup = completionState.after.groups.get(fee.groupKey), payload = fee.forwardPayload.beginParse();
+        requireProof(payload.loadUint(32) === 0x5246464c, 'market_router_direct_fee_payload_invalid');
+        const operationId = payload.loadUintBig(64), creditId = payload.loadUintBig(256), reserved = payload.loadCoins();
+        const context = beginCell().storeCoins(directFeeAmount).storeUint(BigInt('0x' + hash(bodyCell(completion.raw.inMessage)!)), 256)
+            .storeAddress(Address.parse(intent.refundOwner)).storeRef(completionState.after.referralConfig).endCell();
+        const expectedFeeGroup = hash(beginCell().storeUint(10, 8).storeUint(operationId, 64).storeUint(BigInt('0x' + hash(context)), 256).endCell());
+        requireProof(operationId > 0n && reserved === 0n && !payload.remainingBits && !payload.remainingRefs &&
+            creditId === BigInt('0x' + hash(beginCell().storeAddress(Address.parse(router)).storeUint(operationId, 64).endCell())) &&
+            fee.amountRaw === directFeeAmount.toString() && fee.destinationOwner === feeRouter && feeGroup?.kind === 10 &&
+            feeGroup.businessId === operationId.toString() && feeGroup.refundOwner === intent.refundOwner && feeGroup.finalized === 0 &&
+            feeGroup.pendingLegs === 1 && feeGroup.totalLegs === 1 && fee.legIndex === 0 &&
+            !completionState.before.groups.has(fee.groupKey) && fee.groupKey === expectedFeeGroup &&
+            feeGroup.snapshotHash === hash(context) && feeGroup.completionData.equals(context) && feeGroup.intentHash === hash(fee.forwardPayload),
+            'market_router_direct_fee_allocation_invalid');
+        directFeeSettlement = routerSettle(fee, feeRoot, completion);
+    }
+    requireProof(!completionState.before.settlements.has(routerTerminal.settlementId) && allocations.length === (directFeeSettlement ? 2 : 1) &&
+      BigInt(completionState.after.reservedTokens)-BigInt(completionState.before.reservedTokens)===BigInt(routerTerminal.amountRaw) + directFeeAmount && terminalGroup && terminalGroup.kind===4 && terminalGroup.businessId===execute.businessId && terminalGroup.finalized===0 && terminalGroup.refundOwner === intent.refundOwner,
       'market_routed_terminal_allocation_invalid');
-    const terminalSettlement = routerSettle(routerTerminal, output > 0n ? outputRoot : inputRoot, completion);
+    const terminalSettlement = routerSettle(routerTerminal, output > 0n ? outputRoot : inputRoot, completion, directFeeSettlement ?? undefined);
     if (output > 0n) {
         const before = readDlmmLiquidityState(acceptance.before!.state.dataBoc!), after = readDlmmLiquidityState(acceptance.after!.state.dataBoc!);
         const sum = (bins: typeof before.bins, side: 'reserveTRaw' | 'reserveXRaw') => [...bins.values()].reduce((n, bin) => n + BigInt(bin[side]), 0n);
@@ -178,6 +220,6 @@ export function verifyDlmmRoutedSwapExecution(binding: DlmmMarketBinding, proof:
     else
         requireProof(state.before.binsHash === state.after.binsHash && state.before.observationsHash === state.after.observationsHash, 'market_routed_refund_price_changed');
     const settlements: MarketSettlementEvidence[] = [{ ...poolTerminal, kind: output > 0n ? 'swap_output' : 'unused_input_refund' }];
-    const routing: MarketRoutingEvidence = { router, businessId: execute.businessId, requestHash: hash(requestCell), completionHash: hash(bodyCell(completion.raw.inMessage)!), routerAcceptance: ref(admission), completion: ref(completion), completionAcknowledged: ref(acknowledged), inputSettlement, terminalSettlement, protocolFeeSettlement, boundaries: [admissionState.evidence, dispatchedState.evidence, completedState.evidence, completionState.evidence, ackState.evidence] };
+    const routing: MarketRoutingEvidence = { router, businessId: execute.businessId, requestHash: hash(requestCell), completionHash: hash(bodyCell(completion.raw.inMessage)!), routerAcceptance: ref(admission), completion: ref(completion), completionAcknowledged: ref(acknowledged), inputSettlement, terminalSettlement, protocolFeeSettlement, directFeeSettlement, boundaries: [admissionState.evidence, dispatchedState.evidence, completedState.evidence, completionState.evidence, ackState.evidence] };
     return { forward: { ...forward, recipient: intent.recipient }, notice: { ...notice, owner: notice.owner, senderWallet: notice.senderWallet }, inputRoot, outputRoot, inputSide, paid: execute.amount, returned, consumed, output, state, original, paymentSource, paymentCredit, payment, settlements, routing };
 }

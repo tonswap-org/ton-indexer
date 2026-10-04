@@ -9,9 +9,10 @@ import { perpsWalletAddress } from '../ledger/perpsWire';
 import { messageKey, businessOpcode as opcode } from '../ledger/wire';
 import { decodeNativeFundingBody } from '../ledger/nativeFunding';
 import type { Node } from '../ledger/project';
+import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
 
-const folder = join(__dirname, 'fixtures/perps-risk-admission-current');
-const provenance = JSON.parse(readFileSync(join(folder, 'provenance.json'), 'utf8'));
+const folder = perpsRiskFixtureFolder;
+const provenance = readPerpsRiskFixtureProvenance();
 
 function fixture(name: string) {
   const f = JSON.parse(readFileSync(join(folder, `${name}.json`), 'utf8'));

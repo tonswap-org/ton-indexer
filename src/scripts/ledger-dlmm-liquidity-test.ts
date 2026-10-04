@@ -96,6 +96,8 @@ async function buildDiscovery(label: string, options: {missingRecipientWallet?: 
   const guards = [guard.loadUintBig(128), guard.loadUintBig(128), guard.loadUintBig(16), guard.loadUintBig(16), guard.loadUintBig(128)];
   assert.equal(guard.loadUintBig(128).toString(), decoded.binReserveHighWater);
   assert.equal(guard.loadUintBig(64).toString(), decoded.oracleDepthHealthySince);
+  const optionRegistry = guard.loadRef();
+  assert.equal(optionRegistry.hash().toString('hex'), decoded.optionRegistryHash);
   assert.equal(guard.remainingBits, 0); assert.equal(guard.remainingRefs, 0);
   const addressItem = (value: string | null): TupleItem => ({type: 'slice', cell: beginCell().storeAddress(value ? Address.parse(value) : null).endCell()});
   const intItem = (value: bigint | number): TupleItem => ({type: 'int', value: BigInt(value)});

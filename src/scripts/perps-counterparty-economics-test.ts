@@ -5,22 +5,27 @@ import { Address, Cell, loadTransaction } from '@ton/core';
 import { perpsEconomics, counterpartyClose } from '../ledger/perpsEconomics';
 import { readPerpsState, perpsPosition } from '../ledger/perpsState';
 import { perpsWalletAddress } from '../ledger/perpsWire';
-const cp = (reserved: bigint, pendingFunding = 0n, collectedLoss = 0n) => ({ reserved, pendingFunding, collectedLoss });
-assert.deepEqual(counterpartyClose(cp(100n, 10n), 20n, 1n, 3n, 100n, 0n, 0n), {
-    state: cp(60n), forced: false, closed: 1n, pnl: 6n, profit: 16n, debit: 0n, unpaid: 0n, released: 24n
+import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
+// Independent pure capital vectors specify entitlement explicitly: it is not
+// inferred from reserve cash or recreated from the current position notional.
+const cp = (reserved: bigint, remainingEntitlement: bigint, pendingFunding = 0n, collectedLoss = 0n) => ({ reserved, pendingFunding, collectedLoss, remainingEntitlement });
+const fixtureFolder = perpsRiskFixtureFolder;
+readPerpsRiskFixtureProvenance();
+assert.deepEqual(counterpartyClose(cp(100n, 100n, 10n), 20n, 1n, 3n, 100n, 0n, 0n), {
+    state: cp(60n, 60n), forced: false, closed: 1n, pnl: 6n, profit: 16n, debit: 0n, unpaid: 0n, released: 24n
 });
-assert.equal(counterpartyClose(cp(50n, 100n), -10n, 1n, 2n, 100n, 0n, 0n).profit, 40n);
-assert.equal(counterpartyClose(cp(100n), -1n, 1n, 3n, 100n, 0n, 0n).debit, 1n);
-assert.equal(counterpartyClose(cp(200n), 0n, 80n, 100n, 100n, 150n, 0n).forced, false);
-assert.equal(counterpartyClose(cp(2n), 10n, 1n, 1n, 0n, 0n, 1n).profit, 1n, 'Cap gross gap profit before subtracting unpaid funding');
-assert.equal(counterpartyClose(cp(20n), 10n, 1n, 2n, 0n, 0n, 1n).closed, 2n, 'Funding debt compels a full close');
+assert.equal(counterpartyClose(cp(50n, 50n, 100n), -10n, 1n, 2n, 100n, 0n, 0n).profit, 40n);
+assert.equal(counterpartyClose(cp(100n, 50n), -1n, 1n, 3n, 100n, 0n, 0n).debit, 1n);
+assert.equal(counterpartyClose(cp(200n, 100n), 0n, 80n, 100n, 100n, 150n, 0n).forced, false);
+assert.equal(counterpartyClose(cp(2n, 2n), 10n, 1n, 1n, 0n, 0n, 1n).profit, 1n, 'Cap gross gap profit before subtracting unpaid funding');
+assert.equal(counterpartyClose(cp(20n, 10n), 10n, 1n, 2n, 0n, 0n, 1n).closed, 2n, 'Funding debt compels a full close');
 for (let i = 1; i <= 40; i++) {
-    const R = BigInt(1 + i * 7), S = BigInt(2 + i % 9), r = counterpartyClose(cp(R, BigInt(i % 13), 3n), BigInt(i % 2 ? i * 11 : -i * 9), BigInt(1 + i % Number(S)), S, BigInt(i % 7), 1n, 0n);
+    const R = BigInt(1 + i * 7), S = BigInt(2 + i % 9), r = counterpartyClose(cp(R, R / 2n, BigInt(i % 13), 3n), BigInt(i % 2 ? i * 11 : -i * 9), BigInt(1 + i % Number(S)), S, BigInt(i % 7), 1n, 0n);
     assert.equal(r.state.reserved + r.profit + r.released, R);
     assert.equal(r.state.collectedLoss, 3n + r.debit);
 }
 for (const name of ['open-accepted', 'modify-accepted']) {
-    const f = JSON.parse(readFileSync(join(__dirname, 'fixtures/perps-risk-admission-current', name + '.json'), 'utf8'));
+    const f = JSON.parse(readFileSync(join(fixtureFolder, name + '.json'), 'utf8'));
     const hash = Cell.fromBase64(f.engineCode).hash().toString('hex'), owner = Address.parse(f.owner).toRawString(), engine = BigInt('0x' + Address.parse(f.engine).hash.toString('hex'));
     let checked = 0;
     for (const saved of f.transactions) {

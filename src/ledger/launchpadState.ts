@@ -1,6 +1,6 @@
 import { Cell, Dictionary, type Slice } from '@ton/core';
 
-import { end, maybeAddress, raw, readLaunchpadEnvelope, readLaunchpadReferralTerms } from './launchpadStateCommon';
+import { end, maybeAddress, raw, readLaunchpadDirectFeeConfig, readLaunchpadEnvelope, readLaunchpadReferralTerms } from './launchpadStateCommon';
 import { readLaunchpadSharedJournal, readLaunchpadSharedSettlement, type LaunchpadSharedSettlement, type LaunchpadSettlementStatus } from './launchpadSharedJournal';
 export type FixedSaleSettlementStatus = LaunchpadSettlementStatus;
 export type FixedSaleSettlement = LaunchpadSharedSettlement;
@@ -38,7 +38,7 @@ export function readFixedSaleState(dataBoc: string) {
   if (headerFeeRecipient !== metrics.feeRecipient || headerFeeBps !== metrics.feeBps) throw Error('Fixed-sale fee configuration mismatch');
   const c = state.loadRef().beginParse(), entries = c.loadDict(Dictionary.Keys.Address(), contributionValue); end(c);
   const contributions = new Map([...entries].map(([owner, entry]) => [owner.toRawString(), entry]));
-  const r = state.loadRef().beginParse(), referral = { registry: maybeAddress(r), key: r.loadUint(32) }; end(r);
+  const r = state.loadRef().beginParse(), referral = readLaunchpadDirectFeeConfig(r); end(r);
   const journal = readLaunchpadSharedJournal(state.loadRef()); end(state);
   return { layout: 'fixed-v1' as const, ...envelope, config, metrics, contributions, referral, journal };
 }

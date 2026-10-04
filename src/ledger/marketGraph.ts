@@ -129,7 +129,7 @@ export class DlmmMarketGraphBuilder {
           const state=readDlmmRouterState(node.after.state.dataBoc);
           if(state.walletCodeHash!==binding.walletCodeHash)throw Error();
           for(const root of [binding.tokenT,binding.tokenX])needed.add(perpsWalletAddress(state.walletCode,root,binding.router));
-          for(const record of state.settlements.values())if([7,8,12].includes(record.kind)) {
+          for(const record of state.settlements.values())if([7,8,12,15].includes(record.kind)) {
             needed.add(record.sourceWallet);needed.add(record.destinationWallet);
             if(record.kind!==12)needed.add(record.destinationOwner);
           }

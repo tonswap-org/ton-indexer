@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { Address, Cell, beginCell } from '@ton/core';
 import { accruePerpsFunding, perpsEconomics, tvmDiv } from '../ledger/perpsEconomics';
-import { emptyPerpsAccount, perpsRiskActionKey, type PerpsState, type PerpsPosition, type PerpsRiskAction } from '../ledger/perpsState';
+import { emptyPerpsAccount, perpsRiskActionKey, type PerpsState, type PerpsPosition, type PerpsRiskAction, type PerpsOracleRefreshReceipt } from '../ledger/perpsState';
 import { parseLedgerPerpsCodeHash } from '../config/ledgerPerps';
 import * as wire from '../ledger/perpsWire';
 // Explicit synthetic states exercise the economic verifier. Genuine archived
@@ -11,11 +11,12 @@ const address = (n: number) => new Address(0, Buffer.alloc(32, n)).toRawString()
 const owner = address(1), other = address(2), vault = address(3), root = address(4), pool = address(5), wallet = address(6);
 const unit = 1000000000n, subject = beginCell().storeAddress(Address.parse(owner)).storeUint(1, 32).endCell().hash().toString('hex');
 const positionKey = wire.perpsPositionKey(owner, 1), lossKey = beginCell().storeUint(0x43504c53, 32).endCell().hash().toString('hex');
-const base = (): PerpsState => ({ root, walletCode: Cell.EMPTY, feeBps: 0, feeTreasury: null, router: null, riskVault: vault, riskVaultBucketId: 1, nativeSettlement: null,
+const base = (): PerpsState => ({ root, walletCode: Cell.EMPTY, feeBps: 0, feeTreasury: null, router: null,
+    walletIngressProtection:{epoch:1,ready:true,quarantinedRaw:'0'}, riskVault: vault, riskVaultBucketId: 1, nativeSettlement: null, directFeeEscrow: null,
     risk: { oracleDegraded: false, tvlDegraded: false, oracleDriftLevel: 0 }, riskNonce: '1', riskActions: new Map(), counterpartyMaintenance: { cursor: '0'.repeat(64), sequence: '0', positionCount: 0 }, configHash: 'a'.repeat(64), dataHash: 'b'.repeat(64),
     accounts: new Map([[owner, { ...emptyPerpsAccount(), collateralRaw: (25n * unit).toString(), openPositionCount: 1 }],
         [other, { ...emptyPerpsAccount(), collateralRaw: (500n * unit).toString() }]]), positions: new Map(), pending: new Map(), oracleRefreshes: new Map(),
-    markets: new Map([[1, { pool, depthRaw: (2n ** 90n).toString(), alphaRaw: '0', betaRaw: '0', maxLeverageBps: 5000, maintenanceBps: 500,
+    markets: new Map([[1, { pool, depthRaw: (2n ** 90n).toString(), alphaRaw: '0', betaRaw: '0', maxLeverageBps: 10000, maintenanceBps: 500,
                 fundingIndexRaw: '0', fundingRemainderRaw: '0', fundingRateBpsRaw: '0', fundingValidUntil: '0', lastFundingTs: '0',
                 oraclePriceHealthy: true, markRaw: unit.toString(), controlFeeDeltaBps: 0, clampBps: 100, adlDeficitRaw: '0', riskPolicy: null }]]) });
 const clone = (s: PerpsState): PerpsState => ({ ...s, accounts: new Map([...s.accounts].map(([k, v]) => [k, { ...v }])),
@@ -42,7 +43,7 @@ function action(s: PerpsState, notional: bigint, reserve: bigint, payout?: bigin
 function live() {
     const s = base();
     const p: PerpsPosition = { owner, marketId: 1, sizeRaw: (10n * unit).toString(), marginRaw: (25n * unit).toString(),
-        entryNotionalRaw: (10n * unit).toString(), lastFundingIndexRaw: '0', counterparty: { reservedRaw: (20n * unit).toString(), pendingFundingRaw: '0', collectedLossRaw: '0' } };
+        entryNotionalRaw: (10n * unit).toString(), lastFundingIndexRaw: '0', counterparty: { reservedRaw: (20n * unit).toString(), pendingFundingRaw: '0', collectedLossRaw: '0', remainingEntitlementRaw: (10n * unit).toString() } };
     s.positions.set(positionKey, p);
     s.counterpartyMaintenance.positionCount = 1;
     action(s, 10n * unit, 20n * unit);
@@ -148,9 +149,9 @@ const remove: wire.PerpsRequest = { opcode: wire.PERPS_REMOVE_MARGIN, operation:
 assert.equal(perpsEconomics(removeBefore, removeAfter, owner, wallet, remove, '0')?.counterpartyLossRaw, '1000000');
 const gap = live();
 gap.markets.get(1)!.markRaw = (100n * unit).toString();
-const capped = perpsEconomics(gap, closeState(gap, 20n * unit), owner, wallet, close, '0');
+const capped = perpsEconomics(gap, closeState(gap, 10n * unit), owner, wallet, close, '0');
 assert.equal(capped?.realizedPnlRaw, (990n * unit).toString());
-assert.equal(capped?.counterpartyProfitRaw, (20n * unit).toString());
+assert.equal(capped?.counterpartyProfitRaw, (10n * unit).toString());
 assert.equal(capped?.payoutContributionRaw, (25n * unit).toString(), 'Posted margin remains independently funded');
 const loss = live();
 loss.markets.get(1)!.markRaw = (unit * 9n / 10n).toString();
@@ -167,11 +168,121 @@ remain.sizeRaw = (7500000000n).toString();
 remain.entryNotionalRaw = (7500000000n).toString();
 remain.marginRaw = (18750000000n).toString();
 remain.counterparty.reservedRaw = (15n * unit).toString();
+remain.counterparty.remainingEntitlementRaw = '7500000000';
 partial.accounts.get(owner)!.collateralRaw = remain.marginRaw;
 payout(partial, 6250000000n);
 action(partial, 7500000000n, 15n * unit, 250000000n);
 const modify: wire.PerpsRequest = { opcode: wire.PERPS_MODIFY, operation: 'modify', marketId: 1, queryId: '9', sizeRaw: '-2500000000', marginRaw: '0', limitPriceRaw: '0', referrer: null };
 assert.equal(perpsEconomics(before, partial, owner, wallet, modify, '0')?.counterpartyProfitRaw, '250000000');
+
+// These synthetic arithmetic boundaries are deliberately not claimed to be
+// authentic funding histories. A booked LP funding claim cannot make an
+// under-maintenance trader eligible to realize only part of its price loss.
+function fundedReduction(margin: bigint, funding: bigint, feeBps = 0) {
+    const b = live(), p = b.positions.get(positionKey)!;
+    p.marginRaw = margin.toString();
+    p.counterparty.pendingFundingRaw = funding.toString();
+    b.accounts.get(owner)!.collateralRaw = margin.toString();
+    b.accounts.get(owner)!.pendingFundingRaw = funding.toString();
+    b.markets.get(1)!.markRaw = '700000000';
+    b.feeBps = feeBps;
+    const a = clone(b), survivor = a.positions.get(positionKey)!;
+    const fee = 700000000n * BigInt(feeBps) / 10000n;
+    survivor.sizeRaw = (9n * unit).toString();
+    survivor.entryNotionalRaw = (9n * unit).toString();
+    survivor.marginRaw = (margin - margin / 10n - fee).toString();
+    survivor.counterparty = { reservedRaw: ((20n * unit - funding) * 9n / 10n).toString(),
+        pendingFundingRaw: '0', collectedLossRaw: '0', remainingEntitlementRaw: ((10n * unit - funding) * 9n / 10n).toString() };
+    a.accounts.get(owner)!.collateralRaw = survivor.marginRaw;
+    a.accounts.get(owner)!.pendingFundingRaw = '0';
+    payout(a, margin / 10n);
+    action(a, 9n * unit, BigInt(survivor.counterparty.reservedRaw), funding - 300000000n);
+    return { before: b, after: a, request: { ...modify, sizeRaw: (-unit).toString() } };
+}
+const underwaterReduction = fundedReduction(unit, 10n * unit);
+assert.equal(perpsEconomics(underwaterReduction.before, underwaterReduction.after, owner, wallet, underwaterReduction.request, '0'), null,
+    'Pending LP funding cannot authorize a partial reduction of an under-maintenance position');
+const fundedFullExit = closeState(underwaterReduction.before, 7n * unit);
+payout(fundedFullExit, unit);
+for (const request of [close, { ...modify, sizeRaw: (-10n * unit).toString() }]) {
+    const result = perpsEconomics(underwaterReduction.before, fundedFullExit, owner, wallet, request, '0');
+    assert.equal(result?.counterpartyProfitRaw, (7n * unit).toString(), 'Full exit nets the entire funding claim against the entire price loss');
+    assert.equal(result?.payoutContributionRaw, unit.toString(), 'Full exit returns only the isolated trader margin');
+}
+const maintenanceBoundary = fundedReduction(3350000000n, unit);
+assert.equal(perpsEconomics(maintenanceBoundary.before, maintenanceBoundary.after, owner, wallet, maintenanceBoundary.request, '0')?.counterpartyProfitRaw,
+    '700000000', 'A healthy partial reduction at exact maintenance remains accepted');
+const feeCrossing = fundedReduction(3350000000n, unit, 30);
+assert.equal(perpsEconomics(feeCrossing.before, feeCrossing.after, owner, wallet, feeCrossing.request, '0'), null,
+    'The survivor must remain above maintenance after the actual execution fee');
+const impactBefore = live(), impactPosition = impactBefore.positions.get(positionKey)!;
+impactPosition.marginRaw = '500000000';
+impactBefore.accounts.get(owner)!.collateralRaw = impactPosition.marginRaw;
+Object.assign(impactBefore.markets.get(1)!, { depthRaw: (2n * unit).toString(), alphaRaw: '2000', clampBps: 1000 });
+const impactAfter = clone(impactBefore), impactSurvivor = impactAfter.positions.get(positionKey)!;
+Object.assign(impactSurvivor, { sizeRaw: (9n * unit).toString(), entryNotionalRaw: (9n * unit).toString(), marginRaw: '400000000' });
+impactSurvivor.counterparty.reservedRaw = (18n * unit).toString();
+impactSurvivor.counterparty.remainingEntitlementRaw = (9n * unit).toString();
+impactAfter.accounts.get(owner)!.collateralRaw = impactSurvivor.marginRaw;
+impactAfter.pending.set(lossKey, { kind: 16, owner: vault, marketId: 0, wireId: '0', amountRaw: '100000000', queuedRaw: '0', recordedAt: '1' });
+action(impactAfter, 9n * unit, 18n * unit, 0n);
+assert.equal(perpsEconomics(impactBefore, impactAfter, owner, wallet, { ...modify, sizeRaw: (-unit).toString() }, '0'), null,
+    'Execution impact cannot consume enough margin to leave the survivor below maintenance');
+// A cash deposit rescues the whole position before the partial-close check;
+// it must be physically present in the notification amount.
+const rescueReduction = fundedReduction(3350000000n, unit);
+rescueReduction.before.positions.get(positionKey)!.marginRaw = unit.toString();
+rescueReduction.before.accounts.get(owner)!.collateralRaw = unit.toString();
+rescueReduction.request.marginRaw = '2350000000';
+assert.equal(perpsEconomics(rescueReduction.before, rescueReduction.after, owner, wallet, rescueReduction.request, '2350000000')?.depositCollateralRaw,
+    '2350000000', 'A funded margin rescue can restore partial-close eligibility');
+assert.equal(perpsEconomics(rescueReduction.before, rescueReduction.after, owner, wallet, rescueReduction.request, '0'), null,
+    'A claimed rescue without the matching deposit is rejected');
+console.log('PASS partial reduction maintenance, funding exclusion, post-fee/impact survivor, full exit and funded rescue');
+// A terminal oracle rejection carries no token movement for a zero-deposit
+// MODIFY. The exact pending-to-terminal receipt still has to authenticate it.
+const rejectedModifyBefore = clone(underwaterReduction.before);
+const rejectedModifyAfter = clone(rejectedModifyBefore);
+const rejectedRequest = underwaterReduction.request;
+const rejectedRequestCell = beginCell().storeUint(wire.PERPS_MODIFY, 32)
+    .storeUint(BigInt(rejectedRequest.queryId), 64).storeUint(rejectedRequest.marketId, 32)
+    .storeInt(BigInt(rejectedRequest.sizeRaw!), 128).storeInt(0n, 128)
+    .storeCoins(0n).storeAddress(null).endCell();
+assert.deepEqual(wire.perpsRequest(rejectedRequestCell), rejectedRequest);
+const rejectedPosition = rejectedModifyBefore.positions.get(positionKey)!;
+const previousPosition = beginCell().storeAddress(Address.parse(owner)).storeUint(1, 32)
+    .storeInt(BigInt(rejectedPosition.sizeRaw), 128).storeCoins(BigInt(rejectedPosition.marginRaw))
+    .storeCoins(BigInt(rejectedPosition.entryNotionalRaw)).storeInt(BigInt(rejectedPosition.lastFundingIndexRaw), 128)
+    .storeRef(beginCell().storeCoins(BigInt(rejectedPosition.counterparty.reservedRaw))
+        .storeCoins(BigInt(rejectedPosition.counterparty.pendingFundingRaw)).storeCoins(0n)
+        .storeCoins(BigInt(rejectedPosition.counterparty.remainingEntitlementRaw))).endCell();
+const pendingModify: PerpsOracleRefreshReceipt = {
+    queryId: rejectedRequest.queryId, wireQueryId: '1', requestHash: rejectedRequestCell.hash().toString('hex'),
+    status: 1, requestedAt: '100', completedAt: '0', oracleMarkRaw: '0', oracleMarkTs: '0',
+    order: { request: rejectedRequest, requestCell: rejectedRequestCell, notification: Cell.EMPTY, funding: null,
+        nativeBudgetRaw: '5000000000', outcome: 1, reason: 0, admissionPhase: 0, previousPosition,
+        positionOracleContext: null, pool },
+};
+const terminalModify: PerpsOracleRefreshReceipt = { ...pendingModify, status: 2, completedAt: '101',
+    oracleMarkRaw: '700000000', oracleMarkTs: '101', order: { ...pendingModify.order!, outcome: 3, reason: 2 } };
+rejectedModifyBefore.oracleRefreshes = new Map([[1, new Map([[owner, pendingModify]])]]);
+rejectedModifyAfter.oracleRefreshes = new Map([[1, new Map([[owner, terminalModify]])]]);
+const rejectedModify = perpsEconomics(rejectedModifyBefore, rejectedModifyAfter, owner, wallet, rejectedRequest, '0');
+assert.equal(rejectedModify?.outcome, 'rejected', 'An authenticated rejected partial MODIFY is terminal, not unresolved');
+assert.equal(rejectedModify?.payoutContributionRaw, '0');
+assert.equal(rejectedModify?.counterpartyProfitRaw, '0');
+for (const defect of ['missing-prior', 'wrong-query', 'changed-position', 'changed-entitlement', 'unexpected-payout'] as const) {
+    const broken = clone(rejectedModifyAfter);
+    let prior = rejectedModifyBefore;
+    let request = rejectedRequest;
+    if (defect === 'missing-prior') prior = { ...prior, oracleRefreshes: new Map() };
+    if (defect === 'wrong-query') request = { ...request, queryId: '999' };
+    if (defect === 'changed-position') broken.positions.get(positionKey)!.marginRaw = (unit - 1n).toString();
+    if (defect === 'changed-entitlement') broken.positions.get(positionKey)!.counterparty.remainingEntitlementRaw = (10n * unit - 1n).toString();
+    if (defect === 'unexpected-payout') payout(broken, 1n);
+    assert.equal(perpsEconomics(prior, broken, owner, wallet, request, '0'), null, defect);
+}
+console.log('PASS authenticated zero-deposit MODIFY rejection without fabricated cash movements');
 const claimBefore = live();
 claimBefore.markets.get(1)!.fundingIndexRaw = '-1';
 claimBefore.positions.get(positionKey)!.counterparty.pendingFundingRaw = '7';
@@ -180,6 +291,7 @@ const claimAfter = clone(claimBefore), claimPosition = claimAfter.positions.get(
 claimPosition.lastFundingIndexRaw = '-1';
 claimPosition.counterparty.pendingFundingRaw = '0';
 claimPosition.counterparty.reservedRaw = (20n * unit - 1000007n).toString();
+claimPosition.counterparty.remainingEntitlementRaw = (10n * unit - 1000007n).toString();
 claimAfter.accounts.get(owner)!.pendingFundingRaw = '0';
 action(claimAfter, 10n * unit, 20n * unit - 1000007n, 1000007n);
 const claim: wire.PerpsRequest = { opcode: wire.PERPS_CLAIM, operation: 'claim', queryId: '10', marketId: 1 };
@@ -188,7 +300,7 @@ assert.equal(funding?.fundingRaw, '1000000');
 assert.equal(funding?.counterpartyProfitRaw, '1000007');
 assert.equal(funding?.payoutContributionRaw, '0');
 const adl: wire.PerpsRequest = { opcode: wire.PERPS_ADL, operation: 'adl', owner, queryId: '11', marketId: 1, sizeRaw: (10n * unit).toString() };
-assert.equal(perpsEconomics(gap, closeState(gap, 20n * unit), owner, wallet, adl, '0')?.counterpartyProfitRaw, (20n * unit).toString());
+assert.equal(perpsEconomics(gap, closeState(gap, 10n * unit), owner, wallet, adl, '0')?.counterpartyProfitRaw, (10n * unit).toString());
 assert.equal(perpsEconomics(gap, partial, owner, wallet, { ...adl, sizeRaw: '2500000000' }, '0'), null, 'Old quarter-position ADL is unsupported');
 console.log('Perps canonical isolated reservation, exact RVPS beneficiary, margin cash, claim, gap, loss and adversarial proofs passed');
 
@@ -197,7 +309,7 @@ console.log('Perps canonical isolated reservation, exact RVPS beneficiary, margi
 const sibling = (state: PerpsState) => {
     const key = wire.perpsPositionKey(owner, 2), p = state.positions.get(positionKey)!;
     state.positions.set(key, { ...p, marketId: 2, sizeRaw: unit.toString(), marginRaw: (7n * unit).toString(),
-        entryNotionalRaw: unit.toString(), counterparty: {reservedRaw:(2n*unit).toString(),pendingFundingRaw:'0',collectedLossRaw:'0'} });
+        entryNotionalRaw: unit.toString(), counterparty: {reservedRaw:(2n*unit).toString(),pendingFundingRaw:'0',collectedLossRaw:'0',remainingEntitlementRaw:unit.toString()} });
     state.markets.set(2, {...state.markets.get(1)!});
     state.accounts.set(owner,{...state.accounts.get(owner)!,collateralRaw:(32n*unit).toString(),openPositionCount:2});
     state.counterpartyMaintenance = {...state.counterpartyMaintenance,positionCount:2};
@@ -239,14 +351,14 @@ const fundingGap=live();fundingGap.markets.get(1)!.markRaw=(100n*unit).toString(
 fundingGap.markets.get(1)!.fundingIndexRaw='28000';
 fundingGap.positions.get(positionKey)!.counterparty.pendingFundingRaw=(2n*unit).toString();
 fundingGap.accounts.get(owner)!.pendingFundingRaw=(2n*unit).toString();
-const fundingGapAfter=closeState(fundingGap,19n*unit,25n*unit);
+const fundingGapAfter=closeState(fundingGap,7n*unit,25n*unit);
 for(const request of [close,claim]) {
   const result=perpsEconomics(fundingGap,fundingGapAfter,owner,wallet,request,'0');
-  assert.equal(result?.counterpartyProfitRaw,(19n*unit).toString());
-  assert.equal(result?.uncollectedLossRaw,'0','One T3 funding debt is settled from the already capped 20 T3 LP claim');
+  assert.equal(result?.counterpartyProfitRaw,(7n*unit).toString());
+  assert.equal(result?.uncollectedLossRaw,'0','One T3 funding debt is settled after the remaining 8 T3 entitlement caps gross profit');
   assert.equal(result?.payoutContributionRaw,'0');
 }
-const forgivenGap=closeState(fundingGap,20n*unit,25n*unit);
+const forgivenGap=closeState(fundingGap,8n*unit,25n*unit);
 assert.equal(perpsEconomics(fundingGap,forgivenGap,owner,wallet,close,'0'),null,'Subtracting funding debt before gross profit cap overpays a price gap');
 const insolventClaim=live();insolventClaim.positions.get(positionKey)!.marginRaw=unit.toString();
 insolventClaim.accounts.get(owner)!.collateralRaw=unit.toString();
@@ -266,3 +378,130 @@ const rescue:wire.PerpsRequest={opcode:wire.PERPS_ADD_MARGIN,operation:'add_marg
 assert.equal(perpsEconomics(rescueBefore,rescueAfter,owner,wallet,rescue,unit.toString())?.depositCollateralRaw,unit.toString(),'A funded isolated margin rescue does not need a healthy price');
 assert.equal(perpsEconomics(rescueBefore,rescueAfter,owner,wallet,rescue,'0'),null,'Stale-oracle rescue cannot fabricate deposited collateral');
 console.log('PASS oracle-independent actual-funded margin rescue');
+
+// Cumulative entitlement survives real bookkeeping movements; new risk alone
+// earns new entitlement. These synthetic boundaries do not substitute for TVM.
+const canceledBefore = live();
+canceledBefore.positions.get(positionKey)!.counterparty.pendingFundingRaw = (2n * unit).toString();
+canceledBefore.accounts.get(owner)!.pendingFundingRaw = (2n * unit).toString();
+canceledBefore.markets.get(1)!.fundingIndexRaw = '1000';
+const canceledAfter = clone(canceledBefore), canceledPosition = canceledAfter.positions.get(positionKey)!;
+canceledPosition.marginRaw = (26n * unit).toString();
+canceledPosition.lastFundingIndexRaw = '1000';
+canceledPosition.counterparty.pendingFundingRaw = unit.toString();
+canceledPosition.counterparty.remainingEntitlementRaw = (9n * unit).toString();
+canceledAfter.accounts.get(owner)!.collateralRaw = (26n * unit).toString();
+canceledAfter.accounts.get(owner)!.pendingFundingRaw = unit.toString();
+assert(perpsEconomics(canceledBefore, canceledAfter, owner, wallet, rescue, unit.toString()),
+    'Canceled positive funding pays debt and consumes the same gross entitlement');
+const resetCancellation = clone(canceledAfter);
+resetCancellation.positions.get(positionKey)!.counterparty.remainingEntitlementRaw = (10n * unit).toString();
+assert.equal(perpsEconomics(canceledBefore, resetCancellation, owner, wallet, rescue, unit.toString()), null,
+    'Funding cancellation cannot recreate entitlement');
+const usedBefore = live();
+usedBefore.positions.get(positionKey)!.counterparty.remainingEntitlementRaw = (4n * unit).toString();
+const addedMargin = clone(usedBefore);
+addedMargin.positions.get(positionKey)!.marginRaw = (26n * unit).toString();
+addedMargin.accounts.get(owner)!.collateralRaw = (26n * unit).toString();
+assert(perpsEconomics(usedBefore, addedMargin, owner, wallet, rescue, unit.toString()));
+const resetMargin = clone(addedMargin);
+resetMargin.positions.get(positionKey)!.counterparty.remainingEntitlementRaw = (10n * unit).toString();
+assert.equal(perpsEconomics(usedBefore, resetMargin, owner, wallet, rescue, unit.toString()), null,
+    'A margin deposit never resets a partly consumed entitlement');
+// The independent preflight reservation authorizes 22 T3 while the prior
+// position still holds 20 T3. Only the actual newly filled 1 T3 grants new E.
+action(usedBefore, 10n * unit, 22n * unit);
+const increasedAfter = clone(usedBefore), increasedPosition = increasedAfter.positions.get(positionKey)!;
+increasedPosition.sizeRaw = (11n * unit).toString();
+increasedPosition.entryNotionalRaw = (11n * unit).toString();
+increasedPosition.counterparty.reservedRaw = (22n * unit).toString();
+increasedPosition.counterparty.remainingEntitlementRaw = (5n * unit).toString();
+action(increasedAfter, 11n * unit, 22n * unit, 0n);
+const increase = { ...modify, sizeRaw: unit.toString() };
+assert(perpsEconomics(usedBefore, increasedAfter, owner, wallet, increase, '0'));
+const resetIncrease = clone(increasedAfter);
+resetIncrease.positions.get(positionKey)!.counterparty.remainingEntitlementRaw = (11n * unit).toString();
+assert.equal(perpsEconomics(usedBefore, resetIncrease, owner, wallet, increase, '0'), null,
+    'Increasing a partly consumed position grants gross new fill only');
+const shortBefore = live(), shortPosition = shortBefore.positions.get(positionKey)!;
+shortPosition.sizeRaw = (-10n * unit).toString();
+shortPosition.marginRaw = (11n * unit).toString();
+shortBefore.accounts.get(owner)!.collateralRaw = (11n * unit).toString();
+shortBefore.markets.get(1)!.markRaw = (unit / 2n).toString();
+const principalAfter = clone(shortBefore);
+principalAfter.positions.get(positionKey)!.marginRaw = (10n * unit).toString();
+principalAfter.accounts.get(owner)!.collateralRaw = (10n * unit).toString();
+payout(principalAfter, unit);
+assert(perpsEconomics(shortBefore, principalAfter, owner, wallet, remove, '0'), 'A withdrawal may retain exactly entry N');
+const hollowShortBefore = clone(shortBefore), hollowShortAfter = clone(principalAfter);
+hollowShortBefore.positions.get(positionKey)!.marginRaw = (10n * unit).toString();
+hollowShortBefore.accounts.get(owner)!.collateralRaw = (10n * unit).toString();
+hollowShortAfter.positions.get(positionKey)!.marginRaw = (9n * unit).toString();
+hollowShortAfter.accounts.get(owner)!.collateralRaw = (9n * unit).toString();
+assert.equal(perpsEconomics(hollowShortBefore, hollowShortAfter, owner, wallet, remove, '0'), null,
+    'A profitable short cannot withdraw the principal that funds its opposite price tail');
+console.log('PASS cancellation/deposit conservation, gross-fill-only entitlement grant and entry-principal withdrawal rail');
+
+const feeAdmissionBefore = clone(shortBefore), feeAdmissionPosition = feeAdmissionBefore.positions.get(positionKey)!;
+feeAdmissionBefore.feeBps = 30;
+feeAdmissionPosition.marginRaw = '10500000000';
+feeAdmissionBefore.accounts.get(owner)!.collateralRaw = feeAdmissionPosition.marginRaw;
+action(feeAdmissionBefore, 10n * unit, 21n * unit);
+const feeAdmissionAfter = clone(feeAdmissionBefore), feeAdmissionSurvivor = feeAdmissionAfter.positions.get(positionKey)!;
+Object.assign(feeAdmissionSurvivor, { sizeRaw: (-11n * unit).toString(), entryNotionalRaw: '10500000000', marginRaw: '10498500000' });
+feeAdmissionSurvivor.counterparty.reservedRaw = (21n * unit).toString();
+feeAdmissionSurvivor.counterparty.remainingEntitlementRaw = '10500000000';
+feeAdmissionAfter.accounts.get(owner)!.collateralRaw = feeAdmissionSurvivor.marginRaw;
+action(feeAdmissionAfter, 10500000000n, 21n * unit, 0n);
+const shortIncrease = { ...modify, sizeRaw: (-unit).toString() };
+assert.equal(perpsEconomics(feeAdmissionBefore, feeAdmissionAfter, owner, wallet, shortIncrease, '0'), null,
+    'New gross risk retains entry principal after the actual fee even when current-mark margin is lower');
+const fundedFeeBefore = clone(feeAdmissionBefore), fundedFeeAfter = clone(feeAdmissionAfter);
+fundedFeeBefore.positions.get(positionKey)!.marginRaw = '10501500000';
+fundedFeeBefore.accounts.get(owner)!.collateralRaw = '10501500000';
+fundedFeeAfter.positions.get(positionKey)!.marginRaw = '10500000000';
+fundedFeeAfter.accounts.get(owner)!.collateralRaw = '10500000000';
+assert(perpsEconomics(fundedFeeBefore, fundedFeeAfter, owner, wallet, shortIncrease, '0'),
+    'An actually funded fee leaves exact entry principal and admits the new fill');
+console.log('PASS new-gross entry-principal rail after actual fees, including a favorable short mark');
+
+// Current Engine admission checks actual fill equity and the 0.75 T3 entry
+// floor independently of the 1x margin ratio and physical 2N reservation.
+function openPair(size: bigint, notional: bigint, margin: bigint, impact = false) {
+    const b = base();
+    b.accounts.get(owner)!.collateralRaw = '0'; b.accounts.get(owner)!.openPositionCount = 0;
+    if (impact) { b.markets.get(1)!.depthRaw = unit.toString(); b.markets.get(1)!.alphaRaw = '100'; }
+    action(b, notional, 2n * notional);
+    const a = clone(b);
+    a.positions.set(positionKey, { owner, marketId: 1, sizeRaw: size.toString(), marginRaw: margin.toString(),
+        entryNotionalRaw: notional.toString(), lastFundingIndexRaw: '0',
+        counterparty: { reservedRaw: (2n * notional).toString(), pendingFundingRaw: '0', collectedLossRaw: '0', remainingEntitlementRaw: notional.toString() } });
+    a.accounts.get(owner)!.collateralRaw = margin.toString(); a.accounts.get(owner)!.openPositionCount = 1;
+    const request: wire.PerpsRequest = { opcode: wire.PERPS_OPEN, operation: 'open', queryId: '77', marketId: 1,
+        sizeRaw: size.toString(), marginRaw: margin.toString(), limitPriceRaw: '0', leverageBps: 10000, referrer: null };
+    return { b, a, request, deposit: margin.toString() };
+}
+for (const [notional, admitted] of [[749999999n, false], [750000000n, true]] as const) {
+    const v = openPair(notional, notional, notional);
+    assert.equal(perpsEconomics(v.b, v.a, owner, wallet, v.request, v.deposit) !== null, admitted,
+        'OPEN uses the exact entry floor, including its one-unit boundary');
+}
+const premiumOnly = openPair(unit, 1010000000n, 1010000000n, true);
+assert.equal(perpsEconomics(premiumOnly.b, premiumOnly.a, owner, wallet, premiumOnly.request, premiumOnly.deposit), null,
+    '1x margin at a positive fill premium does not meet post-fill mark equity');
+const premiumFunded = openPair(unit, 1010000000n, 1020000000n, true);
+assert(perpsEconomics(premiumFunded.b, premiumFunded.a, owner, wallet, premiumFunded.request, premiumFunded.deposit),
+    'Actual margin covers the fill premium in addition to entry principal');
+for (const [remaining, admitted] of [[749999999n, false], [750000000n, true]] as const) {
+    const b = live(), p = b.positions.get(positionKey)!;
+    Object.assign(p, { sizeRaw: unit.toString(), marginRaw: (2n * unit).toString(), entryNotionalRaw: unit.toString() });
+    p.counterparty = { reservedRaw: (2n * unit).toString(), pendingFundingRaw: '0', collectedLossRaw: '0', remainingEntitlementRaw: unit.toString() };
+    b.accounts.get(owner)!.collateralRaw = p.marginRaw; action(b, unit, 2n * unit);
+    const a = clone(b), survivor = a.positions.get(positionKey)!;
+    survivor.sizeRaw = remaining.toString(); survivor.marginRaw = (2n * remaining).toString(); survivor.entryNotionalRaw = remaining.toString();
+    survivor.counterparty.reservedRaw = (2n * remaining).toString(); survivor.counterparty.remainingEntitlementRaw = remaining.toString();
+    a.accounts.get(owner)!.collateralRaw = survivor.marginRaw; payout(a, 2n * (unit - remaining)); action(a, remaining, 2n * remaining, 0n);
+    assert.equal(perpsEconomics(b, a, owner, wallet, { ...modify, sizeRaw: (remaining - unit).toString() }, '0') !== null, admitted,
+        'A surviving size modification cannot manufacture a below-floor position');
+}
+console.log('PASS exact OPEN equity/entry-floor and surviving-MODIFY entry-floor admission');

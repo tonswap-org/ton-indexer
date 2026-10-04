@@ -1,7 +1,1567 @@
 {
-  "source": "tonswap_tolk/tests/perps/PerpsRiskAdmission.spec.ts Sandbox raw transactions and exact storage boundaries",
-  "engineCodeHash": "806cd1dfeeb953afbbe44803c28c3e787e51b544f1570ec4f64162d39bbc2b6a",
-  "capturedOn": "2026-09-23",
+  "source": "Complete VM15 400-nanoton/gas stress PerpsRiskAdmission raw transactions and exact storage boundaries",
+  "producer": "tests/perps/PerpsRiskAdmission.spec.ts",
+  "qualification": "qualified-after-native-source-lock",
+  "producerReceipt": {
+    "schema": "tonswap-perps-fixture-producer-v1",
+    "producer": "risk",
+    "suite": "tests/perps/PerpsRiskAdmission.spec.ts",
+    "tests": 53,
+    "captureDirectory": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk",
+    "exitCode": 0,
+    "runtime": {
+      "version": "v26.5.1",
+      "noTurboFastApiCalls": true,
+      "binarySha256": "87e9b1fed820a2683ea90f5871596edf605b7162519156856dacbfbad36d1d29"
+    },
+    "logSha256": "a6511d5259b423060a98988dffd5946f62a659f9c7997c95b392286b15b2541c",
+    "sourceBefore": {
+      "digest": "d71e392e09a2c59f700be0ae7c964a215d352d5ecb7f49686817d251860c2ea7",
+      "files": [
+        {
+          "path": "contracts/automation/gas_vault.tolk",
+          "sha256": "2997bfc5a9760323ab9540163b601a98dfe518bdea49fa4672e22e02fa020b3a"
+        },
+        {
+          "path": "contracts/automation/heartbeat.tolk",
+          "sha256": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1"
+        },
+        {
+          "path": "contracts/automation/native_return_collector.tolk",
+          "sha256": "c0fd5ec99cf0e20556136b8e219f49e354653beb6a31b65000d5bd5558b1d8d2"
+        },
+        {
+          "path": "contracts/control/control_mesh_messages.tolk",
+          "sha256": "f14ae4dff0b5eb99c7eaeb2a4641d981735e10688a88e5ab8a6e718c802e7620"
+        },
+        {
+          "path": "contracts/control/risk_controller.tolk",
+          "sha256": "4fc3897a205fc77d3d6620d105f8cc7bb3ef22f9b93a11f79ba350e5da1c3473"
+        },
+        {
+          "path": "contracts/control/risk_native_budget.tolk",
+          "sha256": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67"
+        },
+        {
+          "path": "contracts/dex/stable_math.tolk",
+          "sha256": "be051f9b2ceb11e73cac1e00f9e1f879c7524684fc2c75b938881b0e5099bd64"
+        },
+        {
+          "path": "contracts/dex/twap_native_budget.tolk",
+          "sha256": "8f405352980aa921925168ee713ee4c90c5870a1aa173139b6ada564acd80967"
+        },
+        {
+          "path": "contracts/dlmm/constants.tolk",
+          "sha256": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a"
+        },
+        {
+          "path": "contracts/dlmm/farming.tolk",
+          "sha256": "74b2113d19647cd520e3b9146f68b159a38c68dbbaa149d191b31aaf82ec34e4"
+        },
+        {
+          "path": "contracts/dlmm/math.tolk",
+          "sha256": "2dc2566c48f55476c69b8b199931d2bf16d26ceb962ef37fb165ddbdda63178a"
+        },
+        {
+          "path": "contracts/dlmm/pool.tolk",
+          "sha256": "4dd6fa360ab04c80a032ec82a0f83f056946a02cc451b93735a88225ec6570a5"
+        },
+        {
+          "path": "contracts/generated/opcodes/automation/gas_vault_opcodes.tolk",
+          "sha256": "9c7271afaa558da3f0dbbf2c579e6f68880c7ecc3474e4df980f666a5fd92612"
+        },
+        {
+          "path": "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk",
+          "sha256": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5"
+        },
+        {
+          "path": "contracts/generated/opcodes/governance/treasury_opcodes.tolk",
+          "sha256": "3dca06bd146665ad97d293532ce8345ea873bd7f34fde20be4734c356fa8ee12"
+        },
+        {
+          "path": "contracts/generated/opcodes/perps/insurance_vault_opcodes.tolk",
+          "sha256": "84c539a92bdbeb9e17291272742b0678dd4cc4864e6649b2af071e4b0c5cacce"
+        },
+        {
+          "path": "contracts/generated/opcodes/perps/perps_engine_opcodes.tolk",
+          "sha256": "5be424d41668df7f1bdbfb658f7dc99d1640f160280e3fc27368f64b9bfd0afe"
+        },
+        {
+          "path": "contracts/generated/opcodes/referral/distributor_opcodes.tolk",
+          "sha256": "a18f747e9a75a210efbe5bf6ee65de1f37b8b1bee12637d1efaa5db584cdfe83"
+        },
+        {
+          "path": "contracts/generated/opcodes/referral/emissions_splitter_opcodes.tolk",
+          "sha256": "9cb1a39e1aa3a723d43742b3c4b05ff05b24393d70220f38e2f4c4fc91789591"
+        },
+        {
+          "path": "contracts/generated/opcodes/referral/registry_opcodes.tolk",
+          "sha256": "50268831cbec54d6bd9a9844830778afa1853d084a78b133a14968f3ca54395e"
+        },
+        {
+          "path": "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk",
+          "sha256": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa"
+        },
+        {
+          "path": "contracts/generated/opcodes/shared/jetton/jetton_root_opcodes.tolk",
+          "sha256": "57e21353838b2aa1ad7a5a8a85fd8ab72f48500d7d99dad1895d868fbb441778"
+        },
+        {
+          "path": "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk",
+          "sha256": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61"
+        },
+        {
+          "path": "contracts/generated/opcodes/treasury/fee_router_opcodes.tolk",
+          "sha256": "2d4e7700125c127c1fa382ebd8705f0453839a38c429df9f1b714b50176ff002"
+        },
+        {
+          "path": "contracts/governance/treasury.tolk",
+          "sha256": "5e1f0791b25d64ffa7528a3076b5c83b937c01abc343263f4bec3f27d4ea2f80"
+        },
+        {
+          "path": "contracts/launchpad/native_budget.tolk",
+          "sha256": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4"
+        },
+        {
+          "path": "contracts/perps/insurance_vault.tolk",
+          "sha256": "cfeec81910fc42240c3c168c371ca5b3cb3ff35f7604814513468bf157ff42fc"
+        },
+        {
+          "path": "contracts/perps/native_budget.tolk",
+          "sha256": "07039f9d92150bda665b349224da0d7f1bbc4ecb0ab9661a893c4111b032a546"
+        },
+        {
+          "path": "contracts/perps/perps_engine_installer.tolk",
+          "sha256": "53915cb0adfd58801e18f129bc0240d73aa3abbc5def0de63c5c4c1056237ebb"
+        },
+        {
+          "path": "contracts/perps/perps_engine.tolk",
+          "sha256": "5ebd651ca45e36bbce96afff0ab6802f3f4c9997efeb3c34a3cb6234190aa3a7"
+        },
+        {
+          "path": "contracts/referral/distributor.tolk",
+          "sha256": "2eee774bac114360102e44f844a5b736637b602eac907e5ec945e17f50a13128"
+        },
+        {
+          "path": "contracts/referral/emissions_splitter.tolk",
+          "sha256": "2c3533cf240d450f424e74099f21116634cc7e8554aa182f36ebfa4da67cded2"
+        },
+        {
+          "path": "contracts/referral/registry.tolk",
+          "sha256": "31fa7d026642c59d9aac06a8157aae32e3cb43f6bd42b8a12658b8abc7dbe5a4"
+        },
+        {
+          "path": "contracts/risk/native_budget.tolk",
+          "sha256": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863"
+        },
+        {
+          "path": "contracts/risk/risk_vault.tolk",
+          "sha256": "fbeff1f2775968acdd1da3fd3030e4202710683d0b1ddcdf72a7fc45b13541f6"
+        },
+        {
+          "path": "contracts/shared/automation/gas_vault_namespaces.tolk",
+          "sha256": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9"
+        },
+        {
+          "path": "contracts/shared/automation/job_queue_funding.tolk",
+          "sha256": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295"
+        },
+        {
+          "path": "contracts/shared/automation/module_config.tolk",
+          "sha256": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861"
+        },
+        {
+          "path": "contracts/shared/automation/native_return_collector_identity.tolk",
+          "sha256": "c048574ce19bc7ddd6dd53b1221e8d16a4fba01f9386206f25ad5660507f3b9f"
+        },
+        {
+          "path": "contracts/shared/constants/gas_reserve.tolk",
+          "sha256": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1"
+        },
+        {
+          "path": "contracts/shared/control/control_receipt.tolk",
+          "sha256": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f"
+        },
+        {
+          "path": "contracts/shared/control/gas_telemetry.tolk",
+          "sha256": "a8cfc670fee4b2b6362e70fd66c9bc188710a7919c5eb6329919d67a57d80bb0"
+        },
+        {
+          "path": "contracts/shared/governance/activation_native_budget.tolk",
+          "sha256": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2"
+        },
+        {
+          "path": "contracts/shared/governance/activation_receipt.tolk",
+          "sha256": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf"
+        },
+        {
+          "path": "contracts/shared/jetton/application_ingress.tolk",
+          "sha256": "97d3f365dd75a57f13ff04dd29cfbdaf176b088d91b97c345e02ec32df27f7d8"
+        },
+        {
+          "path": "contracts/shared/jetton/burn_budget.tolk",
+          "sha256": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f"
+        },
+        {
+          "path": "contracts/shared/jetton/cover_ingress.tolk",
+          "sha256": "6ab9441472d0e5d3fb8fdae0936eff31190efa96620a16e29165cc7c411e9167"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_root.tolk",
+          "sha256": "56e1c1d90892c3eec80f26f67726ced05389ccab48690b715b86c8ee372ff439"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_types.tolk",
+          "sha256": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_utils.tolk",
+          "sha256": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_wallet_storage.tolk",
+          "sha256": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_wallet.tolk",
+          "sha256": "843dbfc680c23dbddb9662efebfa01f8a23c566e9e657d1578f854196bce5471"
+        },
+        {
+          "path": "contracts/shared/jetton/mint_budget.tolk",
+          "sha256": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674"
+        },
+        {
+          "path": "contracts/shared/jetton/t3_burn_budget.tolk",
+          "sha256": "ee021d031f6d82608ebcedc04f032c7ff704d73530150934128b28380321c252"
+        },
+        {
+          "path": "contracts/shared/jetton/tep74_codec.tolk",
+          "sha256": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141"
+        },
+        {
+          "path": "contracts/shared/jetton/tep89_codec.tolk",
+          "sha256": "fa30dff7e9be5a95cb75f5dd52e0b4878ab217a2ac5d4d7a195af2430d8ad195"
+        },
+        {
+          "path": "contracts/shared/jetton/transfer_budget.tolk",
+          "sha256": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386"
+        },
+        {
+          "path": "contracts/shared/math/full_math.tolk",
+          "sha256": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a"
+        },
+        {
+          "path": "contracts/shared/math/integer.tolk",
+          "sha256": "c7f63c66b50b6bcc4b1fa77fd71a5123b13cb8403610ac277db59d4caf55f5c3"
+        },
+        {
+          "path": "contracts/shared/native/funding.tolk",
+          "sha256": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f"
+        },
+        {
+          "path": "contracts/shared/oracle/pool_realized.tolk",
+          "sha256": "197c13cecdbcdf93da88482082bd381ee1e66534443385e93eada4bc1eca41cb"
+        },
+        {
+          "path": "contracts/shared/oracle/safety_payload.tolk",
+          "sha256": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b"
+        },
+        {
+          "path": "contracts/shared/oracle/safety.tolk",
+          "sha256": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41"
+        },
+        {
+          "path": "contracts/shared/oracle/twap.tolk",
+          "sha256": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd"
+        },
+        {
+          "path": "contracts/shared/referral/credit_outbox.tolk",
+          "sha256": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57"
+        },
+        {
+          "path": "contracts/shared/referral/credit_protocol.tolk",
+          "sha256": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae"
+        },
+        {
+          "path": "contracts/shared/referral/native_budget.tolk",
+          "sha256": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b"
+        },
+        {
+          "path": "contracts/shared/risk/counterparty.tolk",
+          "sha256": "406a6e92ee8edc99f4a49287de8c36ae4086f0325fe05311ce9e9c2e03a09ad2"
+        },
+        {
+          "path": "contracts/shared/risk/policy_lease.tolk",
+          "sha256": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8"
+        },
+        {
+          "path": "contracts/shared/storage/registry.tolk",
+          "sha256": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a"
+        },
+        {
+          "path": "contracts/shared/utils/error_codes.tolk",
+          "sha256": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2"
+        },
+        {
+          "path": "contracts/shared/utils/overflow_decode.tolk",
+          "sha256": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17"
+        },
+        {
+          "path": "contracts/shared/utils/serialization.tolk",
+          "sha256": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+        },
+        {
+          "path": "contracts/testing/bounce_wallet.tolk",
+          "sha256": "0d7fa428b21c319fcf6bc20701997a834d601312d3494fd87e60a2983c6295f5"
+        },
+        {
+          "path": "contracts/testing/native_funding_rejector.tolk",
+          "sha256": "bcc6754197a1e69c033c9c6389b9443af26ff20602edae71726f7c0a3d3dc893"
+        },
+        {
+          "path": "contracts/treasury/fee_router.tolk",
+          "sha256": "9db416be9e3b3cb52a5c5bedb0def80d71b217732e25cd6f026fd88936b76165"
+        },
+        {
+          "path": "interfaces/automation/gasVaultFunding.ts",
+          "sha256": "87ce2f4b268509b323e61434d83876fb9fdcebf226ec7db0d9be9c2790c2b74e"
+        },
+        {
+          "path": "jest.config.cjs",
+          "sha256": "adafb32e2b616b0f9949df0a7391ab2ae33484552cc440b8a6ea19ea9ee74513"
+        },
+        {
+          "path": "node_modules/@ton/blueprint/package.json",
+          "sha256": "2b541f1c9d7487189bb4f24cdf0dd59e5fcde1a4abe0ec17cd1d54bf1a314676"
+        },
+        {
+          "path": "node_modules/@ton/core/package.json",
+          "sha256": "90d52326f9ee1d9edbc1aab400a578be3223fe19af34751eb7beb462a14d3e0a"
+        },
+        {
+          "path": "node_modules/@ton/sandbox/package.json",
+          "sha256": "42b1d21074547a894b99a6d39813b8a16d09beed24721ee52c3040b64e3f4f7c"
+        },
+        {
+          "path": "node_modules/@ton/tolk-js/package.json",
+          "sha256": "086153e1c537eaa82923e9e6ea94d95dddfefeb10806f1a221b273439ba22fef"
+        },
+        {
+          "path": "node_modules/ts-jest/package.json",
+          "sha256": "1d7b1b9e3001ea9a4bd92471ea580b46f7d9dbd90201c9114c9f129908c96213"
+        },
+        {
+          "path": "node_modules/typescript/package.json",
+          "sha256": "5a0bb7f286c4b3f1413a42c05f902311b161f70e5f52d9da10490443bfd595a3"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "b178f14c7adfe50f4832837492e684cc684aa8468e35d6a90cdd47ba0e1d3cb5"
+        },
+        {
+          "path": "package.json",
+          "sha256": "abc0ab90bb99f9e431191f9db59ca4a394c0e2ec97653128ddc3d6dd99c9c95e"
+        },
+        {
+          "path": "scripts/perps/perpsEngineBootstrapPlan.ts",
+          "sha256": "15470886e4ade2a6c96b6c14bdc50a0ef7f6ae33e569a238478c2d3a782e9706"
+        },
+        {
+          "path": "scripts/release/currentIndexerReadClient.ts",
+          "sha256": "945fb5372be9888165407ae4ad1f2b7f50403ca0ca9b83ef91b76d0e26eafa02"
+        },
+        {
+          "path": "scripts/release/firstReleaseNetworkFeeSchedule.ts",
+          "sha256": "ba8647a70d709f562fe3252d2a1ea998b1560c456184e95bc1d8bf18e631ac2d"
+        },
+        {
+          "path": "scripts/release/firstReleasePerpsHardCap.ts",
+          "sha256": "586f6e0bd69c4ecc557d2b11362586474c1343063d3b1df541ac03d756863f79"
+        },
+        {
+          "path": "scripts/release/firstReleasePerpsMaintenanceBudget.ts",
+          "sha256": "22af8c09aab0e1da73a3fc8597fc2b3d17531df968070b33b306163781a1b85c"
+        },
+        {
+          "path": "scripts/release/firstReleasePerpsUpkeep.ts",
+          "sha256": "8a41fa8425a1f37354df08e5f1f28628b62a48843292bfd0c720d303a95ffd3d"
+        },
+        {
+          "path": "scripts/release/firstReleaseRiskBudget.ts",
+          "sha256": "9d8190664517a360a5410b504edddf5e514502f47872790d746e3736bee4d1a2"
+        },
+        {
+          "path": "scripts/release/perpsDirectFeeProof.ts",
+          "sha256": "913cd62d465e1bea65ed9fda271de46bbbbf1bb0fb1027805de705d9976e1ab8"
+        },
+        {
+          "path": "scripts/release/perpsReferralFundingProof.ts",
+          "sha256": "9c389e51839c23925ac624814ffa65cc5a4e7bfa4cbe3b71796a1b013c94139d"
+        },
+        {
+          "path": "scripts/release/perpsReleaseCausality.ts",
+          "sha256": "98d21d3018a92c8384aed0f0f20c4d3a01f2f19ec69de8a2df1bcf498f639f54"
+        },
+        {
+          "path": "scripts/release/perpsReleaseCounterpartyProof.ts",
+          "sha256": "bffff3e1d7a038c67f4da2c6caf6f4fa21ccdfd90ddcaf546107438bfdcd084b"
+        },
+        {
+          "path": "scripts/release/upkeepProof/trace-policy.cjs",
+          "sha256": "ff828dd9a9795d47a069a24d197ff8c9a27e04b3b4b1eddd3ee31e2f8a93b44e"
+        },
+        {
+          "path": "scripts/utils/canonicalTonTransactionEvidence.ts",
+          "sha256": "ec37ea497bdd6dfe6e146eecfb37e500099a9a7d09d4482b2fc0ac29f2a3b63c"
+        },
+        {
+          "path": "scripts/utils/dlmmOracle.ts",
+          "sha256": "97816e803a034ac3f984d294c4372e5b983abc5e31e60d89d36479e45af842cd"
+        },
+        {
+          "path": "scripts/utils/repoPathGuards.ts",
+          "sha256": "348bc2f68dc44a88ced3115b108885140ffed7abf90ad75189efa185c333d156"
+        },
+        {
+          "path": "scripts/utils/tonTargetTransactionReceipt.ts",
+          "sha256": "07e8c6971d5912346692ff32453d70b55b25921e2ddedbd53a8093ee1e28e55d"
+        },
+        {
+          "path": "simulations/perps/utils/dlmmPool.ts",
+          "sha256": "e3e4e3811374ffb954b8274c28be5e4ce60a2bcd8323a90df56ba3b76d1f37cd"
+        },
+        {
+          "path": "simulations/perps/utils/t3.ts",
+          "sha256": "8f8d801a22e02c20f5ba6740268ee573caab7c0878a04027bbe544d099210108"
+        },
+        {
+          "path": "tests/fixtures/canonicalGovernanceFixtureValue.ts",
+          "sha256": "f85e3c702cfb92e4c24d2701fb27fabcb805d3cd85d9f2472dfbd49bf0d70f45"
+        },
+        {
+          "path": "tests/fixtures/canonicalTestnetConfig.ts",
+          "sha256": "43027cd066842fb62e66bf5a0e73e69cb588536907001a0a332f71227f453eb6"
+        },
+        {
+          "path": "tests/fixtures/closedVm15GraphFees.ts",
+          "sha256": "cb994a3a534b3216172e0efe1a768a575f38838d1e71481d62c19a68a2d2c314"
+        },
+        {
+          "path": "tests/fixtures/jetton.ts",
+          "sha256": "d8019c59596cc0ee73c38c1598f65ec6862a45019cad33ac463b01efffee7616"
+        },
+        {
+          "path": "tests/fixtures/perpsOrder.ts",
+          "sha256": "a40c503e06301adfe9198763d6f95ddec82da4de2a1842e438da479789bcdfac"
+        },
+        {
+          "path": "tests/fixtures/perpsRisk.ts",
+          "sha256": "06d90311c546d2752ddc089e6d3676aac8371d10f2537859c5f4fb0760c8f179"
+        },
+        {
+          "path": "tests/fixtures/perpsRiskFees.ts",
+          "sha256": "ff190d54a93d9644ff5ae5df6a7115f91c6af5e937dd4aa21e759143b92b6a38"
+        },
+        {
+          "path": "tests/fixtures/referralProofOutput.ts",
+          "sha256": "722bd222e4540450bd80220629c51ffdca5a5e3365a54b5ee5fcb57200594171"
+        },
+        {
+          "path": "tests/perps/PerpsBrowserEvidence.spec.ts",
+          "sha256": "c40d04dda33f6643ae17c88c5901b036116e03d76ba0289a195e0b88d399a4ce"
+        },
+        {
+          "path": "tests/perps/PerpsEngineFunding.spec.ts",
+          "sha256": "5a3d09888c73b781151a3eaa485f4a75061d1b1976321396d2a93db5b0a8f63f"
+        },
+        {
+          "path": "tests/perps/PerpsExecutionFunding.spec.ts",
+          "sha256": "7da0d171c6d26f857266bb3b5748f1b13c8252e46fa5d86cea86a401deef5372"
+        },
+        {
+          "path": "tests/perps/PerpsRiskAdmission.spec.ts",
+          "sha256": "1d5d66bf56ea6dc9fcd33092479d17147de4911afd0c845497f824d6847238ac"
+        },
+        {
+          "path": "tests/referral/PerpsTradeReferralPayout.spec.ts",
+          "sha256": "7a4bb7ad3d46e45837074585ef751f40c163eee788dcf3baddc33a00d1436d40"
+        },
+        {
+          "path": "tests/setup.maxListeners.ts",
+          "sha256": "fb7d38de7be512e930c2c5151080b70c4d0c3f8aa33917130e4a702eb5d28eab"
+        },
+        {
+          "path": "tests/setup.silenceSandboxLogs.ts",
+          "sha256": "a78f084cdfecb58dcfc9a011b3e045ccaaf481a5798a90e03628eee2262617f3"
+        },
+        {
+          "path": "tsconfig.json",
+          "sha256": "68f93a963eaba578380ed6972221defd9b7505a172807edbdbafb17ea1f652ec"
+        },
+        {
+          "path": "wrappers/AutomationJobQueue.ts",
+          "sha256": "9ca84297f8cf7efbeaaa2f8192c5446eccf686b90708940902afb4a6e8bd8069"
+        },
+        {
+          "path": "wrappers/BounceWallet.compile.ts",
+          "sha256": "d9c91858fc8bae89d5f3848356a65054255afbe713d86396b23a645482ee75a5"
+        },
+        {
+          "path": "wrappers/DlmmPool.compile.ts",
+          "sha256": "9fce5e18d06ce503df2dcdfb0c9c9e63157644dedda24d38254b49a3585c8b3f"
+        },
+        {
+          "path": "wrappers/DlmmPool.ts",
+          "sha256": "82fbc04d77cd99b1aa5b34ba64f474ba2c7432780d64ed98d09dc85730a021ec"
+        },
+        {
+          "path": "wrappers/dlmmPoolEntrypoint.ts",
+          "sha256": "fe145347b3c4b3326c15a8605db4d606a9324c4f0e20555d9c257bc94ce2336d"
+        },
+        {
+          "path": "wrappers/EmissionsSplitter.compile.ts",
+          "sha256": "40c87fadd413f12e7941196ca9d521baf197fcb87fdf6af517a780baa10a6ebd"
+        },
+        {
+          "path": "wrappers/EmissionsSplitter.ts",
+          "sha256": "2a21c7fba9fba6a624086f24c20be5534e1342ac91b2ee1e029daa658bb5c298"
+        },
+        {
+          "path": "wrappers/entrypointWriter.ts",
+          "sha256": "a8ad4ad81c5e5da4138e711ba6b5069dba477979352753c17eeb6e651d2cbb66"
+        },
+        {
+          "path": "wrappers/FeeRouter.compile.ts",
+          "sha256": "1335d825ae632cd8f814f7d54bb3fdba4f8b2d5f4d3c73f382e34911751b6975"
+        },
+        {
+          "path": "wrappers/FeeRouter.ts",
+          "sha256": "09da23e2c4f6af9ca170f6f2bbb5c4f33af33b60aace8ed5cbbb79a231942123"
+        },
+        {
+          "path": "wrappers/GasVault.compile.ts",
+          "sha256": "5ae1491a1df847ffdeafb0b376a3ff1c793e579f02a7668c5d490515ba9ee3fb"
+        },
+        {
+          "path": "wrappers/GasVault.ts",
+          "sha256": "5500dfefde7cc5f6aea1d473eb466f329749a913a36dbd59d46e2ee6cb55fb13"
+        },
+        {
+          "path": "wrappers/generated/opcodes.ts",
+          "sha256": "8240bc876be6864c373558219ce8720b6c0028538863ddecaab379cc8e47833e"
+        },
+        {
+          "path": "wrappers/InsuranceVault.compile.ts",
+          "sha256": "9d1b3e2453be8432cc0378dae68ff9d216d9cf749fc2667bf2d165684ee4380a"
+        },
+        {
+          "path": "wrappers/InsuranceVault.ts",
+          "sha256": "805758c5768b20309cb59af69e3af6304c72e0eb07ce2838a29811f67ed16173"
+        },
+        {
+          "path": "wrappers/JettonRoot.compile.ts",
+          "sha256": "daa73fbed1e660a02c7de8ae3e72656f0434ec22c9832230516d1d633b786018"
+        },
+        {
+          "path": "wrappers/JettonRoot.ts",
+          "sha256": "47fea07385200ba521231e94d63ae17ff0025bcce9c2d093fc7c4604c799fae0"
+        },
+        {
+          "path": "wrappers/jettonRootEntrypoint.ts",
+          "sha256": "95bf63f6baa561227d00c243e88e4a25dd941a18b9fbe6fe066f231cd82f8145"
+        },
+        {
+          "path": "wrappers/JettonWallet.compile.ts",
+          "sha256": "7de9f1382d341c4aab30849d8af9b381d02e70c628d2ab72bd7949156d5437f3"
+        },
+        {
+          "path": "wrappers/JettonWallet.ts",
+          "sha256": "0957f78d4f0d506c460e28752dda9237083299c92a9a2ddd341e0f97efe31e12"
+        },
+        {
+          "path": "wrappers/jettonWalletEntrypoint.ts",
+          "sha256": "c6adca9d82b3fc6ea767b5070b69461c62fafa63d6bc2f04d23254b2c41aadda"
+        },
+        {
+          "path": "wrappers/launchpadNativeFunding.ts",
+          "sha256": "59bcf40fb22691d8115fd1137643290c6b46f234f0e2e70d157281af524c258c"
+        },
+        {
+          "path": "wrappers/localnetMode.ts",
+          "sha256": "6913364325e642865218c1dc53c28f9e2b2a074a848b723e910a4efc7f47ee01"
+        },
+        {
+          "path": "wrappers/MockJettonWallet.ts",
+          "sha256": "d22445032d748d4e1bc61af4bc9a083076fb9cb2c03b36f0d96603bb42e282f9"
+        },
+        {
+          "path": "wrappers/NativeFunding.ts",
+          "sha256": "d339b3747532d318681ac9f0758dd8b36db64fe33db61772c3188c8eced066fc"
+        },
+        {
+          "path": "wrappers/NativeFundingRejector.compile.ts",
+          "sha256": "447bf8843c8a8bb6c55ecd94a58354d31fd4fa2ca25cbcb34ea88a0a2e55fd6f"
+        },
+        {
+          "path": "wrappers/NativeReturnCollector.compile.ts",
+          "sha256": "cc60631520d74b928d4aa52e838c58f3efb79962d8f720b75367c7be02d82715"
+        },
+        {
+          "path": "wrappers/NativeReturnCollector.ts",
+          "sha256": "7a9d7c8898858187bfc68a8f816d13e19ad31431aef5f413a4ec75b6837a0387"
+        },
+        {
+          "path": "wrappers/OptionFactory.ts",
+          "sha256": "6776f3da574bae3341304efbcba67b5c5908c47c01c2008bf7bfcca67aa1b874"
+        },
+        {
+          "path": "wrappers/OptionsSnapshot.ts",
+          "sha256": "251777cc7f0f80ecf6d0391ee1bc8425d705cc8957a8d3a27863ab70cd79ceb4"
+        },
+        {
+          "path": "wrappers/OptionVault.ts",
+          "sha256": "bf0971979f149377e80e0932dd1279ea89195848fbbf204beaf3d74bcc172c32"
+        },
+        {
+          "path": "wrappers/OutperformanceOption.ts",
+          "sha256": "91c2112175d3dd8eab4dd7488ac2b340ceaf8ee41aaafb95da168dc12075428f"
+        },
+        {
+          "path": "wrappers/perpsControlNativeBudget.ts",
+          "sha256": "ae5dda3b1b1e3a884bc96179170798f400a3566992c3d03fa8208f4f53dea8d8"
+        },
+        {
+          "path": "wrappers/PerpsEngine.compile.ts",
+          "sha256": "40d895dc6f874a74774b86602afee8f98c590889d391f87c024c346dc709c6a8"
+        },
+        {
+          "path": "wrappers/PerpsEngine.ts",
+          "sha256": "90003cb84b89bb6939a9a2a910b3e2f848f51ecd468d81d59e9b8feae9403609"
+        },
+        {
+          "path": "wrappers/PerpsEngineBootstrap.compile.ts",
+          "sha256": "151e9add77eb705345a9c9f4e287874d0ccaab9c27e2ed27f20e1fa445887e99"
+        },
+        {
+          "path": "wrappers/PerpsEngineBootstrap.ts",
+          "sha256": "c3cf896d4913b581c5e9fa92d2f23e67671b234baf027e1c6ba48b1a88f135dc"
+        },
+        {
+          "path": "wrappers/perpsEngineEntrypoint.ts",
+          "sha256": "81120d829ea488bd0528916e4b90490cfb2e8685f8d6710c55640f6f86d71282"
+        },
+        {
+          "path": "wrappers/perpsExecutionFunding.ts",
+          "sha256": "a17440c753aec4336cae59d937319c1a4e852dc33dd36711549b7ccd810fd535"
+        },
+        {
+          "path": "wrappers/ReferralDistributor.compile.ts",
+          "sha256": "514681b507049af7da3d0e506d016c0de276177f6bc786822f96e44129d6793e"
+        },
+        {
+          "path": "wrappers/ReferralDistributor.ts",
+          "sha256": "05d5d5ec4019119cb7fbce2cbdd25e8086e474c92024f16aa207ce6e8303483b"
+        },
+        {
+          "path": "wrappers/ReferralRegistry.compile.ts",
+          "sha256": "4f99b570d229a28804c36f300e26735f2783b1ecc2e12f57c8f779eba4182f1e"
+        },
+        {
+          "path": "wrappers/ReferralRegistry.ts",
+          "sha256": "e3934b0cb43cd1b6a8aed2cdc5fbb3c29089c48978235a5493f1b58ac61acc3a"
+        },
+        {
+          "path": "wrappers/RiskController.compile.ts",
+          "sha256": "02b26c838a208388759cbce0b5a841ad042a34b74a76f643af906ed696bf8ae0"
+        },
+        {
+          "path": "wrappers/RiskController.ts",
+          "sha256": "eb743ffe606e5b09522019b93c95399c18af903510f539e15e170e56238211ed"
+        },
+        {
+          "path": "wrappers/riskControllerEntrypoint.ts",
+          "sha256": "5f2334b7ebe1ba4a159c018810b9d09433a3c56e7a1a995f7a5ffbc552f08e81"
+        },
+        {
+          "path": "wrappers/RiskControllerNativeBudget.ts",
+          "sha256": "e69ca612829e6fa7857125d53897b4d5ae6367a9555475662a4ad9117c21c779"
+        },
+        {
+          "path": "wrappers/RiskVault.compile.ts",
+          "sha256": "609c2a9072522189e54422001158f0313bbd135acd5ecc91f11613a38140b7d7"
+        },
+        {
+          "path": "wrappers/RiskVault.ts",
+          "sha256": "997ff213d4e6a15e88956a9e55cd2f3fecf7f11a5367160bb873388a04f4b1fb"
+        },
+        {
+          "path": "wrappers/riskVaultEntrypoint.ts",
+          "sha256": "cb8319dc100b6a7397d31a58ff4709fd3e287003daf38a44006f9f5b96515ec8"
+        },
+        {
+          "path": "wrappers/ShoutOption.ts",
+          "sha256": "0cea1589051434515f60ad10eec93c8d343fb2248fb20b311c7c3938dfbd948f"
+        },
+        {
+          "path": "wrappers/Treasury.compile.ts",
+          "sha256": "5d7a906c3909bcab2628b27f2279157858c72da11ae67c23b554f76cf98050f6"
+        },
+        {
+          "path": "wrappers/Treasury.ts",
+          "sha256": "f308fa52733dbc306371885ede41b79b40b6de400da43db412ca5d77ada0b2b8"
+        },
+        {
+          "path": "wrappers/TwapNativeBudget.ts",
+          "sha256": "f94b985f3f81bfd917a6f21067fffea2923aa20256f6b96d422c6ce494c8039f"
+        },
+        {
+          "path": "wrappers/utils/registry.ts",
+          "sha256": "bd2099035659c127655131654d4ee736add1e88c407bc10aaf72870a4e1f51ae"
+        }
+      ]
+    },
+    "sourceAfter": {
+      "digest": "d71e392e09a2c59f700be0ae7c964a215d352d5ecb7f49686817d251860c2ea7",
+      "files": [
+        {
+          "path": "contracts/automation/gas_vault.tolk",
+          "sha256": "2997bfc5a9760323ab9540163b601a98dfe518bdea49fa4672e22e02fa020b3a"
+        },
+        {
+          "path": "contracts/automation/heartbeat.tolk",
+          "sha256": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1"
+        },
+        {
+          "path": "contracts/automation/native_return_collector.tolk",
+          "sha256": "c0fd5ec99cf0e20556136b8e219f49e354653beb6a31b65000d5bd5558b1d8d2"
+        },
+        {
+          "path": "contracts/control/control_mesh_messages.tolk",
+          "sha256": "f14ae4dff0b5eb99c7eaeb2a4641d981735e10688a88e5ab8a6e718c802e7620"
+        },
+        {
+          "path": "contracts/control/risk_controller.tolk",
+          "sha256": "4fc3897a205fc77d3d6620d105f8cc7bb3ef22f9b93a11f79ba350e5da1c3473"
+        },
+        {
+          "path": "contracts/control/risk_native_budget.tolk",
+          "sha256": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67"
+        },
+        {
+          "path": "contracts/dex/stable_math.tolk",
+          "sha256": "be051f9b2ceb11e73cac1e00f9e1f879c7524684fc2c75b938881b0e5099bd64"
+        },
+        {
+          "path": "contracts/dex/twap_native_budget.tolk",
+          "sha256": "8f405352980aa921925168ee713ee4c90c5870a1aa173139b6ada564acd80967"
+        },
+        {
+          "path": "contracts/dlmm/constants.tolk",
+          "sha256": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a"
+        },
+        {
+          "path": "contracts/dlmm/farming.tolk",
+          "sha256": "74b2113d19647cd520e3b9146f68b159a38c68dbbaa149d191b31aaf82ec34e4"
+        },
+        {
+          "path": "contracts/dlmm/math.tolk",
+          "sha256": "2dc2566c48f55476c69b8b199931d2bf16d26ceb962ef37fb165ddbdda63178a"
+        },
+        {
+          "path": "contracts/dlmm/pool.tolk",
+          "sha256": "4dd6fa360ab04c80a032ec82a0f83f056946a02cc451b93735a88225ec6570a5"
+        },
+        {
+          "path": "contracts/generated/opcodes/automation/gas_vault_opcodes.tolk",
+          "sha256": "9c7271afaa558da3f0dbbf2c579e6f68880c7ecc3474e4df980f666a5fd92612"
+        },
+        {
+          "path": "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk",
+          "sha256": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5"
+        },
+        {
+          "path": "contracts/generated/opcodes/governance/treasury_opcodes.tolk",
+          "sha256": "3dca06bd146665ad97d293532ce8345ea873bd7f34fde20be4734c356fa8ee12"
+        },
+        {
+          "path": "contracts/generated/opcodes/perps/insurance_vault_opcodes.tolk",
+          "sha256": "84c539a92bdbeb9e17291272742b0678dd4cc4864e6649b2af071e4b0c5cacce"
+        },
+        {
+          "path": "contracts/generated/opcodes/perps/perps_engine_opcodes.tolk",
+          "sha256": "5be424d41668df7f1bdbfb658f7dc99d1640f160280e3fc27368f64b9bfd0afe"
+        },
+        {
+          "path": "contracts/generated/opcodes/referral/distributor_opcodes.tolk",
+          "sha256": "a18f747e9a75a210efbe5bf6ee65de1f37b8b1bee12637d1efaa5db584cdfe83"
+        },
+        {
+          "path": "contracts/generated/opcodes/referral/emissions_splitter_opcodes.tolk",
+          "sha256": "9cb1a39e1aa3a723d43742b3c4b05ff05b24393d70220f38e2f4c4fc91789591"
+        },
+        {
+          "path": "contracts/generated/opcodes/referral/registry_opcodes.tolk",
+          "sha256": "50268831cbec54d6bd9a9844830778afa1853d084a78b133a14968f3ca54395e"
+        },
+        {
+          "path": "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk",
+          "sha256": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa"
+        },
+        {
+          "path": "contracts/generated/opcodes/shared/jetton/jetton_root_opcodes.tolk",
+          "sha256": "57e21353838b2aa1ad7a5a8a85fd8ab72f48500d7d99dad1895d868fbb441778"
+        },
+        {
+          "path": "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk",
+          "sha256": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61"
+        },
+        {
+          "path": "contracts/generated/opcodes/treasury/fee_router_opcodes.tolk",
+          "sha256": "2d4e7700125c127c1fa382ebd8705f0453839a38c429df9f1b714b50176ff002"
+        },
+        {
+          "path": "contracts/governance/treasury.tolk",
+          "sha256": "5e1f0791b25d64ffa7528a3076b5c83b937c01abc343263f4bec3f27d4ea2f80"
+        },
+        {
+          "path": "contracts/launchpad/native_budget.tolk",
+          "sha256": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4"
+        },
+        {
+          "path": "contracts/perps/insurance_vault.tolk",
+          "sha256": "cfeec81910fc42240c3c168c371ca5b3cb3ff35f7604814513468bf157ff42fc"
+        },
+        {
+          "path": "contracts/perps/native_budget.tolk",
+          "sha256": "07039f9d92150bda665b349224da0d7f1bbc4ecb0ab9661a893c4111b032a546"
+        },
+        {
+          "path": "contracts/perps/perps_engine_installer.tolk",
+          "sha256": "53915cb0adfd58801e18f129bc0240d73aa3abbc5def0de63c5c4c1056237ebb"
+        },
+        {
+          "path": "contracts/perps/perps_engine.tolk",
+          "sha256": "5ebd651ca45e36bbce96afff0ab6802f3f4c9997efeb3c34a3cb6234190aa3a7"
+        },
+        {
+          "path": "contracts/referral/distributor.tolk",
+          "sha256": "2eee774bac114360102e44f844a5b736637b602eac907e5ec945e17f50a13128"
+        },
+        {
+          "path": "contracts/referral/emissions_splitter.tolk",
+          "sha256": "2c3533cf240d450f424e74099f21116634cc7e8554aa182f36ebfa4da67cded2"
+        },
+        {
+          "path": "contracts/referral/registry.tolk",
+          "sha256": "31fa7d026642c59d9aac06a8157aae32e3cb43f6bd42b8a12658b8abc7dbe5a4"
+        },
+        {
+          "path": "contracts/risk/native_budget.tolk",
+          "sha256": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863"
+        },
+        {
+          "path": "contracts/risk/risk_vault.tolk",
+          "sha256": "fbeff1f2775968acdd1da3fd3030e4202710683d0b1ddcdf72a7fc45b13541f6"
+        },
+        {
+          "path": "contracts/shared/automation/gas_vault_namespaces.tolk",
+          "sha256": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9"
+        },
+        {
+          "path": "contracts/shared/automation/job_queue_funding.tolk",
+          "sha256": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295"
+        },
+        {
+          "path": "contracts/shared/automation/module_config.tolk",
+          "sha256": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861"
+        },
+        {
+          "path": "contracts/shared/automation/native_return_collector_identity.tolk",
+          "sha256": "c048574ce19bc7ddd6dd53b1221e8d16a4fba01f9386206f25ad5660507f3b9f"
+        },
+        {
+          "path": "contracts/shared/constants/gas_reserve.tolk",
+          "sha256": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1"
+        },
+        {
+          "path": "contracts/shared/control/control_receipt.tolk",
+          "sha256": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f"
+        },
+        {
+          "path": "contracts/shared/control/gas_telemetry.tolk",
+          "sha256": "a8cfc670fee4b2b6362e70fd66c9bc188710a7919c5eb6329919d67a57d80bb0"
+        },
+        {
+          "path": "contracts/shared/governance/activation_native_budget.tolk",
+          "sha256": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2"
+        },
+        {
+          "path": "contracts/shared/governance/activation_receipt.tolk",
+          "sha256": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf"
+        },
+        {
+          "path": "contracts/shared/jetton/application_ingress.tolk",
+          "sha256": "97d3f365dd75a57f13ff04dd29cfbdaf176b088d91b97c345e02ec32df27f7d8"
+        },
+        {
+          "path": "contracts/shared/jetton/burn_budget.tolk",
+          "sha256": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f"
+        },
+        {
+          "path": "contracts/shared/jetton/cover_ingress.tolk",
+          "sha256": "6ab9441472d0e5d3fb8fdae0936eff31190efa96620a16e29165cc7c411e9167"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_root.tolk",
+          "sha256": "56e1c1d90892c3eec80f26f67726ced05389ccab48690b715b86c8ee372ff439"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_types.tolk",
+          "sha256": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_utils.tolk",
+          "sha256": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_wallet_storage.tolk",
+          "sha256": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd"
+        },
+        {
+          "path": "contracts/shared/jetton/jetton_wallet.tolk",
+          "sha256": "843dbfc680c23dbddb9662efebfa01f8a23c566e9e657d1578f854196bce5471"
+        },
+        {
+          "path": "contracts/shared/jetton/mint_budget.tolk",
+          "sha256": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674"
+        },
+        {
+          "path": "contracts/shared/jetton/t3_burn_budget.tolk",
+          "sha256": "ee021d031f6d82608ebcedc04f032c7ff704d73530150934128b28380321c252"
+        },
+        {
+          "path": "contracts/shared/jetton/tep74_codec.tolk",
+          "sha256": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141"
+        },
+        {
+          "path": "contracts/shared/jetton/tep89_codec.tolk",
+          "sha256": "fa30dff7e9be5a95cb75f5dd52e0b4878ab217a2ac5d4d7a195af2430d8ad195"
+        },
+        {
+          "path": "contracts/shared/jetton/transfer_budget.tolk",
+          "sha256": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386"
+        },
+        {
+          "path": "contracts/shared/math/full_math.tolk",
+          "sha256": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a"
+        },
+        {
+          "path": "contracts/shared/math/integer.tolk",
+          "sha256": "c7f63c66b50b6bcc4b1fa77fd71a5123b13cb8403610ac277db59d4caf55f5c3"
+        },
+        {
+          "path": "contracts/shared/native/funding.tolk",
+          "sha256": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f"
+        },
+        {
+          "path": "contracts/shared/oracle/pool_realized.tolk",
+          "sha256": "197c13cecdbcdf93da88482082bd381ee1e66534443385e93eada4bc1eca41cb"
+        },
+        {
+          "path": "contracts/shared/oracle/safety_payload.tolk",
+          "sha256": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b"
+        },
+        {
+          "path": "contracts/shared/oracle/safety.tolk",
+          "sha256": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41"
+        },
+        {
+          "path": "contracts/shared/oracle/twap.tolk",
+          "sha256": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd"
+        },
+        {
+          "path": "contracts/shared/referral/credit_outbox.tolk",
+          "sha256": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57"
+        },
+        {
+          "path": "contracts/shared/referral/credit_protocol.tolk",
+          "sha256": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae"
+        },
+        {
+          "path": "contracts/shared/referral/native_budget.tolk",
+          "sha256": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b"
+        },
+        {
+          "path": "contracts/shared/risk/counterparty.tolk",
+          "sha256": "406a6e92ee8edc99f4a49287de8c36ae4086f0325fe05311ce9e9c2e03a09ad2"
+        },
+        {
+          "path": "contracts/shared/risk/policy_lease.tolk",
+          "sha256": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8"
+        },
+        {
+          "path": "contracts/shared/storage/registry.tolk",
+          "sha256": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a"
+        },
+        {
+          "path": "contracts/shared/utils/error_codes.tolk",
+          "sha256": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2"
+        },
+        {
+          "path": "contracts/shared/utils/overflow_decode.tolk",
+          "sha256": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17"
+        },
+        {
+          "path": "contracts/shared/utils/serialization.tolk",
+          "sha256": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+        },
+        {
+          "path": "contracts/testing/bounce_wallet.tolk",
+          "sha256": "0d7fa428b21c319fcf6bc20701997a834d601312d3494fd87e60a2983c6295f5"
+        },
+        {
+          "path": "contracts/testing/native_funding_rejector.tolk",
+          "sha256": "bcc6754197a1e69c033c9c6389b9443af26ff20602edae71726f7c0a3d3dc893"
+        },
+        {
+          "path": "contracts/treasury/fee_router.tolk",
+          "sha256": "9db416be9e3b3cb52a5c5bedb0def80d71b217732e25cd6f026fd88936b76165"
+        },
+        {
+          "path": "interfaces/automation/gasVaultFunding.ts",
+          "sha256": "87ce2f4b268509b323e61434d83876fb9fdcebf226ec7db0d9be9c2790c2b74e"
+        },
+        {
+          "path": "jest.config.cjs",
+          "sha256": "adafb32e2b616b0f9949df0a7391ab2ae33484552cc440b8a6ea19ea9ee74513"
+        },
+        {
+          "path": "node_modules/@ton/blueprint/package.json",
+          "sha256": "2b541f1c9d7487189bb4f24cdf0dd59e5fcde1a4abe0ec17cd1d54bf1a314676"
+        },
+        {
+          "path": "node_modules/@ton/core/package.json",
+          "sha256": "90d52326f9ee1d9edbc1aab400a578be3223fe19af34751eb7beb462a14d3e0a"
+        },
+        {
+          "path": "node_modules/@ton/sandbox/package.json",
+          "sha256": "42b1d21074547a894b99a6d39813b8a16d09beed24721ee52c3040b64e3f4f7c"
+        },
+        {
+          "path": "node_modules/@ton/tolk-js/package.json",
+          "sha256": "086153e1c537eaa82923e9e6ea94d95dddfefeb10806f1a221b273439ba22fef"
+        },
+        {
+          "path": "node_modules/ts-jest/package.json",
+          "sha256": "1d7b1b9e3001ea9a4bd92471ea580b46f7d9dbd90201c9114c9f129908c96213"
+        },
+        {
+          "path": "node_modules/typescript/package.json",
+          "sha256": "5a0bb7f286c4b3f1413a42c05f902311b161f70e5f52d9da10490443bfd595a3"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "b178f14c7adfe50f4832837492e684cc684aa8468e35d6a90cdd47ba0e1d3cb5"
+        },
+        {
+          "path": "package.json",
+          "sha256": "abc0ab90bb99f9e431191f9db59ca4a394c0e2ec97653128ddc3d6dd99c9c95e"
+        },
+        {
+          "path": "scripts/perps/perpsEngineBootstrapPlan.ts",
+          "sha256": "15470886e4ade2a6c96b6c14bdc50a0ef7f6ae33e569a238478c2d3a782e9706"
+        },
+        {
+          "path": "scripts/release/currentIndexerReadClient.ts",
+          "sha256": "945fb5372be9888165407ae4ad1f2b7f50403ca0ca9b83ef91b76d0e26eafa02"
+        },
+        {
+          "path": "scripts/release/firstReleaseNetworkFeeSchedule.ts",
+          "sha256": "ba8647a70d709f562fe3252d2a1ea998b1560c456184e95bc1d8bf18e631ac2d"
+        },
+        {
+          "path": "scripts/release/firstReleasePerpsHardCap.ts",
+          "sha256": "586f6e0bd69c4ecc557d2b11362586474c1343063d3b1df541ac03d756863f79"
+        },
+        {
+          "path": "scripts/release/firstReleasePerpsMaintenanceBudget.ts",
+          "sha256": "22af8c09aab0e1da73a3fc8597fc2b3d17531df968070b33b306163781a1b85c"
+        },
+        {
+          "path": "scripts/release/firstReleasePerpsUpkeep.ts",
+          "sha256": "8a41fa8425a1f37354df08e5f1f28628b62a48843292bfd0c720d303a95ffd3d"
+        },
+        {
+          "path": "scripts/release/firstReleaseRiskBudget.ts",
+          "sha256": "9d8190664517a360a5410b504edddf5e514502f47872790d746e3736bee4d1a2"
+        },
+        {
+          "path": "scripts/release/perpsDirectFeeProof.ts",
+          "sha256": "913cd62d465e1bea65ed9fda271de46bbbbf1bb0fb1027805de705d9976e1ab8"
+        },
+        {
+          "path": "scripts/release/perpsReferralFundingProof.ts",
+          "sha256": "9c389e51839c23925ac624814ffa65cc5a4e7bfa4cbe3b71796a1b013c94139d"
+        },
+        {
+          "path": "scripts/release/perpsReleaseCausality.ts",
+          "sha256": "98d21d3018a92c8384aed0f0f20c4d3a01f2f19ec69de8a2df1bcf498f639f54"
+        },
+        {
+          "path": "scripts/release/perpsReleaseCounterpartyProof.ts",
+          "sha256": "bffff3e1d7a038c67f4da2c6caf6f4fa21ccdfd90ddcaf546107438bfdcd084b"
+        },
+        {
+          "path": "scripts/release/upkeepProof/trace-policy.cjs",
+          "sha256": "ff828dd9a9795d47a069a24d197ff8c9a27e04b3b4b1eddd3ee31e2f8a93b44e"
+        },
+        {
+          "path": "scripts/utils/canonicalTonTransactionEvidence.ts",
+          "sha256": "ec37ea497bdd6dfe6e146eecfb37e500099a9a7d09d4482b2fc0ac29f2a3b63c"
+        },
+        {
+          "path": "scripts/utils/dlmmOracle.ts",
+          "sha256": "97816e803a034ac3f984d294c4372e5b983abc5e31e60d89d36479e45af842cd"
+        },
+        {
+          "path": "scripts/utils/repoPathGuards.ts",
+          "sha256": "348bc2f68dc44a88ced3115b108885140ffed7abf90ad75189efa185c333d156"
+        },
+        {
+          "path": "scripts/utils/tonTargetTransactionReceipt.ts",
+          "sha256": "07e8c6971d5912346692ff32453d70b55b25921e2ddedbd53a8093ee1e28e55d"
+        },
+        {
+          "path": "simulations/perps/utils/dlmmPool.ts",
+          "sha256": "e3e4e3811374ffb954b8274c28be5e4ce60a2bcd8323a90df56ba3b76d1f37cd"
+        },
+        {
+          "path": "simulations/perps/utils/t3.ts",
+          "sha256": "8f8d801a22e02c20f5ba6740268ee573caab7c0878a04027bbe544d099210108"
+        },
+        {
+          "path": "tests/fixtures/canonicalGovernanceFixtureValue.ts",
+          "sha256": "f85e3c702cfb92e4c24d2701fb27fabcb805d3cd85d9f2472dfbd49bf0d70f45"
+        },
+        {
+          "path": "tests/fixtures/canonicalTestnetConfig.ts",
+          "sha256": "43027cd066842fb62e66bf5a0e73e69cb588536907001a0a332f71227f453eb6"
+        },
+        {
+          "path": "tests/fixtures/closedVm15GraphFees.ts",
+          "sha256": "cb994a3a534b3216172e0efe1a768a575f38838d1e71481d62c19a68a2d2c314"
+        },
+        {
+          "path": "tests/fixtures/jetton.ts",
+          "sha256": "d8019c59596cc0ee73c38c1598f65ec6862a45019cad33ac463b01efffee7616"
+        },
+        {
+          "path": "tests/fixtures/perpsOrder.ts",
+          "sha256": "a40c503e06301adfe9198763d6f95ddec82da4de2a1842e438da479789bcdfac"
+        },
+        {
+          "path": "tests/fixtures/perpsRisk.ts",
+          "sha256": "06d90311c546d2752ddc089e6d3676aac8371d10f2537859c5f4fb0760c8f179"
+        },
+        {
+          "path": "tests/fixtures/perpsRiskFees.ts",
+          "sha256": "ff190d54a93d9644ff5ae5df6a7115f91c6af5e937dd4aa21e759143b92b6a38"
+        },
+        {
+          "path": "tests/fixtures/referralProofOutput.ts",
+          "sha256": "722bd222e4540450bd80220629c51ffdca5a5e3365a54b5ee5fcb57200594171"
+        },
+        {
+          "path": "tests/perps/PerpsBrowserEvidence.spec.ts",
+          "sha256": "c40d04dda33f6643ae17c88c5901b036116e03d76ba0289a195e0b88d399a4ce"
+        },
+        {
+          "path": "tests/perps/PerpsEngineFunding.spec.ts",
+          "sha256": "5a3d09888c73b781151a3eaa485f4a75061d1b1976321396d2a93db5b0a8f63f"
+        },
+        {
+          "path": "tests/perps/PerpsExecutionFunding.spec.ts",
+          "sha256": "7da0d171c6d26f857266bb3b5748f1b13c8252e46fa5d86cea86a401deef5372"
+        },
+        {
+          "path": "tests/perps/PerpsRiskAdmission.spec.ts",
+          "sha256": "1d5d66bf56ea6dc9fcd33092479d17147de4911afd0c845497f824d6847238ac"
+        },
+        {
+          "path": "tests/referral/PerpsTradeReferralPayout.spec.ts",
+          "sha256": "7a4bb7ad3d46e45837074585ef751f40c163eee788dcf3baddc33a00d1436d40"
+        },
+        {
+          "path": "tests/setup.maxListeners.ts",
+          "sha256": "fb7d38de7be512e930c2c5151080b70c4d0c3f8aa33917130e4a702eb5d28eab"
+        },
+        {
+          "path": "tests/setup.silenceSandboxLogs.ts",
+          "sha256": "a78f084cdfecb58dcfc9a011b3e045ccaaf481a5798a90e03628eee2262617f3"
+        },
+        {
+          "path": "tsconfig.json",
+          "sha256": "68f93a963eaba578380ed6972221defd9b7505a172807edbdbafb17ea1f652ec"
+        },
+        {
+          "path": "wrappers/AutomationJobQueue.ts",
+          "sha256": "9ca84297f8cf7efbeaaa2f8192c5446eccf686b90708940902afb4a6e8bd8069"
+        },
+        {
+          "path": "wrappers/BounceWallet.compile.ts",
+          "sha256": "d9c91858fc8bae89d5f3848356a65054255afbe713d86396b23a645482ee75a5"
+        },
+        {
+          "path": "wrappers/DlmmPool.compile.ts",
+          "sha256": "9fce5e18d06ce503df2dcdfb0c9c9e63157644dedda24d38254b49a3585c8b3f"
+        },
+        {
+          "path": "wrappers/DlmmPool.ts",
+          "sha256": "82fbc04d77cd99b1aa5b34ba64f474ba2c7432780d64ed98d09dc85730a021ec"
+        },
+        {
+          "path": "wrappers/dlmmPoolEntrypoint.ts",
+          "sha256": "fe145347b3c4b3326c15a8605db4d606a9324c4f0e20555d9c257bc94ce2336d"
+        },
+        {
+          "path": "wrappers/EmissionsSplitter.compile.ts",
+          "sha256": "40c87fadd413f12e7941196ca9d521baf197fcb87fdf6af517a780baa10a6ebd"
+        },
+        {
+          "path": "wrappers/EmissionsSplitter.ts",
+          "sha256": "2a21c7fba9fba6a624086f24c20be5534e1342ac91b2ee1e029daa658bb5c298"
+        },
+        {
+          "path": "wrappers/entrypointWriter.ts",
+          "sha256": "a8ad4ad81c5e5da4138e711ba6b5069dba477979352753c17eeb6e651d2cbb66"
+        },
+        {
+          "path": "wrappers/FeeRouter.compile.ts",
+          "sha256": "1335d825ae632cd8f814f7d54bb3fdba4f8b2d5f4d3c73f382e34911751b6975"
+        },
+        {
+          "path": "wrappers/FeeRouter.ts",
+          "sha256": "09da23e2c4f6af9ca170f6f2bbb5c4f33af33b60aace8ed5cbbb79a231942123"
+        },
+        {
+          "path": "wrappers/GasVault.compile.ts",
+          "sha256": "5ae1491a1df847ffdeafb0b376a3ff1c793e579f02a7668c5d490515ba9ee3fb"
+        },
+        {
+          "path": "wrappers/GasVault.ts",
+          "sha256": "5500dfefde7cc5f6aea1d473eb466f329749a913a36dbd59d46e2ee6cb55fb13"
+        },
+        {
+          "path": "wrappers/generated/opcodes.ts",
+          "sha256": "8240bc876be6864c373558219ce8720b6c0028538863ddecaab379cc8e47833e"
+        },
+        {
+          "path": "wrappers/InsuranceVault.compile.ts",
+          "sha256": "9d1b3e2453be8432cc0378dae68ff9d216d9cf749fc2667bf2d165684ee4380a"
+        },
+        {
+          "path": "wrappers/InsuranceVault.ts",
+          "sha256": "805758c5768b20309cb59af69e3af6304c72e0eb07ce2838a29811f67ed16173"
+        },
+        {
+          "path": "wrappers/JettonRoot.compile.ts",
+          "sha256": "daa73fbed1e660a02c7de8ae3e72656f0434ec22c9832230516d1d633b786018"
+        },
+        {
+          "path": "wrappers/JettonRoot.ts",
+          "sha256": "47fea07385200ba521231e94d63ae17ff0025bcce9c2d093fc7c4604c799fae0"
+        },
+        {
+          "path": "wrappers/jettonRootEntrypoint.ts",
+          "sha256": "95bf63f6baa561227d00c243e88e4a25dd941a18b9fbe6fe066f231cd82f8145"
+        },
+        {
+          "path": "wrappers/JettonWallet.compile.ts",
+          "sha256": "7de9f1382d341c4aab30849d8af9b381d02e70c628d2ab72bd7949156d5437f3"
+        },
+        {
+          "path": "wrappers/JettonWallet.ts",
+          "sha256": "0957f78d4f0d506c460e28752dda9237083299c92a9a2ddd341e0f97efe31e12"
+        },
+        {
+          "path": "wrappers/jettonWalletEntrypoint.ts",
+          "sha256": "c6adca9d82b3fc6ea767b5070b69461c62fafa63d6bc2f04d23254b2c41aadda"
+        },
+        {
+          "path": "wrappers/launchpadNativeFunding.ts",
+          "sha256": "59bcf40fb22691d8115fd1137643290c6b46f234f0e2e70d157281af524c258c"
+        },
+        {
+          "path": "wrappers/localnetMode.ts",
+          "sha256": "6913364325e642865218c1dc53c28f9e2b2a074a848b723e910a4efc7f47ee01"
+        },
+        {
+          "path": "wrappers/MockJettonWallet.ts",
+          "sha256": "d22445032d748d4e1bc61af4bc9a083076fb9cb2c03b36f0d96603bb42e282f9"
+        },
+        {
+          "path": "wrappers/NativeFunding.ts",
+          "sha256": "d339b3747532d318681ac9f0758dd8b36db64fe33db61772c3188c8eced066fc"
+        },
+        {
+          "path": "wrappers/NativeFundingRejector.compile.ts",
+          "sha256": "447bf8843c8a8bb6c55ecd94a58354d31fd4fa2ca25cbcb34ea88a0a2e55fd6f"
+        },
+        {
+          "path": "wrappers/NativeReturnCollector.compile.ts",
+          "sha256": "cc60631520d74b928d4aa52e838c58f3efb79962d8f720b75367c7be02d82715"
+        },
+        {
+          "path": "wrappers/NativeReturnCollector.ts",
+          "sha256": "7a9d7c8898858187bfc68a8f816d13e19ad31431aef5f413a4ec75b6837a0387"
+        },
+        {
+          "path": "wrappers/OptionFactory.ts",
+          "sha256": "6776f3da574bae3341304efbcba67b5c5908c47c01c2008bf7bfcca67aa1b874"
+        },
+        {
+          "path": "wrappers/OptionsSnapshot.ts",
+          "sha256": "251777cc7f0f80ecf6d0391ee1bc8425d705cc8957a8d3a27863ab70cd79ceb4"
+        },
+        {
+          "path": "wrappers/OptionVault.ts",
+          "sha256": "bf0971979f149377e80e0932dd1279ea89195848fbbf204beaf3d74bcc172c32"
+        },
+        {
+          "path": "wrappers/OutperformanceOption.ts",
+          "sha256": "91c2112175d3dd8eab4dd7488ac2b340ceaf8ee41aaafb95da168dc12075428f"
+        },
+        {
+          "path": "wrappers/perpsControlNativeBudget.ts",
+          "sha256": "ae5dda3b1b1e3a884bc96179170798f400a3566992c3d03fa8208f4f53dea8d8"
+        },
+        {
+          "path": "wrappers/PerpsEngine.compile.ts",
+          "sha256": "40d895dc6f874a74774b86602afee8f98c590889d391f87c024c346dc709c6a8"
+        },
+        {
+          "path": "wrappers/PerpsEngine.ts",
+          "sha256": "90003cb84b89bb6939a9a2a910b3e2f848f51ecd468d81d59e9b8feae9403609"
+        },
+        {
+          "path": "wrappers/PerpsEngineBootstrap.compile.ts",
+          "sha256": "151e9add77eb705345a9c9f4e287874d0ccaab9c27e2ed27f20e1fa445887e99"
+        },
+        {
+          "path": "wrappers/PerpsEngineBootstrap.ts",
+          "sha256": "c3cf896d4913b581c5e9fa92d2f23e67671b234baf027e1c6ba48b1a88f135dc"
+        },
+        {
+          "path": "wrappers/perpsEngineEntrypoint.ts",
+          "sha256": "81120d829ea488bd0528916e4b90490cfb2e8685f8d6710c55640f6f86d71282"
+        },
+        {
+          "path": "wrappers/perpsExecutionFunding.ts",
+          "sha256": "a17440c753aec4336cae59d937319c1a4e852dc33dd36711549b7ccd810fd535"
+        },
+        {
+          "path": "wrappers/ReferralDistributor.compile.ts",
+          "sha256": "514681b507049af7da3d0e506d016c0de276177f6bc786822f96e44129d6793e"
+        },
+        {
+          "path": "wrappers/ReferralDistributor.ts",
+          "sha256": "05d5d5ec4019119cb7fbce2cbdd25e8086e474c92024f16aa207ce6e8303483b"
+        },
+        {
+          "path": "wrappers/ReferralRegistry.compile.ts",
+          "sha256": "4f99b570d229a28804c36f300e26735f2783b1ecc2e12f57c8f779eba4182f1e"
+        },
+        {
+          "path": "wrappers/ReferralRegistry.ts",
+          "sha256": "e3934b0cb43cd1b6a8aed2cdc5fbb3c29089c48978235a5493f1b58ac61acc3a"
+        },
+        {
+          "path": "wrappers/RiskController.compile.ts",
+          "sha256": "02b26c838a208388759cbce0b5a841ad042a34b74a76f643af906ed696bf8ae0"
+        },
+        {
+          "path": "wrappers/RiskController.ts",
+          "sha256": "eb743ffe606e5b09522019b93c95399c18af903510f539e15e170e56238211ed"
+        },
+        {
+          "path": "wrappers/riskControllerEntrypoint.ts",
+          "sha256": "5f2334b7ebe1ba4a159c018810b9d09433a3c56e7a1a995f7a5ffbc552f08e81"
+        },
+        {
+          "path": "wrappers/RiskControllerNativeBudget.ts",
+          "sha256": "e69ca612829e6fa7857125d53897b4d5ae6367a9555475662a4ad9117c21c779"
+        },
+        {
+          "path": "wrappers/RiskVault.compile.ts",
+          "sha256": "609c2a9072522189e54422001158f0313bbd135acd5ecc91f11613a38140b7d7"
+        },
+        {
+          "path": "wrappers/RiskVault.ts",
+          "sha256": "997ff213d4e6a15e88956a9e55cd2f3fecf7f11a5367160bb873388a04f4b1fb"
+        },
+        {
+          "path": "wrappers/riskVaultEntrypoint.ts",
+          "sha256": "cb8319dc100b6a7397d31a58ff4709fd3e287003daf38a44006f9f5b96515ec8"
+        },
+        {
+          "path": "wrappers/ShoutOption.ts",
+          "sha256": "0cea1589051434515f60ad10eec93c8d343fb2248fb20b311c7c3938dfbd948f"
+        },
+        {
+          "path": "wrappers/Treasury.compile.ts",
+          "sha256": "5d7a906c3909bcab2628b27f2279157858c72da11ae67c23b554f76cf98050f6"
+        },
+        {
+          "path": "wrappers/Treasury.ts",
+          "sha256": "f308fa52733dbc306371885ede41b79b40b6de400da43db412ca5d77ada0b2b8"
+        },
+        {
+          "path": "wrappers/TwapNativeBudget.ts",
+          "sha256": "f94b985f3f81bfd917a6f21067fffea2923aa20256f6b96d422c6ce494c8039f"
+        },
+        {
+          "path": "wrappers/utils/registry.ts",
+          "sha256": "bd2099035659c127655131654d4ee736add1e88c407bc10aaf72870a4e1f51ae"
+        }
+      ]
+    },
+    "externalInputs": {},
+    "compiled": {
+      "PerpsEngine": {
+        "file": "current-compiled/PerpsEngine.json",
+        "sha256": "91f7614cc7514304996901073dbc65a814f26fb38f9edc22b1a064c8cb8453c1",
+        "codeHash": "7cb945ded54aaca9793cd34d9822371abfad78f4b10fb7150ce9918f7cce4fb3"
+      },
+      "DlmmPool": {
+        "file": "current-compiled/DlmmPool.json",
+        "sha256": "11049aaa7000ea03ea7e8345a7d8659a3d9ccefcf196caefeb1b48eeaac22a7e",
+        "codeHash": "bc18fa0218fe56de0dda7aee1ab41eeacc9eff277e96bed87a276e75b3a34385"
+      },
+      "JettonWallet": {
+        "file": "current-compiled/JettonWallet.json",
+        "sha256": "32c1a6f5792d0dfa2dd25576de8476324a4015dbd71639a5724ef8702e62a02d",
+        "codeHash": "2f4d9f45154b86c2a94f6420a6a255292fd67469292a18ddbc6ddf1bdb8090e6"
+      },
+      "RiskVault": {
+        "file": "current-compiled/RiskVault.json",
+        "sha256": "ab658e17393a4cbbcc47bf56c450615a3908e8a77cbeaaa3539c01a6dbd83758",
+        "codeHash": "b4440f5892ea6a404db51e926f754f8390dca6d23788f619b56bd0fe8d93da09"
+      },
+      "RiskController": {
+        "file": "current-compiled/RiskController.json",
+        "sha256": "3dd236151de265bc207174eb53f31ff30660f4104016e44709284498a7f6d91f",
+        "codeHash": "440435be7c115a29810542d92b71087c3c20763b542324a613c322843765da7d"
+      }
+    },
+    "artifacts": {
+      "accepts-caller-funded-maintenance-but-rejects-a-foreign-refund--spoofed-GasVault-authority--and-underfunding-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "accepts-rescue-collateral-before-negative-funding-settlement-even-with-stale-prices-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "admits-new-exposure-throughout-the-funded-300-second-Mesh-cadence-and-closes-after-a-missed-tick-open-880.json": "14638b13b15f49b7f809ca35e0ecda4f7d8f28dfef8554889364f7941d27a30e",
+      "automatically-settles-a-fee-bearing-forced-close-directly-to-the-real-FeeRouter-wallet-native-fee-maintenance.json": "0aee4ee5248878fa8b92e3af386db8551d66503e6d33b16d68e9cf5dc6967d33",
+      "automatically-settles-a-fee-bearing-forced-close-directly-to-the-real-FeeRouter-wallet-native-fee-open.json": "dd29deb41e4af786a37f63da82fd17e78c30f07a146b9a14133f8c3c2c1298d3",
+      "books-collected-trader-losses-only-after-the-real-LP-deposit-and-both-authenticated-receipts-loss-deposit.json": "07e65278e460b2151fc2ba2a6aa52140226517c7835e633a604d0a723c2428bb",
+      "books-collected-trader-losses-only-after-the-real-LP-deposit-and-both-authenticated-receipts-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "bounds-accrued-funding-at-actual-LP-capital-and-closes-the-exhausted-counterparty-funding-claim-close.json": "a4c777e4af1168ef448d7a92f06fb1bdcb027b1e12fc1230ca909771736c6dff",
+      "bounds-accrued-funding-at-actual-LP-capital-and-closes-the-exhausted-counterparty-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close-range.json": "a9e79b5238f38e12e41616b99cd52679190c149317e99d6acb85aa0886ed9fc0",
+      "caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close.json": "98e51bd26dccba072f840ea1dc6f106c9e5d6faaa5484d11079b885eb471b238",
+      "caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-open-880.json": "4ff041b3e81a6bfd509fc0984053a6f77aaaae689864852bc8e77d1fe58f59da",
+      "captures-a-funded-round-trip-with-uninterrupted-account-history-direct-close.json": "d319714a4830528c40f56cc8ae324e14951e4539c12ab23aa3c6f6f7b7131c72",
+      "captures-a-funded-round-trip-with-uninterrupted-account-history-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "captures-a-funded-round-trip-with-uninterrupted-account-history-uninterrupted-range.json": "f1866e9e1de77ac5855cba53278334952c16454b5341b5c109e99f1df71e116c",
+      "charges-a-public-sponsor-for-one-distressed-close-and-returns-the-unused-native-amount-to-that-sponsor-distress-observed-price.json": "95a7273a5f1f3c14a87b3b3fd592c9c1077fc664ba57cf4cd73202347d0db27e",
+      "charges-a-public-sponsor-for-one-distressed-close-and-returns-the-unused-native-amount-to-that-sponsor-distress-stress400.json": "fababba074674355fa6e94bc7eccb6a066fb875a8098153bc40d5255066e0a51",
+      "charges-a-public-sponsor-for-one-distressed-close-and-returns-the-unused-native-amount-to-that-sponsor-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "closes-a-bankrupt-LP-counterparty-through-authenticated-bounded-maintenance-and-returns-unused-native-funding-automatic-counterparty-close.json": "5c387031afea0109fdefd1422da07796179e19babadaa781236ddd95daff4f71",
+      "closes-a-bankrupt-LP-counterparty-through-authenticated-bounded-maintenance-and-returns-unused-native-funding-open-880.json": "4ff041b3e81a6bfd509fc0984053a6f77aaaae689864852bc8e77d1fe58f59da",
+      "closes-a-bankrupt-LP-counterparty-through-authenticated-bounded-maintenance-and-returns-unused-native-funding-public-refresh.json": "62090f71791f71edfd94d6efacbba60c88bcca3516324659c414b300b1323c60",
+      "closes-fully-through-modify-plus-withdrawal-without-requiring-a-new-lease-open-880.json": "14638b13b15f49b7f809ca35e0ecda4f7d8f28dfef8554889364f7941d27a30e",
+      "current-compiled/DlmmPool.json": "11049aaa7000ea03ea7e8345a7d8659a3d9ccefcf196caefeb1b48eeaac22a7e",
+      "current-compiled/JettonWallet.json": "32c1a6f5792d0dfa2dd25576de8476324a4015dbd71639a5724ef8702e62a02d",
+      "current-compiled/PerpsEngine.json": "91f7614cc7514304996901073dbc65a814f26fb38f9edc22b1a064c8cb8453c1",
+      "current-compiled/RiskController.json": "3dd236151de265bc207174eb53f31ff30660f4104016e44709284498a7f6d91f",
+      "current-compiled/RiskVault.json": "ab658e17393a4cbbcc47bf56c450615a3908e8a77cbeaaa3539c01a6dbd83758",
+      "does-not-liquidate-a-healthy-counterparty-and-returns-unused-maintenance-funding-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "expires-local-control-after-one-missed-300-second-Mesh-tick-while-preserving-exits-open-882.json": "ba1f0139cc8847807c8ad93647be01664630ac780aad21e5ea6753837399178f",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-governance-delayed-original-policy.json": "4012e33da129a1500a555fc8b47822d648a6060f2dc6c3f09b3b175d3c636613",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-governance-held-original-policy.json": "2964367b09e37fc2644476539cc561e81955351f964482125d4c006fe04e5518",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-governance-resumed-policy-retry.json": "72afab48189f340c40f6c5b31d21f60a0d9a95d8775d2dc294b3c19d4cfec0b8",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-governance-short-policy-retry.json": "02b1d910bc7d65dc4663e83c2f464414bd2f4b3fae75f1bb727ae59a65261fb1",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-held-52505253.json": "06900b3b5d165a70b9d5739eea6edfc5433bd94db7d231e73eb2413b74fc5814",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-public-delayed-original-policy.json": "856a26730dd50f8eec73733d75453d1923c46262ac02c8c6227cd23a938cb317",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-public-held-original-policy.json": "06900b3b5d165a70b9d5739eea6edfc5433bd94db7d231e73eb2413b74fc5814",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-public-resumed-policy-retry.json": "d416e588224ea55d938f6a4655eb1bc0f29a9e711fa24c5a16a1fbf11e22a4d2",
+      "keeps-retry-and-delayed-original-policy-funding-owned-by-their-separate-payers-public-short-policy-retry.json": "4fb17edd61a0553d75677c248064b4d43b35258e0b63b03234cb69f58c9a45f4",
+      "keeps-the-first-direct-sponsor-bound-through-a-competing-maintenance-call-and-owner-CLOSE-held-50525043.json": "5a0cc9479c381da3916b09c2d95e20703994ac5bab5c0272d70783991374a014",
+      "keeps-the-first-direct-sponsor-bound-through-a-competing-maintenance-call-and-owner-CLOSE-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "keeps-the-old-backing-through-a-direction-flip-and-charges-the-full-new-opposite-leg-flip.json": "1e751d80d20aa6d1a563c47cd18ceef6f759b972a08cc540197a96b4ba711337",
+      "keeps-the-old-backing-through-a-direction-flip-and-charges-the-full-new-opposite-leg-open-880.json": "14638b13b15f49b7f809ca35e0ecda4f7d8f28dfef8554889364f7941d27a30e",
+      "keeps-the-original-loss-finalizer-owner-when-another-payer-retries-before-the-delayed-wallet-receipt-held-4a535543.json": "f0675fac9189561b99ac184a3d76bd5f667218dad049298326149870db138ef0",
+      "keeps-the-original-loss-finalizer-owner-when-another-payer-retries-before-the-delayed-wallet-receipt-native-payer-b-retry.json": "5b40e6b9bfdfc104f064019bc9a32b93606f47faadd8d3445febd0b1f942baed",
+      "keeps-the-original-loss-finalizer-owner-when-another-payer-retries-before-the-delayed-wallet-receipt-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "lets-the-owner-CLOSE-supersede-a-paid-maintenance-wire-and-returns-only-the-late-pool-branch-to-the-Mesh-collector-held-50525043.json": "b7b3ae121972393f016c7440a97ddd498fccef1ad8c00b3eaba2d872b7245054",
+      "lets-the-owner-CLOSE-supersede-a-paid-maintenance-wire-and-returns-only-the-late-pool-branch-to-the-Mesh-collector-open-880.json": "e352844aff5d453de3f5de00c12f50e93006d751901a01befda0a55150f3cd70",
+      "measures-actual-native-spend-behind-the-gross-CLOSE--maintenance-and-first-claim-envelopes-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "measures-observed-price-healthy-maintenance-and-separately-proves-its-funded-stress-execution-healthy-observed-price.json": "9ac1c924a484f28539801e138450c7921b1341cb7947554e3fa317971f70b088",
+      "measures-observed-price-healthy-maintenance-and-separately-proves-its-funded-stress-execution-healthy-stress400.json": "0d8e58759d476375755b073949026c48fcd7276e7864b2041f150f90c4bbef50",
+      "measures-observed-price-healthy-maintenance-and-separately-proves-its-funded-stress-execution-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close.json": "39c0894b9f36d8d30a995da075f5d49f9e644b78dc83c1a2e572a426c241295a",
+      "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close.json": "f1f42fa1826a5fb72dd8925804c54675fad401af85e83485120decf7995ad2be",
+      "pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-funding-claim-accepted.json": "8d706f7abf267113943bbe93acfa5fe3afc4418824a98b67fb87ebe8c548629d",
+      "pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-funding-claim-rejected.json": "0d9dee89cd9fbb1d9a10dca9ec8c1cc7e8417fd9db10b387775a739509348ff7",
+      "pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "preserves-an-existing-position-and-its-backing-when-a-same-epoch-modification-exhausts-the-policy-open-880.json": "27886dbb0bd68836ce8809a82c35d151dc0ee95c8f3e7e8ac7576d530fe3bcdb",
+      "preserves-the-canonical-inviter-payload-through-a-paid-increasing-modification-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "preserves-the-canonical-inviter-payload-through-a-paid-increasing-modification-paid-modify-inviter.json": "3028db5bcdad817f5f92366d839dab31a60c521bb1906094f838f66a065f73a6",
+      "recovers-a-lost-LP-deposit-receipt-with-no-second-token-credit-or-transfer-held-52564441.json": "89f64ddf95c376bfaf46fba71de5c3050e8a54caf5865f9dc3bf47edb384d1ac",
+      "recovers-a-lost-LP-deposit-receipt-with-no-second-token-credit-or-transfer-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "recovers-a-lost-profit-receipt-without-repeating-its-already-delivered-LP-payout-held-52565048.json": "b6cc4c7a6d38e0bca668232530445501fc9cf6d2c10e5a726f1110cfc990ed09",
+      "recovers-a-lost-profit-receipt-without-repeating-its-already-delivered-LP-payout-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880.json": "47b62206f950a4be82f83207c9ce9e021b3190fe3cff12c93cfb9299ac5862d3",
+      "refunds-an-authenticated-controller-bounce-to-the-original-paid-order-owner-open-880.json": "18892433b62a59711f2bc3c557c867173f9e8c8c1f5110df5a1d02104d4782c7",
+      "refunds-an-authenticated-pool-bounce-to-the-original-paid-order-owner-open-880.json": "25d27a3bf9d207c2543ccf5028ea35ea315a4aa80c05a585d4d9a7f3054e1e7c",
+      "refunds-an-authenticated-vault-bounce-to-the-original-paid-order-owner-open-880.json": "605dca715043176afbe3558e61b21cefe986b4532edb9286f5aafa0eb11da748",
+      "refunds-an-expired-reserved-order-and-ignores-its-delayed-authentic-vault-acceptance-expired.json": "be4832a77f073638699e4b6575b0ce7212698373b7610a467102995f271a3c56",
+      "refunds-an-expired-reserved-order-and-ignores-its-delayed-authentic-vault-acceptance-held-5256414b.json": "411097905fee754dd4bba481bf179dc5c75dc309416a4d182f8f0d2b181f7b76",
+      "rejects-a-61-second-old-authenticated-CLOSE-mark-without-releasing-the-position-held-50525043.json": "055b38d45b03a87cf4c7f1eec719864ba535f223a443f0fd30f5f7a81a0dd276",
+      "rejects-a-61-second-old-authenticated-CLOSE-mark-without-releasing-the-position-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "rejects-both-retired-public-liquidation-opcodes-before-any-position-changes-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "rejects-undercollateralization-even-when-the-request-declares-negligible-leverage-open-881.json": "5ace687c13180d8f9a86c951199363e9f88892165adabf7a14ba42bed66dc06f",
+      "releases-an-accepted-reservation-and-refunds-when-the-policy-budget-is-insufficient-open-880.json": "e123442722fbdbcccdebbeacb301d9e0475a00b6c7f73965025aab645dc3b08e",
+      "renews-an-expired-policy-automatically-for-a-sufficiently-collateralized-margin-withdrawal-open-880.json": "14638b13b15f49b7f809ca35e0ecda4f7d8f28dfef8554889364f7941d27a30e",
+      "reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify.json": "3854b0bd0fb8e24416736f34607aa429ec82f1fbdabe7b296e6f573512dff0c8",
+      "reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-open-880.json": "14638b13b15f49b7f809ca35e0ecda4f7d8f28dfef8554889364f7941d27a30e",
+      "reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "returns-a-deferred-direct-fee-escrow-to-its-first-payer-when-a-different-payer-retries-held-4a53464b.json": "cbbebcb91bc78a09284bb6c265c62e0e0ecd858faecece47fd8a8bc1f7d1547d",
+      "returns-a-late-Pool-rich-bounce-failure-to-the-original-Mesh-collector-after-owner-CLOSE-held-50524641.json": "dff813692a1410556810d4c75055938d3126382c34155e5f615f9df4c79d79d3",
+      "returns-a-late-Pool-rich-bounce-failure-to-the-original-Mesh-collector-after-owner-CLOSE-held-50525043.json": "f76bccdabc8e6c8bc0c2da899a3941a3def06d11fa728478077431e03f425d53",
+      "returns-a-late-Pool-rich-bounce-failure-to-the-original-Mesh-collector-after-owner-CLOSE-held-50525051.json": "b1909cb82c12068214b747d19f549d3a2b1cacdac9e81f937e24b95e139103a4",
+      "returns-a-late-Pool-rich-bounce-failure-to-the-original-Mesh-collector-after-owner-CLOSE-open-880.json": "e352844aff5d453de3f5de00c12f50e93006d751901a01befda0a55150f3cd70",
+      "returns-a-low-value-authentic-Pool-failure-without-consuming-a-paid-OPEN-or-its-T3-collateral-held-50524641.json": "b25b0f66a587295dd7664d9ba13101d5c17c7d7ba138d5155ff9364ddf899f73",
+      "returns-a-low-value-authentic-Pool-failure-without-consuming-a-paid-OPEN-or-its-T3-collateral-held-50525043.json": "b73b95d2a4e9072ed98d029f59f1b3d7af2ff4f1560965d4389dc0810d1828ce",
+      "returns-a-low-value-authentic-maintenance-pull-bounce-without-spending-the-pending-position-held-50525051.json": "0a66b1937ef7433802b8529533beb2a32b9e325ed2e35a44d7b2613c836177dd",
+      "returns-a-low-value-authentic-maintenance-pull-bounce-without-spending-the-pending-position-open-880.json": "e352844aff5d453de3f5de00c12f50e93006d751901a01befda0a55150f3cd70",
+      "returns-a-superseded-ordinary-CLOSE-pool-bounce-to-its-original-owner-held-50525051.json": "92a63f0b194a8155921acf45e4f9a3b8e2415f81ec0e6bd0c54d2fd5d3a7d9a7",
+      "returns-a-superseded-ordinary-CLOSE-pool-bounce-to-its-original-owner-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "returns-an-authenticated-late-direct-maintenance-rich-bounce-to-its-original-public-sponsor-held-50525051.json": "95fa41d98004b4321a981d643af744ed3cdceaf7e92cdefd0d170b0308e621ab",
+      "returns-an-authenticated-late-direct-maintenance-rich-bounce-to-its-original-public-sponsor-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "returns-an-authenticated-late-rich-bounce-to-the-original-Mesh-collector-after-owner-CLOSE-held-50525051.json": "c176b82cca53f5d364005e8874ed539a2d5febd27914d928ef22274a80ee3d98",
+      "returns-an-authenticated-late-rich-bounce-to-the-original-Mesh-collector-after-owner-CLOSE-open-880.json": "e352844aff5d453de3f5de00c12f50e93006d751901a01befda0a55150f3cd70",
+      "returns-canonical-paid-OPEN-native-surplus-to-its-original-payer--accepted-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "returns-canonical-paid-OPEN-native-surplus-to-its-original-payer--policy-rejected-open-880.json": "e123442722fbdbcccdebbeacb301d9e0475a00b6c7f73965025aab645dc3b08e",
+      "returns-canonical-paid-OPEN-native-surplus-to-its-original-payer--vault-rejected-open-880.json": "47b62206f950a4be82f83207c9ce9e021b3190fe3cff12c93cfb9299ac5862d3",
+      "settles-a-reducing-modification-with-a-withdrawal-after-its-prior-funded-reservation-open-880.json": "14638b13b15f49b7f809ca35e0ecda4f7d8f28dfef8554889364f7941d27a30e",
+      "settles-a-reducing-modification-with-a-withdrawal-after-its-prior-funded-reservation-reduce-withdraw.json": "e81820d60194a7b624b0b3988e042c664406538344d44f750825d2c8098c1776",
+      "skips-an-unhealthy-price-in-maintenance-and-visits-one-surviving-position-only-once-open-880.json": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47"
+    }
+  },
+  "producerLog": "  console.info\n    Perps refresh production hash=7cb945ded54aaca9793cd34d9822371abfad78f4b10fb7150ce9918f7cce4fb3\n\n      at compileOrderFixture (tests/fixtures/perpsOrder.ts:32:10)\n\n  console.info\n    Perps sponsored distress observed-price66.67 net nanotons 223347743\n\n      at Object.<anonymous> (tests/perps/PerpsRiskAdmission.spec.ts:701:17)\n\n  console.info\n    Perps sponsored distress stress400 net nanotons 1180713369\n\n      at Object.<anonymous> (tests/perps/PerpsRiskAdmission.spec.ts:701:17)\n\n  console.info\n    Perps actual native spend (nanotons) {\"close\":{\"attached\":\"3110000000\",\"net\":\"831325219\",\"refunded\":\"2278674781\",\"fees\":\"821690101\"},\"claim\":{\"attached\":\"3110000000\",\"net\":\"1175034835\",\"refunded\":\"1934965165\",\"fees\":\"1152711429\"},\"maintenance\":{\"attached\":\"3170000000\",\"net\":\"1183889369\",\"refunded\":\"1986110631\",\"fees\":\"1161537385\"}}\n\n      at Object.<anonymous> (tests/perps/PerpsRiskAdmission.spec.ts:781:13)\n\nPerps canonical loss pipeline [\n  { op: '434e4657', fees: '72851132', aborted: false, gas: '181908' },\n  { op: '434e4657', fees: '26938714', aborted: false, gas: '56942' },\n  { op: '434e5246', fees: '123601', aborted: false, gas: '309' },\n  { op: '434e4657', fees: '22607621', aborted: false, gas: '56264' },\n  { op: '434e5246', fees: '123600', aborted: false, gas: '309' },\n  { op: '434e4657', fees: '76428465', aborted: false, gas: '190891' },\n  { op: '434e4657', fees: '14783288', aborted: false, gas: '36847' },\n  { op: '434e4657', fees: '41537466', aborted: false, gas: '103775' },\n  { op: '434e5246', fees: '123600', aborted: false, gas: '309' },\n  { op: '434e4657', fees: '64412354', aborted: false, gas: '160851' },\n  { op: '434e5246', fees: '123600', aborted: false, gas: '309' },\n  { op: '434e4657', fees: '14668488', aborted: false, gas: '36560' },\n  { op: '434e5246', fees: '123600', aborted: false, gas: '309' },\n  { op: '434e4657', fees: '65983866', aborted: false, gas: '164891' },\n  { op: '434e5246', fees: '123600', aborted: false, gas: '309' }\n]\n  console.info\n    Perps stale healthy CPMT observed-price66.67 net nanotons 55365964\n\n      at Object.<anonymous> (tests/perps/PerpsRiskAdmission.spec.ts:1049:17)\n\n  console.info\n    Perps stale healthy CPMT stress400 net nanotons 328007621\n\n      at Object.<anonymous> (tests/perps/PerpsRiskAdmission.spec.ts:1049:17)\n\ncanonical-paid-open {\n  outcome: 2,\n  funded: true,\n  engineDelta: '0',\n  txs: [\n    { op: '7362d09c', fee: '88320776', exit: 0, action: 0 },\n    { op: '50525043', fee: '216814154', exit: 0, action: 0 },\n    { op: '5256414b', fee: '100085132', exit: 0, action: 0 },\n    { op: '52505253', fee: '140877466', exit: 0, action: 0 }\n  ]\n}\ncanonical-paid-open {\n  outcome: 3,\n  funded: false,\n  engineDelta: '0',\n  txs: [\n    { op: '7362d09c', fee: '88320776', exit: 0, action: 0 },\n    { op: '50525043', fee: '216814154', exit: 0, action: 0 },\n    { op: '52564e4b', fee: '201775598', exit: 0, action: 0 },\n    { op: '5256414b', fee: '79219866', exit: 0, action: 0 },\n    { op: '4a535543', fee: '64975954', exit: 0, action: 0 },\n    { op: '4a53464b', fee: '86151466', exit: 0, action: 0 }\n  ]\n}\ncanonical-paid-open {\n  outcome: 3,\n  funded: true,\n  engineDelta: '0',\n  txs: [\n    { op: '7362d09c', fee: '88320776', exit: 0, action: 0 },\n    { op: '50525043', fee: '216814154', exit: 0, action: 0 },\n    { op: '5256414b', fee: '100085132', exit: 0, action: 0 },\n    { op: '52505253', fee: '198492398', exit: 0, action: 0 },\n    { op: '5256414b', fee: '79519866', exit: 0, action: 0 },\n    { op: '4a535543', fee: '64975954', exit: 0, action: 0 },\n    { op: '4a53464b', fee: '86151466', exit: 0, action: 0 }\n  ]\n}\nPASS tests/perps/PerpsRiskAdmission.spec.ts (558.283 s)\n  ✓ reserves real funded collateral before a policy reply activates the position (9761 ms)\n  ✓ admits new exposure throughout the funded 300-second Mesh cadence and closes after a missed tick (10596 ms)\n  ✓ expires local control after one missed 300-second Mesh tick while preserving exits (8032 ms)\n  ✓ refunds a paid open when the vault rejects an unfunded reservation (5173 ms)\n  ✓ captures a funded round trip with uninterrupted account history (6769 ms)\n  ✓ releases an accepted reservation and refunds when the policy budget is insufficient (5698 ms)\n  ✓ rejects undercollateralization even when the request declares negligible leverage (5092 ms)\n  ✓ reserves a modification before increasing exposure and spends only the added gross notional (6302 ms)\n  ✓ preserves an existing position and its backing when a same-epoch modification exhausts the policy (6222 ms)\n  ✓ keeps the old backing through a direction flip and charges the full new opposite leg (6328 ms)\n  ✓ renews an expired policy automatically for a sufficiently collateralized margin withdrawal (6344 ms)\n  ✓ rejects both retired public liquidation opcodes before any position changes (5220 ms)\n  ✓ lets the owner CLOSE supersede a paid maintenance wire and returns only the late pool branch to the Mesh collector (8072 ms)\n  ✓ rejects a 61-second-old authenticated CLOSE mark without releasing the position (5512 ms)\n  ✓ returns an authenticated late rich bounce to the original Mesh collector after owner CLOSE (6867 ms)\n  ✓ returns a low-value authentic maintenance pull bounce without spending the pending position (7058 ms)\n  ✓ returns a late Pool rich-bounce failure to the original Mesh collector after owner CLOSE (7456 ms)\n  ✓ returns a low-value authentic Pool failure without consuming a paid OPEN or its T3 collateral (5556 ms)\n  ✓ returns a superseded ordinary CLOSE pool bounce to its original owner (6928 ms)\n  ✓ accepts caller-funded maintenance but rejects a foreign refund, spoofed GasVault authority, and underfunding (6102 ms)\n  ✓ charges a public sponsor for one distressed close and returns the unused native amount to that sponsor (13402 ms)\n  ✓ keeps the first direct sponsor bound through a competing maintenance call and owner CLOSE (7172 ms)\n  ✓ returns an authenticated late direct maintenance rich bounce to its original public sponsor (6994 ms)\n  ✓ measures actual native spend behind the gross CLOSE, maintenance and first-claim envelopes (19318 ms)\n  ✓ refunds an expired reserved order and ignores its delayed authentic vault acceptance (6223 ms)\n  ✓ keeps retry and delayed original policy funding owned by their separate payers (13383 ms)\n  ✓ settles a reducing modification with a withdrawal after its prior funded reservation (6942 ms)\n  ✓ closes fully through modify plus withdrawal without requiring a new lease (6245 ms)\n  ✓ preserves the canonical inviter payload through a paid increasing modification (6338 ms)\n  ✓ pays a profitable close from its isolated vault allocation without spending another trader margin (8645 ms)\n  ✓ caps an oracle-gap liquidation payout at that position actual LP capital (7287 ms)\n  ✓ books collected trader losses only after the real LP deposit and both authenticated receipts (7459 ms)\n  ✓ closes a bankrupt LP counterparty through authenticated bounded maintenance and returns unused native funding (7458 ms)\n  ✓ does not liquidate a healthy counterparty and returns unused maintenance funding (5374 ms)\n  ✓ measures observed-price healthy maintenance and separately proves its funded stress execution (11551 ms)\n  ✓ pays earned funding from allocated LP cash and never the trader margin wallet (7714 ms)\n  ✓ bounds accrued funding at actual LP capital and closes the exhausted counterparty (7212 ms)\n  ✓ accepts rescue collateral before negative funding settlement even with stale prices (5378 ms)\n  ✓ skips an unhealthy price in maintenance and visits one surviving position only once (5608 ms)\n  ✓ recovers a lost profit receipt without repeating its already delivered LP payout (7523 ms)\n  ✓ recovers a lost LP deposit receipt with no second token credit or transfer (8138 ms)\n  ✓ keeps the original loss finalizer owner when another payer retries before the delayed wallet receipt (8058 ms)\n  ✓ automatically settles a fee-bearing forced close directly to the real FeeRouter wallet (11474 ms)\n  ✓ returns a deferred direct-fee escrow to its first payer when a different payer retries (10141 ms)\n  ✓ returns canonical paid OPEN native surplus to its original payer: accepted (5019 ms)\n  ✓ returns canonical paid OPEN native surplus to its original payer: vault-rejected (5504 ms)\n  ✓ returns canonical paid OPEN native surplus to its original payer: policy-rejected (5777 ms)\n  ✓ enforces the exact canonical OPEN intake floor (one nano short: false) (4801 ms)\n  ✓ enforces the exact canonical OPEN intake floor (one nano short: true) (4526 ms)\n  ✓ rejects tiny malformed and valid OPEN notifications without spending engine cash or stranding credited T3 (8052 ms)\n  ✓ refunds an authenticated controller bounce to the original paid order owner (6045 ms)\n  ✓ refunds an authenticated vault bounce to the original paid order owner (5668 ms)\n  ✓ refunds an authenticated pool bounce to the original paid order owner (5107 ms)\n\nTest Suites: 1 passed, 1 total\nTests:       53 passed, 53 total\nSnapshots:   0 total\nTime:        558.335 s\nRan all test suites within paths \"tests/perps/PerpsRiskAdmission.spec.ts\".\n",
+  "engineCodeHash": "7cb945ded54aaca9793cd34d9822371abfad78f4b10fb7150ce9918f7cce4fb3",
+  "poolCodeHash": "bc18fa0218fe56de0dda7aee1ab41eeacc9eff277e96bed87a276e75b3a34385",
+  "walletCodeHash": "2f4d9f45154b86c2a94f6420a6a255292fd67469292a18ddbc6ddf1bdb8090e6",
+  "riskVaultCodeHash": "b4440f5892ea6a404db51e926f754f8390dca6d23788f619b56bd0fe8d93da09",
+  "riskControllerCodeHash": "440435be7c115a29810542d92b71087c3c20763b542324a613c322843765da7d",
   "cases": {
     "open-accepted": "reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880",
     "vault-rejected": "refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880",
@@ -9,65 +1569,78 @@
     "modify-accepted": "reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify",
     "profitable-close": "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close",
     "gap-close": "caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close",
-    "failed-close": "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close"
+    "failed-close": "pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close",
+    "maintenance-close": "automatically-settles-a-fee-bearing-forced-close-directly-to-the-real-FeeRouter-wallet-native-fee-maintenance",
+    "funding-claim-accepted": "pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-funding-claim-accepted",
+    "funding-claim-rejected": "pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-funding-claim-rejected",
+    "funding-claim-close": "bounds-accrued-funding-at-actual-LP-capital-and-closes-the-exhausted-counterparty-funding-claim-close"
   },
-  "poolCodeHash": "4c5a57c698bd0085a8dc54329b9b009d1e2f4d80df131c10f7646dc4f63e0207",
   "artifacts": [
     {
       "relative": "open-accepted.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880.json",
-      "sha256": "151a79952676be2e4888f81089053c97625f2d5d028cc19df5c7a0efe004b1d0",
-      "bytes": 858332
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/reserves-real-funded-collateral-before-a-policy-reply-activates-the-position-open-880.json",
+      "sha256": "abba914f6e3fe246eb0293bcf459a6076be9d61b8e125248c2bb0c65f46bfa47",
+      "bytes": 1102389
     },
     {
       "relative": "vault-rejected.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880.json",
-      "sha256": "3f0bb126a5fbe4acabbe216b90764e0e7d1d69199c91f048e2ff071285e68ab4",
-      "bytes": 1038304
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/refunds-a-paid-open-when-the-vault-rejects-an-unfunded-reservation-open-880.json",
+      "sha256": "47b62206f950a4be82f83207c9ce9e021b3190fe3cff12c93cfb9299ac5862d3",
+      "bytes": 1343361
     },
     {
       "relative": "policy-rejected.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/releases-an-accepted-reservation-and-refunds-when-the-policy-budget-is-insufficient-open-880.json",
-      "sha256": "4933c59caddad643575c9eabd8b797b5462154e97a27b7d95b810b8d37997674",
-      "bytes": 1090684
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/releases-an-accepted-reservation-and-refunds-when-the-policy-budget-is-insufficient-open-880.json",
+      "sha256": "e123442722fbdbcccdebbeacb301d9e0475a00b6c7f73965025aab645dc3b08e",
+      "bytes": 1410689
     },
     {
       "relative": "modify-accepted.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify.json",
-      "sha256": "a3a438163b53501eebb17feaef1cd4529f806173ef455ffd0ce27a7607c237ba",
-      "bytes": 909908
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/reserves-a-modification-before-increasing-exposure-and-spends-only-the-added-gross-notional-modify.json",
+      "sha256": "3854b0bd0fb8e24416736f34607aa429ec82f1fbdabe7b296e6f573512dff0c8",
+      "bytes": 1168777
     },
     {
       "relative": "profitable-close.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close.json",
-      "sha256": "48c3f51acee8b4dd9bd490f4c6e1fc26f7ada630baddd98afe34378be53a9a0c",
-      "bytes": 1103422
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-profitable-close.json",
+      "sha256": "f1f42fa1826a5fb72dd8925804c54675fad401af85e83485120decf7995ad2be",
+      "bytes": 1423167
     },
     {
       "relative": "gap-close.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close.json",
-      "sha256": "24fbef33f28a864c6b939a696eb65516b242c701e37542c4fa8eac4a9180242f",
-      "bytes": 1089590
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/caps-an-oracle-gap-liquidation-payout-at-that-position-actual-LP-capital-gap-close.json",
+      "sha256": "98e51bd26dccba072f840ea1dc6f106c9e5d6faaa5484d11079b885eb471b238",
+      "bytes": 1410767
     },
     {
       "relative": "failed-close.json",
-      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close.json",
-      "sha256": "d365fd185f8784eb613956b74e09318580ca646574ddece18db0734e3c6cf0e8",
-      "bytes": 633143
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/pays-a-profitable-close-from-its-isolated-vault-allocation-without-spending-another-trader-margin-failed-close.json",
+      "sha256": "39c0894b9f36d8d30a995da075f5d49f9e644b78dc83c1a2e572a426c241295a",
+      "bytes": 801352
+    },
+    {
+      "relative": "maintenance-close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/automatically-settles-a-fee-bearing-forced-close-directly-to-the-real-FeeRouter-wallet-native-fee-maintenance.json",
+      "sha256": "0aee4ee5248878fa8b92e3af386db8551d66503e6d33b16d68e9cf5dc6967d33",
+      "bytes": 1927813
+    },
+    {
+      "relative": "funding-claim-accepted.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-funding-claim-accepted.json",
+      "sha256": "8d706f7abf267113943bbe93acfa5fe3afc4418824a98b67fb87ebe8c548629d",
+      "bytes": 1222610
+    },
+    {
+      "relative": "funding-claim-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-funding-claim-rejected.json",
+      "sha256": "0d9dee89cd9fbb1d9a10dca9ec8c1cc7e8417fd9db10b387775a739509348ff7",
+      "bytes": 865235
+    },
+    {
+      "relative": "funding-claim-close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/risk/bounds-accrued-funding-at-actual-LP-capital-and-closes-the-exhausted-counterparty-funding-claim-close.json",
+      "sha256": "a4c777e4af1168ef448d7a92f06fb1bdcb027b1e12fc1230ca909771736c6dff",
+      "bytes": 1411171
     }
-  ],
-  "walletCodeHash": "c6a2543ca7ee992bc0a90e84586fdd8c1bb1bf3afbe031a6a0c1325a91554ddf",
-  "validation": {
-    "path": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/producer.log",
-    "sha256": "52bd6ebe0121b73aba6748d9effe1165f87785c50aad7a2b3810d2b2e4a0bb3e",
-    "bytes": 2547,
-    "passed": 44,
-    "skipped": 0,
-    "scope": "Complete current PerpsRiskAdmission.spec.ts VM15 producer suite with independently compiled current Pool and PerpsEngine artifacts."
-  },
-  "sourceBinding": {
-    "path": "/Users/mtakemiya/dev/tonswap/output/first-testnet/perps-risk-final-capture-v4-20260923/source-binding.json",
-    "sha256": "a080b88c7d97d3ab0d7eaea9eb785bb3bb1ba0047b5ce484da64cc3921e97e2a",
-    "bytes": 5734
-  }
+  ]
 }

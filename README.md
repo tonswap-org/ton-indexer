@@ -10,6 +10,32 @@ actual transaction fees plus outgoing forwarding fees from original BOCs. Origin
 historical fixture capture files retain their recorded provider field names;
 production evidence re-decodes their BOCs using the current raw schema.
 
+The diagnostic pool count includes configured pools and pools whose current
+typed deployment acknowledgement succeeded at the registered DLMM Factory.
+It verifies the original Factory transaction, including its receiver, execution
+status and complete DPDA or launch callback body. Create requests, outgoing
+deployment attempts, bounces and summary-only observations do not increase the
+count. The count does not certify Registry activation, market admission or
+settlement. Run `npx tsx src/scripts/history-integrity-test.ts` after changing
+this boundary; `npm test` includes that check.
+
+The retained Factory fixture binds its complete native source inventory,
+independent compiler BOCs and original transaction/account boundaries. Its five
+temporary compiler entrypoints are derived in memory from the authenticated
+original source and exact mode banners: the five retained canonical renderer
+definitions are identity transforms. Their source, descriptors and imports remain
+hash-bound, but validation does not execute native modules. Changed inputs or mode
+banners fail the captured compiler-input hashes. Clean checkouts do not need generated
+entrypoint files, and leftover generated files cannot supply evidence. The history
+test covers absent entrypoints, altered source/renderer/descriptor bindings,
+omitted inputs and unbound module shadows without modifying the native package.
+
+System-health snapshots decode the current 21-field RiskController getter with
+separate atomic `configuredGrossBudget` and `committedGrossBudget` values, and
+the complete 37-field ControlMesh getter for four Perps markets. Retired or
+malformed tuples remain unavailable. Run `npm test` to check these API decoders;
+the retained native account fixtures are ABI regressions, not release qualification.
+
 ## Requirements
 - Node.js 18+
 
@@ -510,6 +536,17 @@ standalone smoke therefore enforces six distinct, coherent transaction-backed
 candles; the canonical release wrapper remains responsible for matching those
 candles to the retained release proof.
 
+Public mainnet/testnet JSON-RPC proxies verify the selected upstream's
+`getMasterchainInfo.init` workchain and both zero-state hashes on every request.
+Configured URLs and discovered URLs receive the same check. A mismatched or missing
+identity skips that upstream; if none can prove the selected network, the public
+JSON-RPC error reports the failure without exposing URLs or credentials. Enabled
+`sendBoc`, `sendBocReturnHash`, and `estimateFee` calls require a fresh successful
+check against that same endpoint before forwarding. Explicit localnet endpoints
+retain their own network identity and never use public endpoint discovery. The
+route registrar requires an explicit validated network. Run `npm run test:rpc-network`
+for the focused network and SDK-protocol regressions.
+
 ## Configuration
 Environment variables (all optional):
 - `PORT` (default: `8787`)
@@ -519,7 +556,7 @@ Environment variables (all optional):
 - `TON_NETWORK` (`mainnet` | `testnet` | `localnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
 - `TON_HTTP_ENDPOINT` (explicit TonClient4 endpoint; if unset uses `@orbs-network/ton-access`)
-- `INDEXER_WRITE_RPC_ENDPOINT` (optional upstream JSON-RPC endpoint for proxying write methods)
+- `INDEXER_WRITE_RPC_ENDPOINT` / `INDEXER_WRITE_RPC_ENDPOINTS` (optional upstream JSON-RPC endpoint or comma-separated endpoints for masterchain metadata and enabled write methods)
 - `INDEXER_ENABLE_WRITE_RPC` (`true` to allow proxied write methods; default `false`)
 - `INDEXER_WRITE_RPC_API_KEY` (optional API key passed as `X-API-Key` to `INDEXER_WRITE_RPC_ENDPOINT`)
 - `INDEXER_RPC_PROXY_TIMEOUT_MS` (default: `30000`)
@@ -677,8 +714,9 @@ Metrics payload highlights:
 Refresh testnet registry data from one reviewed canonical release manifest:
 ```bash
 npm run sync-registry -- /absolute/path/to/release-manifest.json
+npm run sync-registry -- --check /absolute/path/to/release-manifest.json
 ```
-`sync-registry` validates the release schema, network and hashes, then atomically replaces the entire contract map. It never merges addresses from old deployments or `tmp_debug`. The bundled testnet registry contains 61 reviewed contract keys and has registry hash `ba392312e502dca9f0e70404770431834b0210149c0216311c6af58f78454016`.
+`sync-registry` validates the release schema, network and hashes, then atomically replaces the entire contract map. It never merges addresses from old deployments or `tmp_debug`. `--check` performs the same canonical manifest validation and verifies every bundled registry role and address without writing files; missing, extra or changed entries exit unsuccessfully. Use it to catch stale repository setup data before publication. The bundled map is a source snapshot, not proof of the currently deployed release: verify the public `/contracts` and `/service-info` release identity and hashes against the same reviewed manifest. A different or retired public deployment must not be copied into a fresh candidate.
 
 Release runs may instead provide the canonical
 `tonswap-first-release-manifest-v1` manifest with `network`, `releaseId`, `contracts`,
@@ -732,6 +770,21 @@ leave perps settlement unconfigured. Every nonempty value must be exactly 64 low
 hexadecimal characters: prefixes, uppercase, surrounding whitespace, and malformed
 values fail startup. There is one registry engine and one hash, with no automatic
 network fallback. Physical wallet transfers remain visible when this binding is absent.
+
+Current positions require exactly four counterparty coins in this order: reserved
+LP cash, booked positive funding, collected trader loss, and remaining cumulative
+gross entitlement. OPEN reserves 2N of LP cash and grants entitlement N using the
+actual entry fill. Gross positive price and funding benefit share that entitlement;
+paid funding and positive funding canceled against opposite debt consume it.
+Partial exits retire the closed quantity's unused entitlement, deposits preserve
+it, and actual new gross fills alone add new entitlement. Withdrawals retain entry
+principal N even when a favorable price lowers the current margin requirement.
+The API exposes mandatory `remainingEntitlementRaw`; omitted or old three-coin
+states are unsupported. These bounds do not claim every LP position is lossless.
+Run `npx tsx src/scripts/perps-entitlement-test.ts` for strict ABI and integer
+boundaries, `npx tsx src/scripts/ledger-perps-test.ts` for synthetic lifecycle
+conservation, and `npm run test:ledger` with genuinely recaptured current native
+fixtures before release. Synthetic states never certify physical token settlement.
 
 The durable graph crawls the canonical engine and the owner's and engine's T3 wallets,
 including keeper transactions that name an owner without touching the owner's wallet.
@@ -839,6 +892,61 @@ The historical `optionPosition.sourceWallet` is the factory-owned collateral
 wallet stored by the current contract. It must equal the actual factory receipt
 wallet in the original funding evidence. The buyer's source wallet remains the
 funding debit asset's `wallet`; consumers must bind these distinct identities.
+
+Factory ingress receipts use the sole current layout: accepted flag,
+`buyKey:uint128`, accepted amount, then the pending refund dictionary. Historical
+abort proof binds that key and amount to the exact original allocation and token
+payment. A separate physical refund cannot alter an earlier accepted identity.
+The current Factory state also requires the series expiry-registration flag and
+writer native-escrow reference before the returns reference. Its guard cell stores
+exactly guardian and oracle addresses; obsolete canary owner/mode fields are rejected.
+Missing fields and the former two-field receipt are rejected. The lifecycle suite
+includes an actual VM Factory state BOC as well as malformed-state fixtures. Run `npx tsx
+src/scripts/ledger-option-lifecycle-test.ts`, `npx tsx
+src/scripts/ledger-option-abort-test.ts`, and `npx tsx
+src/scripts/ledger-option-buy-bounce-test.ts` after changing this interface.
+
+Regenerate the actual rejected-ingress fixture with the maintained preparation
+tool after building the current native testnet artifacts (`build:deploy:testnet`
+in `../tonswap_tolk`). Use the reviewed Node executable and its SHA-256, with
+that executable's directory first in `PATH` and `NODE_OPTIONS` unset:
+
+```sh
+"$NODE" --no-turbo-fast-api-calls scripts/refresh-options-rejected-ingress-fixture.cjs prepare \
+  --native-root "$NATIVE_ROOT" --node-sha256 "$NODE_SHA256" --output-root "$NEW_OUTPUT"
+```
+
+All paths must be absolute; the output directory must not exist. This runs the
+complete 55-test `OptionFactory.spec.ts` with `OPTIONS_REFUND_STATE_CAPTURE=1`,
+freshly compiles Factory, Wallet, Root, Shout and Outperformance, and validates the
+actual BOC against the current strict state decoder and embedded code identities.
+It checks complete native source/runtime equality, authenticated testnet build
+inputs, complete compiler imports, actual unfiltered Jest JSON and log, and owned
+process cleanup. It retains the capture under `capture/` and writes the unchanged
+captured BOC and provenance under `fixtures/`. Failed or interrupted runs never
+produce accepted fixture outputs. This is local fixture preparation, not release
+qualification or evidence of live settlement.
+
+A separately reviewed, already completed producer can be consumed without
+repeating its native suite:
+
+```sh
+"$NODE" --no-turbo-fast-api-calls scripts/refresh-options-rejected-ingress-fixture.cjs adopt \
+  --capture-dir "$CAPTURE_DIR" --native-root "$NATIVE_ROOT" --node-sha256 "$NODE_SHA256" \
+  --source-before-sha256 "$REVIEWED_SOURCE_BEFORE_SHA256" \
+  --compile-sha256 "$REVIEWED_COMPILE_JSON_SHA256" --output-root "$NEW_FIXTURE_OUTPUT"
+```
+
+The explicit pins select the reviewed actual producer/runtime authority and its
+fresh independent compiler output; they must not be manufactured by repinning old
+transactions. The capture directory must contain the complete source-before/after,
+producer-launch/terminal/result/log, independent-compile JSON/terminal/log and
+diagnostic files emitted by `prepare` (or the equivalent reviewed producer).
+After reviewing the two output files, copy both into `src/scripts/fixtures/`,
+then run the lifecycle consumer above and the native release fixture preflight.
+The tool never overwrites canonical fixtures automatically. Its maintained
+negative and process-cleanup tests run with
+`"$NODE" --no-turbo-fast-api-calls --test scripts/refresh-options-rejected-ingress-fixture.test.cjs`.
 
 ### Option exercise, payout and individual refunds
 
@@ -1285,11 +1393,23 @@ paths from the public listener. Adapt and validate it on the actual edge before
 reloading; application tests cannot verify a separately managed proxy.
 
 T3 graph discovery identifies owned mint/burn activity before remote state reads.
+The current `vault_routes` getter has exactly 18 fields, including the mandatory
+wallet code after the receiver code; the old 17-field getter is unsupported.
+Configured recovery bindings must match both code hashes.
 A failed redemption-receiver lookup leaves a receiver gap while mint hub/root
-identity and settlement discovery continue. Required hub getter failures remain an
+identity and settlement discovery continue. Active receiver identity/getter or
+custody discovery failures likewise retain the independently verified mint hub,
+while publishing an explicit receiver gap and never accepting unverified custody.
+Required hub getter failures remain an
 explicit T3 gap. The retained public-testnet mint fixture tests discovery with the
 original transaction and current identity inputs; it does not certify historical
 settlement or replace a live reindex.
+
+Balance snapshots with unavailable configured wallets remain `confirmed:false`
+and are not cached, so a later read can immediately recover the missing asset.
+An unavailable wallet is never reported as a zero balance or replaced with a stale
+balance. `npm run test:report` covers transient balance recovery and the isolated
+T3 receiver failures; `npm run test:ledger` covers exact settlement qualification.
 
 The first release supports only DLMM and stableswap. Registry roles use `DexRouter` and `DlmmPoolFactory`; pool discovery accepts only the current DLMM factory protocol. CLMM deployment messages, contract roles, and perps registration hints are unsupported.
 
@@ -1427,13 +1547,19 @@ for LP fees. Run `npm run test:ledger:market`, `npm run test:ledger:liquidity` a
 `npm run test:ledger` after changing these proofs.
 
 Launchpad first-release storage uses one shared settlement journal across fixed,
-bonding and auction sales. The decoder retains original referral terms, the
-credit outbox, exact funding wire and separate native reserve. `accounting-pending`
-records do not certify a completed fee allocation. CNTR/PBID must contain their
-explicit referral reference; prior serialized layouts are rejected. Participation
-proofs require unchanged settlement state because a fee may be routed only after
-the later purchased-token settlement has positive finality. Fixed/Bonding refunds
-cancel accrued fees; Auction bids have zero accrued fees until a successful claim.
+bonding and auction sales. The current decoder requires the activation bit,
+settlement native-refund owner, null referral registry and zero module key.
+CNTR/PBID retain their explicit nullable referral reference; a non-null inviter
+cannot establish participation. Protocol fees use only the current RFFL outbox
+and physical FeeRouter custody, with zero TS rewards. The old CRED body and
+obsolete storage layouts are rejected. `accounting-pending` records do not
+certify a completed fee allocation. Participation proofs require unchanged
+settlement state because fees can be routed only after positive purchased-token
+finality. Fixed/Bonding refunds cancel accrued fees; Auction bids have zero
+accrued fees until a successful claim. The current fixtures include original
+ShardAccount inputs/outputs matched to raw VM transaction state hashes, exact
+compiler/import/runtime provenance, and actual failed nonzero-referral
+configuration and inviter-refund graphs. Run `npm run test:ledger:launchpad`.
 
 Perps referral-release qualification uses only the current wallet storage, including
 both permanent mint and funding-notification dictionaries. The current OPEN/CLOSE
@@ -1457,6 +1583,46 @@ Two persistent owned worker processes authenticate the signature chain and a fre
 
 Perps economic qualification uses only the current isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Run `npx tsx src/scripts/ledger-perps-test.ts`, `npx tsx src/scripts/perps-counterparty-economics-test.ts`, `npx tsx src/scripts/perps-risk-admission-test.ts`, and `npx tsx src/scripts/perps-oracle-state-test.ts`, followed by the complete `npm run test:ledger`.
 
+The current oracle journal distinguishes an ordinary CLOSE's empty context, a
+MODIFY's complete prior position, and a managed CLOSE or funding claim's exact
+position commitment plus native sponsor. Pending kind and terminal reason have
+different meanings. The decoder preserves the original context across the
+callback and checks an accepted managed exit against its actual prior position;
+Mesh refunds must name job 405 and the configured control return collector.
+The oracle-state regression includes an authenticated current native maintenance
+capture and rejects substituted position commitments, sponsors and trailing
+fields. These bindings identify the operation and do not prove wallet delivery.
+An ordinary owner full CLOSE may replace a pending maintenance CLOSE, including
+with the same business query ID, only under the native supersession conditions
+and with a new wire nonce. Other paid pending orders remain protected.
+This exception has a synthetic indexer boundary regression using an unchanged
+ordinary-CLOSE wire, plus the existing native supersession test; it is not an
+actual captured supersession ledger graph.
+
+A fresh direct-owner `CFNG` funding claim executes at its authenticated oracle
+callback. Intake queues the claim and preserves the position commitment; it does
+not establish settled funding. The stored native sponsor must retain the intake
+transaction's logical time, direct refund kind 0, module 0 and owner refund
+address, with the same context through the callback. An existing pending funding
+transfer follows the contract's direct retry branch and keeps its original
+settlement journal. Fee allocation, trader-margin returns and LP-funded profit
+delivery require their separate custody evidence. As of 2026-09-27, the decoder
+and continuation changes pass the targeted oracle-execution integration against
+the authenticated final15 native captures, including accepted and rejected
+funding claims and an exhausted-reserve close. The 53-test native risk producer
+and independent compilation bind those captures to source closure `c93e4a60...`
+and Engine `d3a74ae2...`. The targeted log is
+`../output/first-testnet/generation-20260925-g33/preparation/indexer-claim-integration-final15-01.log`.
+All six final15 producers now pass at counts 53/7/32/5/1/1. The canonical risk
+fixtures contain all 11 authenticated cases, and the browser and funded exports
+bind the exact current 234-file indexer source inventory. The complete indexer
+`npm test` (including pretest and all 47 ledger scripts), indexer and web
+typechecks, 592 Perps unit tests and 13 browser scenarios pass. A post-package
+check revalidates all six native receipts, both projector inventories and output
+hashes. The receipt is
+`../output/first-testnet/generation-20260925-g33/preparation/perps-current-precheck-final15.json`.
+Frozen whole-release qualification and testnet deployment remain pending.
+
 The current bounded Perps range graph discovers complete engine-emitted RVLT/RVPS, RPRQ and referral requests, including RiskVault and fee-router T3 custody. It captures every peer at the original masterchain snapshot and qualifies active wallets against the engine-pinned root and wallet code. Discovery is bounded to 32 protocol peers plus their wallets and shares the existing 128-page work budget; it never substitutes a latest-head account read. Physical profit delivery still requires the separate exact RiskVault journal, beneficiary credit, wallet finality and engine hook. Run `npx tsx src/scripts/ledger-perps-range-test.ts` and `npm run test:ledger` after changes.
 
 Current funded managed messages use the strict `CNFW` envelope and full TVM12+
@@ -1473,10 +1639,77 @@ The current RiskVault payout journal contains the explicit native escrow referen
 before its route reference. Its containing journal has the mandatory funded ready FIFO (`head:uint64 tail:uint64 entries:dict64→256`); missing, noncontiguous or dangling queue entries are rejected. Omitted historical layouts are unsupported. Run
 `npm run test:ledger:native-funding` for original compiled wallet and RiskVault
 captures, including all seven RiskVault graph account balance boundaries. Current
-Mesh snapshots require exactly31 getter fields; no13/57-field fallback is accepted.
+Mesh snapshots require exactly37 getter fields; no13/31/57-field fallback is accepted.
 
 Launchpad bonding participation verification uses the current cumulative linear
 curve cost `C(s + q) - C(s)`, including the contract's upward rounding, and checks
 that the accepted quantity is maximal for the physical payment. Spot price alone
-does not establish a fill. Run `npm run test:ledger:launchpad` to verify all three
+does not establish a fill. Every confirmed bonding entitlement carries the
+mandatory `curve` evidence: linear `curveKind: 1`, base price, slope numerator
+and denominator, maximum supply, global sold before and after, and the actual
+post-fill marginal price. The values come from the same authenticated archives
+as the participant delta; participant balances cannot replace global supply.
+Run `npm run test:ledger:launchpad` to verify all three
 current model captures and their independent wallet/state evidence.
+# Current Perps fixture qualification
+
+Perps ledger fixtures are original local VM captures, not evidence of live
+testnet deployment. Regenerate them through `src/scripts/capture-perps-fixture.ts`
+using Node 26.5.1 with `--no-turbo-fast-api-calls`, `--import tsx`, and `NODE_OPTIONS`
+unset. The producer argument is `risk`, `wallets`, `browser`, `directFee`, or `funding`; the
+second argument is a new absolute output directory. Each run requires its complete
+native suite, binds the transitive TypeScript/Tolk sources and toolchain before
+and after execution, independently recompiles the code, and saves immutable
+artifact hashes and a complete producer log.
+
+`directFeeObserved` runs the same custody assertions with a separately supplied
+observed-gas-price configuration path as its third argument. It records that
+external input and keeps the evidence separate from mandatory stress-400 gas
+qualification. This is a local fee simulation, not a live-chain trade, and
+commercial viability is separate from native-custody isolation.
+
+The `refresh-perps-risk-admission-fixture.ts`,
+`refresh-perps-funding-checkpoint-fixture.ts`, and
+`refresh-perps-direct-fee-fixture.ts` scripts require those producer receipts
+when using `--qualified`. `refresh-perps-range-fixture.ts` requires both the risk
+and wallet producer directories. The risk, wallet and funding captures include
+and require their exact VM15 400-nanoton/gas execution configuration; fixture
+provisioning costs and the separately labeled observed-price healthy-query
+measurement are not stress-cost evidence. `refresh-perps-direct-fee-web-fixture.ts`
+takes a complete qualified direct-fee producer directory and exports the genuine
+before/after getters plus current physical FeeRouter custody to the browser.
+Current Perps direct fees create no automatic referral earnings or claims.
+Qualified direct-fee adoption also refreshes the native release OPEN/CLOSE
+causality fixture. Qualified risk adoption to the default canonical directory
+refreshes the native profitable-close counterparty fixture. Both retain their
+complete producer receipt, log and compressed original capture bytes; native
+consumer tests recheck the current producer source closure and original graph
+bindings before proving physical custody. These tests reuse the canonical
+collector and complete-log validator from the sibling indexer source; they
+independently reconstruct the exact dependency list and reject omitted,
+duplicated, reordered or altered entries and conflicting terminal summaries.
+They read selected original artifacts retained in the fixtures, without requiring
+the historical private capture directories. A private risk `--output` export does
+not replace the native release fixture.
+After adopting the qualified risk capture, run
+`refresh-perps-funded-web-fixture.ts <new-absolute-projection-directory>` with
+the same pinned runtime. It projects all ten original operation traces through
+the indexer, checks the current code identities and stress configuration, binds
+indexer source before and after, and publishes seven genuine browser fixtures with
+their complete 53-test native receipt and projector logs. The separate wallet
+producer requires all seven tests, including cold deployment and populated-state
+protection acknowledgement at the exact caller-funded budget.
+For the five browser expiry, rejection, close and fee-excess cases, run
+`export-perps-browser-evidence.ts <absolute-qualified-browser-producer> <new-absolute-projection-directory>`.
+This requires the complete five-test producer receipt and publishes all five
+current original graphs only after their full strict projection succeeds.
+A flag, stale build output, truncated test log,
+or edited source cannot qualify a capture. Run `npm run test:ledger` after
+adoption; its Perps qualification checks reject source drift after capture.
+
+Current routed market evidence includes `routing.directFeeSettlement` for the
+physical Router-to-FeeRouter wallet delivery, separately from the Pool-to-Router
+protocol fee leg. A same-wallet beneficiary payout is tied to the fee finalizer
+that advances the Router's source queue. Verify this path with
+`npm run test:ledger:market`; `npm run test:ledger:liquidity` also checks the
+current Pool protection mask and rejection of obsolete metadata.

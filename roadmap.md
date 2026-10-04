@@ -1,5 +1,45 @@
 # TONSWAP Indexer Roadmap
 
+## Current Perps qualification — 2026-09-27
+
+The current decoder distinguishes ordinary CLOSE's empty context, MODIFY's
+complete prior position and managed CLOSE/CFNG's exact position commitment plus
+native sponsor. It validates pending operation kind separately from terminal
+reason, preserves context identity through the oracle callback and verifies an
+accepted managed exit against its actual prior position. Mesh sponsors require
+job 405 and the configured control return collector; malformed, substituted or
+trailing context fields are rejected.
+An ordinary owner full CLOSE can supersede a pending maintenance CLOSE, even
+with the same business query ID, while allocating a different wire nonce. This
+exception does not allow replacement of other paid pending orders.
+The indexer regression exercises that exception with synthetic intake boundaries
+and an unchanged ordinary-CLOSE wire; the existing native risk suite separately
+tests actual supersession. These are not a captured supersession ledger graph.
+
+Fresh direct-owner CFNG claims use the authenticated oracle callback for economic
+execution. Their native context binds the intake transaction's logical time to
+direct refund kind 0, module 0 and the owner refund address. Existing pending
+funding transfers keep the contract's direct retry path and original settlement
+journal. Oracle acceptance, fee allocation, trader-margin returns and physical
+LP-funded payment remain separate facts with independent evidence.
+
+The managed maintenance decoder regression passed against original final14
+native transaction and storage captures. A later capture-only native test change
+adds accepted/rejected CFNG and exhausted-reserve-close cases. The final15 risk
+producer passes all 53 native tests and independent compilation at source
+closure `c93e4a60...`, with Engine `d3a74ae2...`. Targeted oracle-execution
+integration passes against the authenticated 11-case staged fixture directory,
+including the three new actual claim cases and missing-custody/context negatives.
+The log is `../output/first-testnet/generation-20260925-g33/preparation/indexer-claim-integration-final15-01.log`.
+Earlier final14 captures retain their original provenance. All six final15
+native producers now pass at counts 53/7/32/5/1/1 and their current fixtures are
+adopted. The complete indexer `npm test`, including pretest and all 47 ledger
+scripts, passes alongside both typechecks, 592 web Perps unit tests and 13 browser
+scenarios. The final provenance check verifies all six native receipts and the
+exact current 234-file indexer inventory used by both web projector families.
+The receipt is `../output/first-testnet/generation-20260925-g33/preparation/perps-current-precheck-final15.json`.
+Frozen whole-release qualification and testnet deployment remain pending.
+
 ## Design (v1)
 
 ### Goals

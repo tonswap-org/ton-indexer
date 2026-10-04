@@ -179,6 +179,14 @@ export type AccountStateResponse = {
   accountState?: 'active' | 'uninitialized' | 'frozen' | null;
   codeBoc?: string | null;
   dataBoc?: string | null;
+  /** Exact final transaction boundary retained by authenticated historical replay. */
+  replayBoundary?: Readonly<{
+    beforeShardAccountBoc: string;
+    afterShardAccountBoc: string;
+    transactionBoc: string;
+    blockBoc: string;
+    configBoc: string;
+  }>;
 };
 
 export type MasterchainInfo = {

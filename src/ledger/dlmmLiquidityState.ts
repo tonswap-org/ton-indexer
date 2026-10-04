@@ -139,7 +139,9 @@ export function readDlmmLiquidityState(boc: string): DlmmLiquidityState {
   if (market.poolKind !== 4 || market.binSpacing < 1 || market.binSpacing > 200) throw Error('dlmm_liquidity_pool_kind_invalid');
   binIdValid(market.activeBinId);
   const cell = Cell.fromBase64(boc), bs = cell.refs[0].beginParse();
-  const guard = cell.refs[2].beginParse(); guard.skip(288); const binLiquidityCapRaw = guard.loadUintBig(128).toString(); guard.skip(192); end(guard);
+  const guard = cell.refs[2].beginParse(); guard.skip(288); const binLiquidityCapRaw = guard.loadUintBig(128).toString(); guard.skip(192);
+  if (guard.loadRef().hash().toString('hex') !== market.optionRegistryHash) throw Error('dlmm_liquidity_option_registry_invalid');
+  end(guard);
   const feeGrowthGlobalTRaw = bs.loadUintBig(256).toString(), feeGrowthGlobalXRaw = bs.loadUintBig(256).toString();
   const binDict = bs.loadRef(); end(bs);
   if (market.storageForm === 'constructor') return { market, bins: new Map(), feeGrowthGlobalTRaw, feeGrowthGlobalXRaw,
@@ -231,7 +233,7 @@ export function deriveDlmmLiquidityAmounts(state: DlmmLiquidityState, request: D
 export function verifyDlmmLiquidityTransition(before: DlmmLiquidityState, after: DlmmLiquidityState, request: DlmmLiquidityRequest): DlmmLiquidityAmounts {
   const result = deriveDlmmLiquidityAmounts(before, request);
   const same = (a: unknown, b: unknown, code: string) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw Error(code); };
-  for (const field of ['tokenT', 'tokenX', 'treasury', 'router', 'stableAmp', 'routerOperationsHash', 'poolKind', 'binSpacing', 'activeBinId', 'feePips', 'impactCapBps', 'governance', 'controlSeqno', 'walletCodeHash', 'guardConfigurationHash', 'farmingHash'] as const)
+  for (const field of ['tokenT', 'tokenX', 'treasury', 'router', 'stableAmp', 'routerOperationsHash', 'poolKind', 'binSpacing', 'activeBinId', 'feePips', 'impactCapBps', 'governance', 'controlSeqno', 'walletCodeHash', 'guardConfigurationHash', 'optionRegistryHash', 'farmingHash'] as const)
     same(before.market[field], after.market[field], `dlmm_liquidity_changed_${field}`);
   if (before.market.storageForm === 'constructor' && before.market.provenanceHash === null) {
     if (!after.market.provenanceIsDefault) throw Error('dlmm_liquidity_constructor_provenance_changed');

@@ -211,11 +211,14 @@ export async function recoverT3Burn(
     s.proof.queryId === request.queryId &&
     s.proof.wireId === wireId &&
     s.proof.amountRaw === request.amountRaw &&
-    s.proof.recipient === request.recipient &&
-    s.proof.slippage === request.slippage &&
-    s.proof.mode === request.mode &&
-    s.proof.outputToken === request.outputToken &&
-    s.proof.referrer === request.referrer;
+    (s.proof.consumed === 1
+      ? s.proof.intentHash === proofState.after.proof?.intentHash &&
+        s.proof.payoutId === proofState.after.proof?.payoutId
+      : s.proof.recipient === request.recipient &&
+        s.proof.slippage === request.slippage &&
+        s.proof.mode === request.mode &&
+        s.proof.outputToken === request.outputToken &&
+        s.proof.referrer === request.referrer);
   if (
     !walletMatches(walletState.after) ||
     walletState.after.journal.status !== 4 ||

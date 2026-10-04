@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { Address, beginCell, Cell, Dictionary } from "@ton/core";
 import {
   projectOwnerLedger,
@@ -127,6 +129,7 @@ export type FactorySeriesFixture = {
   openNotional: bigint;
   collateralLocked: bigint;
   status: number;
+  expiryRegistered: boolean;
   settlementTimestamp: bigint;
   nextTokenId: bigint;
   correlationScaleBps: number;
@@ -155,6 +158,7 @@ const factorySeries = (
   openNotional: notional,
   collateralLocked: collateral,
   status: 0,
+  expiryRegistered: true,
   settlementTimestamp: 0n,
   nextTokenId: 4n,
   correlationScaleBps: 10000,
@@ -177,7 +181,7 @@ const factorySeries = (
   ...overrides,
 });
 export type FactoryStateFixture = {
-  ingressReceipts?: Array<{logical: string; accepted: boolean; refunds: bigint[]}>;
+  ingressReceipts?: Array<{logical: string; accepted: boolean; buyKey: bigint; acceptedAmount: bigint; refunds: bigint[]}>;
   ingressClaimAttempts?: Array<[bigint, bigint]>;
   physicalTombstones?: string[];
   series?: FactorySeriesFixture[];
@@ -211,6 +215,7 @@ function factoryData(
         .storeCoins(s.openNotional)
         .storeCoins(s.collateralLocked)
         .storeUint(s.status, 8)
+        .storeBit(s.expiryRegistered)
         .storeInt(s.settlementTimestamp, 64)
         .storeUint(s.nextTokenId, 64)
         .storeUint(s.correlationScaleBps, 32)
@@ -232,6 +237,7 @@ function factoryData(
         )
         .storeRef(beginCell().storeAddress(A(other)).storeUint(1, 64).storeUint(3, 8)
           .storeCoins(s.maxNotional).storeCoins(s.maxNotional).storeUint(1, 64).storeUint(1, 64)
+          .storeRef(beginCell().storeBit(true).storeUint(1, 64).storeCoins(s.kind === 1 ? 11_830_000_000n : 18_930_000_000n))
           .storeRef(beginCell().storeCoins(0)))
         .endCell(),
     );
@@ -319,7 +325,8 @@ function factoryData(
   for (const receipt of state.ingressReceipts ?? []) {
     const logical = BigInt("0x" + receipt.logical), refunds = Dictionary.empty(Dictionary.Keys.BigUint(64), Dictionary.Values.Bool());
     for (const id of receipt.refunds) { refunds.set(id, true); ingressClaimAttempts.set(id, logical); }
-    ingressReceipts.set(logical, beginCell().storeBit(receipt.accepted).storeDict(refunds).endCell());
+    ingressReceipts.set(logical, beginCell().storeBit(receipt.accepted)
+      .storeUint(receipt.buyKey, 128).storeCoins(receipt.acceptedAmount).storeDict(refunds).endCell());
   }
   if (state.ingressClaimAttempts) {
     for (const [id] of ingressClaimAttempts) ingressClaimAttempts.delete(id);
@@ -330,7 +337,8 @@ function factoryData(
     .storeAddress(A(vault))
     .storeRef(beginCell().storeAddress(A(other)).storeAddress(A(other)))
     .storeRef(beginCell().storeRef(shoutCode).storeRef(spreadCode))
-    .storeRef(beginCell().storeAddress(A(root)).storeRef(walletCode))
+    .storeRef(beginCell().storeAddress(A(root)).storeRef(walletCode)
+      .storeBit(true).storeAddress(null).storeCoins(0n))
     .storeRef(
       beginCell()
         .storeAddress(A(other))
@@ -373,7 +381,8 @@ export function acceptedIngressState(notification: RawMessage): FactoryStateFixt
   const forward = slice.loadRef();
   return {
     physicalTombstones: [optionIngressClaimIdentity(factoryWallet, notification.createdLt!, body.hash().toString("hex"))],
-    ingressReceipts: [{logical: optionIngressLogicalIdentity(owner, query, amount, forward.hash().toString("hex")), accepted: true, refunds: []}],
+    ingressReceipts: [{logical: optionIngressLogicalIdentity(owner, query, amount, forward.hash().toString("hex")),
+      accepted: true, buyKey: (7n << 64n) | 3n, acceptedAmount: BigInt(amount), refunds: []}],
   };
 }
 
@@ -872,7 +881,8 @@ function refund(kind: 1 | 3 = 3, paid = true, count = 1, accepted = false) {
     p = kind === 3 ? position({ excess: amount }) : null,
     physicalTombstones: string[] = [],
     receiptState = (pending: bigint[] = []): FactoryStateFixture => kind === 1 ? {
-      physicalTombstones: [...physicalTombstones], ingressReceipts: [{logical, accepted, refunds: pending}],
+      physicalTombstones: [...physicalTombstones], ingressReceipts: [{logical, accepted, buyKey: 0n,
+        acceptedAmount: accepted ? amount : 0n, refunds: pending}],
     } : {};
   f.tx(factory, undefined, [], { code: factoryCode, data: factoryData(p, [], 0n, undefined, accepted ? receiptState() : {}) });
   const append = (index: number) => {
@@ -970,6 +980,32 @@ function refund(kind: 1 | 3 = 3, paid = true, count = 1, accepted = false) {
   return { ...f, ...refunds.at(-1)!, refunds, logical, payload };
 }
 async function testPhysicalIngressRefunds() {
+  const logical = "13".repeat(32), buyKey = (7n << 64n) | 3n, acceptedAmount = 37n;
+  const currentReceipt = beginCell().storeBit(true).storeUint(buyKey, 128)
+    .storeCoins(acceptedAmount).storeDict(null).endCell();
+  const current = factoryData(null, [], 0n, undefined, { ingressReceipts: [
+    { logical, accepted: true, buyKey, acceptedAmount, refunds: [] },
+  ] });
+  const parsed = readOptionFactoryConfig(boc(current)).ingressReceipts.get(logical)!;
+  assert.equal(parsed.accepted, true);
+  assert.equal(parsed.buyKey, buyKey);
+  assert.equal(parsed.acceptedAmountRaw, "37");
+  assert.equal(parsed.refunds.size, 0);
+  const replaceReceipt = (cell: Cell, replacement: Cell): Cell => cell.equals(currentReceipt) ? replacement
+    : beginCell().storeBits(cell.bits).store(cellBuilder => {
+      for (const ref of cell.refs) cellBuilder.storeRef(replaceReceipt(ref, replacement));
+    }).endCell();
+  const invalidReceipts = [
+    beginCell().storeBit(true).storeDict(null).endCell(),
+    beginCell().storeBit(false).storeUint(buyKey, 128).storeCoins(0).storeDict(null).endCell(),
+    beginCell().storeBit(false).storeUint(0, 128).storeCoins(acceptedAmount).storeDict(null).endCell(),
+    beginCell().storeBit(true).storeUint(buyKey, 128).storeCoins(0).storeDict(null).endCell(),
+    beginCell().storeBit(true).storeUint(3, 128).storeCoins(acceptedAmount).storeDict(null).endCell(),
+    beginCell().storeSlice(currentReceipt.beginParse()).storeBit(true).endCell(),
+  ];
+  for (const receipt of invalidReceipts) assert.throws(() =>
+    readOptionFactoryConfig(boc(replaceReceipt(current, receipt))),
+    "obsolete, malformed or inconsistent ingress receipt cannot qualify current state");
   for (const accepted of [false, true]) {
     const f = refund(1, true, 2, accepted), events = (await projectOwnerLedger(f.input)).events,
       returns = events.filter((e) => e.kind === "option_refund");
@@ -986,6 +1022,8 @@ async function testPhysicalIngressRefunds() {
     }
     const state = readOptionFactoryConfig(boc(f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data));
     assert.equal(state.ingressReceipts.get(f.logical)?.accepted, accepted);
+    assert.equal(state.ingressReceipts.get(f.logical)?.buyKey, 0n);
+    assert.equal(state.ingressReceipts.get(f.logical)?.acceptedAmountRaw, accepted ? payout.toString() : "0");
     assert.equal(state.ingressReceipts.get(f.logical)?.refunds.size, 0);
     assert.equal(state.ingressClaimAttempts.size, 0);
     for (const r of f.refunds) assert.equal(state.claimIndex.get(BigInt("0x" + r.claim.identity)), 0n);
@@ -997,10 +1035,10 @@ async function testPhysicalIngressRefunds() {
     ["changed full body", (f) => { f.incoming.body = boc(beginCell().storeSlice(Cell.fromBase64(f.incoming.body!).beginParse()).storeBit(true).endCell()); }],
     ["claim logical mapping absent", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id); }],
     ["claim logical mapping forged", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id, undefined, {...f.pendingState, ingressClaimAttempts: [[f.claim.id, 1n]]}); }],
-    ["accepted flag falsely changed by refund", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id, undefined, {...f.pendingState, ingressReceipts: [{logical: f.logical, accepted: true, refunds: [f.claim.id]}]}); }],
+    ["accepted flag falsely changed by refund", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id, undefined, {...f.pendingState, ingressReceipts: [{logical: f.logical, accepted: true, buyKey: 0n, acceptedAmount: payout, refunds: [f.claim.id]}]}); }],
     ["terminal logical receipt omitted", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity); }],
     ["terminal pending claim retained", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity, f.pendingState); }],
-    ["terminal accepted flag mutated", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity, {...f.terminalState, ingressReceipts: [{logical: f.logical, accepted: true, refunds: []}]}); }],
+    ["terminal accepted flag mutated", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity, {...f.terminalState, ingressReceipts: [{logical: f.logical, accepted: true, buyKey: 0n, acceptedAmount: payout, refunds: []}]}); }],
     ["business hash substituted for physical identity", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [{...f.claim, identity: f.logical}], f.claim.id, undefined, f.pendingState); }],
   ];
   for (const [label, mutate] of cases) {
@@ -1009,7 +1047,16 @@ async function testPhysicalIngressRefunds() {
     assert(!events.some((e) => e.kind === "option_refund"), label);
     assert(!events.flatMap((e) => e.movements).some((m) => m.purpose === "option_refund"), label);
   }
-  console.log(`4 same-query physical refunds and ${cases.length} physical/journal forgery cases passed`);
+  for (const field of ["buyKey", "acceptedAmount"] as const) {
+    const f = refund(1, true, 1, true), receipt = f.pendingState.ingressReceipts![0];
+    const changed = { ...receipt, [field]: field === "buyKey" ? buyKey : payout + 1n };
+    f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id,
+      undefined, { ...f.pendingState, ingressReceipts: [changed] });
+    const events = (await projectOwnerLedger(f.input)).events;
+    assert(!events.some(event => event.kind === "option_refund"),
+      `ingress refund cannot change an existing accepted ${field}`);
+  }
+  console.log(`4 same-query physical refunds, ${invalidReceipts.length} strict current receipt shapes and ${cases.length + 2} physical/journal forgery cases passed`);
 }
 const exerciseEvent = async (f: ReturnType<typeof exercise>) =>
   (await projectOwnerLedger(f.input)).events.find(
@@ -1232,6 +1279,9 @@ export function testFactoryState() {
   assert.equal(empty.series.size, 0);
   assert.equal(empty.seriesBuyIndex.size, 0);
   assert.equal(empty.positions.size, 0);
+  assert.equal(empty.walletProtected, true);
+  assert.equal(empty.walletProtectionSponsor, null);
+  assert.equal(empty.walletQuarantinedRaw, "0");
   const seriesId = (1n << 62n) + 7n,
     tokenId = (1n << 53n) + 3n,
     wire = (1n << 63n) + 13n,
@@ -1289,6 +1339,7 @@ export function testFactoryState() {
     openNotionalRaw: ((1n << 113n) + 31n).toString(),
     collateralLockedRaw: ((1n << 115n) + 17n).toString(),
     status: 4,
+    expiryRegistered: true,
     settlementTimestamp: (-((1n << 53n) + 19n)).toString(),
     nextTokenId: tokenId.toString(),
     correlationScaleBps: 10007,
@@ -1360,6 +1411,13 @@ export function testFactoryState() {
   const appendBit = (cell: Cell) => beginCell().storeSlice(cell.beginParse()).storeBit(true).endCell();
   const appendRef = (cell: Cell) => beginCell().storeSlice(cell.beginParse()).storeRef(Cell.EMPTY).endCell();
   const negatives: Array<[string, Cell]> = [];
+  for (const collateral of [
+    beginCell().storeAddress(A(root)).storeRef(walletCode).endCell(),
+    beginCell().storeAddress(A(root)).storeRef(walletCode).storeBit(false).storeAddress(null).storeCoins(1n).endCell(),
+    beginCell().storeAddress(null).storeRef(walletCode).storeBit(true).storeAddress(null).storeCoins(0n).endCell(),
+  ]) negatives.push(["missing or invalid wallet protection", replace(source, [0, 1, 2], () => collateral)]);
+  negatives.push(["trailing wallet protection bits", replace(source, [0, 1, 2], appendBit)]);
+  negatives.push(["trailing wallet protection ref", replace(source, [0, 1, 2], appendRef)]);
   for (const [label, path] of [
     ["map bundle", [1]],
     ["series dictionary", [1, 2]],
@@ -1396,6 +1454,19 @@ export function testFactoryState() {
     negatives.push([`trailing ${label} bits`, alterSeries((c) => replace(c, [ref], appendBit))]);
     negatives.push([`trailing ${label} reference`, alterSeries((c) => replace(c, [ref], appendRef))]);
   }
+  negatives.push(["missing writer native escrow", alterSeries(c => replace(c, [3], writer =>
+    beginCell().storeBits(writer.bits).storeRef(writer.refs[1]).endCell()))]);
+  for (const invalid of [
+    beginCell().storeBit(false).storeUint(1, 64).storeCoins(0).endCell(),
+    beginCell().storeBit(true).storeUint(0, 64).storeCoins(1).endCell(),
+    beginCell().storeBit(true).storeUint(1, 64).storeCoins(0).endCell(),
+  ]) negatives.push(["invalid writer native escrow", alterSeries(c => replace(c, [3, 0], () => invalid))]);
+  for (const invalid of [
+    beginCell().storeAddress(A(other)).endCell(),
+    beginCell().storeAddress(A(other)).storeAddress(A(other)).storeAddress(null).storeUint(0, 8).endCell(),
+    beginCell().storeAddress(A(other)).storeAddress(A(other)).storeAddress(null).storeUint(1, 8).endCell(),
+    beginCell().storeAddress(A(other)).storeAddress(A(other)).storeAddress(A(owner)).storeUint(3, 8).endCell(),
+  ]) negatives.push(["missing current guard or obsolete canary fields", replace(source, [0, 1, 0], () => invalid)]);
   for (const bits of [127, 129]) {
     const wrongWidth = Dictionary.empty(Dictionary.Keys.BigUint(64), inline);
     wrongWidth.set(wire, beginCell().storeUint(key, bits).endCell());
@@ -1455,6 +1526,22 @@ async function main() {
   }))), 'extra writer reserve fields are rejected');
 
   testFactoryState();
+  const actualBoc = readFileSync(path.join(__dirname, "fixtures/options-factory-rejected-ingress.boc"));
+  const provenance = JSON.parse(readFileSync(path.join(__dirname,
+    "fixtures/options-factory-rejected-ingress.provenance.json"), "utf8"));
+  assert.equal(createHash("sha256").update(actualBoc).digest("hex"), provenance.bocSha256);
+  const actual = readOptionFactoryConfig(actualBoc.toString("base64"));
+  assert.equal(actual.series.size, 1);
+  assert.equal(actual.series.get("1")?.expiryRegistered, true);
+  assert.equal(actual.series.get("1")?.writer.nativeEscrow.admitted, true);
+  assert.equal(actual.series.get("1")?.writer.nativeEscrow.requiredReserveRaw, "11830000000");
+  assert.equal(actual.ingressReceipts.size, 2);
+  const actualReceipts = [...actual.ingressReceipts.values()];
+  assert.equal(actualReceipts.filter(receipt => !receipt.accepted && receipt.buyKey === 0n &&
+    receipt.acceptedAmountRaw === "0" && receipt.refunds.size === 0).length, 1);
+  assert.equal(actualReceipts.filter(receipt => receipt.accepted && receipt.buyKey === 0n &&
+    receipt.acceptedAmountRaw === "112500000000" && receipt.refunds.size === 0).length, 1);
+  console.log("actual VM15/gas400 Factory rejected-ingress state and mandatory current fields passed");
   for (const kind of [1, 2] as const) {
     const f = exercise(kind),
       events = (await projectOwnerLedger(f.input)).events,

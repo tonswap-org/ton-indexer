@@ -1,6 +1,6 @@
 import { Address, Cell, Dictionary, beginCell, contractAddress } from '@ton/core';
 import type { RawMessage } from '../data/dataSource';
-import { bodyCell, BURN, BURN_NOTIFY } from './wire';
+import { businessBodyCell, BURN, BURN_NOTIFY } from './wire';
 export const T3_MINT = 0x4d494e54,
   T3_MINT_RECEIPT = 0x4d524354,
   T3_REDEEM = 0x5245444d,
@@ -14,6 +14,7 @@ export const T3_MINT = 0x4d494e54,
   BURN_ACCEPTED = 0x4a424143,
   RECEIVER_PAYOUT = 0x54335059,
   RECEIVER_CREDITED = 0x54334352,
+  PAYOUT_NOTIFICATION_REPLAY = 0x5433504e,
   DEPOSIT_NOTE = 0x54444550;
 export const T3_OPS = new Set([
   T3_MINT,
@@ -36,6 +37,7 @@ export const T3_OPS = new Set([
   0x54335052,
   0x54335044,
   RECEIVER_CREDITED,
+  PAYOUT_NOTIFICATION_REPLAY,
   0x54335252,
   0x54334453,
   0x54335744,
@@ -50,7 +52,7 @@ const parse = <T>(
   read: (s: ReturnType<Cell['beginParse']>) => T,
 ): T | null => {
   try {
-    const c = bodyCell(m);
+    const c = businessBodyCell(m);
     if (!c) return null;
     const s = c.beginParse();
     if (s.loadUint(32) !== op) return null;
@@ -89,10 +91,18 @@ export function readT3ReferralState(c: Cell) {
   for (const [key, value] of completedMints) {
     const journal = value.beginParse(), status = journal.loadUint(8), businessQuery = journal.loadUintBig(64),
       rootQuery = journal.loadUintBig(64), amount = journal.loadCoins(), recipient = journal.loadAddress(),
-      destination = journal.loadAddress(), requestHash = journal.loadUintBig(256), receipt = journal.loadRef().beginParse();
+      details = journal.loadRef().beginParse();
     end(journal);
+    const destination = details.loadAddress(), requestHash = details.loadUintBig(256),
+      controlBudget = details.loadCoins(), receipt = details.loadRef().beginParse(),
+      funding = details.loadRef().beginParse();
+    end(details);
+    funding.loadUintBig(64);
+    const refundKind = funding.loadUint(8), moduleId = funding.loadUint(32);
+    funding.loadAddress(); end(funding);
     const expectedKey = BigInt(`0x${beginCell().storeUint(0x54334d52, 32).storeAddress(destination).storeUint(businessQuery, 64).endCell().hash().toString('hex')}`);
     if (key !== expectedKey || status !== 4 || rootQuery === 0n || amount === 0n || requestHash === 0n ||
+      controlBudget !== 0n || !((refundKind === 0 && moduleId === 0) || (refundKind === 1 && moduleId > 0)) ||
       receipt.loadUint(32) !== T3_MINT_RECEIPT || receipt.loadUintBig(64) !== businessQuery ||
       !receipt.loadAddress().equals(recipient) || receipt.loadCoins() !== amount) throw Error('T3 archived mint identity');
     basket(receipt); receipt.loadMaybeRef(); end(receipt);
@@ -126,15 +136,26 @@ export function readT3AutomationReferral(c: Cell) {
 export function depositNote(c: Cell) {
   try {
     const s = c.beginParse();
-    if (s.loadUint(32) !== DEPOSIT_NOTE || s.loadUint(8) !== 1) return null;
+    if (s.loadUint(32) !== DEPOSIT_NOTE) return null;
+    const kind = s.loadUint(8);
+    if (kind !== 1 && kind !== 2) return null;
     const flags = s.loadUint(8), slippage = s.loadUint(16),
       recipient = s.loadMaybeAddress()?.toRawString() ?? null,
       referrer = referralAddress(s.loadRef());
     end(s);
-    return { flags, slippage, recipient, referrer };
+    return { kind, flags, slippage, recipient, referrer };
   } catch {
     return null;
   }
+}
+/** The immutable Hub payout identity binds a refund to its exact credited basket. */
+export function refundPayloadHash(kind: 3 | 5, owner: string, basketRaw: string[]) {
+  if (basketRaw.length !== 3 || basketRaw.some(v => !/^(0|[1-9][0-9]*)$/.test(v)))
+    throw Error('T3 refund basket');
+  return BigInt(`0x${beginCell().storeUint(0x54335049, 32).storeUint(kind, 8)
+    .storeAddress(Address.parse(owner)).storeUint(0, 256)
+    .storeRef(beginCell().storeCoins(BigInt(basketRaw[0])).storeCoins(BigInt(basketRaw[1]))
+      .storeCoins(BigInt(basketRaw[2])).endCell()).endCell().hash().toString('hex')}`).toString();
 }
 export const mintRequest = (m?: RawMessage) =>
   parse(m, T3_MINT, (s) => {
@@ -431,8 +452,7 @@ export function t3State(dataBoc: string) {
   end(r);
   const level = peg.loadUint(8);
   peg.loadUint(16);
-  const outageMask = peg.loadUint(8),
-    frozenMask = peg.loadUint(8);
+  const frozenMask = peg.loadUint(8);
   peg.skip(128);
   coins(peg);
   basket(peg);
@@ -452,7 +472,6 @@ export function t3State(dataBoc: string) {
     governance,
     root,
     level,
-    outageMask,
     frozenMask,
     mintFeeBps,
     redeemFeeBps,
@@ -469,34 +488,52 @@ export function redemptionFees(
   mode: number,
   target: number,
 ) {
+  const balances = state.balances.map(BigInt),
+    supply = BigInt(state.totalSupply),
+    amount = BigInt(amountRaw);
+  if (amount <= 0n || amount > supply || (mode !== 0 && mode !== 1) ||
+      !Number.isInteger(target) || target < 0 || target > 2 ||
+      (mode === 0 && target !== 0)) return null;
+  // The final proportional holder receives every active reserve. The Hub
+  // bypasses haircuts and redemption fees so no backing is orphaned.
+  if (amount === supply) {
+    if (mode !== 0) return null;
+    return { net: balances.map(String), fees: balances.map(() => '0') };
+  }
   if (
     state.level >= 3 ||
-    state.outageMask ||
     state.frozenMask ||
     state.amp <= 0 ||
     state.redeemFeeBps > 10000 ||
     state.haircuts.some((v) => v > 10000)
   )
     return null;
-  const balances = state.balances.map(BigInt),
-    supply = BigInt(state.totalSupply),
-    amount = BigInt(amountRaw),
-    ann = BigInt(state.amp) * 3n;
-  if (amount <= 0n || amount > supply) return null;
-  const abs = (v: bigint) => (v < 0n ? -v : v);
-  let d = balances.reduce((a, b) => a + b, 0n);
-  if (d > 0n) {
+  let gross: bigint[];
+  if (mode === 0) {
+    // Floor the payout in each leg, exactly as the Hub does. Flooring the
+    // residual instead would overpay microscopic burns from two/three legs.
+    gross = balances.map((balance) => (balance * amount) / supply);
+  } else {
+    const coinCount = balances[2] === 0n ? 2 : 3;
+    if (target >= coinCount || balances[target] <= 0n) return null;
+    const n = BigInt(coinCount), ann = BigInt(state.amp) * n;
+    const abs = (v: bigint) => (v < 0n ? -v : v);
+    let d = balances.reduce((a, b) => a + b, 0n);
+    if (d <= 0n) return null;
     const sum = d;
     let converged = false;
     for (let i = 0; i < 96; i++) {
       let p = d;
-      for (const b of balances) p = b === 0n ? 0n : (p * d) / (b * 3n);
-      const den = (ann - 1n) * d + 4n * p;
+      for (let leg = 0; leg < coinCount; leg++) {
+        const balance = balances[leg];
+        p = balance === 0n ? 0n : (p * d) / (balance * n);
+      }
+      const den = (ann - 1n) * d + (n + 1n) * p;
       if (den === 0n) {
         converged = true;
         break;
       }
-      const next = ((ann * sum + p * 3n) * d) / den;
+      const next = ((ann * sum + p * n) * d) / den;
       if (abs(next - d) <= 1n) {
         d = next;
         converged = true;
@@ -505,24 +542,20 @@ export function redemptionFees(
       d = next;
     }
     if (!converged) return null;
-  }
-  const remaining = supply - amount,
-    d1 = (d * remaining) / supply;
-  let gross: bigint[];
-  if (mode === 1 && balances[target] > 0n && d > 0n) {
+    const d1 = (d * (supply - amount)) / supply;
     let y = 0n;
     if (d1 > 0n) {
       let c = d1,
         sum = 0n;
-      for (let i = 0; i < 3; i++)
+      for (let i = 0; i < coinCount; i++)
         if (i !== target) {
           const b = balances[i];
           if (b > 0n) {
             sum += b;
-            c = (c * d1) / (b * 3n);
+            c = (c * d1) / (b * n);
           } else c = 0n;
         }
-      c = (c * d1) / (ann * 3n);
+      c = (c * d1) / (ann * n);
       const b = sum + d1 / ann;
       y = d1;
       let converged = false;
@@ -541,18 +574,12 @@ export function redemptionFees(
         y = next;
       }
       if (!converged) return null;
+      // The Hub retains one atomic unit after the integer y solver.
+      y += 1n;
     }
+    if (y > balances[target]) return null;
     gross = balances.map((b, i) => (i === target ? b - y : 0n));
-  } else
-    gross = balances.map(
-      (b) =>
-        b -
-        (remaining === 0n
-          ? 0n
-          : d === 0n
-            ? (b * remaining) / supply
-            : (b * d1) / d),
-    );
+  }
   const preFee = gross.map((v, i) =>
       mode === 1 && i !== target
         ? v

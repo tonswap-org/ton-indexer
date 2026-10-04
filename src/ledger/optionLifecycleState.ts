@@ -27,6 +27,12 @@ export type OptionOutboundClaim = {
   owner: string;
   recipient: string;
 };
+export type OptionIngressReceipt = {
+  accepted: boolean;
+  buyKey: bigint;
+  acceptedAmountRaw: string;
+  refunds: Dictionary<bigint, boolean>;
+};
 export type OptionFactorySeries = {
   stateHash: string;
   templateId: number;
@@ -39,6 +45,7 @@ export type OptionFactorySeries = {
   openNotionalRaw: string;
   collateralLockedRaw: string;
   status: number;
+  expiryRegistered: boolean;
   settlementTimestamp: string;
   nextTokenId: string;
   correlationScaleBps: number;
@@ -53,7 +60,8 @@ export type OptionFactorySeries = {
   activationRequestHash: string;
   configHash: string;
   writer: { creator: string; creationQueryId: string; fundingStatus: number; requiredReserveRaw: string;
-    fundedReserveRaw: string; fundingQueryId: string; fundingClaimId: string; backingReturnedRaw: string };
+    fundedReserveRaw: string; fundingQueryId: string; fundingClaimId: string; backingReturnedRaw: string;
+    nativeEscrow: { admitted: boolean; queryId: string; requiredReserveRaw: string } };
 };
 /** Exact SeriesPersisted order from options/factory.tolk. */
 function readFactorySeries(data: Cell): OptionFactorySeries {
@@ -67,7 +75,7 @@ function readFactorySeries(data: Cell): OptionFactorySeries {
     strikeBps = s.loadUint(32),
     openNotionalRaw = s.loadCoins().toString(),
     collateralLockedRaw = s.loadCoins().toString(),
-    status = s.loadUint(8),
+    status = s.loadUint(8), expiryRegistered = s.loadBoolean(),
     settlementTimestamp = s.loadIntBig(64).toString(),
     nextTokenId = s.loadUintBig(64).toString(),
     correlationScaleBps = s.loadUint(32),
@@ -92,7 +100,15 @@ function readFactorySeries(data: Cell): OptionFactorySeries {
   end(activation);
   const writer = { creator: writerCell.loadAddress().toRawString(), creationQueryId: writerCell.loadUintBig(64).toString(),
     fundingStatus: writerCell.loadUint(8), requiredReserveRaw: writerCell.loadCoins().toString(),
-    fundedReserveRaw: writerCell.loadCoins().toString(), fundingQueryId: writerCell.loadUintBig(64).toString(), fundingClaimId: writerCell.loadUintBig(64).toString(), backingReturnedRaw: "" };
+    fundedReserveRaw: writerCell.loadCoins().toString(), fundingQueryId: writerCell.loadUintBig(64).toString(), fundingClaimId: writerCell.loadUintBig(64).toString(), backingReturnedRaw: "",
+    nativeEscrow: { admitted: false, queryId: "0", requiredReserveRaw: "0" } };
+  const nativeEscrow = writerCell.loadRef().beginParse();
+  writer.nativeEscrow = { admitted: nativeEscrow.loadBoolean(), queryId: nativeEscrow.loadUintBig(64).toString(),
+    requiredReserveRaw: nativeEscrow.loadCoins().toString() };
+  end(nativeEscrow);
+  if (writer.nativeEscrow.admitted ? writer.nativeEscrow.queryId === "0" || writer.nativeEscrow.requiredReserveRaw === "0"
+      : writer.nativeEscrow.queryId !== "0" || writer.nativeEscrow.requiredReserveRaw !== "0")
+    throw Error("Invalid option native escrow admission");
   const backingReturn = writerCell.loadRef().beginParse();
   writer.backingReturnedRaw = backingReturn.loadCoins().toString();
   end(backingReturn);
@@ -109,7 +125,7 @@ function readFactorySeries(data: Cell): OptionFactorySeries {
     strikeBps,
     openNotionalRaw,
     collateralLockedRaw,
-    status,
+    status, expiryRegistered,
     settlementTimestamp,
     nextTokenId,
     correlationScaleBps,
@@ -193,8 +209,13 @@ export function readOptionFactoryConfig(boc: string) {
     outperformanceCodeHash = codes.loadRef().hash().toString("hex");
   end(codes);
   const collateralRoot = maybe(collateral),
-    walletCode = collateral.loadRef();
+    walletCode = collateral.loadRef(),
+    walletProtected = collateral.loadBoolean(),
+    walletProtectionSponsor = maybe(collateral),
+    walletQuarantinedRaw = collateral.loadCoins().toString();
   end(collateral);
+  if ((!walletProtected && walletQuarantinedRaw !== "0") ||
+      (walletProtected && collateralRoot === null)) throw Error("Invalid Factory wallet protection");
   const feeRouter = maybe(fee),
     t3Root = maybe(fee),
     t3WalletCode = fee.loadRef(),
@@ -205,16 +226,23 @@ export function readOptionFactoryConfig(boc: string) {
   const ownerIndex = accounting.loadDict(Dictionary.Keys.Address(), Dictionary.Values.Cell());
   const receiptEntries = accounting.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
   const ingressClaimAttempts = accounting.loadDict(Dictionary.Keys.BigUint(64), Dictionary.Values.BigUint(256));
-  const ingressReceipts = new Map<string, { accepted: boolean; refunds: Dictionary<bigint, boolean> }>();
+  const ingressReceipts = new Map<string, OptionIngressReceipt>();
   for (const [key, receiptCell] of receiptEntries) {
     const receipt = receiptCell.beginParse(), accepted = receipt.loadBoolean(),
+      buyKey = receipt.loadUintBig(128), acceptedAmount = receipt.loadCoins(),
       refunds = receipt.loadDict(Dictionary.Keys.BigUint(64), Dictionary.Values.Bool());
     end(receipt);
+    if ((!accepted && (buyKey !== 0n || acceptedAmount !== 0n)) ||
+        (accepted && acceptedAmount <= 0n) ||
+        (buyKey !== 0n && ((buyKey >> 64n) === 0n || (buyKey & ((1n << 64n) - 1n)) === 0n)))
+      throw Error("Invalid option ingress acceptance identity");
     for (const [claimId, pending] of refunds) {
       if (claimId === 0n || !pending || ingressClaimAttempts.get(claimId) !== key)
         throw Error("Invalid pending option ingress refund");
     }
-    ingressReceipts.set(key.toString(16).padStart(64, "0"), { accepted, refunds });
+    ingressReceipts.set(key.toString(16).padStart(64, "0"), {
+      accepted, buyKey, acceptedAmountRaw: acceptedAmount.toString(), refunds,
+    });
   }
   for (const [claimId, logical] of ingressClaimAttempts) {
     if (ingressReceipts.get(logical.toString(16).padStart(64, "0"))?.refunds.get(claimId) !== true)
@@ -300,6 +328,9 @@ export function readOptionFactoryConfig(boc: string) {
     outperformanceCodeHash,
     collateralRoot,
     walletCode,
+    walletProtected,
+    walletProtectionSponsor,
+    walletQuarantinedRaw,
     feeRouter,
     t3Root,
     t3WalletCode,

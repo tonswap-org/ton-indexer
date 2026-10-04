@@ -73,8 +73,10 @@ export async function replayHistoricalAccount(input: {
     throw new Error('Historical replay requested cursor mismatch.');
   }
   let shardAccount = input.predecessor;
+  let finalBeforeShardAccount = input.predecessor;
   const engine = executor ?? await Executor.create();
   for (const step of input.steps) {
+    finalBeforeShardAccount = shardAccount;
     const before = loadShardAccount(shardAccount.beginParse());
     const tx = loadTransaction(step.transaction.beginParse());
     if (!before.account?.addr.equals(input.address) ||
@@ -121,11 +123,20 @@ export async function replayHistoricalAccount(input: {
   const state = loadShardAccount(shardAccount.beginParse());
   const account = state.account!;
   const active = account.storage.state.type === 'active' ? account.storage.state.state : null;
-  return {
+  return Object.freeze({
     balance: account.storage.balance.coins.toString(), lastTxLt: input.cursor.lt,
     lastTxHash: final.hash().toString('base64'),
     accountState: active ? 'active' : account.storage.state.type === 'frozen' ? 'frozen' : 'uninitialized',
     codeBoc: active?.code?.toBoc().toString('base64') ?? null,
     dataBoc: active?.data?.toBoc().toString('base64') ?? null,
-  };
+    // Preserve the complete final boundary only after the original transaction
+    // and both full Account commitments have passed the checks above.
+    replayBoundary: Object.freeze({
+      beforeShardAccountBoc: finalBeforeShardAccount.toBoc().toString('base64'),
+      afterShardAccountBoc: shardAccount.toBoc().toString('base64'),
+      transactionBoc: final.toBoc().toString('base64'),
+      blockBoc: input.steps[input.steps.length - 1].block.toBoc().toString('base64'),
+      configBoc: input.steps[input.steps.length - 1].config.toBoc().toString('base64'),
+    }),
+  });
 }

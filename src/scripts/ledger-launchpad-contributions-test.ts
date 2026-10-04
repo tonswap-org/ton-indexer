@@ -66,6 +66,22 @@ function alterFeeJournal(f:Fixture,field:'amount'|'reserve') {
   .storeCoins(reserve+(field==='reserve'?1n:0n)).storeCoins(saleReserve).storeCoins(native+(field==='amount'?1n:0n)).storeSlice(j).endCell();
  state.state.dataBoc=replaceRef(root,3,replaceRef(inner,journalIndex,changed)).toBoc().toString('base64');parsers[f.model](state.state.dataBoc);
 }
+function alterBondingCurve(f:Fixture, field:'slope'|'denominator'|'sold') {
+ const row=ownerAcceptance(f),before=f.states.get(key(row.account,row.raw.prevTransactionLt!,row.raw.prevTransactionHash!))!,after=snapshot(f,row);
+ for(const state of field==='sold'?[after]:[before,after]) {
+  const root=Cell.fromBase64(state.state.dataBoc!);
+  if(field==='sold') {
+   const runtime=root.refs[3].refs[0].beginParse(),raised=runtime.loadCoins(),sold=runtime.loadCoins();
+   const changed=beginCell().storeCoins(raised).storeCoins(sold+1n).storeSlice(runtime).endCell();
+   state.state.dataBoc=replaceRef(root,3,replaceRef(root.refs[3],0,changed)).toBoc().toString('base64');
+  } else {
+   const config=root.refs[2],curve=config.refs[0].beginParse(),kind=curve.loadUint(8),base=curve.loadCoins(),numerator=curve.loadCoins(),denominator=curve.loadCoins();
+   const changed=beginCell().storeUint(kind,8).storeCoins(base).storeCoins(field==='slope'?numerator+1n:numerator).storeCoins(field==='denominator'?0n:denominator).storeSlice(curve).endCell();
+   state.state.dataBoc=replaceRef(root,2,replaceRef(config,0,changed)).toBoc().toString('base64');
+  }
+  readBondingSaleState(state.state.dataBoc!);
+ }
+}
 const physical=(events:LedgerEvent[])=>events.flatMap(e=>e.movements).map(({purpose,...movement})=>movement).sort((a,b)=>a.id.localeCompare(b.id));
 
 let passed=0;
@@ -86,6 +102,31 @@ export async function testLaunchpadContributions(){
    }
    exports[model]={scope:projection.projectionScope,events:projection.events};provenance[model]=f.fixtureSha256;
    const raw=participationFixture(model);raw.input.launchpadSales=new Map();assert.deepEqual(physical(projection.events),physical((await project(raw)).events),'Acceptance preserves exact physical amounts, fee evidence and unique movement IDs');
+  });
+  if(model==='bonding') await test('bonding: mandatory global curve evidence equals authentic before/after archives for repeated and independent buyers',async()=>{
+   let nonlinear=false,globalBeyondOwner=false,checks=0;
+   for(const participant of ['owner','otherOwner'] as const) {
+    const f=participationFixture('bonding',participant),events=accepted((await project(f)).events);
+    for(const event of events) {
+     const metadata=event.settlement!.launchpadParticipation!,entitlement=metadata.entitlement!;
+     assert.equal(entitlement.model,'bonding');if(entitlement.model!=='bonding')throw Error('Expected bonding entitlement');
+     const proof=metadata.stateEvidence.find(row=>row.purpose==='acceptance')!;
+     const boundary=f.trace.boundaries.find(row=>row.account===proof.transaction.account&&row.transactionLt===proof.transaction.lt&&canonicalLedgerHash(row.transactionHash)===proof.transaction.hash)!;assert(boundary);
+     const before=readBondingSaleState(boundary.before.dataBoc!),after=readBondingSaleState(boundary.after.dataBoc!);
+     assert.equal(before.dataHash,proof.beforeHash);assert.equal(after.dataHash,proof.afterHash);
+     assert.deepEqual(entitlement.curve,{curveKind:1,basePriceRaw:before.config.basePriceRaw,slopeNumeratorRaw:before.config.slopeNumeratorRaw,
+      slopeDenominatorRaw:before.config.slopeDenominatorRaw,maxSupplyRaw:before.config.maxSupplyRaw,totalSoldBeforeRaw:before.metrics.totalSoldRaw,
+      totalSoldAfterRaw:after.metrics.totalSoldRaw,currentPriceAfterRaw:after.metrics.currentPriceRaw});
+     const c=entitlement.curve,base=BigInt(c.basePriceRaw),n=BigInt(c.slopeNumeratorRaw),d=BigInt(c.slopeDenominatorRaw),start=BigInt(c.totalSoldBeforeRaw),end=BigInt(c.totalSoldAfterRaw),amount=BigInt(metadata.payment.amountRaw),tokens=BigInt(entitlement.tokenDeltaRaw);
+     const denominator=2n*d*10n**18n,cumulative=(sold:bigint)=>(sold*(2n*d*base+n*sold)+denominator-1n)/denominator;
+     assert.equal(end-start,tokens);assert.equal(cumulative(end)-cumulative(start),amount);
+     assert(end===BigInt(c.maxSupplyRaw)||cumulative(end+1n)-cumulative(start)>amount);
+     assert.equal(entitlement.priceRaw,(base+n*start/d).toString());assert.equal(c.currentPriceAfterRaw,(base+n*end/d).toString());
+     nonlinear ||= amount*10n**18n/BigInt(entitlement.priceRaw)!==tokens;
+     globalBeyondOwner ||= start>BigInt(entitlement.before?.tokenAmountRaw??'0');checks++;
+    }
+   }
+   assert(checks>=3);assert(nonlinear,'Fixture must exercise cumulative curve rather than marginal-price division');assert(globalBeyondOwner,'Global sold must not be substituted with participant tokens');
   });
   await test(`${model}: raw request identities exclude foreign, bounced, unknown and zero-payment messages`,async()=>{
    const f=participationFixture(model),e=accepted((await project(f)).events)[0],raw=f.input.chains.get(f.input.owner)!.transactions.find(t=>t.lt===e.lt)!;
@@ -127,10 +168,12 @@ export async function testLaunchpadContributions(){
    assert(!accepted((await project(participationFixture(model))).events).some(e=>e.settlement!.launchpadParticipation!.outerQueryId==='301'));
   });
   const negatives:Record<string,(f:Fixture)=>void>={
+   ...(model==='bonding'?{'changed immutable curve economics':(f:Fixture)=>alterBondingCurve(f,'slope'),'zero curve denominator':(f:Fixture)=>alterBondingCurve(f,'denominator'),'wrong global sold boundary':(f:Fixture)=>alterBondingCurve(f,'sold')}:{}),
    ...(model==='fixed'?{}:{'wrong fill-chain head':(f:Fixture)=>alterParticipant(f,'fill')}),
    'wrong fee liability amount':f=>alterFeeJournal(f,'amount'),
    'wrong reserved fee delta':f=>alterFeeJournal(f,'reserve'),
    'missing acceptance archive':f=>{const row=ownerAcceptance(f);f.states.delete(key(row.account,row.raw.lt,row.raw.hash));},
+   'inactive sale':f=>{const state=snapshot(f,ownerAcceptance(f)),root=Cell.fromBase64(state.state.dataBoc!),s=root.beginParse(),b=beginCell().storeBits(s.loadBits(s.remainingBits-1)).storeBit(false);root.refs.forEach(ref=>b.storeRef(ref));state.state.dataBoc=b.endCell().toBoc().toString('base64');},
    'wrong historical sale code':f=>{snapshot(f,ownerAcceptance(f)).state.codeBoc=Cell.EMPTY.toBoc().toString('base64');},
    'wrong participant payment delta':f=>alterParticipant(f,'payment'),
    'wrong participant token delta':f=>alterParticipant(f,'tokens'),

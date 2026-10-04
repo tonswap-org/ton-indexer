@@ -9,9 +9,11 @@ import {
   type ProjectionInput,
   type LedgerChain,
 } from "../ledger/project";
+import { LedgerGraphBuilder } from "../ledger/graph";
 import type { RawMessage, RawTransaction } from "../data/dataSource";
 import { loadOpcodes } from "../utils/opcodes";
 import { INTERNAL, NOTIFY, TRANSFER, BURN, BURN_NOTIFY } from "../ledger/wire";
+import { NATIVE_FUNDING } from "../ledger/nativeFunding";
 import * as w from "../ledger/t3Wire";
 import { perpsWalletAddress } from "../ledger/perpsWire";
 import { readT3RecoveryHub, t3ReceiptKey } from "../ledger/t3RecoveryState";
@@ -46,14 +48,24 @@ const query = "9007199254741033",
   rootQuery = "9007199254741049",
   wire = "9007199254741061",
   payout = "9007199254741067",
+  refundPayout = "9223372036854775813",
   amount = 2n ** 80n + 31n;
+function wrapNativeFundingMessage(message: RawMessage) {
+  const business = Cell.fromBase64(message.body!);
+  const envelope = beginCell().storeUint(NATIVE_FUNDING, 32)
+    .storeUint(BigInt(wire), 64).storeUint(0, 8).storeUint(0, 32)
+    .storeAddress(A(owner)).storeRef(business).endCell();
+  message.body = envelope.toBoc().toString('base64');
+  message.op = NATIVE_FUNDING;
+}
 function emptyReferralState(completedMints?: Dictionary<bigint, Cell>) {
   return beginCell().storeUint(0, 32).storeCoins(0).storeUint(1, 64).storeUint(0, 64).storeUint(0, 64)
     .storeRef(Cell.EMPTY).storeRef(beginCell().storeUint(0, 64).storeUint(0, 64).storeDict(null).storeDict(null)).storeDict(completedMints ?? null).endCell();
 }
 function emptyBounceState() {
   return beginCell().storeAddress(null).storeUint(0, 32).storeUint(0, 32).storeCoins(0).storeInt(0, 64)
-    .storeRef(Cell.EMPTY).storeRef(beginCell().storeUint(1, 64).storeDict(null).storeDict(null))
+    .storeRef(Cell.EMPTY).storeRef(beginCell().storeUint(1, 64).storeDict(null)
+      .storeDict(null).storeDict(null).storeDict(null))
     .storeRef(emptyReferralState()).endCell();
 }
 const inviterCell = (referrer: string | null = null) => beginCell().storeAddress(referrer ? A(referrer) : null).endCell();
@@ -68,7 +80,6 @@ function state(
   const peg = beginCell()
     .storeUint(0, 8)
     .storeUint(0, 16)
-    .storeUint(0, 8)
     .storeUint(0, 8)
     .storeUint(0, 128);
   for (let i = 0; i < 5; i++) peg.storeCoins(0);
@@ -270,7 +281,7 @@ function fixture() {
   };
   return { input, config, identity, msg, tx, transfer };
 }
-function mint(basket = [amount, 0n, 0n], referrer: string | null = null) {
+function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped = false) {
   const f = fixture(),
     note = beginCell()
       .storeUint(w.DEPOSIT_NOTE, 32)
@@ -440,6 +451,10 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null) {
   );
   f.tx(root, final, [finalized]);
   f.tx(hub, finalized);
+  if (wrapped) {
+    for (const message of [start, internal, accepted, success, final, finalized])
+      wrapNativeFundingMessage(message);
+  }
   const data = state();
   f.input.stateAt = async () => ({
     seqno: 10,
@@ -460,7 +475,126 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null) {
     accepted,
   };
 }
-function redeem(sliced = false, recovery = false, referrer: string | null = null) {
+function rejectedMintRefund(stage: 'queued' | 'dispatching' | 'credited', kind: 3 | 5 = 3) {
+  const f = fixture(), raw = 1_000_000n;
+  const note = beginCell().storeUint(w.DEPOSIT_NOTE, 32).storeUint(1, 8)
+    .storeUint(1, 8).storeUint(10000, 16).storeAddress(A(owner))
+    .storeRef(inviterCell()).endCell();
+  const deposit = f.transfer(owner, wallets[0], hub, vaults[0], query, raw, note);
+  f.tx(owner, undefined, [deposit.request]);
+  const zeroReceipt = f.msg(hub, owner, beginCell()
+    .storeUint(w.T3_MINT_RECEIPT, 32).storeUint(BigInt(query), 64)
+    .storeAddress(A(owner)).storeCoins(0).storeCoins(raw).storeCoins(0)
+    .storeCoins(0).storeMaybeRef(null).endCell());
+  const hubAdmission = f.tx(hub, deposit.notification, [zeroReceipt]);
+  f.tx(owner, zeroReceipt);
+  const businessQueryId = kind === 3 ? query : hubAdmission.lt;
+  const observedAt = '2026-09-25T00:00:00.000Z';
+  const getter = (method: 'vault_payout_identity' | 'refund_queue_item' | 'vault_payout_state',
+    args: string[], result: string[]) => ({ account: hub, method, args, result, observedAt });
+  const identityEvidence = getter('vault_payout_identity', [String(kind), owner, businessQueryId],
+    ['1', refundPayout, w.refundPayloadHash(kind, owner, [String(raw), '0', '0'])]);
+  f.input.t3Hubs!.get(hub)!.refunds = new Map([[hubAdmission.lt, {
+    kind, businessQueryId, payoutId: refundPayout, token: 0, amountRaw: String(raw),
+    basketRaw: [String(raw), '0', '0'], identityEvidence,
+    ...(stage === 'queued' ? { queueEvidence: getter('refund_queue_item',
+      [String(kind), owner, businessQueryId], ['1', String(raw), '0', '0']) } : {}),
+    ...(stage === 'dispatching' ? {
+      payoutEvidence: getter('vault_payout_state', [refundPayout], ['1', owner, '1', String(raw), '0', '0']),
+      payout: { phase: 1, activeToken: 0, wireId: '55', amountRaw: String(raw),
+        routeEpoch: 1, receiverWallet: custody[0], sourceAccepted: false,
+        receiverCredited: false },
+    } : {}),
+  }]]);
+  if (stage === 'credited') {
+    const payload = beginCell().storeUint(w.RECEIVER_PAYOUT, 32)
+      .storeUint(BigInt(refundPayout), 64).storeUint(55, 64).storeUint(1, 32)
+      .storeUint(0, 8).storeCoins(raw).storeRef(beginCell()
+        .storeAddress(A(hub)).storeAddress(A(owner)).storeAddress(A(receiver)).endCell()).endCell();
+    const transfer = f.transfer(hub, vaults[0], receiver, custody[0], '55', raw, payload, true);
+    f.tx(hub, undefined, [transfer.request]);
+    const ack = f.msg(receiver, hub, beginCell().storeUint(w.RECEIVER_CREDITED, 32)
+      .storeUint(BigInt(refundPayout), 64).storeUint(55, 64).storeUint(1, 32)
+      .storeUint(0, 8).storeCoins(raw).storeAddress(A(custody[0]))
+      .storeUint(BigInt(`0x${payload.hash().toString('hex')}`), 256).endCell());
+    f.tx(receiver, transfer.notification, [ack]);
+    f.tx(hub, ack);
+  }
+  return { ...f, deposit, hubAdmission, raw };
+}
+async function discoverRejectedMintRefund(identityHash?: string, kind: 3 | 5 = 3,
+  repeated = false) {
+  const f = rejectedMintRefund('queued', kind);
+  let repeatAdmissionLt: string | undefined;
+  if (repeated) {
+    const note = beginCell().storeUint(w.DEPOSIT_NOTE, 32).storeUint(1, 8)
+      .storeUint(1, 8).storeUint(10000, 16).storeAddress(A(owner))
+      .storeRef(inviterCell()).endCell();
+    const second = f.transfer(owner, wallets[0], hub, vaults[0], query, f.raw, note);
+    f.tx(owner, undefined, [second.request]);
+    repeatAdmissionLt = f.tx(hub, second.notification).lt;
+  }
+  const walletAssets = f.input.wallets;
+  const store = {
+    account: async (_network: string, account: string) => ({ current_generation: account, syncing: false }),
+    rawHistory: async (generation: string) =>
+      (repeated ? [...(f.input.chains.get(generation)?.transactions ?? [])].reverse()
+        : f.input.chains.get(generation)?.transactions ?? []).map(raw => ({ raw })),
+    pool: { query: async () => ({ rows: [{ complete: true }] }) },
+  } as unknown as PostgresLedgerStore;
+  const slice = (address: string) => ({ type: 'slice' as const,
+    cell: beginCell().storeAddress(A(address)).endCell() });
+  const integer = (value: bigint) => ({ type: 'int' as const, value });
+  const routes = Array.from({ length: 18 }, () => integer(0n)) as any[];
+  routes[1] = { type: 'cell', cell: code };
+  routes[2] = { type: 'cell', cell: code };
+  for (const [index, rootAddress] of [[3, roots[0]], [8, roots[1]], [13, roots[2]]] as const)
+    routes[index] = slice(rootAddress);
+  const source = {
+    getAccountState: async (account: string) => account === hub
+      ? { accountState: 'active', codeBoc: code.toBoc().toString('base64'),
+        dataBoc: state().toBoc().toString('base64') }
+      : account === receiver
+        ? { accountState: 'active', codeBoc: code.toBoc().toString('base64'),
+          dataBoc: Cell.EMPTY.toBoc().toString('base64') }
+        : { accountState: 'uninitialized', codeBoc: null, dataBoc: null },
+    getJettonBalance: async (holder: string, master: string) => {
+      if (holder === owner && master === root) return { wallet: tw, balance: '0' };
+      const token = roots.indexOf(master);
+      if (token < 0) return null;
+      return holder === owner ? { wallet: wallets[token], balance: '0' }
+        : holder === receiver ? { wallet: custody[token], balance: '0' } : null;
+    },
+    runGetMethod: async (account: string, method: string, args: any[] = []) => {
+      if (account === hub && method === 'vault_routes') return { exitCode: 0, stack: routes };
+      if (account === hub && method === 'vault_addresses') return { exitCode: 0, stack: vaults.map(slice) };
+      if (account === root && method === 'root_emitter') return { exitCode: 0, stack: [slice(hub)] };
+      if (account === receiver && method === 'receiver_identity') return { exitCode: 0,
+        stack: [integer(1n), slice(hub), slice(owner)] };
+      if (account === hub && method === 'vault_payout_identity') {
+        const requestedKind = args[0]?.value;
+        const requestedQuery = args[2]?.value;
+        const businessQuery = kind === 3 ? BigInt(query) : BigInt(f.hubAdmission.lt);
+        const first = requestedKind === BigInt(kind) && requestedQuery === businessQuery;
+        const second = repeated && requestedKind === 5n &&
+          requestedQuery === BigInt(repeatAdmissionLt!);
+        return { exitCode: 0, stack: first || second
+          ? [integer(1n), integer(BigInt(refundPayout) + (second ? 1n : 0n)),
+            integer(BigInt(second ? w.refundPayloadHash(5, owner, [String(f.raw), '0', '0'])
+              : identityHash ?? w.refundPayloadHash(kind, owner, [String(f.raw), '0', '0'])))]
+          : [integer(0n), integer(0n), integer(0n)] };
+      }
+      if (account === hub && method === 'refund_queue_item') return { exitCode: 0,
+        stack: [integer(1n), integer(f.raw), integer(0n), integer(0n)] };
+      return null;
+    },
+  } as unknown as TonDataSource;
+  const graph = await new LedgerGraphBuilder('localnet', source, store, [], undefined,
+    async address => walletAssets.get(address) ?? null, async () => true, 256,
+    undefined, hub, root).build(owner, owner);
+  return { graph, admissionLt: f.hubAdmission.lt, repeatAdmissionLt };
+}
+function redeem(sliced = false, recovery = false, referrer: string | null = null, wrapped = false) {
   const f = fixture();
   if (recovery) for (const a of [tw, root, hub]) f.tx(a);
   const n = 2n ** 60n + 37n,
@@ -697,7 +831,9 @@ function redeem(sliced = false, recovery = false, referrer: string | null = null
     f.tx(receiver, second.notification, [ack]);
     f.tx(hub, ack);
   }
-  const data = state(100, 100, n, [n, 0n, 0n]);
+  // This wire fixture burns half the outstanding supply, so its 1% fee is
+  // nonterminal. A full-supply proportional burn exits at gross backing.
+  const data = state(100, 100, 2n * n, [2n * n, 0n, 0n]);
   f.input.stateAt = async () => ({
     seqno: 10,
     state: {
@@ -706,6 +842,10 @@ function redeem(sliced = false, recovery = false, referrer: string | null = null
       dataBoc: data.toBoc().toString("base64"),
     } as any,
   });
+  if (wrapped) {
+    for (const message of [notify, proof, hubAck, walletAck, ack])
+      wrapNativeFundingMessage(message);
+  }
   return {
     ...f,
     n,
@@ -816,30 +956,62 @@ function recoveredRedeem(referrer: string | null = null) {
       Dictionary.Keys.BigUint(64),
       Dictionary.Values.BigUint(256),
     );
+    const payoutBusiness = Dictionary.empty(
+      Dictionary.Keys.BigUint(256),
+      Dictionary.Values.Cell(),
+    );
+    const repeatRefundLinks = Dictionary.empty(
+      Dictionary.Keys.BigUint(256),
+      Dictionary.Values.Cell(),
+    );
     if (consumed !== null) {
-      const key = BigInt("0x" + intentHash);
+      const key = BigInt("0x" + beginCell().storeUint(0x54335049, 32)
+        .storeUint(1, 8).storeAddress(A(owner)).storeUint(BigInt(query), 64)
+        .endCell().hash().toString("hex"));
+      const referral = inviterCell(proofReferrer);
+      const proofPayloadHash = BigInt("0x" + beginCell()
+        .storeUint(0x54335249, 32)
+        .storeUint(BigInt(query), 64)
+        .storeUint(BigInt(proofWire), 64)
+        .storeUint(BigInt("0x" + referral.hash().toString("hex")), 256)
+        .storeRef(beginCell().storeAddress(A(owner)).storeAddress(A(owner))
+          .storeCoins(f.n).storeUint(0, 16).storeUint(0, 8).storeUint(0, 8)
+          .endCell())
+        .endCell().hash().toString("hex"));
+      const referralEconomics = beginCell().storeCoins(0).storeCoins(0)
+        .storeCoins(0).storeCoins(0).storeCoins(0).storeUint(0, 32)
+        .storeRef(Cell.EMPTY).endCell();
+      const reservation = beginCell().storeUint(proofPayloadHash, 256)
+        .storeCoins(0).storeCoins(0).storeCoins(0)
+        .storeRef(beginCell().storeCoins(0).storeCoins(0).storeCoins(0)
+          .storeCoins(0).storeUint(0, 8).storeRef(referralEconomics)
+          .endCell()).endCell();
       entries.set(
         key,
         beginCell()
-          .storeUint(BigInt(query), 64)
+          .storeUint(consumed ? 0n : BigInt(query), 64)
           .storeUint(BigInt(proofWire), 64)
-          .storeAddress(A(owner))
-          .storeAddress(A(owner))
           .storeCoins(f.n)
-          .storeUint(0, 16)
-          .storeUint(0, 8)
-          .storeUint(0, 8)
           .storeUint(BigInt(proofPayout), 64)
           .storeUint(consumed, 8)
-          .storeRef(inviterCell(proofReferrer))
+          .storeRef(consumed ? Cell.EMPTY : beginCell().storeAddress(A(owner))
+            .storeAddress(A(owner)).storeUint(0, 16).storeUint(0, 8)
+            .storeUint(0, 8).storeRef(referral).endCell())
+          .storeRef(reservation)
           .endCell(),
       );
       identities.set(BigInt(proofPayout), key);
+      payoutBusiness.set(key, beginCell().storeUint(BigInt(proofPayout), 64)
+        .storeUint(proofPayloadHash, 256).storeDict(Dictionary.empty(
+          Dictionary.Keys.BigUint(256), Dictionary.Values.Cell()))
+        .endCell());
     }
     const proofs = beginCell()
       .storeUint(BigInt(payout) + 1n, 64)
       .storeDict(entries)
-      .storeDict(identities);
+      .storeDict(identities)
+      .storeDict(payoutBusiness)
+      .storeDict(repeatRefundLinks);
     const bounce = beginCell()
       .storeAddress(null)
       .storeUint(0, 32)
@@ -853,8 +1025,8 @@ function recoveredRedeem(referrer: string | null = null) {
     return state(
       100,
       100,
-      consumed ? 0n : f.n,
-      [consumed ? f.n - f.net : f.n, 0n, 0n],
+      consumed ? f.n : 2n * f.n,
+      [consumed ? 2n * f.n - f.net : 2n * f.n, 0n, 0n],
       bounce,
       enabled,
     );
@@ -1453,6 +1625,7 @@ async function database() {
           stack: [
             int(1),
             { type: "cell", cell: code },
+            { type: "cell", cell: Cell.EMPTY },
             ...roots.flatMap((r) => [
               cell(r),
               cell(other),
@@ -1548,6 +1721,28 @@ async function main() {
   assert.throws(() => w.t3State(obsoleteBounceState), /Trailing T3 wire/);
   assert.throws(() => readT3RecoveryHub(obsoleteBounceState, owner, query), /trailing/i);
   const current = state();
+  const reserve = 75_000n * 1_000_000_000n;
+  const twoLegSupply = reserve * 2n;
+  const threeLegSupply = reserve * 3n;
+  const twoLeg = w.t3State(state(0, 0, twoLegSupply, [reserve, reserve, 0n]).toBoc().toString('base64'));
+  const threeLeg = w.t3State(state(0, 0, threeLegSupply, [reserve, reserve, reserve]).toBoc().toString('base64'));
+  assert.deepEqual(w.redemptionFees(twoLeg, '1000000000', 0, 0)?.net,
+    ['500000000', '500000000', '0'], 'two-leg proportional payout uses direct per-leg floor');
+  assert.deepEqual(w.redemptionFees(threeLeg, '1000000000', 0, 0)?.net,
+    ['333333333', '333333333', '333333333'], 'three-leg proportional payout uses direct per-leg floor');
+  assert.deepEqual(w.redemptionFees(twoLeg, '1000000000', 1, 0)?.net,
+    ['999999966', '0', '0'], 'two-leg single payout retains the rounded output atom');
+  assert.deepEqual(w.redemptionFees(threeLeg, '1000000000', 1, 0)?.net,
+    ['999999955', '0', '0'], 'three-leg single payout retains the rounded output atom');
+  const small = w.t3State(state(0, 0, 10n, [5n, 5n, 0n]).toBoc().toString('base64'));
+  assert.deepEqual(w.redemptionFees(small, '3', 0, 0)?.net,
+    ['1', '1', '0'], 'small proportional burns cannot collect a rounded-up share from each leg');
+  const terminal = w.t3State(state(100, 100, twoLegSupply, [reserve, reserve, 0n]).toBoc().toString('base64'));
+  assert.deepEqual(w.redemptionFees(terminal, twoLegSupply.toString(), 0, 0),
+    { net: [reserve.toString(), reserve.toString(), '0'], fees: ['0', '0', '0'] },
+    'terminal proportional exit returns all backing without a redemption fee');
+  assert.equal(w.redemptionFees(terminal, twoLegSupply.toString(), 1, 0), null,
+    'terminal single-leg exit is invalid');
   const payload = current.refs[0];
   const refs = [...payload.refs];
   refs[2] = beginCell().storeRef(refs[2].refs[2]).storeRef(refs[2].refs[3]).endCell();
@@ -1580,7 +1775,10 @@ async function main() {
   const archivedReceipt = beginCell().storeUint(w.T3_MINT_RECEIPT, 32).storeUint(25, 64).storeAddress(A(owner)).storeCoins(100)
     .storeCoins(100).storeCoins(0).storeCoins(0).storeMaybeRef(null).endCell();
   const archivedMint = beginCell().storeUint(4, 8).storeUint(25, 64).storeUint(3, 64).storeCoins(100)
-    .storeAddress(A(owner)).storeAddress(A(owner)).storeUint(42, 256).storeRef(archivedReceipt).endCell();
+    .storeAddress(A(owner)).storeRef(beginCell().storeAddress(A(owner))
+      .storeUint(42, 256).storeCoins(0).storeRef(archivedReceipt)
+      .storeRef(beginCell().storeUint(25, 64).storeUint(0, 8)
+        .storeUint(0, 32).storeAddress(A(owner)).endCell()).endCell()).endCell();
   const completedMints = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
   const archivedKey = BigInt(`0x${beginCell().storeUint(0x54334d52, 32).storeAddress(A(owner)).storeUint(25, 64).endCell().hash().toString('hex')}`);
   completedMints.set(archivedKey, archivedMint);
@@ -1609,6 +1807,12 @@ async function main() {
     outs.find((v) => v.purpose === "protocol_fee")?.amountRaw,
     String(amount - m.minted),
   );
+  const fundedMint = mint([amount, 0n, 0n], null, true);
+  const fundedEvents = (await projectOwnerLedger(fundedMint.input)).events;
+  const fundedEvent = fundedEvents.find((e) => e.kind === 't3_mint')!;
+  assert.equal(fundedEvent.settlement?.status, 'confirmed', JSON.stringify(fundedEvents));
+  assert.equal(fundedEvent.settlement?.t3?.amountRaw, String(fundedMint.minted));
+  assert.equal(fundedEvent.settlement?.t3?.feeBreakdown, 'verified');
   assert(
     event.movements.some(
       (v) => v.direction === "fee" && v.asset.kind === "native",
@@ -1661,6 +1865,106 @@ async function main() {
     )?.settlement?.status,
     "incomplete",
   );
+  for (const [wireStage, projectedStage] of [
+    ['queued', 'refund_queued'],
+    ['dispatching', 'refund_dispatching'],
+    ['credited', 'receiver_credited'],
+  ] as const) {
+    const rejected = rejectedMintRefund(wireStage);
+    const result = await projectOwnerLedger(rejected.input);
+    const refunded = result.events.find(e => e.kind === 't3_mint' && e.settlement?.t3?.refund);
+    assert(refunded, `missing ${wireStage} refund projection`);
+    assert.equal(refunded.status, 'success', 'the original physical debit was successful');
+    assert.equal(refunded.settlement?.status, 'incomplete', 'refund is not a completed T3 mint');
+    assert.equal(refunded.settlement?.t3?.stage, projectedStage);
+    assert.equal(refunded.settlement?.t3?.queryId, query);
+    assert.deepEqual(refunded.settlement?.t3?.basketRaw, [String(rejected.raw), '0', '0']);
+    assert.deepEqual(refunded.settlement?.t3?.deliveredRaw,
+      wireStage === 'credited' ? [String(rejected.raw), '0', '0'] : ['0', '0', '0']);
+    assert.equal(refunded.settlement?.t3?.refund?.kind, 3);
+    assert.equal(refunded.settlement?.t3?.refund?.businessQueryId, query);
+    assert.equal(refunded.settlement?.t3?.refund?.payoutId, refundPayout);
+    assert(refunded.settlement?.evidence.some(ref => ref.account === hub && ref.lt === rejected.hubAdmission.lt));
+    assert.equal(Boolean(refunded.settlement?.t3?.refund?.queueEvidence), wireStage === 'queued');
+    assert.equal(Boolean(refunded.settlement?.t3?.refund?.payoutEvidence), wireStage === 'dispatching');
+    assert.equal(Boolean(refunded.settlement?.t3?.refund?.creditEvidence), wireStage === 'credited');
+    assert.equal(refunded.movements.filter(m => m.purpose === 't3_refund').length,
+      wireStage === 'credited' ? 1 : 0);
+    assert.equal(refunded.movements.filter(m => m.purpose === 't3_mint').length, 0);
+    assert(refunded.movements.some(m => m.direction === 'out' && m.amountRaw === String(rejected.raw) &&
+      m.asset.kind === 'jetton' && m.asset.master === roots[0] && m.asset.owner === owner),
+      'the original gross owner debit remains explicit in a refund lifecycle event');
+    assert.equal(refunded.settlement?.t3?.referrer, null);
+  }
+  const repeatedRefund = rejectedMintRefund('queued', 5);
+  const repeatEvent = (await projectOwnerLedger(repeatedRefund.input)).events.find(e => e.kind === 't3_mint' && e.settlement?.t3?.refund)!;
+  assert.equal(repeatEvent.settlement?.t3?.refund?.kind, 5);
+  assert.equal(repeatEvent.settlement?.t3?.queryId, query);
+  assert.equal(repeatEvent.settlement?.t3?.refund?.businessQueryId, repeatedRefund.hubAdmission.lt);
+  const discoveredRefund = await discoverRejectedMintRefund();
+  assert.equal(discoveredRefund.graph.t3Hubs.get(hub)?.refunds?.get(discoveredRefund.admissionLt)?.payoutId, refundPayout,
+    `graph must bind current immutable identity to the original Hub notification: ${JSON.stringify({issues: discoveredRefund.graph.issues, hubs: [...discoveredRefund.graph.t3Hubs.keys()], refunds: [...(discoveredRefund.graph.t3Hubs.get(hub)?.refunds?.keys() ?? [])]})}`);
+  const forgedRefund = await discoverRejectedMintRefund('1');
+  assert.equal(forgedRefund.graph.t3Hubs.get(hub)?.refunds?.size, 0,
+    'a Hub identity whose immutable payload hash differs from the credited basket is inert');
+  const discoveredRepeat = await discoverRejectedMintRefund(undefined, 5);
+  assert.equal(discoveredRepeat.graph.t3Hubs.get(hub)?.refunds?.get(discoveredRepeat.admissionLt)?.businessQueryId,
+    discoveredRepeat.admissionLt, 'repeat refund business identity must bind the physical Hub LT');
+  const newestFirst = await discoverRejectedMintRefund(undefined, 3, true);
+  assert.equal(newestFirst.graph.t3Hubs.get(hub)?.refunds?.get(newestFirst.admissionLt)?.kind, 3,
+    'newest-first account history must not assign the original kind-3 refund to the replay');
+  assert.equal(newestFirst.graph.t3Hubs.get(hub)?.refunds?.get(newestFirst.repeatAdmissionLt!)?.kind, 5,
+    'the later colliding deposit must retain its kind-5 identity');
+  const mintedThenRepeated = mint();
+  const repeatedNote = beginCell().storeUint(w.DEPOSIT_NOTE, 32).storeUint(1, 8)
+    .storeUint(1, 8).storeUint(10000, 16).storeAddress(A(owner))
+    .storeRef(inviterCell()).endCell();
+  const rejectedRepeat = mintedThenRepeated.transfer(owner, wallets[0], hub,
+    vaults[0], query, amount, repeatedNote);
+  mintedThenRepeated.tx(owner, undefined, [rejectedRepeat.request]);
+  const repeatedReceipt = mintedThenRepeated.msg(hub, owner, beginCell()
+    .storeUint(w.T3_MINT_RECEIPT, 32).storeUint(BigInt(query), 64)
+    .storeAddress(A(owner)).storeCoins(0).storeCoins(amount)
+    .storeCoins(0).storeCoins(0).storeMaybeRef(null).endCell());
+  const repeatedAdmission = mintedThenRepeated.tx(hub, rejectedRepeat.notification,
+    [repeatedReceipt]);
+  mintedThenRepeated.tx(owner, repeatedReceipt);
+  const repeatObservedAt = '2026-09-25T00:00:00.000Z';
+  const repeatBasket = [String(amount), '0', '0'];
+  mintedThenRepeated.input.t3Hubs!.get(hub)!.refunds = new Map([[
+    repeatedAdmission.lt, {
+      kind: 5, businessQueryId: repeatedAdmission.lt, payoutId: refundPayout,
+      token: 0, amountRaw: String(amount), basketRaw: repeatBasket,
+      identityEvidence: { account: hub, method: 'vault_payout_identity',
+        args: ['5', owner, repeatedAdmission.lt],
+        result: ['1', refundPayout, w.refundPayloadHash(5, owner, repeatBasket)],
+        observedAt: repeatObservedAt },
+      queueEvidence: { account: hub, method: 'refund_queue_item',
+        args: ['5', owner, repeatedAdmission.lt],
+        result: ['1', ...repeatBasket], observedAt: repeatObservedAt },
+    },
+  ]]);
+  const mintAndRepeat = (await projectOwnerLedger(mintedThenRepeated.input)).events;
+  assert.equal(mintAndRepeat.filter(e => e.kind === 't3_mint' &&
+    e.settlement?.status === 'confirmed').length, 1,
+    'a later same-query deposit cannot invalidate the earlier completed mint');
+  const repeatedRefundEvent = mintAndRepeat.find(e => e.kind === 't3_mint' &&
+    e.settlement?.t3?.refund?.kind === 5);
+  assert.equal(repeatedRefundEvent?.settlement?.t3?.stage, 'refund_queued',
+    'a rejected same-query replay keeps its separate owner-funded refund claim');
+  assert(repeatedRefundEvent?.movements.some(m => m.direction === 'out' &&
+    m.asset.kind === 'jetton' && m.asset.master === roots[0] &&
+    m.asset.owner === owner && m.amountRaw === String(amount)),
+    'the repeat refund event retains its own gross owner debit');
+  const lostReceiverNotification = rejectedMintRefund('credited');
+  const receiverNotice = lostReceiverNotification.input.chains.get(receiver)!.transactions
+    .find(tx => tx.inMessage?.op === NOTIFY)!;
+  receiverNotice.success = false;
+  receiverNotice.status = 'failed';
+  const unproved = (await projectOwnerLedger(lostReceiverNotification.input)).events.find(e => e.kind === 't3_mint' && e.settlement?.t3?.refund)!;
+  assert.notEqual(unproved.settlement?.t3?.stage, 'receiver_credited',
+    'wallet credit without Receiver acceptance cannot create a claim');
+  assert.equal(unproved.movements.filter(m => m.purpose === 't3_refund').length, 0);
   const wrong = mint();
   wrong.input.wallets.get(tw)!.master = other;
   assert(
@@ -1723,6 +2027,12 @@ async function main() {
     0,
     "withheld payout fee is not a second wallet debit",
   );
+  const fundedRedemption = redeem(false, false, null, true);
+  const fundedRedemptionEvents = (await projectOwnerLedger(fundedRedemption.input)).events;
+  const fundedRedeemed = fundedRedemptionEvents.find((e) => e.kind === 't3_redeem')!;
+  assert.equal(fundedRedeemed.settlement?.status, 'confirmed', JSON.stringify(fundedRedemptionEvents));
+  assert.equal(fundedRedeemed.movements.find((v) => v.purpose === 't3_payout')?.amountRaw,
+    String(fundedRedemption.net));
   const overpaid = redeem();
   const old = overpaid.execute.outMessages[0],
     bad = overpaid.msg(
@@ -1889,6 +2199,13 @@ async function main() {
   // including the missing-decimals fixture, remain immutable.
   if (process.env.T3_WEB_FIXTURES_DIR) {
     const directory = resolve(process.env.T3_WEB_FIXTURES_DIR);
+    const refundCases = await Promise.all((['queued', 'dispatching', 'credited'] as const)
+      .map(async stage => {
+        const caseFixture = rejectedMintRefund(stage);
+        return [stage, { events: (await projectOwnerLedger(caseFixture.input)).events,
+          network: 'localnet', owner, hub, root, collateralRoot: roots[0],
+          queryId: query, amountRaw: String(caseFixture.raw) }] as const;
+      }));
     const fixtures = {
       "t3-mint.json": {
         events, network: "localnet", owner, hub, root,
@@ -1900,6 +2217,8 @@ async function main() {
         reserveRoots: roots, reserveVaults: vaults, custodyWallets: custody,
         burnBodyBoc: r.request.body, events: rs,
       },
+      ...Object.fromEntries(refundCases.map(([stage, fixture]) =>
+        [`t3-mint-refund-${stage}.json`, fixture])),
     };
     await Promise.all(Object.entries(fixtures).map(([name, fixture]) =>
       writeFile(resolve(directory, name), `${JSON.stringify(fixture, null, 2)}\n`)));

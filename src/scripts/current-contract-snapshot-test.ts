@@ -39,7 +39,7 @@ const moduleScores = beginCell();
 for (let index = 0; index < 12; index += 1) moduleScores.storeUint(index * 100, 32);
 const riskControllerState: TupleItem[] = [
   address(governance), int(1), int(2), int(100), int(3), int(99), int(4), int(5), int(6),
-  int(7_000), address(controlMesh), int(8), int(900), int(1), int(2), int(4), int(3),
+  int(7_000), int(9_000), address(controlMesh), int(8), int(900), int(1), int(2), int(4), int(3),
   int(1_000), int(500), { type: 'cell', cell: moduleScores.endCell() },
 ];
 const controlMeshState: TupleItem[] = [
@@ -176,7 +176,8 @@ async function main() {
   });
   const health = defi.sections.systemHealth;
   assert(health?.ok);
-  assert.equal(health.data.riskControllerState?.totalGrossBudget, '7000');
+  assert.equal(health.data.riskControllerState?.configuredGrossBudget, '7000');
+  assert.equal(health.data.riskControllerState?.committedGrossBudget, '9000');
   assert.equal(health.data.riskControllerState?.controlMesh, controlMesh);
   assert.equal(health.data.controlState?.perpsMarket3WeightMillibps, '25');
   assert.equal(health.data.controlState?.perpsMarket4FundingCapBps, '30');
@@ -195,7 +196,8 @@ async function main() {
   });
   assert.equal(response.statusCode, 200);
   const apiHealth = response.json().sections.systemHealth;
-  assert.equal(apiHealth.data.riskControllerState.totalGrossBudget, '7000');
+  assert.equal(apiHealth.data.riskControllerState.configuredGrossBudget, '7000');
+  assert.equal(apiHealth.data.riskControllerState.committedGrossBudget, '9000');
   assert.equal(apiHealth.data.controlState.perpsMarket4FundingCapBps, '30');
   assert.equal(apiHealth.data.controlState.insuranceBtcCover, '2000000000');
   await api.close();

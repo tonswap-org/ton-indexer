@@ -134,7 +134,11 @@ export async function decodeOptionRefunds(
             acceptedAt.after.ingressReceipts.get(physical.logicalIdentity)?.refunds.get(claimId) !== true ||
             acceptedAt.after.ingressClaimAttempts.get(claimId) !== logical ||
             (acceptedAt.before.ingressReceipts.get(physical.logicalIdentity)?.accepted ?? false) !==
-              acceptedAt.after.ingressReceipts.get(physical.logicalIdentity)?.accepted) continue;
+              acceptedAt.after.ingressReceipts.get(physical.logicalIdentity)?.accepted ||
+            (acceptedAt.before.ingressReceipts.get(physical.logicalIdentity)?.buyKey ?? 0n) !==
+              acceptedAt.after.ingressReceipts.get(physical.logicalIdentity)?.buyKey ||
+            (acceptedAt.before.ingressReceipts.get(physical.logicalIdentity)?.acceptedAmountRaw ?? "0") !==
+              acceptedAt.after.ingressReceipts.get(physical.logicalIdentity)?.acceptedAmountRaw) continue;
         queryId = wire.queryId;
         payloadHash = wire.forward.hash().toString("hex");
         originalRequestBodyHash = bodyCell(funding[0].source.raw.inMessage)
@@ -190,7 +194,9 @@ export async function decodeOptionRefunds(
           afterReceipt = terminal.after.ingressReceipts.get(ingress.logicalIdentity);
         if (terminal.before.ingressClaimAttempts.get(id) !== logical ||
             beforeReceipt?.refunds.get(id) !== true || !afterReceipt ||
-            beforeReceipt.accepted !== afterReceipt.accepted || afterReceipt.refunds.has(id) ||
+            beforeReceipt.accepted !== afterReceipt.accepted ||
+            beforeReceipt.buyKey !== afterReceipt.buyKey ||
+            beforeReceipt.acceptedAmountRaw !== afterReceipt.acceptedAmountRaw || afterReceipt.refunds.has(id) ||
             terminal.after.ingressClaimAttempts.has(id)) continue;
       }
       const receipts = cash.terminal.raw.outMessages.flatMap((m, i) => {

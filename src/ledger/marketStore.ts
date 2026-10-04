@@ -3,11 +3,11 @@ import { validateHistoricalJettonPrecision } from './jettonPrecision';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Cell } from '@ton/core';
+import { Address, beginCell, Cell } from '@ton/core';
 import type { Network } from '../models';
 import type { LedgerEvidenceRef } from './types';
 import type { LedgerSqlPool } from './store';
-import type { DlmmMarketBinding, MarketBoundaryEvidence, MarketDependency, MarketObservation, MarketCandidate, MarketProjection } from './marketTypes';
+import type { DlmmMarketBinding, MarketBoundaryEvidence, MarketDependency, MarketObservation, MarketCandidate, MarketProjection, MarketSettlementEvidence } from './marketTypes';
 
 export class MarketCursorError extends Error {}
 export class MarketPublicationConflict extends Error {}
@@ -97,8 +97,7 @@ function observation(value: MarketObservation, b: DlmmMarketBinding) {
     if(s.kind==='swap_output') totalOutput+=amount; else if(s.kind==='unused_input_refund') totalRefund+=amount; else invalid('settlement kind');
     for (const v of [s.sourceWallet,s.destinationWallet,s.destinationOwner]) address(v,'settlement endpoint');
     hash(s.requestBodyHash, 'request body hash');
-    if (typeof s.requestBodyBoc !== 'string' || s.requestBodyBoc.length > 65536 || !s.requestBodyBoc.length || Buffer.from(s.requestBodyBoc,'base64').toString('base64') !== s.requestBodyBoc) invalid('request BOC');
-    try { const cells=Cell.fromBoc(Buffer.from(s.requestBodyBoc,'base64')); if(cells.length!==1 || cells[0].hash().toString('hex')!==s.requestBodyHash) invalid('request BOC identity'); } catch { invalid('request BOC identity'); }
+    settlementRequest(s, b.pool);
     for (const key of ['request','debit','credit','acknowledged','walletFinalized','poolFinalized'] as const) ref(s[key], `settlement ${key}`);
     if (s.request.account!==b.pool || s.debit.account!==s.sourceWallet || s.credit.account!==s.destinationWallet || s.acknowledged.account!==b.pool || s.walletFinalized.account!==s.sourceWallet || s.poolFinalized.account!==b.pool) invalid('settlement evidence endpoints');
     if(s.destinationOwner!==(value.routing?b.router:s.kind==='swap_output'?value.recipient:value.payer)) invalid('settlement owner');
@@ -108,7 +107,7 @@ function observation(value: MarketObservation, b: DlmmMarketBinding) {
   if(totalOutput!==output || totalRefund!==returned) invalid('settlement conservation');
   validateRouting(value,b);
   const routing=value.routing;
-  const routeLegs=routing?[routing.inputSettlement,routing.terminalSettlement,...(routing.protocolFeeSettlement?[routing.protocolFeeSettlement]:[])]:[];
+  const routeLegs=routing?[routing.inputSettlement,routing.terminalSettlement,...(routing.protocolFeeSettlement?[routing.protocolFeeSettlement]:[]),...(routing.directFeeSettlement?[routing.directFeeSettlement]:[])]:[];
   const creditIds=new Set([...routeLegs.map(s=>refId(s.credit)),refId(value.input.credit),...value.settlements.map(s=>refId(s.credit))]);
   const allBoundaries=[...value.input.boundaries,value.allocation,...value.settlements.flatMap(s=>s.boundaries),...routeLegs.flatMap(s=>s.boundaries),...(routing?.boundaries??[])];
   for(const bnd of allBoundaries) if(bnd.codeHash!==(bnd.transaction.account===b.pool?b.poolCodeHash:bnd.transaction.account===b.router?b.routerCodeHash:b.walletCodeHash) || bnd.beforeAccountState==='uninitialized' && !creditIds.has(refId(bnd.transaction))) invalid('boundary binding');
@@ -118,9 +117,30 @@ function observation(value: MarketObservation, b: DlmmMarketBinding) {
   for (const fee of value.fees) { object(fee,['transaction','nativeAmountRaw'],'fee'); ref(fee.transaction,'fee transaction'); const k=refId(fee.transaction); if(fees.has(k)) invalid('duplicate fee'); fees.add(k); if(fee.nativeAmountRaw!==null) atomic(fee.nativeAmountRaw,'fee amount'); }
 }
 
+/** Bind reported cash to the sole current JSTT cell-ref transfer. The request
+ * body contains owner/query/amount, not a destination-wallet or token-root field. */
+function settlementRequest(value: Pick<MarketSettlementEvidence, 'settlementId' | 'amountRaw' | 'destinationOwner' | 'requestBodyBoc' | 'requestBodyHash'>, controller: string) {
+  if (typeof value.requestBodyBoc !== 'string' || !value.requestBodyBoc.length || value.requestBodyBoc.length > 65536 ||
+      Buffer.from(value.requestBodyBoc, 'base64').toString('base64') !== value.requestBodyBoc) invalid('settlement request BOC');
+  try {
+    const cells = Cell.fromBoc(Buffer.from(value.requestBodyBoc, 'base64'));
+    if (cells.length !== 1 || cells[0].isExotic || cells[0].hash().toString('hex') !== value.requestBodyHash) invalid('settlement request BOC identity');
+    const body = cells[0], s = body.beginParse();
+    if (s.loadUint(32) !== 0x0f8a7ea5) invalid('settlement request opcode');
+    const query = s.loadUintBig(64), amount = s.loadCoins(), owner = s.loadAddress(), response = s.loadAddress();
+    const marker = s.loadRef(), forwardValue = s.loadCoins(), payload = s.loadRef(); s.endParse();
+    if (marker.isExotic || marker.bits.length !== 32 || marker.refs.length || marker.beginParse().loadUint(32) !== 0x4a535454 ||
+        query.toString() !== value.settlementId || amount.toString() !== value.amountRaw ||
+        owner.toRawString() !== value.destinationOwner || response.toRawString() !== controller) invalid('settlement request fields');
+    const canonical = beginCell().storeUint(0x0f8a7ea5, 32).storeUint(query, 64).storeCoins(amount)
+      .storeAddress(owner).storeAddress(Address.parse(controller)).storeRef(marker).storeCoins(forwardValue).storeRef(payload).endCell();
+    if (!canonical.equals(body)) invalid('settlement request canonical layout');
+  } catch { invalid('settlement request wire'); }
+}
+
 function validateRouting(value: MarketObservation,b:DlmmMarketBinding) {
   const r=value.routing;if(r===null)return;
-  object(r,['router','businessId','requestHash','completionHash','routerAcceptance','completion','completionAcknowledged','inputSettlement','terminalSettlement','protocolFeeSettlement','boundaries'],'routing');
+  object(r,['router','businessId','requestHash','completionHash','routerAcceptance','completion','completionAcknowledged','inputSettlement','terminalSettlement','protocolFeeSettlement','directFeeSettlement','boundaries'],'routing');
   if(!b.router || !b.routerCodeHash || r.router!==b.router)invalid('routing binding');
   atomic(r.businessId,'router business ID',true,UINT64_MAX);hash(r.requestHash,'router request hash');hash(r.completionHash,'router completion hash');
   for(const e of [r.routerAcceptance,r.completion,r.completionAcknowledged])ref(e,'routing transaction');
@@ -130,12 +150,15 @@ function validateRouting(value: MarketObservation,b:DlmmMarketBinding) {
   const legs=[r.inputSettlement,r.terminalSettlement];
   if(legs[0].kind!==12 || legs[0].amountRaw!==value.paidInputRaw || legs[0].destinationOwner!==b.pool ||
     legs[1].kind!==8 || legs[1].amountRaw!==value.outputRaw || legs[1].destinationOwner!==value.recipient || value.returnedInputRaw!=='0')invalid('routing cash conservation');
-  for(const leg of [...legs,...(r.protocolFeeSettlement?[r.protocolFeeSettlement]:[])]) {
+  if ((r.protocolFeeSettlement === null) !== (r.directFeeSettlement === null) || r.directFeeSettlement &&
+      (r.directFeeSettlement.kind !== 15 || r.directFeeSettlement.amountRaw !== r.protocolFeeSettlement!.amountRaw ||
+       [b.pool, b.router].includes(r.directFeeSettlement.destinationOwner) || refId(r.directFeeSettlement.request) !== refId(r.completion))) invalid('routing direct protocol fee');
+  for(const leg of [...legs,...(r.protocolFeeSettlement?[r.protocolFeeSettlement]:[]),...(r.directFeeSettlement?[r.directFeeSettlement]:[])]) {
     const pool='poolFinalized' in leg,final=pool?leg.poolFinalized:leg.routerFinalized,controller=pool?b.pool:b.router;
     object(leg,['settlementId','kind','amountRaw','sourceWallet','destinationWallet','destinationOwner','requestBodyHash','requestBodyBoc','request','debit','credit','acknowledged','walletFinalized',pool?'poolFinalized':'routerFinalized','boundaries'],'routing leg');
     atomic(leg.settlementId,'routing settlement ID',true,UINT64_MAX);atomic(leg.amountRaw,'routing amount',true);
     for(const a of [leg.sourceWallet,leg.destinationWallet,leg.destinationOwner])address(a,'routing endpoint');hash(leg.requestBodyHash,'routing request hash');
-    try {const cells=Cell.fromBoc(Buffer.from(leg.requestBodyBoc,'base64'));if(cells.length!==1||cells[0].hash().toString('hex')!==leg.requestBodyHash)invalid('routing request BOC');}catch{invalid('routing request BOC');}
+    settlementRequest(leg, controller!);
     for(const e of [leg.request,leg.debit,leg.credit,leg.acknowledged,leg.walletFinalized,final])ref(e,'routing leg evidence');
     if(leg.request.account!==controller || leg.acknowledged.account!==controller || final.account!==controller || leg.debit.account!==leg.sourceWallet || leg.walletFinalized.account!==leg.sourceWallet || leg.credit.account!==leg.destinationWallet)invalid('routing leg endpoints');
     if(BigInt(leg.request.lt)>=BigInt(leg.debit.lt)||BigInt(leg.debit.lt)>=BigInt(leg.credit.lt)||BigInt(leg.credit.lt)>=BigInt(leg.acknowledged.lt)||BigInt(leg.acknowledged.lt)>=BigInt(leg.walletFinalized.lt)||BigInt(leg.walletFinalized.lt)>=BigInt(final.lt))invalid('routing leg chronology');
@@ -143,7 +166,21 @@ function validateRouting(value: MarketObservation,b:DlmmMarketBinding) {
     for(const e of [leg.request,leg.debit,leg.credit,leg.acknowledged,leg.walletFinalized,final])if(!leg.boundaries.some(b=>refId(b.transaction)===refId(e)))invalid('routing leg missing boundary');
     if(pool && (leg.kind!==9 || leg.destinationOwner!==b.router))invalid('routing protocol fee');
   }
-  if(refId(legs[0].request)!==refId(r.routerAcceptance)||BigInt(legs[0].routerFinalized.lt)>=BigInt(value.acceptance.lt)||refId(legs[1].request)!==refId(r.completion))invalid('routing transition linkage');
+  if (value.settlements.length !== 1 || value.settlements[0].kind !== 'swap_output' ||
+      legs[0].sourceWallet !== value.input.credit.account || legs[1].sourceWallet !== value.settlements[0].destinationWallet ||
+      legs[0].sourceWallet === legs[1].sourceWallet || legs[0].destinationWallet === value.settlements[0].sourceWallet) invalid('routing custody linkage');
+  // The qualified swap direction identifies the T3 wallets from the two cash
+  // legs, so the fee cannot substitute a wallet holding the other token.
+  if (r.directFeeSettlement && r.protocolFeeSettlement) {
+    const inputIsT = value.inputAsset === `${b.network}:jetton:${b.tokenT}`;
+    const routerTWallet = inputIsT ? legs[0].sourceWallet : legs[1].sourceWallet;
+    const poolTWallet = inputIsT ? legs[0].destinationWallet : value.settlements[0].sourceWallet;
+    if (r.protocolFeeSettlement.sourceWallet !== poolTWallet || r.protocolFeeSettlement.destinationWallet !== routerTWallet ||
+        r.directFeeSettlement.sourceWallet !== routerTWallet) invalid('routing fee token custody');
+  }
+  const terminalDispatchesWithFee = r.directFeeSettlement && legs[1].sourceWallet === r.directFeeSettlement.sourceWallet;
+  const expectedTerminalRequest = terminalDispatchesWithFee ? r.directFeeSettlement!.routerFinalized : r.completion;
+  if(refId(legs[0].request)!==refId(r.routerAcceptance)||BigInt(legs[0].routerFinalized.lt)>=BigInt(value.acceptance.lt)||refId(legs[1].request)!==refId(expectedTerminalRequest))invalid('routing transition linkage');
   for(const e of [r.routerAcceptance,r.completion,r.completionAcknowledged])if(!r.boundaries.some(b=>refId(b.transaction)===refId(e)))invalid('routing boundary missing');
 }
 

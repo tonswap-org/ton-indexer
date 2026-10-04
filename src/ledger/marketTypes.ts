@@ -59,5 +59,7 @@ export type MarketRoutingEvidence = {
   routerAcceptance: LedgerEvidenceRef; completion: LedgerEvidenceRef; completionAcknowledged: LedgerEvidenceRef;
   inputSettlement: RouterSettlementEvidence; terminalSettlement: RouterSettlementEvidence;
   protocolFeeSettlement: import('./dlmmProof').DlmmSettlementEvidence | null;
+  /** Physical Router-to-FeeRouter wallet delivery, separate from the Pool fee leg. */
+  directFeeSettlement: RouterSettlementEvidence | null;
   boundaries: MarketBoundaryEvidence[];
 };

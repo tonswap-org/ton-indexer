@@ -264,7 +264,8 @@ export async function decodePerps(
             : addr(n.raw.inMessage?.source) === input.owner);
       let oracle: Awaited<ReturnType<typeof readPerpsOracleExecution>> = null;
       const usesOracleContinuation = intakeStates !== null && intakeStates.before.markets.has(request.marketId) &&
-        (['open', 'close'].includes(request.operation) || request.operation === 'modify' &&
+        (['open', 'close'].includes(request.operation) ||
+          request.operation === 'claim' && !perpsPending(intakeStates.before, engine.ownerWallet) || request.operation === 'modify' &&
           intakeStates.after.oracleRefreshes.get(request.marketId)?.get(input.owner)?.queryId === request.queryId);
       if (authenticated && intakeStates && ok(n) && usesOracleContinuation) {
         oracle = await readPerpsOracleExecution({ owner: input.owner, ownerWallet: engine.ownerWallet, engine: engine.address,
@@ -306,7 +307,7 @@ export async function decodePerps(
             )
           : null;
       if (usesOracleContinuation && economics) {
-        // Linear OPEN/CLOS admission happens only at the authenticated oracle
+        // Oracle-backed execution happens only at the authenticated oracle
         // continuation. An ingress refund is still a provable rejection.
         if ((economics.outcome === 'accepted' && !oracle?.execution) ||
             (oracle && (oracle.receipt.order!.outcome === 1 ||

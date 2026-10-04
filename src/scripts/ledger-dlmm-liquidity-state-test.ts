@@ -71,11 +71,21 @@ test('every captured pool boundary reads only an exact current constructor or pe
 
 test('current pool metadata rejects obsolete guards, omitted cumulative observations and unknown pool kinds', () => {
   const data = Cell.fromBase64(wb.before.dataBoc!);
+  const metadata = data.refs[3];
+  for (const bits of [metadata.bits.substring(0, 651), beginCell().storeBits(metadata.bits).storeBit(0).endCell().bits]) {
+    const changed = beginCell().storeBits(bits); metadata.refs.forEach(ref => changed.storeRef(ref));
+    assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data, 3, changed.endCell()))), /metadata_invalid/);
+  }
+  assert.equal(readDlmmMarketState(wb.before.dataBoc!).protectedWalletMask, 3);
   const guard = data.refs[2];
   const oldGuard = beginCell().storeBits(guard.bits.substring(0,416)).endCell();
   assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data,2,oldGuard))), /structures_invalid/);
   const tailedGuard = beginCell().storeBits(guard.bits).storeBit(0).endCell();
   assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data,2,tailedGuard))), /structures_invalid/);
+  const registry = guard.refs[0];
+  const wrongRegistry = beginCell().storeUint(0, 32).storeBits(registry.bits.substring(32, registry.bits.length - 32)).endCell();
+  assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data, 2, replaceRef(guard, 0, wrongRegistry)))), /option_expiry_registry_invalid/);
+  assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data, 2, replaceRef(guard, 0, Cell.EMPTY)))));
   const observations = data.refs[1], ring = observations.refs[0];
   const oldRing = beginCell(); ring.refs.slice(0,3).forEach(ref => oldRing.storeRef(ref));
   assert.throws(() => readDlmmMarketState(toBoc(replaceRef(data,1,replaceRef(observations,0,oldRing.endCell())))), /observation_ring_invalid/);
@@ -130,7 +140,7 @@ test('fee collection debits the owner checkpoint and preserves a distinct payout
   assert.notEqual(dlmmPositionState(before, intent.owner, 0).creditedTRaw, dlmmPositionState(after, intent.owner, 0).creditedTRaw);
 });
 
-for (const mutation of ['other-bin', 'other-owner', 'growth', 'fee-claim', 'credit', 'shares', 'fee-reserve', 'journal-total', 'guard', 'farm', 'active-query', 'initial-delivered', 'completion-funding'] as const) test(`rejects an altered ${mutation} despite otherwise matching payouts`, () => {
+for (const mutation of ['other-bin', 'other-owner', 'growth', 'fee-claim', 'credit', 'shares', 'fee-reserve', 'journal-total', 'guard', 'option-registry', 'farm', 'active-query', 'initial-delivered', 'completion-funding'] as const) test(`rejects an altered ${mutation} despite otherwise matching payouts`, () => {
   const bad = clone(wafter), target = dlmmPositionState(bad, withdrawal.owner, 0).positionKey;
   if (mutation === 'other-bin') bad.bins.set(1, { ...bad.bins.get(0)! });
   if (mutation === 'other-owner') bad.positions.set(dlmmPositionState(bad, fixture.accounts.recipient, 0).positionKey, '1');
@@ -141,6 +151,7 @@ for (const mutation of ['other-bin', 'other-owner', 'growth', 'fee-claim', 'cred
   if (mutation === 'fee-reserve') bad.bins.get(0)!.feeReserveTRaw = '0';
   if (mutation === 'journal-total') bad.withdrawals.set(withdrawal.businessQueryId, { ...bad.withdrawals.get(withdrawal.businessQueryId)!, totalTRaw: '320757' });
   if (mutation === 'guard') bad.market.guardConfigurationHash = '0'.repeat(64);
+  if (mutation === 'option-registry') bad.market.optionRegistryHash = '0'.repeat(64);
   if (mutation === 'farm') bad.market.farmingHash = '0'.repeat(64);
   if (mutation === 'active-query') bad.activeWithdrawalQueryId = '0';
   if (mutation === 'initial-delivered') bad.withdrawals.set(withdrawal.businessQueryId, { ...bad.withdrawals.get(withdrawal.businessQueryId)!, legT: 1 });

@@ -4,19 +4,22 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Address, Cell, beginCell, loadTransaction } from '@ton/core';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
-import { projectOwnerLedger, type ProjectionInput, type LedgerChain } from '../ledger/project';
+import { projectOwnerLedger, type ProjectionInput, type LedgerChain, type Node } from '../ledger/project';
 import { canonicalLedgerHash } from '../ledger/normalize';
-import { readPerpsState } from '../ledger/perpsState';
+import { readPerpsState, type PerpsOracleTradeOrder } from '../ledger/perpsState';
 import { loadOpcodes } from '../utils/opcodes';
-import { perpsWalletAddress } from '../ledger/perpsWire';
-import { businessOpcode as opcode } from '../ledger/wire';
+import { perpsWalletAddress, perpsMessage } from '../ledger/perpsWire';
+import { businessOpcode as opcode, messageKey } from '../ledger/wire';
+import { readPerpsOracleExecution, type PerpsBoundary } from '../ledger/perpsOracle';
+import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
 
-const provenance = JSON.parse(readFileSync(join(__dirname, 'fixtures/perps-risk-admission-current/provenance.json'), 'utf8'));
+const folder = perpsRiskFixtureFolder;
+const provenance = readPerpsRiskFixtureProvenance();
 
 // Unmodified raw transactions and before/after storage emitted by the actual
 // Tolk engine, DLMM, RiskVault, RiskController and owner/product T3 wallets.
 function fixture(name: string) {
-  const bytes = readFileSync(join(__dirname, 'fixtures/perps-risk-admission-current', `${name}.json`));
+  const bytes = readFileSync(join(folder, `${name}.json`));
   const original = provenance.artifacts.find((entry: { relative: string }) => entry.relative === `${name}.json`);
   assert(original, 'Every execution case identifies its unchanged original capture');
   assert.equal(createHash('sha256').update(bytes).digest('hex'), original.sha256);
@@ -70,8 +73,31 @@ function fixture(name: string) {
       walletCodeHash: Cell.fromBase64(f.walletCode).hash().toString('hex'), ownerWallet: f.ownerWallet, engineWallet: f.engineWallet }]]) };
   return { f, rows, states, input, engineCodeHash };
 }
+
+function pendingOracleFixture(name: string, requestOpcode: number) {
+  const { f, rows, engineCodeHash } = fixture(name);
+  const row = rows.find((value: any) => value.account === f.engine && opcode(value.raw.inMessage) === requestOpcode);
+  assert(row);
+  const nodes: Node[] = rows.map((value: any) => ({ account: value.account, raw: value.raw,
+    id: `${value.account}:${value.raw.lt}:${canonicalLedgerHash(value.raw.hash)}` }));
+  const original = nodes.find(node => node.raw === row.raw)!;
+  const before = readPerpsState(row.oldStorage, engineCodeHash), after = readPerpsState(row.newStorage, engineCodeHash);
+  const request = perpsMessage(row.raw.inMessage)!;
+  const order = after.oracleRefreshes.get(request.marketId)!.get(f.owner)!.order!;
+  const intake: PerpsBoundary = { before, after, evidence: { kind: 'perps_account_delta',
+    stateBeforeHash: before.dataHash, stateAfterHash: after.dataHash, beforeSeqno: 1, afterSeqno: 2, transactions: [] } };
+  return { f, request, order, intake, read: () => readPerpsOracleExecution({ owner: f.owner, ownerWallet: f.ownerWallet, engine: f.engine,
+    request, original, intake, engineNodes: [], boundary: async () => null,
+    receiptFor: (node, index) => {
+      const key = messageKey(node.raw.outMessages[index]);
+      const matches = key ? nodes.filter(candidate => messageKey(candidate.raw.inMessage) === key) : [];
+      return matches.length === 1 ? matches[0] : null;
+    } }) };
+}
+
 async function main() {
-  for (const name of ['open-accepted', 'vault-rejected', 'policy-rejected', 'modify-accepted', 'profitable-close', 'gap-close', 'failed-close']) {
+  for (const name of ['open-accepted', 'vault-rejected', 'policy-rejected', 'modify-accepted', 'profitable-close', 'gap-close', 'failed-close',
+    'funding-claim-accepted', 'funding-claim-rejected', 'funding-claim-close']) {
     const { f, input } = fixture(name);
     const result = await projectOwnerLedger(input);
     const event = result.events.find(event => event.kind === 'perps_operation');
@@ -96,7 +122,35 @@ async function main() {
     assert.notEqual(meta.oracleExecution.completed.lt, meta.oracleExecution.queued.lt);
     assert.deepEqual(meta.stateEvidence?.transactions, [meta.oracleExecution.completed]);
     assert.deepEqual(meta.oracleExecution.intakeEvidence?.transactions, [meta.oracleExecution.queued]);
-    if (name.endsWith('close')) {
+    if (name.startsWith('funding-claim-')) {
+      assert.equal(meta.request.operation, 'claim');
+      assert.equal(meta.depositRaw, '0');
+      assert(meta.oracleExecution.intake.position, 'Funding claims retain their original position at intake');
+      if (accepted) {
+        assert.equal(meta.counterpartyPayout.status, 'completed', 'Funding is paid from separately verified LP custody');
+        assert(BigInt(meta.counterpartyPayout.amountRaw) > 0n);
+        assert.equal(meta.counterpartyPayout.proof?.beneficiaryWallet, f.ownerWallet);
+        const profit = event.movements.filter(m => m.purpose === 'perps_counterparty_profit');
+        assert.equal(profit.length, 1);
+        assert.equal(profit[0].amountRaw, meta.counterpartyPayout.amountRaw);
+        if (name === 'funding-claim-accepted') {
+          assert(meta.after?.position);
+          assert.equal(meta.after.position.marginRaw, meta.before?.position?.marginRaw);
+          assert.equal(meta.after.account.collateralRaw, meta.before?.account.collateralRaw);
+          assert.equal(meta.payout.status, 'none', 'LP funding is not a second refund of trader margin');
+        } else {
+          assert.equal(meta.after?.position, null);
+          assert.equal(meta.payout.status, 'completed', 'Exhausted-counterparty close separately returns trader margin');
+        }
+      } else {
+        assert.equal(meta.oracleExecution.reason, 2);
+        assert.equal(meta.payout.status, 'none');
+        assert.equal(meta.counterpartyPayout.status, 'none');
+        assert.deepEqual(meta.before?.position, meta.after?.position);
+        assert.deepEqual(meta.before?.account, meta.after?.account);
+        assert(!event.movements.some(m => m.purpose === 'perps_counterparty_profit'));
+      }
+    } else if (name.endsWith('close')) {
       assert.equal(meta.counterpartyPayout.status, 'completed', `${name}: LP claim requires actual separate wallet delivery`);
       assert(BigInt(meta.counterpartyPayout.amountRaw) > 0n);
       assert.equal(meta.counterpartyPayout.proof?.beneficiaryWallet, f.ownerWallet);
@@ -130,8 +184,9 @@ async function main() {
     assert(!result.events.some(event => event.kind === 'perps_operation' && event.settlement?.status === 'confirmed'),
       'A missing independently qualified risk response boundary never becomes a confirmed operation');
   }
-  for (const defect of ['missing-beneficiary-history', 'missing-vault-journal', 'forged-hook'] as const) {
-    const { f, input, rows, states } = fixture('profitable-close');
+  for (const name of ['profitable-close', 'funding-claim-accepted', 'funding-claim-close']) {
+   for (const defect of ['missing-beneficiary-history', 'missing-vault-journal', 'forged-hook'] as const) {
+    const { f, input, rows, states } = fixture(name);
     if (defect === 'missing-beneficiary-history') input.chains.delete(f.ownerWallet);
     else if (defect === 'missing-vault-journal') {
       for (const [key] of states) if (key.startsWith(`${f.riskVault}:`)) states.delete(key);
@@ -141,7 +196,62 @@ async function main() {
     }
     const result = await projectOwnerLedger(input);
     assert(!result.events.some(e => e.settlement?.perps?.counterpartyPayout.status === 'completed'),
-      `${defect}: reserved claim and engine margin are insufficient evidence of an LP payment`);
+      `${name}/${defect}: reserved claim and engine margin are insufficient evidence of an LP payment`);
+   }
+  }
+  for (const defect of ['missing-oracle-boundary', 'missing-pool-history', 'wrong-owner'] as const) {
+    const { f, input, rows, states } = fixture('funding-claim-accepted');
+    const callback = rows.find((row: any) => row.account === f.engine && opcode(row.raw.inMessage) === 0x50525043);
+    assert(callback);
+    if (defect === 'missing-oracle-boundary') {
+      for (const [key, value] of states) if (value.state.lastTxLt === callback.raw.lt) states.delete(key);
+    } else if (defect === 'missing-pool-history') input.chains.delete(f.pool);
+    else {
+      const intake = rows.find((row: any) => row.account === f.engine && opcode(row.raw.inMessage) === 0x43464e47);
+      assert(intake); intake.raw.inMessage.source = f.pool;
+    }
+    const result = await projectOwnerLedger(input);
+    assert(!result.events.some(event => event.kind === 'perps_operation' && event.settlement?.status === 'confirmed'),
+      `${defect}: a funding claim needs its exact owner and independent oracle execution`);
+  }
+  for (const defect of ['none', 'wrong-correlation', 'wrong-refund-owner', 'wrong-refund-kind', 'missing-context'] as const) {
+    const { f, order, read } = pendingOracleFixture('funding-claim-accepted', 0x43464e47);
+    assert(order.positionOracleContext);
+    if (defect === 'missing-context') order.positionOracleContext = null;
+    else if (defect !== 'none') {
+      const sponsor = order.positionOracleContext.sponsor;
+      if (defect === 'wrong-correlation') sponsor.correlationId = (BigInt(sponsor.correlationId) + 1n).toString();
+      if (defect === 'wrong-refund-owner') sponsor.refundTo = f.pool;
+      if (defect === 'wrong-refund-kind') { sponsor.refundKind = 1; sponsor.moduleId = 405; }
+      order.previousPosition = beginCell().storeUint(BigInt(`0x${order.positionOracleContext.positionHash}`), 256)
+        .storeRef(beginCell().storeUint(BigInt(sponsor.correlationId), 64).storeUint(sponsor.refundKind, 8)
+          .storeUint(sponsor.moduleId, 32).storeAddress(Address.parse(sponsor.refundTo))).endCell();
+    }
+    const result = await read();
+    if (defect === 'none') {
+      assert(result, 'The authentic direct funding claim is pending before its callback');
+      assert.equal(result.execution, null);
+    } else assert.equal(result, null, `${defect}: a direct claim cannot borrow another native payer context`);
+  }
+  // Synthetic intake boundaries exercise the native owner's narrow right to
+  // replace pending maintenance. The original CLOSE wire remains unchanged.
+  for (const defect of ['none', 'same-wire', 'ordinary-order', 'completed-oracle', 'claim-order', 'missing-context'] as const) {
+    const { f, request, intake, read } = pendingOracleFixture('profitable-close', 0x434c4f53);
+    const pending = intake.after.oracleRefreshes.get(request.marketId)!.get(f.owner)!;
+    const previousOrder: PerpsOracleTradeOrder = { ...pending.order!, reason: 1,
+      previousPosition: beginCell().storeUint(BigInt(`0x${'01'.repeat(32)}`), 256)
+        .storeRef(beginCell().storeUint(1, 64).storeUint(0, 8).storeUint(0, 32).storeAddress(Address.parse(f.owner))).endCell(),
+      positionOracleContext: { positionHash: '01'.repeat(32), sponsor: { correlationId: '1', refundKind: 0, moduleId: 0, refundTo: f.owner } } };
+    const previous = { ...pending, wireQueryId: (BigInt(pending.wireQueryId) - 1n).toString(), order: previousOrder };
+    if (defect === 'same-wire') previous.wireQueryId = pending.wireQueryId;
+    if (defect === 'ordinary-order') previous.order.reason = 0;
+    if (defect === 'completed-oracle') previous.status = 2;
+    if (defect === 'claim-order') previous.order.request = { ...previous.order.request, operation: 'claim', opcode: 0x43464e47 };
+    if (defect === 'missing-context') previous.order.positionOracleContext = null;
+    intake.before.oracleRefreshes.get(request.marketId)!.set(f.owner, previous);
+    const result = await read();
+    if (defect === 'none') assert(result, 'Owner CLOSE supersedes maintenance even when the business query ID is the same');
+    else assert.equal(result, null, `${defect}: only a distinct wire can supersede pending maintenance`);
   }
   console.log('PASS missing beneficiary custody, missing vault journal and forged RVPH never complete a counterparty payment');
   console.log('PASS missing vault/policy historical boundaries remain unresolved');

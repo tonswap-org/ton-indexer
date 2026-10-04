@@ -1,5 +1,5 @@
 import { Address, Cell, Dictionary, beginCell } from "@ton/core";
-import { burnIntentHash, referralAddress, readT3ReferralState } from "./t3Wire";
+import { referralAddress, readT3ReferralState } from "./t3Wire";
 import { readCurrentJettonWalletStorage } from "./jettonWalletState";
 const end = (s: ReturnType<Cell["beginParse"]>) => {
   if (s.remainingBits || s.remainingRefs)
@@ -166,9 +166,16 @@ export function readT3RecoveryHub(boc: string, owner: string, queryId: string) {
     identities = p.loadDict(
       Dictionary.Keys.BigUint(64),
       Dictionary.Values.BigUint(256),
+    ),
+    payoutBusiness = p.loadDict(
+      Dictionary.Keys.BigUint(256),
+      Dictionary.Values.Cell(),
     );
+  p.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
   end(p);
-  const key = BigInt("0x" + burnIntentHash(owner, queryId)),
+  const key = BigInt("0x" + beginCell().storeUint(0x54335049, 32)
+    .storeUint(1, 8).storeAddress(Address.parse(owner))
+    .storeUint(BigInt(queryId), 64).endCell().hash().toString("hex")),
     entry = entries.get(key);
   if (!entry)
     return {
@@ -177,26 +184,54 @@ export function readT3RecoveryHub(boc: string, owner: string, queryId: string) {
       proof: null,
       dataHash: cell.hash().toString("hex"),
     };
-  const v = entry.beginParse(),
-    proof = {
-      queryId: v.loadUintBig(64).toString(),
-      wireId: v.loadUintBig(64).toString(),
-      owner: v.loadAddress().toRawString(),
-      recipient: v.loadAddress().toRawString(),
-      amountRaw: v.loadCoins().toString(),
-      slippage: v.loadUint(16),
-      mode: v.loadUint(8),
-      outputToken: v.loadUint(8),
-      payoutId: v.loadUintBig(64).toString(),
-      consumed: v.loadUint(8),
-      referrer: referralAddress(v.loadRef()),
-    };
+  const v = entry.beginParse();
+  const storedQueryId = v.loadUintBig(64), wireId = v.loadUintBig(64),
+    amountRaw = v.loadCoins(), payoutId = v.loadUintBig(64),
+    consumed = v.loadUint(8), intentCell = v.loadRef(),
+    reservation = v.loadRef().beginParse();
   end(v);
+  const intentHash = reservation.loadUintBig(256);
+  for (let i = 0; i < 3; i++) reservation.loadCoins();
+  const continuation = reservation.loadRef().beginParse(); end(reservation);
+  for (let i = 0; i < 4; i++) continuation.loadCoins();
+  continuation.loadUint(8);
+  const referralEconomics = continuation.loadRef().beginParse(); end(continuation);
+  for (let i = 0; i < 5; i++) referralEconomics.loadCoins();
+  referralEconomics.loadUint(32); referralEconomics.loadRef(); end(referralEconomics);
+  let recipient: string | null = null, slippage: number | null = null,
+    mode: number | null = null, outputToken: number | null = null,
+    referrer: string | null = null;
+  if (consumed === 0) {
+    const intent = intentCell.beginParse();
+    if (intent.loadAddress().toRawString() !== owner) throw Error("T3 proof owner");
+    recipient = intent.loadAddress().toRawString();
+    slippage = intent.loadUint(16); mode = intent.loadUint(8);
+    outputToken = intent.loadUint(8); referrer = referralAddress(intent.loadRef());
+    end(intent);
+  } else if (consumed === 1) {
+    end(intentCell.beginParse());
+  }
+  const identityCell = payoutBusiness.get(key);
+  if (!identityCell) throw Error("T3 proof payout business identity");
+  const identity = identityCell.beginParse();
+  const identityPayoutId = identity.loadUintBig(64),
+    identityHash = identity.loadUintBig(256);
+  identity.loadDict(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell()); end(identity);
+  const proof = {
+    queryId, wireId: wireId.toString(), owner, recipient,
+    amountRaw: amountRaw.toString(), slippage, mode, outputToken,
+    payoutId: payoutId.toString(), consumed, referrer,
+    intentHash: hex(intentHash)!,
+  };
   if (
     proof.consumed > 1 ||
     proof.payoutId === "0" ||
     proof.wireId === "0" ||
-    identities.get(BigInt(proof.payoutId)) !== key
+    intentHash === 0n ||
+    (consumed === 0 && storedQueryId !== BigInt(queryId)) ||
+    (consumed === 1 && storedQueryId !== 0n) ||
+    identities.get(payoutId) !== key ||
+    identityPayoutId !== payoutId || identityHash !== intentHash
   )
     throw Error("T3 proof identity");
   return { root, enabled, proof, dataHash: cell.hash().toString("hex") };

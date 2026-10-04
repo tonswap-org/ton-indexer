@@ -1,0 +1,10 @@
+Referral proof directory: /Users/mtakemiya/dev/tonswap/output/first-testnet/fresh-fixture-refresh-20261002-g62-all-01/perps/directFee
+PASS tests/referral/PerpsTradeReferralPayout.spec.ts (174.092 s)
+  First-release Perps direct protocol fee custody
+    ✓ delivers the T3 fee after payout finality without referral fan-out (171518 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       1 passed, 1 total
+Snapshots:   0 total
+Time:        174.138 s
+Ran all test suites within paths "tests/referral/PerpsTradeReferralPayout.spec.ts".
