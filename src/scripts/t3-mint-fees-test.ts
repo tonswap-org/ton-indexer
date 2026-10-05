@@ -65,6 +65,10 @@ assert.equal(mintFeesFromStateTransition(snapshot([1000n, 1000n, 0n], 2000n),
 const reference = beginCell().storeSlice(feeCell().beginParse()).storeRef(Cell.EMPTY).endCell();
 assert.equal(mintFeesFromStateTransition(snapshot([1000n, 1000n, 0n], 2000n),
   { ...snapshot([1100n, 1100n, 0n], 2200n), fees: reference }, ['100', '100', '0'], '200'), null);
+const nonminimal = beginCell().storeUint(1, 4).storeUint(0, 8);
+for (let i = 0; i < 5; i++) nonminimal.storeCoins(0);
+assert.equal(mintFeesFromStateTransition(snapshot([1000n, 1000n, 0n], 2000n),
+  { ...snapshot([1100n, 1100n, 0n], 2200n), fees: nonminimal.endCell() }, ['100', '100', '0'], '200'), null);
 assert.equal(mintFeesFromStateTransition(beforeTwo, afterTwo, ['100', '100'], '200'), null);
 assert.equal(mintFeesFromStateTransition(beforeTwo, afterTwo, ['-100', '100', '0'], '200'), null);
 

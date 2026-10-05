@@ -1,4 +1,4 @@
-import type { Cell } from '@ton/core';
+import { beginCell, type Cell } from '@ton/core';
 
 type MintFeeState = {
   totalSupply: string;
@@ -25,6 +25,9 @@ function feeBuckets(cell: Cell) {
   const proportional = [s.loadCoins(), s.loadCoins(), s.loadCoins()];
   const single = [s.loadCoins(), s.loadCoins(), s.loadCoins()];
   if (s.remainingBits || s.remainingRefs) throw Error('Invalid T3 fee buckets');
+  const canonical = beginCell();
+  [...proportional, ...single].forEach(value => canonical.storeCoins(value));
+  if (!canonical.endCell().equals(cell)) throw Error('Noncanonical T3 fee buckets');
   return { proportional, single };
 }
 
