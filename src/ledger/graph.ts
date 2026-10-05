@@ -4,7 +4,7 @@ import { readDlmmMarketState } from "./dlmmState";
 import { ROUTED_SWAP_INTENT, ROUTER_POOL_EXECUTE, ROUTER_POOL_COMPLETED, ROUTER_POOL_COMPLETION_ACK } from "./dlmmRoutedWire";
 import type { LedgerPerpsEngine } from "./perps";
 import type { LedgerLaunchpadSale } from "./launchpadModels";
-import type { LedgerLaunchpadCodeHashes } from "../config/ledgerLaunchpad";
+import type { LedgerLaunchpadCodeHashes } from "./bindings";
 import { readFixedSaleState } from "./launchpadState";
 import { readBondingSaleState } from "./launchpadBondingState";
 import { readAuctionSaleState } from "./launchpadAuctionState";
@@ -16,7 +16,7 @@ import { optionBuyForward, type LedgerOptionFactory } from "./options";
 import { optionExercise, optionVaultPayout } from "./optionLifecycleWire";
 import { optionOwnerAbort } from "./optionAbortWire";
 import { readOptionFactoryConfig } from "./optionLifecycleState";
-import type { LedgerOptionsCodeHashes } from "../config/ledgerOptions";
+import type { LedgerOptionsCodeHashes } from "./bindings";
 import { Address, Cell, beginCell } from "@ton/core";
 import type { TonDataSource } from "../data/dataSource";
 import type { Network } from "../models";
@@ -75,7 +75,7 @@ export class LedgerGraphBuilder {
     private perpsEngineCodeHash?: string,
     private optionVault?: string,
     private optionCodeHashes?: LedgerOptionsCodeHashes,
-    private t3RedemptionBinding?: import("../config/ledgerT3").LedgerT3RedemptionBinding,
+    private t3RedemptionBinding?: import("./bindings").LedgerT3RedemptionBinding,
     private launchpadCodeHashes?: LedgerLaunchpadCodeHashes,
     private launchpadControllers: string[] = [],
     private configuredMarketBindings: DlmmMarketBinding[] = [],

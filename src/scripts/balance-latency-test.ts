@@ -55,7 +55,7 @@ const testConcurrentReadsAndMetadataEnrichment = async () => {
     async getAccountState() { nativeCalls += 1; return native.promise; },
     async getJettonBalance() { jettonCalls += 1; return jetton.promise; },
     async getJettonMetadata() { metadataCalls += 1; return metadata.promise; },
-  }), loadOpcodes(undefined), [{ master, symbol: 'UNKNOWN' }]);
+  }), loadOpcodes(), [{ master, symbol: 'UNKNOWN' }]);
 
   // The REST raw/formatted endpoints and SSE snapshots share one canonical read,
   // including when the same owner uses a friendly address representation.
@@ -99,7 +99,7 @@ const testColdNativeReadsDoNotWaitForHistory = async () => {
   let nativeCalls = 0;
   const service = new IndexerService(config, store, sourceWith({
     async getAccountState() { nativeCalls += 1; return native.promise; },
-  }), loadOpcodes(undefined), []);
+  }), loadOpcodes(), []);
   const newer: AccountState = { address: owner, balance: '999', updatedAt: Date.now() };
   const historyWorkflow = store.withAddressLock(owner, async () => {
     locked.resolve();
@@ -137,7 +137,7 @@ const testFailedNativeReadCanRetry = async () => {
       return { balance: '456' };
     },
     async getJettonMetadata() { throw new Error('Metadata unavailable'); },
-  }), loadOpcodes(undefined), [{ master, symbol: 'UNKNOWN' }]);
+  }), loadOpcodes(), [{ master, symbol: 'UNKNOWN' }]);
   const failures = await Promise.allSettled([service.getBalance(owner), service.getBalances(owner)]);
   assert.ok(failures.every((result) => result.status === 'rejected'));
   assert.equal(calls, 1);
@@ -152,7 +152,7 @@ const testFreshMetadataWithCachingDisabled = async () => {
   let metadataCalls = 0;
   const service = new IndexerService(uncachedConfig, new MemoryStore(uncachedConfig), sourceWith({
     async getJettonMetadata() { metadataCalls += 1; return { decimals: 6 }; },
-  }), loadOpcodes(undefined), [{ master, symbol: 'UNKNOWN' }]);
+  }), loadOpcodes(), [{ master, symbol: 'UNKNOWN' }]);
   const first = await service.getBalances(owner);
   const second = await service.getBalances(owner);
   assert.equal(first.assets.find((item) => item.kind === 'jetton')?.balance, '1.234567');
@@ -167,7 +167,7 @@ const testPartialJettonReadCanRetry = async () => {
       calls += 1;
       return calls === 1 ? null : { wallet, balance: '1234567' };
     },
-  }), loadOpcodes(undefined), [{ master, symbol: 'UNKNOWN' }]);
+  }), loadOpcodes(), [{ master, symbol: 'UNKNOWN' }]);
   const partial = await service.getBalances(owner);
   assert.equal(partial.confirmed, false);
   assert.equal(partial.assets.filter((asset) => asset.kind === 'jetton').length, 0);

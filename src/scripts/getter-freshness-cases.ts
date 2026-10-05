@@ -24,7 +24,7 @@ const make = (runGetMethod: TonDataSource['runGetMethod'], enabled = true, ttl =
     async getJettonMetadata() { return null; },
     async close() {},
   };
-  return { config, service: new IndexerService(config, new MemoryStore(config), source, loadOpcodes(undefined), []) };
+  return { config, service: new IndexerService(config, new MemoryStore(config), source, loadOpcodes(), []) };
 };
 const deferred = () => {
   let resolve!: (value: Result) => void;

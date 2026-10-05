@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import fastify from 'fastify';
-import { parseLedgerMarketBindings } from '../config/ledgerMarkets';
+import { validateMarketBindings } from '../ledger/bindings';
 import { DlmmMarketGraphBuilder } from '../ledger/marketGraph';
 import { DlmmMarketService } from '../ledger/marketService';
 import { registerMarketLedgerRoutes } from '../ledger/marketRoutes';
@@ -21,11 +21,11 @@ async function main() {
   const binding: DlmmMarketBinding = { router: null, routerCodeHash: null, network: 'localnet', pool: f.accounts.pool, tokenT: f.accounts.tokenT, tokenX: f.accounts.tokenX, tokenTCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash, tokenXCodeHash:f.compiler.find((c:{entrypointFileName:string})=>c.entrypointFileName.endsWith('/jetton/jetton_root.tolk')).codeHash,
     poolCodeHash: f.compiler.find((x: any) => x.entrypointFileName.endsWith('/dlmm/pool.tolk')).codeHash,
     walletCodeHash: f.compiler.find((x: any) => x.entrypointFileName.endsWith('/jetton/jetton_wallet.tolk')).codeHash };
-  assert.deepEqual(parseLedgerMarketBindings(undefined, 'localnet'), []);
-  assert.deepEqual(parseLedgerMarketBindings(JSON.stringify([binding]), 'localnet'), [binding]);
-  for (const raw of ['{', '{}', JSON.stringify([binding, binding]), JSON.stringify([{ ...binding, network: 'mainnet' }]),
-    JSON.stringify([{ ...binding, tokenX: binding.tokenT }]), JSON.stringify([{ ...binding, walletCodeHash: 'current' }]),
-    JSON.stringify([{ ...binding, oldPoolCodeHash: binding.poolCodeHash }])]) assert.throws(() => parseLedgerMarketBindings(raw, 'localnet'));
+  assert.deepEqual(validateMarketBindings([], 'localnet'), []);
+  assert.deepEqual(validateMarketBindings([binding], 'localnet'), [binding]);
+  for (const value of [undefined, '{', {}, JSON.stringify([binding]), [binding, binding], [{ ...binding, network: 'mainnet' }],
+    [{ ...binding, tokenX: binding.tokenT }], [{ ...binding, walletCodeHash: 'current' }],
+    [{ ...binding, oldPoolCodeHash: binding.poolCodeHash }]]) assert.throws(() => validateMarketBindings(value, 'localnet'));
   const db = new PGlite(), pool = { query: async (sql: string, args?: any[]) => args === undefined ? (await db.exec(sql)).at(-1) ?? { rows: [] } : db.query(sql, args), connect: async () => pool, end: async () => db.close() } as unknown as LedgerSqlPool;
   const ledgerStore = new PostgresLedgerStore(pool), marketStore = new PostgresMarketStore(pool); await ledgerStore.initialize();
   const accounts = [...new Set<string>(f.transactions.map((entry: any) => entry.account))], opcodes = loadOpcodes(), calls: string[] = [];

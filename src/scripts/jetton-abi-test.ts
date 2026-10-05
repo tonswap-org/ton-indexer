@@ -269,7 +269,7 @@ const assertTransferPayloadUsesExactWalletLayout = async () => {
     config,
     new MemoryStore(config),
     transferPayloadSource(canonicalWallet, accountStateCalls),
-    loadOpcodes(undefined),
+    loadOpcodes(),
     []
   );
 
@@ -296,7 +296,7 @@ const assertTransferPayloadUsesExactWalletLayout = async () => {
     config,
     new MemoryStore(config),
     transferPayloadSource(legacyWallet, legacyAccountStateCalls),
-    loadOpcodes(undefined),
+    loadOpcodes(),
     []
   );
   const rejected = await legacyService.getJettonTransferPayload(

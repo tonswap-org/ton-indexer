@@ -16,7 +16,7 @@ export type LedgerT3Hub = {
   address: string;
   root: string;
   codeHash: string;
-  redemptionBinding?: import("../config/ledgerT3").LedgerT3RedemptionBinding;
+  redemptionBinding?: import("./bindings").LedgerT3RedemptionBinding;
   reserveRoots: string[];
   vaults: string[];
   receiver?: string;

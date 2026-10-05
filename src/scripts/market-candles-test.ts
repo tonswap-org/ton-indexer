@@ -258,7 +258,7 @@ async function main() {
     {
       releaseId: 'local-run-1',
       registryHash: 'a'.repeat(64),
-      releaseManifestHash: 'b'.repeat(64),
+      manifestHash: 'b'.repeat(64),
       spotMarkets: [
         {marketKey:'spot:TOKEN-T3', marketAddress, tokenRoot:marketAddress, assetSymbol:'TOKEN', quoteSymbol:'T3', assetDecimals:0, quoteDecimals:0, tokenRootCodeHash:'e'.repeat(64), poolCodeHash:'f'.repeat(64)},
         {marketKey:'spot:USDC-T3', marketAddress:`0:${'c'.repeat(64)}`, tokenRoot:`0:${'b'.repeat(64)}`, assetSymbol:'USDC', quoteSymbol:'T3', assetDecimals:6, quoteDecimals:9, tokenRootCodeHash:'e'.repeat(64), poolCodeHash:'f'.repeat(64)},

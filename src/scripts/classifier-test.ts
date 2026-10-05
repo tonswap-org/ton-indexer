@@ -130,7 +130,14 @@ const makeJettonTransferBodyBase64 = (destination: Address, amount: bigint, quer
     .toBoc({ idx: false })
     .toString('base64');
 
-const opcodes = loadOpcodes(undefined);
+const opcodes = loadOpcodes();
+assert.deepEqual([...opcodes.jettonTransfer], [0x0f8a7ea5]);
+assert.deepEqual([...opcodes.jettonNotify], [0x7362d09c]);
+assert.equal(opcodes.jettonTransfer.has(0x7362d09c), false, 'A notification is not a transfer request');
+assert.equal(opcodes.jettonTransfer.has(0x4a544246), false, 'A transfer bounce is not a new transfer request');
+const separateOpcodes = loadOpcodes();
+separateOpcodes.swap.add(0xdeadbeef);
+assert.equal(loadOpcodes().swap.has(0xdeadbeef), false, 'Each decoder receives its own opcode sets');
 const body = makeBodyBase64();
 const swapBody = beginCell()
   .storeUint(0x53574150, 32)

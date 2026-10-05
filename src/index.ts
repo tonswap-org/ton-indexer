@@ -2,8 +2,7 @@ import fastify from 'fastify';
 import { createIndexerShutdown } from './shutdown';
 import { NativeAdmissionPool } from './data/admission/nativePool';
 import helmet from '@fastify/helmet';
-import { createServer } from 'node:net';
-import { loadConfig, readRegistryFile } from './config';
+import { loadConfig } from './config';
 import { createLogger } from './utils/logger';
 import { MemoryStore } from './store/memoryStore';
 import { TonClient4DataSource } from './data/tonClient4Source';
@@ -22,10 +21,14 @@ import { SnapshotService } from './snapshotService';
 import { DebugService } from './debugService';
 import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
-import { validateMainnetRegistry } from './config/registry';
-import { buildRegistryBundle, RegistryMetadata } from './config/releaseManifest';
-import { applyRuntimeManifestBindings } from './config/runtimeManifestBindings';
-import { Pool } from 'pg';
+import { parseCanonicalReleaseManifest, RegistryMetadata } from './config/releaseManifest';
+import { deriveRuntimeManifestBindings } from './config/runtimeManifestBindings';
+import { loadRuntimeManifest, type LoadedManifest } from './config/manifestSource';
+import { createManifestSupervisor } from './manifestSupervisor';
+import { launchManifestWorker } from './manifestWorker';
+import { releaseSnapshotPath } from './releaseState';
+import { createReleaseLedgerPool } from './ledger/releasePool';
+import { deriveT3RedemptionBinding } from './ledger/runtimeT3Binding';
 import { PostgresLedgerStore } from './ledger/store';
 import { LedgerService } from './ledger/service';
 import { registerLedgerRoutes } from './ledger/routes';
@@ -33,60 +36,28 @@ import { registerMarketLedgerRoutes } from './ledger/marketRoutes';
 import { DlmmMarketService } from './ledger/marketService';
 import { PostgresMarketStore } from './ledger/marketStore';
 
-const isPortAvailable = (host: string, port: number) =>
-  new Promise<boolean>((resolve) => {
-    const server = createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => server.close(() => resolve(true)));
-    server.listen({ port, host });
-  });
-
-const findAvailablePort = async (host: string, port: number, attempts = 20) => {
-  if (port === 0) return 0;
-  for (let i = 0; i < attempts; i += 1) {
-    const candidate = port + i;
-    if (await isPortAvailable(host, candidate)) return candidate;
-  }
-  throw new Error(`No available port found starting at ${port}`);
-};
-
 let admissionRuntime: NativeAdmissionPool | undefined;
 const stopAdmissionDuringStartup = () => {
   void admissionRuntime?.close().finally(() => process.exit(0));
 };
-const start = async () => {
+const start = async (manifest: LoadedManifest) => {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
 
-  let registry: Record<string, string> = {};
-  let registryMetadata: RegistryMetadata | undefined;
-  try {
-    registry = readRegistryFile(config.registryPath);
-    const bundle = buildRegistryBundle(registry, config.network, config.releaseManifestPath);
-    registry = bundle.contracts;
-    registryMetadata = bundle.metadata;
-  } catch (error) {
-    if (config.mode === 'production' || config.releaseManifestPath) {
-      throw error;
-    }
-    logger.warn('registry load failed', { error: (error as Error).message });
-  }
+  const registry = manifest.contracts;
+  const registryMetadata: RegistryMetadata = { ...manifest };
+  const bindings = deriveRuntimeManifestBindings(manifest.runtime);
+  config.snapshotPath = releaseSnapshotPath(config.snapshotPath, manifest.runtime.manifestHash);
 
   if (config.snapshotAutosaveEnabled && !config.snapshotPath) {
     throw new Error('SNAPSHOT_PATH is required when SNAPSHOT_AUTOSAVE_ENABLED=true.');
   }
-  if (config.mode === 'production' && config.network === 'mainnet') {
-    validateMainnetRegistry(registry);
-  }
-
-  if (registryMetadata?.runtime) applyRuntimeManifestBindings(config, registryMetadata.runtime);
-
   if (registry.PerpsEngine) {
-    if (config.network !== 'testnet' || !config.ledgerPerpsEngineCodeHash || !config.perpsAdmissionArtifacts) {
+    if (config.network !== 'testnet' || !bindings.perpsEngineCodeHash || !config.perpsAdmissionArtifacts) {
       throw new Error('The registered PerpsEngine requires a qualified testnet admission runtime and exact artifact pins.');
     }
     admissionRuntime = new NativeAdmissionPool({ ...config.perpsAdmissionArtifacts, engine: registry.PerpsEngine,
-      codeHash: config.ledgerPerpsEngineCodeHash });
+      codeHash: bindings.perpsEngineCodeHash });
     process.once('SIGTERM', stopAdmissionDuringStartup);
     process.once('SIGINT', stopAdmissionDuringStartup);
     logger.info('authenticating perps admission runtime before service readiness');
@@ -96,12 +67,8 @@ const start = async () => {
     throw new Error('Admission runtime artifacts require a registered PerpsEngine.');
   }
 
-  const opcodes = loadOpcodes(config.opcodesPath);
-  const jettonRoots = registryMetadata?.runtime
-    ? registryMetadata.runtime.tokens.map(token => ({ master: token.root, symbol: token.symbol }))
-    : Object.entries(registry)
-    .filter(([key, value]) => key.endsWith('Root') && value && !value.startsWith('REPLACE_'))
-    .map(([key, value]) => ({ master: value, symbol: key.replace(/Root$/, '') }));
+  const opcodes = loadOpcodes();
+  const jettonRoots = bindings.jettonRoots;
   const poolTracker = new PoolTracker(registry);
   const store = new MemoryStore(config);
   if (config.snapshotPath) {
@@ -145,27 +112,24 @@ const start = async () => {
         })();
   const service = new IndexerService(config, store, source, opcodes, jettonRoots, metricsCollector, poolTracker);
   if (admissionRuntime) service.setAdmissionExecutor(admissionRuntime);
-  const ledgerPool = config.databaseUrl ? new Pool({connectionString:config.databaseUrl,max:10,connectionTimeoutMillis:10_000}) : undefined;
+  const t3RedemptionBinding = config.databaseUrl ? await deriveT3RedemptionBinding(manifest.runtime, source) : undefined;
+  const ledgerPool = config.databaseUrl ? await createReleaseLedgerPool(config.databaseUrl, manifest.runtime.manifestHash) : undefined;
   const ledgerStore = ledgerPool ? new PostgresLedgerStore(ledgerPool) : undefined;
   if (ledgerStore) await ledgerStore.initialize();
   const ledger = ledgerStore ? new LedgerService(config.network, ledgerStore, source, opcodes, logger, 2, {
     jettonRoots: jettonRoots.map(root => root.master),
     dlmmRegistry: registry.DlmmRegistry,
-    marketBindings: config.ledgerMarketBindings,
+    marketBindings: bindings.marketBindings,
     optionFactory: registry.OptionFactory,
     optionVault: registry.OptionVault,
-    optionCodeHashes: config.ledgerOptionsCodeHashes,
-    launchpadCodeHashes: config.ledgerLaunchpadCodeHashes,
-    launchpadControllers: [
-      registry.SaleFactory,
-      registry.VestingVault,
-      ...(registryMetadata?.markets ?? []).map(market => market.sale)
-    ].filter((value): value is string => Boolean(value)),
+    optionCodeHashes: bindings.optionCodeHashes,
+    launchpadCodeHashes: bindings.launchpadCodeHashes,
+    launchpadControllers: bindings.launchpadControllers,
     t3Hub: registry.T3,
     t3Root: registry.T3Root,
-    t3RedemptionBinding: config.ledgerT3RedemptionBinding,
+    t3RedemptionBinding,
     perpsEngine: registry.PerpsEngine,
-    perpsEngineCodeHash: config.ledgerPerpsEngineCodeHash,
+    perpsEngineCodeHash: bindings.perpsEngineCodeHash,
     maxWatchedAccounts: config.ledgerMaxWatchedAccounts,
     maxPagesPerSync: config.ledgerMaxPagesPerSync,
     maxRelatedAccounts: config.ledgerMaxRelatedAccounts
@@ -173,7 +137,7 @@ const start = async () => {
 
   if (ledger) service.setSwapLedgerReader((owner, query) => ledger.page(owner, query));
 
-  const marketLedger = ledger && ledgerStore ? new DlmmMarketService(ledger, source, new PostgresMarketStore(ledgerStore.pool), config.ledgerMarketBindings, logger, config.ledgerMaxRelatedAccounts) : undefined;
+  const marketLedger = ledger && ledgerStore ? new DlmmMarketService(ledger, source, new PostgresMarketStore(ledgerStore.pool), bindings.marketBindings, logger, config.ledgerMaxRelatedAccounts) : undefined;
 
   const backfillWorker = new BackfillWorker(config, store, source, opcodes, logger, metricsCollector, poolTracker);
   const blockFollower = new BlockFollower(config, store, source, opcodes, logger, service, poolTracker);
@@ -234,17 +198,12 @@ const start = async () => {
     metricsCollector.recordRequest(durationMs);
   });
 
-  const port = await findAvailablePort(config.host, config.port);
-  if (port !== config.port) {
-    logger.warn('port in use, selected next available', { requested: config.port, selected: port });
-  }
-
   backfillWorker.start();
   blockFollower.start();
   ledger?.start();
   marketLedger?.start();
 
-  const address = await app.listen({ port, host: config.host });
+  const address = await app.listen({ port: config.port, host: config.host });
   logger.info('server started', { address, network: config.network, registryLoaded: Object.keys(registry).length > 0 });
 
   const shutdown = createIndexerShutdown({
@@ -273,11 +232,43 @@ const start = async () => {
   process.on('SIGTERM', shutdown);
   process.removeListener('SIGTERM', stopAdmissionDuringStartup);
   process.removeListener('SIGINT', stopAdmissionDuringStartup);
+  process.send?.({ type: 'manifest-ready', manifestHash: manifest.runtime.manifestHash });
 };
 
-start().catch(async (error) => {
+const fatal = async (error: unknown) => {
   // eslint-disable-next-line no-console
   console.error('Fatal startup error', error);
   await admissionRuntime?.close();
   process.exit(1);
-});
+};
+
+if (process.argv.includes('--manifest-worker')) {
+  if (!process.send) void fatal(Error('Manifest workers require the supervisor IPC channel'));
+  else {
+    process.once('message', (message: any) => {
+      try {
+        if (message?.type !== 'manifest-start') throw Error('Invalid manifest worker initialization');
+        const config = loadConfig();
+        const manifest = parseCanonicalReleaseManifest(message.manifest, config.network);
+        void start(manifest).catch(fatal);
+      } catch (error) { void fatal(error); }
+    });
+    // A killed supervisor must not leave a process serving retired bindings.
+    process.once('disconnect', () => process.kill(process.pid, 'SIGTERM'));
+  }
+} else {
+  const config = loadConfig();
+  if (!config.releaseManifestSource) void fatal(Error('INDEXER_RELEASE_MANIFEST is required'));
+  else {
+    const logger = createLogger(config.logLevel);
+    const supervisor = createManifestSupervisor({
+      read: () => loadRuntimeManifest(config.releaseManifestSource!, config.network),
+      launch: manifest => launchManifestWorker(__filename, manifest),
+      onError: error => logger.error('manifest reload failed; worker stopped', { reason: String(error) }),
+    });
+    const shutdown = createIndexerShutdown({ close: () => supervisor.stop(), timeoutMs: 30_000,
+      onFailure: reason => logger.error('manifest supervisor shutdown failed', { reason }) });
+    process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
+    void supervisor.start().catch(fatal);
+  }
+}

@@ -14,7 +14,7 @@ import {
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 
-const opcodes = loadOpcodes(undefined);
+const opcodes = loadOpcodes();
 const account = Address.parseRaw(`0:${'1'.repeat(64)}`);
 const counterparty = Address.parseRaw(`0:${'2'.repeat(64)}`);
 const pool = Address.parseRaw(`0:${'3'.repeat(64)}`);

@@ -99,7 +99,7 @@ const service = (retired = false) => new IndexerService(
   config,
   new MemoryStore(config),
   sourceFor(retired),
-  loadOpcodes(undefined),
+  loadOpcodes(),
   [],
 );
 
@@ -137,7 +137,7 @@ async function main() {
     }
     return baseGetter(contract, method, args);
   };
-  const highService = new IndexerService(config, new MemoryStore(config), highSource, loadOpcodes(undefined), []);
+  const highService = new IndexerService(config, new MemoryStore(config), highSource, loadOpcodes(), []);
   const highCover = await highService.getCoverSnapshot(manager, { limit: 1 });
   assert.deepEqual(requestedPolicyIds, [1n], 'old live policy remains discoverable after many newer closed policies');
   assert.equal(highCover.next_after_slot, 1);

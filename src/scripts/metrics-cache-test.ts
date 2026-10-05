@@ -16,7 +16,7 @@ const config = {
 };
 
 const store = new MemoryStore({ ...config, maxAddresses: 10 });
-const opcodes = loadOpcodes(undefined);
+const opcodes = loadOpcodes();
 const logger = createLogger('fatal');
 
 const dummySource: TonDataSource = {

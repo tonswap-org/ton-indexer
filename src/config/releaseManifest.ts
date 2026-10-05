@@ -11,8 +11,8 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { Network } from './index';
-import { assertCurrentContractRoles } from './registry';
-import { parseRuntimeReleaseManifest, type RuntimeReleaseManifest } from './runtimeManifest';
+import { parseRuntimeReleaseManifest, parseRuntimeReleaseManifestText, type RuntimeReleaseManifest } from './runtimeManifest';
+export { hashReleaseManifest } from './runtimeManifest';
 
 
 export type RegistryMarketMetadata = {
@@ -56,7 +56,7 @@ export type CanonicalReleaseManifest = RuntimeReleaseManifest;
 export type RegistryMetadata = {
   releaseId: string | null;
   registryHash: string;
-  releaseManifestHash: string | null;
+  manifestHash?: string | null;
   markets?: RegistryMarketMetadata[];
   spotMarkets?: RegistrySpotMarketMetadata[];
   approvedComparisons?: RegistryApprovedComparison[];
@@ -196,150 +196,26 @@ const readStableReleaseManifest = (
   return raw.toString('utf8');
 };
 
-const assertNoDuplicateJsonObjectKeys = (raw: string): void => {
-  let index = 0;
-  const fail = (message: string): never => {
-    throw new Error(`Release manifest JSON is not canonical: ${message} at byte ${index}.`);
-  };
-  const whitespace = () => {
-    while (index < raw.length && /\s/.test(raw[index])) index += 1;
-  };
-  const string = (): string => {
-    const start = index;
-    if (raw[index] !== '"') fail('expected string');
-    index += 1;
-    while (index < raw.length) {
-      const character = raw[index];
-      if (character === '"') {
-        index += 1;
-        return JSON.parse(raw.slice(start, index)) as string;
-      }
-      if (character === '\\') {
-        index += 1;
-        if (index >= raw.length) fail('unterminated string escape');
-        if (raw[index] === 'u') {
-          const codepoint = raw.slice(index + 1, index + 5);
-          if (!/^[0-9a-fA-F]{4}$/.test(codepoint)) fail('invalid Unicode escape');
-          index += 5;
-          continue;
-        }
-        if (!/["\\/bfnrt]/.test(raw[index])) fail('invalid string escape');
-      } else if (character.charCodeAt(0) < 0x20) {
-        fail('unescaped control character');
-      }
-      index += 1;
-    }
-    return fail('unterminated string');
-  };
-  const value = (): void => {
-    whitespace();
-    const character = raw[index];
-    if (character === '{') {
-      object();
-      return;
-    }
-    if (character === '[') {
-      array();
-      return;
-    }
-    if (character === '"') {
-      string();
-      return;
-    }
-    for (const literal of ['true', 'false', 'null']) {
-      if (raw.startsWith(literal, index)) {
-        index += literal.length;
-        return;
-      }
-    }
-    const number = raw.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
-    if (!number) return fail('invalid JSON value');
-    index += number[0].length;
-  };
-  const array = (): void => {
-    index += 1;
-    whitespace();
-    if (raw[index] === ']') {
-      index += 1;
-      return;
-    }
-    while (index < raw.length) {
-      value();
-      whitespace();
-      if (raw[index] === ']') {
-        index += 1;
-        return;
-      }
-      if (raw[index] !== ',') fail('expected array comma');
-      index += 1;
-    }
-    fail('unterminated array');
-  };
-  const object = (): void => {
-    index += 1;
-    whitespace();
-    const keys = new Set<string>();
-    if (raw[index] === '}') {
-      index += 1;
-      return;
-    }
-    while (index < raw.length) {
-      whitespace();
-      const key = string();
-      if (keys.has(key)) fail(`duplicate object key ${JSON.stringify(key)}`);
-      keys.add(key);
-      whitespace();
-      if (raw[index] !== ':') fail('expected object colon');
-      index += 1;
-      value();
-      whitespace();
-      if (raw[index] === '}') {
-        index += 1;
-        return;
-      }
-      if (raw[index] !== ',') fail('expected object comma');
-      index += 1;
-    }
-    fail('unterminated object');
-  };
-
-  value();
-  whitespace();
-  if (index !== raw.length) fail('trailing JSON content');
-};
-
-const stableJson = (value: unknown): string => {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const object = value as Record<string, unknown>;
-    return `{${Object.keys(object)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-};
-
 export const hashRegistry = (contracts: Record<string, string>) =>
   sha256(`${JSON.stringify(sortedRecord(contracts))}\n`);
 
-export const hashReleaseManifest = (manifest: Record<string, unknown>) => {
-  const unsigned = { ...manifest };
-  delete unsigned.manifestHash;
-  return sha256(stableJson(unsigned));
-};
-
 const instrumentMetadata = (manifest: RuntimeReleaseManifest) => {
-  const token = (symbol: string) => manifest.tokens.find(t => t.symbol === symbol)!;
+  const token = (symbol: string) => {
+    const value = manifest.tokens.find(t => t.symbol === symbol);
+    if (!value) throw Error('Release manifest token binding is unavailable');
+    return value;
+  };
   const spotMarkets: RegistrySpotMarketMetadata[] = manifest.spotMarkets.map(spot => {
     const base = token(spot.symbol);
-    const rootCodeHash = Object.values(manifest.contracts).find(c => c?.address === base.root)?.codeHash;
+    const rootCodeHash = Object.entries(manifest.contracts).find(([role, c]) =>
+      ['T3Root', 'TSRoot', 'USDT', 'USDC', 'KUSD'].includes(role) && c?.address === base.root)?.[1]?.codeHash;
     return { marketKey: `spot:${spot.symbol}-T3`, marketAddress: spot.pool, tokenRoot: base.root,
       ...(rootCodeHash ? { tokenRootCodeHash: rootCodeHash } : {}), poolCodeHash: manifest.templates.DlmmPool,
-      assetSymbol: spot.symbol, quoteSymbol: 'T3', assetDecimals: base.decimals, quoteDecimals: 9 };
+      assetSymbol: spot.symbol, quoteSymbol: 'T3', assetDecimals: base.decimals, quoteDecimals: token('T3').decimals };
   }).sort((a, b) => a.marketKey.localeCompare(b.marketKey));
   const markets: RegistryMarketMetadata[] = manifest.perpsMarkets.map(market => {
-    const spot = spotMarkets.find(s => s.assetSymbol === market.symbol)!;
+    const spot = spotMarkets.find(s => s.assetSymbol === market.symbol && s.marketAddress === market.pool);
+    if (!spot) throw Error('Release manifest perps pool binding is unavailable');
     return { ...spot, perpsMarketId: market.marketId, perpsPool: market.pool,
       perpsPoolCodeHash: manifest.templates.DlmmPool, perpsCandleMarketKey: `perps-oracle:${market.marketId}` };
   }).sort((a, b) => a.perpsMarketId - b.perpsMarketId);
@@ -353,91 +229,37 @@ const instrumentMetadata = (manifest: RuntimeReleaseManifest) => {
   return { markets, spotMarkets, approvedComparisons: [...comparisons.values()].sort((a, b) => a.templateId - b.templateId) };
 };
 
-const assertRegistryParity = (
-  registry: Record<string, string>,
-  manifestContracts: Record<string, string>
-) => {
-  const registryKeys = Object.keys(registry).sort();
-  const manifestKeys = Object.keys(manifestContracts).sort();
-  if (
-    registryKeys.length !== manifestKeys.length ||
-    registryKeys.some((key, index) => key !== manifestKeys[index])
-  ) {
-    throw new Error(
-      `Registry/release manifest key mismatch: registry=[${registryKeys.join(',')}] manifest=[${manifestKeys.join(',')}]`
-    );
-  }
-  for (const key of manifestKeys) {
-    if (registry[key] !== manifestContracts[key]) {
-      throw new Error(`Registry/release manifest address mismatch for ${key}`);
-    }
-  }
-};
-
-export const readCanonicalReleaseManifest = (
-  path: string,
-  expectedNetwork: Network,
-  testHooks: ReleaseManifestReadTestHooks = {}
-): {
+export type ParsedReleaseManifest = {
   contracts: Record<string, string>;
   releaseId: string;
   registryHash: string;
-  releaseManifestHash: string;
+  manifestHash: string;
   markets: RegistryMarketMetadata[];
   spotMarkets: RegistrySpotMarketMetadata[];
   approvedComparisons: RegistryApprovedComparison[];
   runtime: RuntimeReleaseManifest;
-} => {
-  let parsed: unknown;
-  try {
-    const raw = readStableReleaseManifest(path, testHooks);
-    assertNoDuplicateJsonObjectKeys(raw);
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Failed to read release manifest at ${path}: ${(error as Error).message}`);
-  }
-  const runtime = parseRuntimeReleaseManifest(parsed, expectedNetwork);
-  const releaseManifestHash = hashReleaseManifest(runtime);
-  if (runtime.manifestHash !== releaseManifestHash)
-    throw Error('Release manifest manifestHash does not match its canonical contents');
-  const contracts = sortedRecord(Object.fromEntries(Object.entries(runtime.contracts).map(([role, contract]) => [role, contract!.address])));
-  return { contracts, releaseId: runtime.releaseId, registryHash: hashRegistry(contracts), releaseManifestHash,
-    ...instrumentMetadata(runtime), runtime };
 };
 
-export const buildRegistryBundle = (
-  registry: Record<string, string>,
-  network: Network,
-  releaseManifestPath?: string
-): RegistryBundle => {
-  assertCurrentContractRoles(registry);
-  const normalizedRegistry = sortedRecord(registry);
-  if (!releaseManifestPath) {
-    return {
-      contracts: normalizedRegistry,
-      metadata: {
-        releaseId: null,
-        registryHash: hashRegistry(normalizedRegistry),
-        releaseManifestHash: null,
-        markets: [],
-        spotMarkets: [],
-        approvedComparisons: []
-      }
-    };
-  }
+export const buildRuntimeManifestBundle = (runtime: RuntimeReleaseManifest): RegistryBundle => {
+  const contracts = sortedRecord(Object.fromEntries(Object.entries(runtime.contracts).map(([role, contract]) => [role, contract!.address])));
+  return { contracts, metadata: { releaseId: runtime.releaseId, manifestHash: runtime.manifestHash,
+    registryHash: hashRegistry(contracts), ...instrumentMetadata(runtime), runtime } };
+};
 
-  const manifest = readCanonicalReleaseManifest(releaseManifestPath, network);
-  assertRegistryParity(normalizedRegistry, manifest.contracts);
-  return {
-    contracts: manifest.contracts,
-    metadata: {
-      releaseId: manifest.releaseId,
-      registryHash: manifest.registryHash,
-      releaseManifestHash: manifest.releaseManifestHash,
-      markets: manifest.markets,
-      spotMarkets: manifest.spotMarkets,
-      approvedComparisons: manifest.approvedComparisons,
-      runtime: manifest.runtime
-    }
-  };
+export const parseCanonicalReleaseManifest = (raw: string | unknown, expectedNetwork: Network): ParsedReleaseManifest => {
+  const runtime = typeof raw === 'string' ? parseRuntimeReleaseManifestText(raw, expectedNetwork)
+    : parseRuntimeReleaseManifest(raw, expectedNetwork);
+  const bundle = buildRuntimeManifestBundle(runtime);
+  return { contracts: bundle.contracts, releaseId: runtime.releaseId, registryHash: bundle.metadata.registryHash,
+    manifestHash: runtime.manifestHash, ...instrumentMetadata(runtime), runtime };
+};
+
+/** Tooling wrapper. Startup's file-or-URL loader passes fetched text to the same parser. */
+export const readCanonicalReleaseManifest = (
+  path: string,
+  expectedNetwork: Network,
+  testHooks: ReleaseManifestReadTestHooks = {}
+): ParsedReleaseManifest => {
+  try { return parseCanonicalReleaseManifest(readStableReleaseManifest(path, testHooks), expectedNetwork); }
+  catch (error) { throw Error(`Failed to read release manifest at ${path}: ${(error as Error).message}`); }
 };

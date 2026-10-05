@@ -1639,7 +1639,7 @@ const testClassifierIgnoresMalformedBodies = () => {
         },
       ],
     },
-    loadOpcodes(undefined)
+    loadOpcodes()
   );
   assert.equal(indexed.kind, 'swap');
   assert.equal(indexed.ui.kind, 'swap');
@@ -1783,7 +1783,7 @@ const testBlockFollowerCatchesUpAcrossMultipleBatches = async () => {
       return [];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -1828,8 +1828,8 @@ const testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest = async () =
       return [];
     },
   });
-  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
-  const follower = new BlockFollower(config, store, source, loadOpcodes(undefined), createLogger('fatal'), service);
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
+  const follower = new BlockFollower(config, store, source, loadOpcodes(), createLogger('fatal'), service);
 
   await (follower as any).refreshAddress(validAddress, 124);
 
@@ -1868,7 +1868,7 @@ const testBlockFollowerRejectsReorderedCatchupSegment = async () => {
       return [linked[0]!, linked[2]!, linked[1]!, linked[3]!];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -1901,7 +1901,7 @@ const testBlockFollowerProvesFirstTransactionHistory = async () => {
       return makeLinkedRawRange(3, 1);
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -1933,7 +1933,7 @@ const testBlockFollowerMarksIncompleteBeforeCatchupFailure = async () => {
       throw new Error('catch-up unavailable');
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -1964,7 +1964,7 @@ const testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill = async (
       return makeLinkedRawRange(158, 141);
     },
   });
-  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
   const queued: string[] = [];
   service.setBackfillEnqueue((address) => queued.push(address));
 
@@ -1995,7 +1995,7 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
         throw new Error('finite lite read failure');
       },
     }),
-    loadOpcodes(undefined),
+    loadOpcodes(),
     []
   );
   const fallback = await finiteFailureService.getTransactions(validAddress, 1);
@@ -2014,7 +2014,7 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
           return await new Promise<RawTransaction[]>(() => undefined);
         },
       }),
-      loadOpcodes(undefined),
+      loadOpcodes(),
       []
     );
     const app = fastify({ logger: false });
@@ -2049,7 +2049,7 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
         });
       },
     }),
-    loadOpcodes(undefined),
+    loadOpcodes(),
     []
   );
   await assert.rejects(
@@ -2080,7 +2080,7 @@ const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
       return [];
     },
   });
-  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
   const queued: string[] = [];
   service.setBackfillEnqueue((address) => queued.push(address));
 
@@ -2111,7 +2111,7 @@ const testInitialTransactionsEmptyPageWithHeadStaysIncomplete = async () => {
       return [];
     },
   });
-  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
   const queued: string[] = [];
   service.setBackfillEnqueue((address) => queued.push(address));
 
@@ -2141,7 +2141,7 @@ const testInitialTransactionsLinkedHistoryStartMarksComplete = async () => {
       return makeLinkedRawRange(7, 1);
     },
   });
-  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
   const queued: string[] = [];
   service.setBackfillEnqueue((address) => queued.push(address));
 
@@ -2193,7 +2193,7 @@ const testBackfillContinuesAfterShortPagesUntilHistoryStartProof = async () => {
     config,
     store,
     source,
-    loadOpcodes(undefined),
+    loadOpcodes(),
     createLogger('fatal')
   );
 
@@ -2233,7 +2233,7 @@ const testBackfillDuplicateCursorStaysIncomplete = async () => {
     config,
     store,
     source,
-    loadOpcodes(undefined),
+    loadOpcodes(),
     createLogger('fatal')
   );
 
@@ -2268,7 +2268,7 @@ const testBackfillEmptyInclusivePageStaysIncomplete = async () => {
     config,
     store,
     source,
-    loadOpcodes(undefined),
+    loadOpcodes(),
     createLogger('fatal')
   );
 
@@ -2302,7 +2302,7 @@ const testBackfillPageCapStaysIncomplete = async () => {
     config,
     store,
     source,
-    loadOpcodes(undefined),
+    loadOpcodes(),
     createLogger('fatal')
   );
 
@@ -2331,7 +2331,7 @@ const testPartialCachedHistoryIsQueuedForBackfill = async () => {
       return [];
     },
   });
-  const service = new IndexerService(config, store, source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
   const queued: string[] = [];
   service.setBackfillEnqueue((address) => queued.push(address));
 
@@ -2363,7 +2363,7 @@ const testBlockFollowerMarksHistoryIncompleteWhenCatchupIsCapped = async () => {
       return [makeRawTx(100), makeRawTx(99), makeRawTx(98), makeRawTx(97)];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -2397,7 +2397,7 @@ const testBlockFollowerStopsOnDuplicateCursorPage = async () => {
       return [makeRawTx(100, 'h100')];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -2434,7 +2434,7 @@ const testBlockFollowerSkipsFetchWhenLatestTransactionIsUnchanged = async () => 
       return [makeLinkedRawTx(100)];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 

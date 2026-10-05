@@ -1,12 +1,6 @@
 import assert from 'node:assert/strict';
-import { Address } from '@ton/core';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from '../api/validation';
 import { loadConfig } from '../config';
-import {
-  REQUIRED_MAINNET_REGISTRY_KEYS,
-  collectMainnetRegistryIssues,
-  validateMainnetRegistry
-} from '../config/registry';
 
 assert.equal(parsePositiveInt('10'), 10);
 assert.equal(parsePositiveInt('0'), null);
@@ -61,47 +55,6 @@ assert.throws(() => loadConfig(), /TON_DATASOURCE must be one of http, lite/);
 process.env.TON_DATASOURCE = 'LITE';
 assert.equal(loadConfig().dataSource, 'lite');
 
-const mainnetAddress = Address.parseRaw(`0:${'1'.repeat(64)}`).toString({ testOnly: false });
-const testnetOnlyAddress = Address.parseRaw(`0:${'2'.repeat(64)}`).toString({ testOnly: true });
-const rawAddressHash = '3'.repeat(64);
-const rawMainnetAddress = `0:${rawAddressHash}`;
-const completeMainnetRegistry = Object.fromEntries(
-  REQUIRED_MAINNET_REGISTRY_KEYS.map((key) => [key, mainnetAddress])
-) as Record<string, string>;
-assert.doesNotThrow(() => validateMainnetRegistry(completeMainnetRegistry));
-assert.deepEqual(collectMainnetRegistryIssues(completeMainnetRegistry), []);
-assert.equal(REQUIRED_MAINNET_REGISTRY_KEYS.includes('DexRouter'), true);
-for (const role of ['ClmmRouter', 'ClmmPoolFactory', 'ClmmSeedingExecutor']) {
-  assert.throws(() => validateMainnetRegistry({ ...completeMainnetRegistry, [role]: mainnetAddress }), /Unsupported first-release contract roles/);
-}
-const missingDexRouter = { ...completeMainnetRegistry };
-delete missingDexRouter.DexRouter;
-assert.throws(() => validateMainnetRegistry(missingDexRouter), /missing\/placeholder keys: DexRouter/);
-assert.doesNotThrow(() =>
-  validateMainnetRegistry({
-    ...completeMainnetRegistry,
-    FeeRouter: rawMainnetAddress,
-  })
-);
-for (const malformedRawAddress of [`${rawMainnetAddress}:junk`, `0junk:${rawAddressHash}`]) {
-  assert.deepEqual(
-    collectMainnetRegistryIssues({
-      ...completeMainnetRegistry,
-      FeeRouter: malformedRawAddress,
-    }),
-    [{ key: 'FeeRouter', reason: 'invalid_address' }]
-  );
-}
-assert.throws(
-  () =>
-    validateMainnetRegistry({
-      ...completeMainnetRegistry,
-      FeeRouter: 'REPLACE_WITH_MAINNET_FEE_ROUTER',
-      Treasury: 'not-a-ton-address',
-      T3Root: testnetOnlyAddress,
-    }),
-  /missing\/placeholder keys: FeeRouter \| invalid address keys: Treasury \| testnet-only address keys: T3Root/
-);
 if (originalPageSize === undefined) delete process.env.PAGE_SIZE;
 else process.env.PAGE_SIZE = originalPageSize;
 if (originalBackfillConcurrency === undefined) delete process.env.BACKFILL_CONCURRENCY;

@@ -67,7 +67,7 @@ const snapshotFor = async (configStack: TupleItem[], automationStack?: TupleItem
     config,
     new MemoryStore({ ...config, maxAddresses: 10 }),
     source,
-    loadOpcodes(undefined),
+    loadOpcodes(),
     [],
   );
   return { snapshot: await service.getPerpsSnapshot(engine), calls };
@@ -95,7 +95,7 @@ const testMarketConcurrency = async () => {
     stack[38] = int(38n);
     return { exitCode: 0, stack };
   };
-  const service = new IndexerService(config, new MemoryStore(config), source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, new MemoryStore(config), source, loadOpcodes(), []);
   const ids = [1, 2, 3, 4, 5, 6];
   const first = service.getPerpsSnapshot(engine, { marketIds: ids });
   const shared = service.getPerpsSnapshot(engine, { marketIds: ids });
@@ -132,7 +132,7 @@ const testFailedReadRecovery = async () => {
     if (failing) throw new Error('Liteserver query deadline exceeded');
     return originalGet(addr, method, args);
   };
-  const service = new IndexerService(config, new MemoryStore(config), source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, new MemoryStore(config), source, loadOpcodes(), []);
   await assert.rejects(service.getPerpsSnapshot(engine), /unavailable/);
   failing = false;
   assert.equal((await service.getPerpsSnapshot(engine)).status?.feeBps, '30', 'Rejected requests never poison the in-flight cache');
@@ -146,7 +146,7 @@ const testRetiredMarketTupleRejected = async () => {
     if (method !== 'market_state') return originalGet(addr, method, args);
     return { exitCode: 0, stack: Array.from({ length: 40 }, () => int(0n)) };
   };
-  const service = new IndexerService(config, new MemoryStore(config), source, loadOpcodes(undefined), []);
+  const service = new IndexerService(config, new MemoryStore(config), source, loadOpcodes(), []);
   const snapshot = await service.getPerpsSnapshot(engine, { marketIds: [1] });
   assert.deepEqual(snapshot.market_ids, []);
   assert.deepEqual(snapshot.markets, {});

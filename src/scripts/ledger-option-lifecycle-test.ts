@@ -43,7 +43,7 @@ import {
   readOptionProductState,
   readOptionVaultState,
 } from "../ledger/optionLifecycleState";
-import { parseLedgerOptionsCodeHashes } from "../config/ledgerOptions";
+import { validateOptionsCodeHashes } from "../ledger/bindings";
 
 const A = (s: string) => Address.parse(s),
   addr = (n: number) => `0:${n.toString(16).padStart(64, "0")}`;
@@ -1869,16 +1869,18 @@ async function main() {
       "known protocol cash stays unresolved when its terminal evidence is absent",
     );
   }
-  assert.equal(parseLedgerOptionsCodeHashes(undefined), undefined);
-  assert.equal(parseLedgerOptionsCodeHashes("  "), undefined);
-  assert.deepEqual(parseLedgerOptionsCodeHashes(JSON.stringify(q)), q);
+  assert.deepEqual(validateOptionsCodeHashes(q), q);
   for (const bad of [
+    undefined,
+    null,
+    "  ",
+    JSON.stringify(q),
     {},
     { ...q, extra: "x" },
     { ...q, walletCodeHash: "ABC".repeat(21) + "A" },
     { ...q, factoryCodeHash: undefined },
   ])
-    assert.throws(() => parseLedgerOptionsCodeHashes(JSON.stringify(bad)));
+    assert.throws(() => validateOptionsCodeHashes(bad));
   const replay = exercise(),
     originalEvents = (await projectOwnerLedger(replay.input)).events;
   const again = replay.msg(

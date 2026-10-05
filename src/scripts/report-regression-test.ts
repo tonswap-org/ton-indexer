@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { Address } from '@ton/core';
 import fastify from 'fastify';
 import { loadConfig } from '../config';
-import { hashRegistry } from '../config/releaseManifest';
 import { registerRoutes } from '../api/routes';
 import { setCorsHeaders } from '../api/cors';
 import { RateLimiter } from '../api/rateLimit';
@@ -23,14 +21,10 @@ const source: TonDataSource = {
 };
 
 async function main() {
-  const registry = JSON.parse(readFileSync('registry/testnet.json', 'utf8'));
-  assert.equal(Object.keys(registry).length, 60);
-  assert.equal(hashRegistry(registry), 'a8605dc38d0a88f49abc851b6d40784d08b13fa61aaa4335fb0c7aec74da9e6f');
-
   let walletReads = 0;
   const service = new IndexerService(config, new MemoryStore(config), {
     ...source, async getJettonBalance() { walletReads++; return source.getJettonBalance(owner, root); },
-  }, loadOpcodes(undefined), [{ master: root, symbol: 'USDT' }, { master: Address.parse(root).toString(), symbol: 'USDT' }]);
+  }, loadOpcodes(), [{ master: root, symbol: 'USDT' }, { master: Address.parse(root).toString(), symbol: 'USDT' }]);
   const reads = await Promise.all(Array.from({ length: 20 }, (_, index) => service.getBalances(index % 2 ? owner : Address.parse(owner).toString())));
   assert.equal(walletReads, 1);
   for (const read of reads) {
@@ -44,7 +38,7 @@ async function main() {
   }
   const preciseService = new IndexerService(config, new MemoryStore(config), {
     ...source, async getJettonMetadata() { return { symbol: 'USDT', decimals: 9 }; },
-  }, loadOpcodes(undefined), [{ master: root, symbol: 'USDT' }]);
+  }, loadOpcodes(), [{ master: root, symbol: 'USDT' }]);
   const precise = await preciseService.getBalances(owner);
   assert.equal(precise.assets[1].balance, '1000');
   assert.equal(precise.assets[1].decimals, 9);
@@ -92,7 +86,7 @@ async function main() {
       if (status === 503) assert.equal(response.json().code, 'balance_unavailable');
     } finally { await corsApp.close(); }
   }
-  console.log('Report regressions passed: registry, canonical concurrent balances, explicit precision, metrics auth, strict pagination, retryable cold reads and CORS errors.');
+  console.log('Report regressions passed: canonical concurrent balances, explicit precision, metrics auth, strict pagination, retryable cold reads and CORS errors.');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

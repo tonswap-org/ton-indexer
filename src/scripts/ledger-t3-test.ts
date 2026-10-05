@@ -18,7 +18,7 @@ import { NATIVE_FUNDING } from "../ledger/nativeFunding";
 import * as w from "../ledger/t3Wire";
 import { perpsWalletAddress } from "../ledger/perpsWire";
 import { readT3RecoveryHub, t3ReceiptKey } from "../ledger/t3RecoveryState";
-import { parseLedgerT3RedemptionBinding } from "../config/ledgerT3";
+import { validateT3RedemptionBinding } from "../ledger/bindings";
 import {
   projectionFingerprint,
   PostgresLedgerStore,
@@ -1246,11 +1246,11 @@ function recoveredRedeem(referrer: string | null = null) {
 async function recoveryTests() {
   const f = recoveredRedeem();
   assert.deepEqual(
-    parseLedgerT3RedemptionBinding(JSON.stringify(f.binding), "localnet"),
+    validateT3RedemptionBinding(f.binding, "localnet"),
     f.binding,
   );
-  for (const value of [undefined, "", "  "])
-    assert.equal(parseLedgerT3RedemptionBinding(value, "localnet"), undefined);
+  for (const value of [undefined, null, "", "  ", JSON.stringify(f.binding)])
+    assert.throws(() => validateT3RedemptionBinding(value, "localnet"));
   for (const binding of [
     { ...f.binding, network: "testnet" },
     { ...f.binding, extra: true },
@@ -1272,7 +1272,7 @@ async function recoveryTests() {
     },
   ])
     assert.throws(() =>
-      parseLedgerT3RedemptionBinding(JSON.stringify(binding), "localnet"),
+      validateT3RedemptionBinding(binding, "localnet"),
     );
   const result = (await projectOwnerLedger(f.input)).events.find(
     (e) => e.kind === "t3_redeem",

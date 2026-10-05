@@ -1,12 +1,4 @@
-import {parseLedgerT3RedemptionBinding, type LedgerT3RedemptionBinding} from './ledgerT3';
-import {parseLedgerPerpsCodeHash} from './ledgerPerps';
 import {parseAdmissionArtifacts, type AdmissionArtifactConfig} from './admission';
-import {parseLedgerOptionsCodeHashes, type LedgerOptionsCodeHashes} from './ledgerOptions';
-import {parseLedgerLaunchpadCodeHashes, type LedgerLaunchpadCodeHashes} from './ledgerLaunchpad';
-import { parseLedgerMarketBindings } from './ledgerMarkets';
-import type { DlmmMarketBinding } from '../ledger/marketTypes';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { readDatabaseUrl } from './database';
 
 export type Network = 'mainnet' | 'testnet' | 'localnet';
@@ -31,12 +23,7 @@ export type Config = {
   corsMaxAge: number;
   snapshotPath?: string;
   databaseUrl?: string;
-  ledgerPerpsEngineCodeHash?: string;
   perpsAdmissionArtifacts?: AdmissionArtifactConfig;
-  ledgerOptionsCodeHashes?: LedgerOptionsCodeHashes;
-  ledgerLaunchpadCodeHashes?: LedgerLaunchpadCodeHashes;
-  ledgerMarketBindings: DlmmMarketBinding[];
-  ledgerT3RedemptionBinding?: LedgerT3RedemptionBinding;
   ledgerMaxWatchedAccounts: number;
   ledgerMaxPagesPerSync: number;
   ledgerMaxRelatedAccounts: number;
@@ -77,11 +64,9 @@ export type Config = {
   liteserverPool?: string;
   logLevel: string;
   adminToken?: string;
-  registryPath: string;
-  releaseManifestPath?: string;
+  releaseManifestSource?: string;
   serviceId: string;
   publicBaseUrl: string;
-  opcodesPath?: string;
 };
 
 const numberFromEnv = (
@@ -163,7 +148,7 @@ const modeFromEnv = (): IndexerMode => {
 };
 
 const networkFromEnv = (): Network => {
-  // Default to testnet for current TONSWAP deployments; mainnet requires real registry addresses.
+  // The manifest must independently match this network at startup.
   return enumFromEnv<Network>('TON_NETWORK', 'testnet', ['mainnet', 'testnet', 'localnet']);
 };
 
@@ -174,15 +159,6 @@ const dataSourceFromEnv = (): 'http' | 'lite' => {
 export const loadConfig = (): Config => {
   const mode = modeFromEnv();
   const network = networkFromEnv();
-  const registryPath = resolve(
-    stringFromEnv('INDEXER_REGISTRY_PATH') ||
-      stringFromEnv('REGISTRY_PATH') ||
-      resolve(process.cwd(), 'registry', `${network}.json`)
-  );
-  const opcodesPath = stringFromEnv(
-    'OPCODES_PATH',
-    resolve(process.cwd(), '..', 'tonswap_tolk', 'config', 'opcodes.json')
-  );
 
   const configuredProxyEndpoints = listFromEnv([
     'INDEXER_WRITE_RPC_ENDPOINTS',
@@ -271,15 +247,10 @@ export const loadConfig = (): Config => {
     corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600, { min: 0, integer: true }),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
     databaseUrl: readDatabaseUrl(),
-    ledgerPerpsEngineCodeHash: parseLedgerPerpsCodeHash(process.env.LEDGER_PERPS_ENGINE_CODE_HASH),
     perpsAdmissionArtifacts: parseAdmissionArtifacts(process.env),
-    ledgerOptionsCodeHashes: parseLedgerOptionsCodeHashes(process.env.LEDGER_OPTIONS_CODE_HASHES_JSON),
-    ledgerLaunchpadCodeHashes: parseLedgerLaunchpadCodeHashes(process.env.LEDGER_LAUNCHPAD_CODE_HASHES_JSON),
-    ledgerMarketBindings: parseLedgerMarketBindings(process.env.LEDGER_MARKET_BINDINGS_JSON, network),
-    ledgerT3RedemptionBinding: parseLedgerT3RedemptionBinding(process.env.LEDGER_T3_REDEMPTION_BINDING_JSON, network),
-    ledgerMaxWatchedAccounts: numberFromEnv('LEDGER_MAX_WATCHED_ACCOUNTS', 1000, {min:1,max:100000,integer:true}),
-    ledgerMaxPagesPerSync: numberFromEnv('LEDGER_MAX_PAGES_PER_SYNC',20,{min:1,max:100,integer:true}),
-    ledgerMaxRelatedAccounts: numberFromEnv('LEDGER_MAX_RELATED_ACCOUNTS',256,{min:1,max:1024,integer:true}),
+    ledgerMaxWatchedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_WATCHED_ACCOUNTS', 1000, {min:1,max:100000}),
+    ledgerMaxPagesPerSync: strictBoundedIntegerFromEnv('INDEXER_MAX_PAGES_PER_SYNC',20,{min:1,max:100}),
+    ledgerMaxRelatedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_RELATED_ACCOUNTS',256,{min:1,max:1024}),
     snapshotOnExit: booleanFromEnv('SNAPSHOT_ON_EXIT', false),
     snapshotAutosaveEnabled: booleanFromEnv(
       'SNAPSHOT_AUTOSAVE_ENABLED',
@@ -335,21 +306,8 @@ export const loadConfig = (): Config => {
     ),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
     adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN') || stringFromEnv('INDEXER_ADMIN_API_KEY'),
-    registryPath,
-    releaseManifestPath:
-      stringFromEnv('INDEXER_RELEASE_MANIFEST_PATH') ||
-      stringFromEnv('TONSWAP_RELEASE_MANIFEST_PATH'),
+    releaseManifestSource: stringFromEnv('INDEXER_RELEASE_MANIFEST'),
     serviceId: stringFromEnv('INDEXER_SERVICE_ID', 'ti.soramitsu.io')!,
     publicBaseUrl: stringFromEnv('INDEXER_PUBLIC_BASE_URL', 'https://ti.soramitsu.io')!,
-    opcodesPath,
   };
-};
-
-export const readRegistryFile = (path: string) => {
-  try {
-    const raw = readFileSync(path, 'utf8');
-    return JSON.parse(raw) as Record<string, string>;
-  } catch (error) {
-    throw new Error(`Failed to read registry at ${path}: ${(error as Error).message}`);
-  }
 };

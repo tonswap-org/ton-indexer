@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { parseLedgerLaunchpadCodeHashes } from "../config/ledgerLaunchpad";
+import { validateLaunchpadCodeHashes } from "../ledger/bindings";
 
 const hashes = { fixedCodeHash: "a".repeat(64), walletCodeHash: "b".repeat(64), bondingCodeHash: "c".repeat(64), auctionCodeHash: "d".repeat(64) };
-assert.deepEqual(parseLedgerLaunchpadCodeHashes(JSON.stringify(hashes)), hashes);
-assert.equal(parseLedgerLaunchpadCodeHashes(undefined), undefined);
-assert.equal(parseLedgerLaunchpadCodeHashes(" \n "), undefined);
+assert.deepEqual(validateLaunchpadCodeHashes(hashes), hashes);
 for (const value of [
-  null, [], {}, true, "hash", { fixedCodeHash: hashes.fixedCodeHash },
+  undefined, null, [], {}, true, "hash", " \n ", JSON.stringify(hashes), { fixedCodeHash: hashes.fixedCodeHash },
   { fixedCodeHash: hashes.fixedCodeHash, walletCodeHash: hashes.walletCodeHash },
   { ...hashes, factoryCodeHash: "c".repeat(64) },
   { ...hashes, fixedCodeHash: "A".repeat(64) },
@@ -14,6 +12,5 @@ for (const value of [
   { ...hashes, walletCodeHash: "b".repeat(63) },
   { ...hashes, walletCodeHash: 123 },
   { ...hashes, fixedCodeHash: ` ${hashes.fixedCodeHash}` },
-]) assert.throws(() => parseLedgerLaunchpadCodeHashes(JSON.stringify(value)), /LEDGER_LAUNCHPAD_CODE_HASHES_JSON/);
-assert.throws(() => parseLedgerLaunchpadCodeHashes("{"), /must be valid JSON/);
+]) assert.throws(() => validateLaunchpadCodeHashes(value), /Launchpad binding/);
 console.log("Launchpad qualification configuration checks passed");

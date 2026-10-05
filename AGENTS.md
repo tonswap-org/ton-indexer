@@ -6,14 +6,10 @@ This repository contains a **TypeScript TONSWAP indexer service** plus the desig
 ## Repo Structure
 - `README.md`: setup, run, and API overview.
 - `roadmap.md`: detailed architecture, API shape, storage model, and phased roadmap.
-- `registry/mainnet.json`: **placeholder** addresses for mainnet contracts (must be replaced).
-- `registry/testnet.json`: known testnet contract addresses.
-- `registry/localnet.json`: empty bootstrap registry; local release runs should point
-  `INDEXER_REGISTRY_PATH` at a generated registry and
-  `INDEXER_RELEASE_MANIFEST_PATH` at the matching canonical manifest.
+- `INDEXER_RELEASE_MANIFEST`: required native-deployer `tonswap-release-v1` file path or HTTPS URL (loopback HTTP allowed); no static registries or manual ledger pin inputs.
 - `src/`: TypeScript implementation (server, store, data source, workers, API).
-- Snapshots: optional JSON snapshots for in-memory state are supported via `SNAPSHOT_PATH` + `SNAPSHOT_ON_EXIT`.
-- `src/ledger/` and `sql/ledger.sql`: PostgreSQL account ledger with independent chain-verified backfill, immutable cursor snapshots, and explicit decoding gaps. Configure `INDEXER_DATABASE_URL`; run `npm run bootstrap:ledger` and `npm run test:ledger`. T3 settlement uses registry T3/T3Root identities and exact receipt/credit evidence, including deterministic controller-owned receiver custody. A queued redemption receipt is never final delivery. Lost-ACK recovery additionally requires `LEDGER_T3_REDEMPTION_BINDING_JSON`, the separately authenticated current-release reserve-route binding, and exact historical wallet/root/hub state transitions. Unconfigured or conflicting release code and missing archives remain unresolved; acceptance does not prove payout or journal cleanup. Perps requires an exact `LEDGER_PERPS_ENGINE_CODE_HASH` bound to the current registry engine, supplied by the runtime manifest or explicit configuration; exact historical code/state and typed payout evidence are mandatory. Booked collateral/funding are contract claims, while position margin is a subset and must not be counted twice. Financial amounts are atomic strings. Never infer a product settlement from a transfer request or claim portfolio/tax completeness from account history alone.
+- Snapshots: `SNAPSHOT_PATH` is a prefix for manifest-hash-scoped JSON snapshots; old releases retain separate files. PostgreSQL ledger schemas also isolate releases.
+- `src/ledger/` and `sql/ledger.sql`: PostgreSQL account ledger with independent chain-verified backfill, immutable cursor snapshots, and explicit decoding gaps. Configure `INDEXER_DATABASE_URL`; run `npm run bootstrap:ledger` and `npm run test:ledger`. T3 settlement uses manifest T3/T3Root identities and exact receipt/credit evidence, including deterministic controller-owned receiver custody. A queued redemption receipt is never final delivery. Lost-ACK recovery uses manifest-approved hub/root/wallet/receiver hashes and reserve roots, independently authenticated root/emitter and deterministic vault identities, plus exact historical wallet/root/hub state transitions. Unconfigured or conflicting release code and missing archives remain unresolved; acceptance does not prove payout or journal cleanup. Perps requires the exact current-network PerpsEngine identity/code hash supplied by the manifest; exact historical code/state and typed payout evidence are mandatory. Booked collateral/funding are contract claims, while position margin is a subset and must not be counted twice. Financial amounts are atomic strings. Never infer a product settlement from a transfer request or claim portfolio/tax completeness from account history alone.
 
 ## What This Repo Is (and Isn’t)
 
@@ -23,20 +19,14 @@ are 3, 8 and 13. Recovery bindings authenticate both code cells; the old 17-fiel
 layout is unsupported. Receiver discovery failures remain custody gaps without
 hiding independently verified mint hub/root identities.
 
-Option lifecycle qualification uses `LEDGER_OPTIONS_CODE_HASHES_JSON` with exactly the current factory, vault, Shout, Outperformance and wallet Cell hashes. Registry identities and historical state must match. Exercise right retirement, actual holder payout and RiskVault reimbursement are separate facts. `ReleaseCollateral` never supplies a cash refund. An early OCRC receipt never proves a completed claim. Preserve raw fees and explicit archive/related-history gaps; owner-OBAR unwind requires original funding, historical cancellation and exact independent factory/vault cash finalizers. Initial BOYR/BBUY bounce recovery additionally requires the actual qualified failed product transaction, exact standard VM bounce, historical series/index unwind and independent physical factory return. Other automatic abort/retry recovery and expiry-only paths remain unsupported and must not fabricate payouts.
-- **Is**: a runnable indexer service with in-memory storage and background workers, plus registry data.
+Option lifecycle qualification uses manifest-approved factory, vault, Shout, Outperformance and wallet Cell hashes. Deployment identities and historical state must match. Exercise right retirement, actual holder payout and RiskVault reimbursement are separate facts. `ReleaseCollateral` never supplies a cash refund. An early OCRC receipt never proves a completed claim. Preserve raw fees and explicit archive/related-history gaps; owner-OBAR unwind requires original funding, historical cancellation and exact independent factory/vault cash finalizers. Initial BOYR/BBUY bounce recovery additionally requires the actual qualified failed product transaction, exact standard VM bounce, historical series/index unwind and independent physical factory return. Other automatic abort/retry recovery and expiry-only paths remain unsupported and must not fabricate payouts.
+- **Is**: a runnable indexer service with in-memory storage and background workers, plus release-manifest bindings.
 - **Isn’t**: a production-hardened indexer yet (liteserver pool adapter and full swap/LP decoding remain partial).
 
-## Registry Conventions
-- JSON keys are stable contract roles (e.g., `DexRouter`, `DlmmPoolFactory`).
-- Keep key names consistent across networks.
-- `registry/mainnet.json` is intentionally a placeholder; it should be replaced with real addresses before any mainnet usage.
-- `registry/testnet.json` should be refreshed whenever testnet deployments change.
-- The sole runtime manifest schema is `tonswap-release-v1`: singleton entries
-  are exact address/codeHash objects, reserves use USDT/USDC/KUSD roles, and the
-  hub role is T3. Its network/globalId and complete singleton address map must
-  exactly match the selected registry; legacy release schemas are rejected. The service exposes the
-  resulting registry and manifest hashes from `/contracts` and `/service-info`.
+## Release Manifest
+- The sole runtime input is required `INDEXER_RELEASE_MANIFEST`, using schema `tonswap-release-v1`. Singleton entries are exact address/codeHash objects; reserves use USDT/USDC/KUSD token roles and the hub role is T3. Network/globalId and manifestHash must validate. No registry files, ledger pin environment variables, opcode file loading or parity checks are supported.
+- Poll every five seconds. Stop the old child worker before starting a changed manifest in a fresh process. Snapshots and PostgreSQL schemas are scoped to manifestHash; never resume old jobs under new bindings or delete retained release state.
+- `/contracts` and `/service-info` expose `release: { releaseId, manifestHash }`. Opcode definitions are bundled. Runtime ledger limits use `INDEXER_MAX_WATCHED_ACCOUNTS`, `INDEXER_MAX_PAGES_PER_SYNC` and `INDEXER_MAX_RELATED_ACCOUNTS`.
 - First-release perps instruments bind the declared market ID and symbol to
   the explicit spot pool and `templates.DlmmPool` code hash. Oracle pool candles use the canonical
   `perps-oracle:{marketId}` key; never substitute a spot pool by symbol. Current
@@ -76,13 +66,13 @@ The roadmap references sibling repos for contract definitions and UI alignment:
 
 ## Editing Guidance
 - If you add implementation code, update `README.md` with build/run instructions.
-- If you add new registries or configuration, document their purpose and update this file.
+- If you change manifest bindings or configuration, document their purpose and update this file.
 - Keep `roadmap.md` as the canonical design reference unless an implementation doc supersedes it.
 
 
-Launchpad participation and fixed-sale refund qualification uses `LEDGER_LAUNCHPAD_CODE_HASHES_JSON`
-with exactly the deployment-qualified `fixedCodeHash`, `bondingCodeHash`,
-`auctionCodeHash` and `walletCodeHash`. Model identity is explicit; never try a
+Launchpad participation and fixed-sale refund qualification uses the manifest's
+deployment-qualified `SaleFixed`, `SaleBonding`, `SaleAuction` and
+`JettonWallet` template hashes. Model identity is explicit; never try a
 different layout when the qualified model parser rejects a state. Participation
 requires the exact original owner message, physical payment debit/credit and
 historical participant-entry change. Repeated query IDs are not deduplication
@@ -99,10 +89,9 @@ movements at their original time, creator insurance returns separate, unsupporte
 models/retries explicitly unresolved, and recorded factory provenance distinct
 from verified authority. Run `npm run test:ledger:launchpad` after changes.
 
-Historical DLMM execution observations use `LEDGER_MARKET_BINDINGS_JSON`: an
-array of exact `network`, `pool`, `poolCodeHash`, `walletCodeHash`, `tokenT`, and
-`tokenX`, `tokenTCodeHash`, `tokenXCodeHash`, and mandatory paired `router` /
-`routerCodeHash` deployment bindings (both null for direct-only markets). The pool-seeded graph reads durable physical account
+Historical DLMM execution observations use manifest spot-market identities,
+explicit token-root code pins, pool/wallet templates and the router singleton.
+Missing root code pins leave the market unqualified. The pool-seeded graph reads durable physical account
 chains and qualified historical state; it never reuses an owner projection or
 float candles. Keep actual input consumption, unused-input refunds, output
 credits and finalization separate. A pool acknowledgement is not wallet receipt.
@@ -123,8 +112,8 @@ archives are immutable database rows, not inferred owner scopes or root history
 coverage. Keep original fixture metadata unchanged; use the dedicated explicit
 6/9 fixture for resolved precision tests.
 
-Public testnet report regression checks: run `npm run test:report`. Registry sync
-requires one canonical release manifest and replaces the complete map. Never infer
+Public testnet report regression checks: run `npm run test:report`. The running
+worker's release identity must match its canonical manifest. Never infer
 jetton decimal precision from symbols or expose swap minimum output as received.
 Metrics require admin authentication; proxy-generated errors must preserve CORS.
 

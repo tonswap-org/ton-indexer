@@ -70,7 +70,7 @@ for (const env of [{ PERPS_ADMISSION_BINARY_PATH: '/a' }, { PERPS_ADMISSION_BINA
 async function serviceBoundary() {
   const config = loadConfig(), store = new MemoryStore(config); let remoteCalls = 0;
   const source = { network: 'testnet', runGetMethod: async () => { remoteCalls++; throw Error('Remote admission fallback forbidden'); } } as unknown as TonDataSource;
-  const service = new IndexerService(config, store, source, loadOpcodes(config.opcodesPath), []);
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
   await assert.rejects(service.runGetMethod(identity.engine, 'close_order_preflight', args), AdmissionError);
   let nativeCalls = 0;
   service.setAdmissionExecutor({ engine: identity.engine, ready: true, run: async () => { nativeCalls++; return accepted; }, close: async () => {} });

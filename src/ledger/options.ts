@@ -16,7 +16,7 @@ export type LedgerOptionFactory = {
   collateralRoot: string;
   series: Map<string, { address: string; kind: 1 | 2 }>;
   codeHash: string;
-  qualification?: import('../config/ledgerOptions').LedgerOptionsCodeHashes;
+  qualification?: import('./bindings').LedgerOptionsCodeHashes;
   vault?: string;
   vaultWallet?: string;
   factoryWallet?: string;

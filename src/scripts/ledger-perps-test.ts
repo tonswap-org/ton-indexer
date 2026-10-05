@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Address, Cell, beginCell } from '@ton/core';
 import { accruePerpsFunding, perpsEconomics, tvmDiv } from '../ledger/perpsEconomics';
 import { emptyPerpsAccount, perpsRiskActionKey, type PerpsState, type PerpsPosition, type PerpsRiskAction, type PerpsOracleRefreshReceipt } from '../ledger/perpsState';
-import { parseLedgerPerpsCodeHash } from '../config/ledgerPerps';
+import { validatePerpsCodeHash } from '../ledger/bindings';
 import * as wire from '../ledger/perpsWire';
 // Explicit synthetic states exercise the economic verifier. Genuine archived
 // runtime and message-causality cases run in perps-counterparty-economics-test
@@ -85,10 +85,9 @@ for (const defect of [{ fundingRemainderRaw: '-1' }, { fundingRemainderRaw: '360
     { fundingValidUntil: '-1' }, { lastFundingTs: '1301' }]) {
     assert.throws(() => accruePerpsFunding({ ...checkpoint, ...defect }, 1300n));
 }
-assert.equal(parseLedgerPerpsCodeHash(' '), undefined);
-for (const hash of ['0x' + 'a'.repeat(64), 'A'.repeat(64), 'a'.repeat(63), ' ' + 'a'.repeat(64)])
-    assert.throws(() => parseLedgerPerpsCodeHash(hash));
-assert.equal(parseLedgerPerpsCodeHash('a'.repeat(64)), 'a'.repeat(64));
+for (const hash of [undefined, '', ' ', '0x' + 'a'.repeat(64), 'A'.repeat(64), 'a'.repeat(63), ' ' + 'a'.repeat(64)])
+    assert.throws(() => validatePerpsCodeHash(hash));
+assert.equal(validatePerpsCodeHash('a'.repeat(64)), 'a'.repeat(64));
 const before = live();
 before.markets.get(1)!.markRaw = (unit * 11n / 10n).toString();
 const after = closeState(before, unit), economic = perpsEconomics(before, after, owner, wallet, close, '0');

@@ -9,7 +9,6 @@ FROM deps AS build
 COPY tsconfig.json ./
 COPY scripts/clean-dist.cjs ./scripts/clean-dist.cjs
 COPY src ./src
-COPY registry ./registry
 RUN npm run build
 RUN npm prune --omit=dev
 
@@ -33,7 +32,6 @@ COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/package-lock.json ./package-lock.json
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
-COPY --from=build --chown=node:node /app/registry ./registry
 COPY --chown=node:node sql ./sql
 USER node
 EXPOSE 8787

@@ -18,9 +18,17 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - Confirm public builds work without private overlays.
 - Run `docker build -t ton-indexer:release .` and confirm the production image
   builds from the checked-in container contract.
-- Confirm `registry/mainnet.json` contains reviewed mainnet contract addresses,
-  with no `REPLACE_WITH_MAINNET_` placeholders, missing required keys, or
-  malformed TON addresses.
+- Provide the reviewed native-deployer `tonswap-release-v1` manifest through
+  required `INDEXER_RELEASE_MANIFEST` (file path or HTTPS URL; loopback HTTP
+  allowed). Confirm its network/globalId, addresses, approved code pins and
+  canonical manifest hash validate. Do not generate a separate registry.
+- Confirm the five-second manifest poll stops the old child worker before
+  starting a changed release, and snapshots/PostgreSQL schemas isolate
+  manifest hashes without resuming old ledger jobs under new bindings.
+- A registered PerpsEngine requires the reviewed macOS arm64 testnet native
+  admission package. Configure its binary/config paths and SHA-256 hashes
+  together; require authenticated fresh engine state before readiness. The
+  generic Linux image does not provide this runtime.
 - Run `npm run test:deployment-evidence-template`,
   `npm run generate:deployment-evidence-template -- --output
   build/reports/production-deployment-evidence-template.json`,
@@ -33,18 +41,21 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
   `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
   result in `scripts/production-deployment-evidence.json`, set
   `status: ready` and `releaseEnabled: true`, and rerun
-  `npm run audit:deployment-evidence -- --require-ready`. The ready audit also
-  rejects placeholder, incomplete, or malformed mainnet registry values.
+  `npm run audit:deployment-evidence -- --require-ready`. The offline audit
+  validates recorded deployment evidence; live smoke verifies the running
+  manifest-derived release identity.
 - Run or confirm green CI for branch-flow audit, public artifact audit,
   TODO-debt audit, install, production dependency audit, tests, build, Docker
   image build, and OpenAPI smoke.
 - Confirm `https://ti.soramitsu.io` deployment target and read-only public write
   RPC posture.
 - For testnet/localnet releases, pin `TON_INDEXER_EXPECTED_NETWORK`,
-  `TON_INDEXER_EXPECTED_RELEASE_ID`, `TON_INDEXER_EXPECTED_REGISTRY_HASH`,
+  `TON_INDEXER_EXPECTED_RELEASE_ID`,
   `TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH`, the canonical single-link absolute
   `TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH`, and
-  `TON_INDEXER_EXPECTED_CORS_ORIGIN` to the canonical release evidence.
+  `TON_INDEXER_EXPECTED_CORS_ORIGIN` to the canonical release evidence. Confirm
+  both public `/contracts` and `/service-info` report
+  `release: { releaseId, manifestHash }` without obsolete hash aliases.
 - Run `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
   against the deployed service and confirm health, service-info, OpenAPI, and
   required wallet routes pass before declaring the release production-ready.

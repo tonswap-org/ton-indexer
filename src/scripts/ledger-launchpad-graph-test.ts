@@ -6,7 +6,7 @@ import { LedgerGraphBuilder } from "../ledger/graph";
 import { projectOwnerLedger } from "../ledger/project";
 import type { LedgerAsset } from "../ledger/types";
 import type { AccountStateResponse, RawTransaction, TonDataSource } from "../data/dataSource";
-import type { LedgerLaunchpadCodeHashes } from "../config/ledgerLaunchpad";
+import type { LedgerLaunchpadCodeHashes } from "../ledger/bindings";
 import type { PostgresLedgerStore } from "../ledger/store";
 import { canonicalLedgerHash } from "../ledger/normalize";
 import { loadOpcodes } from "../utils/opcodes";

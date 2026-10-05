@@ -1,14 +1,22 @@
-import { loadConfig, readRegistryFile } from '../config';
+import assert from 'node:assert/strict';
+import { loadConfig } from '../config';
+import { parseCanonicalReleaseManifest } from '../config/releaseManifest';
+import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 import { loadOpcodes } from '../utils/opcodes';
 
 const config = loadConfig();
 
 try {
-  const registry = readRegistryFile(config.registryPath);
-  const opcodes = loadOpcodes(config.opcodesPath);
+  const fixture = runtimeManifestFixture();
+  const manifest = parseCanonicalReleaseManifest(fixture, 'testnet');
+  assert.equal(manifest.runtime.manifestHash, fixture.manifestHash);
+  assert.equal(manifest.contracts.T3Root, fixture.contracts.T3Root!.address);
+  assert.equal('registryPath' in config, false);
+  assert.equal('opcodesPath' in config, false);
+  const opcodes = loadOpcodes();
   console.log('config ok', {
     network: config.network,
-    registryKeys: Object.keys(registry).length,
+    fixtureContracts: Object.keys(manifest.contracts).length,
     opSwap: opcodes.swap.size,
   });
   process.exit(0);

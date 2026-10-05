@@ -107,6 +107,10 @@ const expectedServiceInfo = {
   network: 'mainnet',
   publicBaseUrl: 'https://ti.soramitsu.io',
   readOnly: true,
+  release: {
+    releaseId: 'TODO_DEPLOYED_RELEASE_ID',
+    manifestHash: 'TODO_64_HEX_RELEASE_MANIFEST_HASH',
+  },
   endpoints: {
     openapi: '/api/indexer/v1/openapi.json',
   },
@@ -162,6 +166,17 @@ manifest.scope = 'wrong-production-deployment-readiness';
 fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 expect_failure "wrong evidence scope" "scope must be" bash "$GENERATOR_SCRIPT" --evidence "$bad_scope"
+
+current_blockers="$tmp_dir/current-blockers.json"
+cp "$DEFAULT_MANIFEST" "$current_blockers"
+node - "$current_blockers" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+manifest.blockers = manifest.blockers.filter((blocker) => blocker !== 'mainnet-registry-placeholders-remain');
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+bash "$GENERATOR_SCRIPT" --evidence "$current_blockers" >/dev/null
 
 unsupported_blocker="$tmp_dir/unsupported-blocker.json"
 cp "$DEFAULT_MANIFEST" "$unsupported_blocker"

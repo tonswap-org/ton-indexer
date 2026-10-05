@@ -29,8 +29,7 @@ type ServiceInfo = {
   };
   release?: {
     releaseId?: unknown;
-    registryHash?: unknown;
-    releaseManifestHash?: unknown;
+    manifestHash?: unknown;
   };
 };
 
@@ -46,9 +45,7 @@ type HealthInfo = {
 type ContractsInfo = {
   network?: unknown;
   count?: unknown;
-  registry_hash?: unknown;
-  release_id?: unknown;
-  release_manifest_hash?: unknown;
+  release?: { releaseId?: unknown; manifestHash?: unknown };
   contracts?: unknown;
 };
 
@@ -86,13 +83,12 @@ export type ProductionSmokeOptions = {
   expectedNetwork?: 'mainnet' | 'testnet' | 'localnet';
   expectedServiceId?: string;
   expectedPublicBaseUrl?: string;
-  expectedRegistryHash?: string;
   expectedReleaseId?: string;
   expectedReleaseManifestHash?: string;
   expectedReleaseManifestPath?: string;
   expectedCorsOrigin?: string;
   hostileCorsOrigin?: string;
-  /** Programmatic-only compatibility escape hatch. The production CLI never enables it. */
+  /** Isolated transport-test seam. The production CLI always requires a manifest. */
   allowUnboundRelease?: boolean;
 };
 
@@ -101,7 +97,6 @@ const DEFAULT_HOSTILE_CORS_ORIGIN = 'https://hostile.tonswap.invalid';
 const SHA256_RE = /^[0-9a-f]{64}$/;
 type StrictReleaseExpectation = {
   releaseId: string;
-  registryHash: string;
   releaseManifestHash: string;
   contracts: Record<string, string>;
   markets: RegistrySpotMarketMetadata[];
@@ -291,10 +286,6 @@ function resolveStrictReleaseExpectation(
   expectedNetworkWasExplicit: boolean
 ): StrictReleaseExpectation | null {
   const releaseId = optionOrEnv(options.expectedReleaseId, 'TON_INDEXER_EXPECTED_RELEASE_ID');
-  const registryHash = optionOrEnv(
-    options.expectedRegistryHash,
-    'TON_INDEXER_EXPECTED_REGISTRY_HASH'
-  );
   const releaseManifestHash = optionOrEnv(
     options.expectedReleaseManifestHash,
     'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH'
@@ -314,7 +305,6 @@ function resolveStrictReleaseExpectation(
   const hostileCorsOrigin = configuredHostileCorsOrigin ?? DEFAULT_HOSTILE_CORS_ORIGIN;
   const releaseInputPresent = [
     releaseId,
-    registryHash,
     releaseManifestHash,
     releaseManifestPath,
     expectedCorsOrigin,
@@ -323,7 +313,7 @@ function resolveStrictReleaseExpectation(
   if (!releaseInputPresent) {
     if (options.allowUnboundRelease === true) return null;
     throw new Error(
-      'Release-bound production smoke requires explicit network, release ID, registry hash, manifest path/hash, and allowed CORS origin inputs.'
+      'Release-bound production smoke requires explicit network, release ID, manifest path/hash, and allowed CORS origin inputs.'
     );
   }
   if (!expectedNetworkWasExplicit) {
@@ -334,10 +324,6 @@ function resolveStrictReleaseExpectation(
   if (!releaseId) {
     throw new Error('TON_INDEXER_EXPECTED_RELEASE_ID must be explicitly set for a release-bound smoke.');
   }
-  const exactRegistryHash = requireSha256(
-    registryHash,
-    'TON_INDEXER_EXPECTED_REGISTRY_HASH'
-  );
   const exactReleaseManifestHash = requireSha256(
     releaseManifestHash,
     'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH'
@@ -366,12 +352,7 @@ function resolveStrictReleaseExpectation(
     `release manifest releaseId must be ${releaseId}`
   );
   assert.equal(
-    manifest.registryHash,
-    exactRegistryHash,
-    `release manifest registryHash must be ${exactRegistryHash}`
-  );
-  assert.equal(
-    manifest.releaseManifestHash,
+    manifest.manifestHash,
     exactReleaseManifestHash,
     `release manifest manifestHash must be ${exactReleaseManifestHash}`
   );
@@ -381,7 +362,6 @@ function resolveStrictReleaseExpectation(
 
   return {
     releaseId,
-    registryHash: exactRegistryHash,
     releaseManifestHash: exactReleaseManifestHash,
     contracts: manifest.contracts,
     markets: manifest.spotMarkets,
@@ -529,20 +509,16 @@ export async function runProductionSmoke(
     'service-info openapi endpoint must be /api/indexer/v1/openapi.json',
   );
   if (strictRelease) {
-    assert.equal(
-      serviceInfo.release?.registryHash,
-      strictRelease.registryHash,
-      `service-info registryHash must be ${strictRelease.registryHash}`
-    );
+    assert.deepEqual(Object.keys(serviceInfo.release ?? {}).sort(), ['manifestHash', 'releaseId']);
     assert.equal(
       serviceInfo.release?.releaseId,
       strictRelease.releaseId,
       `service-info releaseId must be ${strictRelease.releaseId}`
     );
     assert.equal(
-      serviceInfo.release?.releaseManifestHash,
+      serviceInfo.release?.manifestHash,
       strictRelease.releaseManifestHash,
-      `service-info releaseManifestHash must be ${strictRelease.releaseManifestHash}`
+      `service-info manifestHash must be ${strictRelease.releaseManifestHash}`
     );
   }
 
@@ -564,20 +540,16 @@ export async function runProductionSmoke(
       Object.keys(strictRelease.contracts).length,
       'contracts count must match the supplied release manifest'
     );
+    assert.deepEqual(Object.keys(contracts.release ?? {}).sort(), ['manifestHash', 'releaseId']);
     assert.equal(
-      contracts.registry_hash,
-      strictRelease.registryHash,
-      `contracts registry_hash must be ${strictRelease.registryHash}`
-    );
-    assert.equal(
-      contracts.release_id,
+      contracts.release?.releaseId,
       strictRelease.releaseId,
-      `contracts release_id must be ${strictRelease.releaseId}`
+      `contracts releaseId must be ${strictRelease.releaseId}`
     );
     assert.equal(
-      contracts.release_manifest_hash,
+      contracts.release?.manifestHash,
       strictRelease.releaseManifestHash,
-      `contracts release_manifest_hash must be ${strictRelease.releaseManifestHash}`
+      `contracts manifestHash must be ${strictRelease.releaseManifestHash}`
     );
   }
 

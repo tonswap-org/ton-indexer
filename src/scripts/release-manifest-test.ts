@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { buildRegistryBundle, hashReleaseManifest, hashRegistry, readCanonicalReleaseManifest } from '../config/releaseManifest';
-import { applyRuntimeManifestBindings } from '../config/runtimeManifestBindings';
-import type { Config } from '../config';
-import { runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
+import { join } from 'node:path';
+import { buildRuntimeManifestBundle, hashRegistry, parseCanonicalReleaseManifest, readCanonicalReleaseManifest } from '../config/releaseManifest';
+import { validateReleaseManifest } from '../config/runtimeManifest';
+import { deriveRuntimeManifestBindings } from '../config/runtimeManifestBindings';
+import { nativeLocalnetManifestText, runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'ton-indexer-release-manifest-')));
 const writeManifest = (name: string, overrides: Record<string, unknown> = {}) => {
@@ -16,13 +15,12 @@ const writeManifest = (name: string, overrides: Record<string, unknown> = {}) =>
 };
 const fixture = runtimeManifestFixture();
 const contracts = Object.fromEntries(Object.entries(fixture.contracts).map(([role, c]) => [role, c!.address]));
-const config = () => ({ network: 'testnet', ledgerMarketBindings: [] } as unknown as Config);
 try {
   const path = writeManifest('good.json');
   const parsed = readCanonicalReleaseManifest(path, 'testnet');
   assert.deepEqual(parsed.contracts, contracts);
   assert.equal(parsed.registryHash, hashRegistry(contracts));
-  assert.equal(parsed.releaseManifestHash, fixture.manifestHash);
+  assert.equal(parsed.manifestHash, fixture.manifestHash);
   assert.equal(parsed.markets.length, 1);
   assert.equal(parsed.spotMarkets.length, 3);
   assert.equal(parsed.markets[0].perpsCandleMarketKey, 'perps-oracle:1');
@@ -31,7 +29,22 @@ try {
   assert.equal(parsed.markets[0].oracle, undefined, 'manifest identity is not current oracle readiness');
   assert.equal(parsed.markets[0].coverPolicyId, undefined);
   assert.equal(parsed.approvedComparisons[0].comparisonPool, fixture.spotMarkets[1].pool);
-  assert.deepEqual(buildRegistryBundle(contracts, 'testnet', path).metadata.runtime, fixture);
+  assert.deepEqual(buildRuntimeManifestBundle(parsed.runtime).metadata.runtime, fixture);
+  assert.equal(buildRuntimeManifestBundle(parsed.runtime).metadata.manifestHash, fixture.manifestHash);
+  assert.equal(validateReleaseManifest(fixture).ok, true);
+  const native = parseCanonicalReleaseManifest(nativeLocalnetManifestText, 'localnet');
+  const nativeBindings = deriveRuntimeManifestBindings(native.runtime);
+  assert.equal(native.runtime.schema, 'tonswap-release-v1');
+  assert.equal(nativeBindings.network, 'localnet');
+  assert.equal(nativeBindings.marketBindings.length, native.runtime.spotMarkets.length);
+  assert.equal(nativeBindings.t3CodeHashes?.hubCodeHash, native.runtime.contracts.T3!.codeHash);
+  assert.equal(nativeBindings.t3CodeHashes?.walletCodeHash, native.runtime.templates.JettonWallet);
+  assert.equal(nativeBindings.perpsEngine, native.runtime.contracts.PerpsEngine!.address);
+  assert.equal(nativeBindings.optionCodeHashes?.shoutCodeHash, native.runtime.templates.ShoutOption);
+  if (process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE) {
+    const current = readCanonicalReleaseManifest(process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE, 'localnet');
+    assert.equal(deriveRuntimeManifestBindings(current.runtime).t3CodeHashes?.hubCodeHash, current.runtime.contracts.T3!.codeHash);
+  }
   const spotOnly = readCanonicalReleaseManifest(writeManifest('spot-only.json', { perpsMarkets: [], options: [] }), 'testnet');
   assert.equal(spotOnly.markets.length, 0); assert.equal(spotOnly.spotMarkets.length, 3);
   const withSeries = readCanonicalReleaseManifest(writeManifest('two-series.json', { options: [fixture.options[0],
@@ -46,7 +59,7 @@ try {
   const fail = (label: string, change: Record<string, unknown>, error = /Release manifest/) =>
     assert.throws(() => readCanonicalReleaseManifest(writeManifest(label + '.json', change), 'testnet'), error, label);
   fail('old-schema', { schema: 'tonswap-first-release-manifest-v1' }, /schema must be tonswap-release-v1/);
-  fail('old-fields', { candidateDigest: 'a'.repeat(64) }, /top-level fields/);
+  fail('old-fields', { candidateDigest: 'a'.repeat(64) }, /top-level keys/);
   fail('wrong-network-domain', { globalId: -239 }, /network\/globalId/);
   fail('wrong-source', { source: { ...fixture.source, contracts: 'not-a-git-sha' } });
   fail('wrong-release-build', { releaseId: 'testnet-unit-123456789abc' });
@@ -54,44 +67,64 @@ try {
   fail('unknown-role', { contracts: { ...fixture.contracts, T3Hub: fixture.contracts.T3 } });
   fail('old-address-entry', { contracts: { ...fixture.contracts, T3: contracts.T3 } });
   fail('missing-code-hash', { contracts: { ...fixture.contracts, T3: { address: contracts.T3 } } });
+  const shapeFail = (label: string, change: Record<string, unknown>, expected: string) => {
+    const malformed = runtimeManifestFixture(change);
+    const validation = validateReleaseManifest(malformed);
+    if (validation.ok) assert.fail(`${label} must reject its malformed shape`);
+    assert(validation.errors.includes(expected), `${label}: ${validation.errors.join(', ')}`);
+    assert(!validation.errors.includes('manifestHash'), `${label} must carry a valid recomputed manifest hash`);
+    assert.throws(() => parseCanonicalReleaseManifest(JSON.stringify(malformed), 'testnet'), /Release manifest is invalid:/, label);
+  };
+  shapeFail('array-source-sha', { source: { ...fixture.source, contracts: [fixture.source.contracts] } }, 'source');
+  shapeFail('array-source-build-hash', { source: { ...fixture.source, build: [fixture.source.build] } }, 'source');
+  shapeFail('array-singleton-code-hash', { contracts: { ...fixture.contracts, T3: {
+    ...fixture.contracts.T3, codeHash: [fixture.contracts.T3!.codeHash] } } }, 'contracts.T3');
+  shapeFail('array-template-code-hash', { templates: { ...fixture.templates,
+    JettonWallet: [fixture.templates.JettonWallet] } }, 'templates');
+  shapeFail('numeric-token-symbol', { tokens: fixture.tokens.map(token =>
+    token.symbol === 'TS' ? { ...token, symbol: 123 } : token) }, 'tokens[1]');
+  shapeFail('missing-perps-symbol-and-pool', { perpsMarkets: [{ marketId: 1 }] }, 'perpsMarkets[0]');
+  shapeFail('missing-perps-pool', { perpsMarkets: [{ marketId: 1, symbol: 'USDT' }] }, 'perpsMarkets[0]');
+  shapeFail('missing-perps-spot-symbol', { perpsMarkets: [{ marketId: 1, symbol: 'TS' }] }, 'perpsMarkets[0]');
   fail('friendly-address', { contracts: { ...fixture.contracts, T3: { ...fixture.contracts.T3, address: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c' } } });
   fail('duplicate-singleton', { contracts: { ...fixture.contracts, T3: { ...fixture.contracts.T3, address: contracts.T3Root } } });
   fail('wrong-token-root', { tokens: fixture.tokens.map(t => t.symbol === 'T3' ? { ...t, root: runtimeAddress(999) } : t) });
-  fail('wrong-quote-precision', { tokens: fixture.tokens.map(t => t.symbol === 'T3' ? { ...t, decimals: 6 } : t) });
-  fail('wrong-reserve-root', { tokens: fixture.tokens.map(t => t.symbol === 'USDT' ? { ...t, root: contracts.PerpsEngine } : t) });
+  const precision = parseCanonicalReleaseManifest(runtimeManifestFixture({ tokens: fixture.tokens.map(t => t.symbol === 'T3' ? { ...t, decimals: 6 } : t) }), 'testnet');
+  assert.equal(precision.spotMarkets[0].quoteDecimals, 6, 'metadata preserves declared precision; it does not infer it from a symbol');
+
   fail('foreign-perps-pool', { perpsMarkets: [{ ...fixture.perpsMarkets[0], pool: runtimeAddress(999) }] });
-  fail('unsupported-perps-id', { perpsMarkets: [{ ...fixture.perpsMarkets[0], marketId: 5 }] });
+  fail('oversized-perps-id', { perpsMarkets: [{ ...fixture.perpsMarkets[0], marketId: 0x100000000 }] });
+  assert.equal(parseCanonicalReleaseManifest(runtimeManifestFixture({ perpsMarkets: [{ ...fixture.perpsMarkets[0], marketId: 5 }] }), 'testnet').markets[0].perpsMarketId, 5);
   fail('duplicate-perps-id', { perpsMarkets: [...fixture.perpsMarkets, fixture.perpsMarkets[0]] });
   fail('duplicate-spot', { spotMarkets: [...fixture.spotMarkets, fixture.spotMarkets[0]] });
-  fail('oracle-readiness-claim', { spotMarkets: [{ ...fixture.spotMarkets[0], oracle: { status: 'ready' } }] });
+  const oracleClaim = parseCanonicalReleaseManifest(runtimeManifestFixture({ spotMarkets: fixture.spotMarkets.map((spot, index) =>
+    index === 0 ? { ...spot, oracle: { status: 'ready' } } : spot) }), 'testnet');
+  assert.equal(oracleClaim.spotMarkets[0].oracle, undefined, 'extra metadata never proves current oracle readiness');
   fail('self-comparison', { options: [{ ...fixture.options[1], comparisonSymbol: 'USDT' }] });
   fail('partial-series', { options: [{ ...fixture.options[1], seriesId: '2' }] });
   fail('duplicate-series', { options: [fixture.options[0], { ...fixture.options[0], option: runtimeAddress(302) }] });
-  fail('conflicting-template', { options: [fixture.options[0], { ...fixture.options[1], templateId: 1 }] });
-  fail('service-secret', { services: { ...fixture.services, tonRpc: 'https://user:secret@example.org' } });
+  fail('invalid-service', { services: { ...fixture.services, tonRpc: 'file:///private/secret' } });
   const tamperedPath = writeManifest('tampered.json');
   const tampered = JSON.parse(readFileSync(tamperedPath, 'utf8')); tampered.services.platform = 'https://other.example';
   writeFileSync(tamperedPath, JSON.stringify(tampered));
   assert.throws(() => readCanonicalReleaseManifest(tamperedPath, 'testnet'), /manifestHash does not match/);
 
-  const bound = config(); applyRuntimeManifestBindings(bound, parsed.runtime);
-  assert.equal(bound.ledgerPerpsEngineCodeHash, fixture.contracts.PerpsEngine!.codeHash);
-  assert.equal(bound.ledgerOptionsCodeHashes?.walletCodeHash, fixture.templates.JettonWallet);
-  assert.equal(bound.ledgerLaunchpadCodeHashes?.fixedCodeHash, fixture.templates.SaleFixed);
-  assert.equal(bound.ledgerMarketBindings.length, 3);
-  assert.equal(bound.ledgerMarketBindings[0].router, contracts.DexRouter);
-  assert.equal(bound.ledgerT3RedemptionBinding, undefined, 'reserve wallet identity must be separately authenticated');
-  applyRuntimeManifestBindings(bound, parsed.runtime);
-  const conflict = config(); conflict.ledgerPerpsEngineCodeHash = 'f'.repeat(64);
-  assert.throws(() => applyRuntimeManifestBindings(conflict, parsed.runtime), /LEDGER_PERPS_ENGINE_CODE_HASH conflicts/);
-  const wrongMarket = config(); wrongMarket.ledgerMarketBindings = [{ ...bound.ledgerMarketBindings[0], pool: runtimeAddress(999) }];
-  assert.throws(() => applyRuntimeManifestBindings(wrongMarket, parsed.runtime), /LEDGER_MARKET_BINDINGS_JSON conflicts/);
+  const bound = deriveRuntimeManifestBindings(parsed.runtime);
+  assert.equal(bound.perpsEngineCodeHash, fixture.contracts.PerpsEngine!.codeHash);
+  assert.equal(bound.optionCodeHashes?.walletCodeHash, fixture.templates.JettonWallet);
+  assert.equal(bound.launchpadCodeHashes?.fixedCodeHash, fixture.templates.SaleFixed);
+  assert.equal(bound.marketBindings.length, 3);
+  assert.equal(bound.marketBindings[0].router, contracts.DexRouter);
+  assert.equal(bound.t3CodeHashes?.hubCodeHash, fixture.contracts.T3!.codeHash);
+  assert.equal(bound.t3CodeHashes?.rootCodeHash, fixture.contracts.T3Root!.codeHash);
+  assert.equal(bound.t3CodeHashes?.receiverCodeHash, fixture.templates.T3Receiver);
+  assert(!Object.hasOwn(bound, 't3RedemptionBinding'), 'vault custody routes still require authenticated independent discovery');
+  assert.deepEqual(deriveRuntimeManifestBindings(parsed.runtime), bound);
   const external = runtimeManifestFixture({ contracts: Object.fromEntries(Object.entries(fixture.contracts).filter(([role]) => role !== 'USDT')) });
-  const externalConfig = config(); applyRuntimeManifestBindings(externalConfig, external);
-  assert.equal(externalConfig.ledgerMarketBindings.length, 2, 'a missing external root hash remains unresolved');
+  assert.equal(deriveRuntimeManifestBindings(external).marketBindings.length, 2, 'an omitted external root hash remains unresolved');
+  const nonRoot = runtimeManifestFixture({ tokens: fixture.tokens.map(token => token.symbol === 'USDT' ? { ...token, root: contracts.PerpsEngine } : token) });
+  assert.equal(deriveRuntimeManifestBindings(nonRoot).marketBindings.length, 2, 'a non-root singleton code is never enrolled as a trusted token root');
 
-  assert.throws(() => buildRegistryBundle({ ...contracts, T3Root: runtimeAddress(999) }, 'testnet', path), /address mismatch/);
-  assert.throws(() => buildRegistryBundle({ T3Root: contracts.T3Root }, 'testnet', path), /key mismatch/);
   assert.throws(() => readCanonicalReleaseManifest('good.json', 'testnet'), /canonical absolute path/);
   const symlinkPath = join(root, 'symlink.json'); symlinkSync(path, symlinkPath);
   assert.throws(() => readCanonicalReleaseManifest(symlinkPath, 'testnet'), /symlink/); unlinkSync(symlinkPath);
@@ -104,23 +137,5 @@ try {
   assert.throws(() => readCanonicalReleaseManifest(duplicate, 'testnet'), /duplicate object key/);
   const race = writeManifest('race.json'), replacement = writeManifest('replacement.json');
   assert.throws(() => readCanonicalReleaseManifest(race, 'testnet', { afterOpen: () => renameSync(replacement, race) }), /single-link|changed during/);
-  const plain = buildRegistryBundle(contracts, 'testnet');
-  assert.equal(plain.metadata.releaseManifestHash, null); assert.equal(plain.metadata.registryHash, hashRegistry(contracts));
-
-  mkdirSync(join(root, 'registry')); const registryPath = join(root, 'registry/testnet.json');
-  const syncCommand = resolve(__dirname, 'refresh-registry.ts'), tsx = resolve(__dirname, '../../node_modules/tsx/dist/cli.mjs');
-  const sync = (...args: string[]) => spawnSync(process.execPath, [tsx, syncCommand, ...args], {
-    cwd: root, encoding: 'utf8', timeout: 15_000, env: { ...process.env, INDEXER_RELEASE_MANIFEST_PATH: '' },
-  });
-  const exact = JSON.stringify(contracts, null, 2) + '\n'; writeFileSync(registryPath, exact);
-  assert.equal(sync('--check', path).status, 0); assert.equal(readFileSync(registryPath, 'utf8'), exact);
-  const { T3Root: omitted, ...missing } = contracts;
-  for (const registry of [missing, { ...contracts, T3Root: runtimeAddress(999) }, { ...contracts, ExtraRole: runtimeAddress(999) }]) {
-    const retained = JSON.stringify(registry); writeFileSync(registryPath, retained);
-    assert.equal(sync('--check', path).status, 1); assert.equal(readFileSync(registryPath, 'utf8'), retained);
-  }
-  assert.equal(sync(path).status, 0); assert.deepEqual(JSON.parse(readFileSync(registryPath, 'utf8')), contracts);
-  assert.deepEqual(readdirSync(join(root, 'registry')), ['testnet.json']);
-  assert.equal(sync('--check', path).status, 0);
-  process.stdout.write('runtime release manifest identities, bindings and registry parity passed\n');
+  process.stdout.write('runtime release manifest producer fixture, identities and derived bindings passed\n');
 } finally { rmSync(root, { recursive: true, force: true }); }

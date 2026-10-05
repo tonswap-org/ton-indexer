@@ -45,21 +45,20 @@ npm install
 ```
 
 ## Run (dev)
-Default dev now runs on testnet with the lite client enabled.
+Dev runs on testnet with the lite client enabled. Every startup requires the native deployer's reviewed release manifest through `INDEXER_RELEASE_MANIFEST`.
 ```bash
-npm run dev
+INDEXER_RELEASE_MANIFEST=/absolute/path/to/testnet.manifest.json npm run dev
 ```
 
 Run dev on mainnet (lite client):
 ```bash
-npm run dev:mainnet
+INDEXER_RELEASE_MANIFEST=/absolute/path/to/mainnet.manifest.json npm run dev:mainnet
 ```
 
 Run against a local TON network:
 ```bash
 LITESERVER_POOL_LOCALNET=../tonswap_tolk/tmp_mylocalton/global.config.json \
-INDEXER_REGISTRY_PATH=../tonswap_tolk/tmp_release/localnet.registry.json \
-INDEXER_RELEASE_MANIFEST_PATH=../tonswap_tolk/tmp_release/localnet.manifest.json \
+INDEXER_RELEASE_MANIFEST=/absolute/path/to/localnet.manifest.json \
 npm run dev:localnet
 ```
 Localnet never falls back to a public TON endpoint: the lite datasource requires
@@ -70,7 +69,7 @@ Localnet never falls back to a public TON endpoint: the lite datasource requires
 ```bash
 npm run build
 npm run test:historical-replay
-npm run start
+INDEXER_RELEASE_MANIFEST=/absolute/path/to/release-manifest.json npm run start
 ```
 
 ## Test
@@ -159,14 +158,14 @@ also suppresses events and cursors, sets completeness flags false, and reports
 `owner_projection_metadata_invalid`; consumers must not substitute the owner as
 an inferred scope.
 
-Two workers run concurrently. `LEDGER_MAX_WATCHED_ACCOUNTS` defaults to 1,000
+Two workers run concurrently. `INDEXER_MAX_WATCHED_ACCOUNTS` defaults to 1,000
 (maximum 100,000); admission overflow returns `watch_capacity_reached` and creates
-no watch/account row. `LEDGER_MAX_PAGES_PER_SYNC` defaults to 20 (maximum 100),
+no watch/account row. `INDEXER_MAX_PAGES_PER_SYNC` defaults to 20 (maximum 100),
 shared across the owner and its related-account crawl; each page has at most 100
 transactions. Exhausted budgets persist the next exact cursor with
 `backfill_capacity_deferred`, then resume the same run on a later pass. No old
 transactions are discarded. The fair scheduler revisits only explicitly admitted
-owners, ordered by last attempt. `LEDGER_MAX_RELATED_ACCOUNTS` defaults to 256
+owners, ordered by last attempt. `INDEXER_MAX_RELATED_ACCOUNTS` defaults to 256
 (maximum 1,024); discovery overflow is an explicit coverage gap. Operators must
 set these admission/crawl limits for their upstream and PostgreSQL capacity.
 
@@ -223,18 +222,12 @@ Run `npx tsx src/scripts/ledger-test.ts` for persisted decoder invalidation.
 
 ### Historical market execution ledger
 
-`LEDGER_MARKET_BINDINGS_JSON` enables a separate durable DLMM market projection.
-Supply a JSON array whose entries have exactly `network`, `pool`, `poolCodeHash`,
-`walletCodeHash`, `tokenT`, `tokenX`, `tokenTCodeHash`, `tokenXCodeHash`, `router`,
-and `routerCodeHash`. The router pair must both be null for direct-only markets,
-or both contain the qualified router address and code hash for routed markets.
-The same binding qualifies routed swaps in owner history.
-Addresses must use canonical raw TON
-form; code hashes must be deployment-qualified lowercase 64-character Cell
-hashes. The network must match `TON_NETWORK`. Empty/unset means no qualified
-historical markets. Never copy a live RPC code hash into this allowlist merely
-because an address appears in a registry.
-
+The release manifest's `spotMarkets`, token root code pins, DLMM wallet/pool
+templates and router singleton configure the separate durable DLMM market
+projection and qualify routed swaps in owner history. Markets whose required
+root code pins are absent remain unqualified. Code hashes must come from the
+reviewed deployment manifest; never enroll a live RPC code hash merely because
+an address appears in discovery.
 Use `INDEXER_DATABASE_URL` and the existing ledger database initialization. The
 canonical `sql/ledger.sql` also creates independent `market_heads`,
 `market_generations`, `market_observations`, `market_candidates`, and
@@ -252,8 +245,8 @@ execution and adversarial evidence tests.
 
 Configured pools refresh through the durable account backfill every 30 seconds;
 work is serialized locally, coordinated by a PostgreSQL advisory lock, and
-published with an expected-generation fence. `LEDGER_MAX_RELATED_ACCOUNTS` and
-`LEDGER_MAX_PAGES_PER_SYNC` bound each pass. Missing archives, incomplete backfill,
+published with an expected-generation fence. `INDEXER_MAX_RELATED_ACCOUNTS` and
+`INDEXER_MAX_PAGES_PER_SYNC` bound each pass. Missing archives, incomplete backfill,
 or an account cap remain explicit coverage issues. Auxiliary reads never submit
 wallet transactions. Worker shutdown completes market work before closing the
 shared account ledger.
@@ -383,7 +376,7 @@ is the actual debit. Excess refund attribution remains explicit and unresolved.
 This proves purchase activation, not a cash-equivalent asset valuation, taxation,
 or a later exercise, settlement, payout, cancellation or refund.
 
-T3 mint and redemption use the configured `T3` and `T3Root` registry roles.
+T3 mint and redemption use the release manifest's `T3` and `T3Root` singleton roles.
 The graph verifies the hub's tagged storage root, root emitter, three immutable
 reserve root/vault identities, and the deterministic receiver code/address and
 controller. Its related accounts include the hub, root, reserve vaults, and all
@@ -416,16 +409,13 @@ basket, including all slices. An early receipt, queued payout, unrelated global
 supply delta or incomplete custody history cannot confirm redemption.
 
 A lost initial burn acknowledgement can be recovered by the owner's explicit
-`REDM` continuation. Configure `LEDGER_T3_REDEMPTION_BINDING_JSON` with the exact
-separately authenticated current-release reserve-route binding: active
-network, raw hub/root addresses, four approved TON Cell hashes
-(`hubCodeHash`, `rootCodeHash`, `walletCodeHash`, `receiverCodeHash`), and three
-ordered `reserveRoutes` containing raw `root`, `vault`, and `discovery` addresses.
-`discovery` must equal its reserve root; roots and vaults must be distinct.
-Missing or whitespace-only input leaves recovery unconfigured. Malformed,
-extra-field, noncanonical-address, or wrong-network input fails startup. The
-runtime binding must also match registry and authenticated reserve routes;
-observed code is never enrolled as an approved release.
+`REDM` continuation. The release manifest supplies the active network, approved
+hub/root/wallet/receiver code hashes and ordered USDT/USDC/KUSD reserve roots.
+Startup authenticates the current root code and emitter, checks its wallet code
+against the approved template and derives each hub-owned reserve wallet. The
+ledger independently checks the stored hub routes and vault identities against
+that binding. Missing or conflicting code, configuration or archive evidence
+leaves recovery unresolved; observed code never becomes an approved release pin.
 
 Recovery requires exact archive code/data boundaries for the original wallet
 burn, root supply debit and receipt, hub's unconsumed proof, later proof
@@ -499,12 +489,16 @@ production archive availability or change the ledger's explicit decoding limits.
 ## Production Container
 ```bash
 docker build -t ti-indexer:release .
-docker run --rm -p 8787:8787 ti-indexer:release
+docker run --rm -p 8787:8787 \
+  --mount type=bind,src=/absolute/path/to/release-manifest.json,dst=/release/manifest.json,readonly \
+  -e INDEXER_RELEASE_MANIFEST=/release/manifest.json ti-indexer:release
 ```
 
 The image defaults to `INDEXER_MODE=production`, `TON_NETWORK=mainnet`, and the
-lite-client mainnet pool. Startup is intentionally blocked until
-`registry/mainnet.json` contains reviewed mainnet contract addresses.
+lite-client mainnet pool. Startup requires a valid current-network
+`INDEXER_RELEASE_MANIFEST`; there is no bundled contract-address map. A registered
+PerpsEngine also requires the separately qualified native admission package,
+which the generic Linux image does not provide.
 
 ## Production Smoke
 ```bash
@@ -516,7 +510,7 @@ The smoke check verifies that the target host serves the TONSWAP API contract,
 not another indexer service. The CLI is always release-bound: either command
 above fails until all of the release inputs below are present in its environment.
 
-Release-bound checks fail closed unless the network, release ID, registry hash,
+Release-bound checks fail closed unless the network, release ID,
 canonical manifest path/hash, and allowed browser origin are all pinned. The
 manifest must be a canonical absolute path to a stable, single-link regular
 file in a non-symlink, non-group/other-writable parent. A release-bound check
@@ -529,7 +523,6 @@ TON_INDEXER_EXPECTED_NETWORK=localnet \
 TON_INDEXER_EXPECTED_SERVICE_ID=tonswap-local-indexer \
 TON_INDEXER_EXPECTED_PUBLIC_BASE_URL=http://127.0.0.1:8787 \
 TON_INDEXER_EXPECTED_RELEASE_ID=local-run-1 \
-TON_INDEXER_EXPECTED_REGISTRY_HASH=<sha256> \
 TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH=<sha256> \
 TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH=/absolute/path/to/release-manifest.json \
 TON_INDEXER_EXPECTED_CORS_ORIGIN=http://127.0.0.1:5173 \
@@ -558,7 +551,8 @@ route registrar requires an explicit validated network. Run `npm run test:rpc-ne
 for the focused network and SDK-protocol regressions.
 
 ## Configuration
-Environment variables (all optional):
+`INDEXER_RELEASE_MANIFEST` is required at bootstrap. Other environment variables
+have defaults or are required only for their documented feature:
 - `PORT` (default: `8787`)
 - `HOST` (default: `127.0.0.1`)
 - `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (`true` only when the service is behind a trusted proxy)
@@ -571,8 +565,11 @@ Environment variables (all optional):
 - `INDEXER_WRITE_RPC_API_KEY` (optional API key passed as `X-API-Key` to `INDEXER_WRITE_RPC_ENDPOINT`)
 - `INDEXER_RPC_PROXY_TIMEOUT_MS` (default: `30000`)
 - `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` / `LITESERVER_POOL_LOCALNET` (lite client pool; see below)
-- `INDEXER_REGISTRY_PATH` (selected network registry; defaults to `registry/{network}.json`)
-- `INDEXER_RELEASE_MANIFEST_PATH` / `TONSWAP_RELEASE_MANIFEST_PATH` (canonical release manifest; when set, startup requires exact network, key, address, and registry-hash parity with the selected registry)
+- `INDEXER_RELEASE_MANIFEST` (reviewed `tonswap-release-v1` file path or HTTPS URL; HTTP is allowed only on loopback; polled every five seconds)
+- `INDEXER_DATABASE_URL` (PostgreSQL account/market ledger; each manifest hash receives a separate release schema)
+- `INDEXER_MAX_WATCHED_ACCOUNTS` (default: `1000`, range: `1..100000`)
+- `INDEXER_MAX_PAGES_PER_SYNC` (default: `20`, range: `1..100`)
+- `INDEXER_MAX_RELATED_ACCOUNTS` (default: `256`, range: `1..1024`)
 - `INDEXER_SERVICE_ID` (default: `ti.soramitsu.io`)
 - `INDEXER_PUBLIC_BASE_URL` (default: `https://ti.soramitsu.io`)
 - `CORS_ENABLED` (`true` to enable CORS headers; default `true`)
@@ -582,7 +579,7 @@ Environment variables (all optional):
 - `CORS_ALLOW_HEADERS` (default: `content-type,accept`)
 - `CORS_EXPOSE_HEADERS` (default: `x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset`)
 - `CORS_MAX_AGE` (default: `600`)
-- `SNAPSHOT_PATH` (path to load/save in-memory snapshot)
+- `SNAPSHOT_PATH` (snapshot path prefix; the actual file includes the manifest hash and is loaded only for that release)
 - `SNAPSHOT_ON_EXIT` (`true` to write snapshot on shutdown; default `false`)
 - `SNAPSHOT_AUTOSAVE_ENABLED` (`true` to periodically persist snapshots; default `true` in production when `SNAPSHOT_PATH` is set)
 - `SNAPSHOT_AUTOSAVE_INTERVAL_MS` (default: `30000`)
@@ -608,18 +605,17 @@ Environment variables (all optional):
 - `JETTON_METADATA_TTL_MS` (default: `86400000`)
 - `WATCHLIST_REFRESH_MS` (default: `5000`)
 - `BLOCK_POLL_MS` (default: `5000`)
-- `OPCODES_PATH` (default: `../tonswap_tolk/config/opcodes.json`)
 - `LOG_LEVEL` (default: `info`)
 - `INDEXER_ADMIN_TOKEN` / `INDEXER_ADMIN_API_KEY` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
 
 Explicit enum values for `INDEXER_MODE`, `TON_NETWORK`, and `TON_DATASOURCE` fail startup when unsupported instead of silently falling back.
-If the requested `PORT` is already in use, the server will bind to the next available port and log the selected one.
+The worker binds the configured `PORT`. If it is occupied, startup fails and the supervisor retries; a release reload never silently moves the public API to another port.
 
 Production safeguards:
-- In `INDEXER_MODE=production TON_NETWORK=mainnet`, placeholder, malformed, or testnet-only required registry addresses fail startup.
-- `npm run audit:deployment-evidence -- --require-ready` also rejects ready
-  deployment evidence while `registry/mainnet.json` still has placeholder,
-  missing, or malformed required mainnet addresses.
+- Missing, malformed, unauthenticated or wrong-network release manifests fail startup.
+- Code pins and deployment bindings come only from that manifest. Opcode definitions are bundled with the service.
+- A changed manifest hash stops the old child worker before a fresh process starts with separate snapshots, PostgreSQL schema, jobs, caches and native admission workers.
+- `npm run audit:deployment-evidence -- --require-ready` requires recorded Docker image and successful live smoke evidence.
 - For `https://ti.soramitsu.io` production deployment guidance, see `docs/ti-production.md`.
 
 ## API
@@ -720,38 +716,33 @@ Metrics payload highlights:
 - `cache_stats`: balance/tx hit rates
 - `backfill_*`: pending/inflight plus batch/tx counters
 
-## Registry Sync
-Refresh testnet registry data from one reviewed canonical release manifest:
-```bash
-npm run sync-registry -- /absolute/path/to/release-manifest.json
-npm run sync-registry -- --check /absolute/path/to/release-manifest.json
-```
-`sync-registry` validates the release schema, network and hashes, then atomically replaces the entire contract map. It never merges addresses from old deployments or `tmp_debug`. `--check` performs the same canonical manifest validation and verifies every bundled registry role and address without writing files; missing, extra or changed entries exit unsuccessfully. Use it to catch stale repository setup data before publication. The bundled map is a source snapshot, not proof of the currently deployed release: verify the public `/contracts` and `/service-info` release identity and hashes against the same reviewed manifest. A different or retired public deployment must not be copied into a fresh candidate.
+## Release Manifest
 
-Release runs provide the sole `tonswap-release-v1` runtime manifest from the
-native deployer. It contains `network`, `globalId`, `releaseId`, source/build
-identity, services, singleton `contracts`, child-code `templates`, `tokens`,
-`spotMarkets`, `perpsMarkets`, `options`, and `manifestHash`. Every singleton is
-exactly `{ "address": "0:<64 lowercase hex>", "codeHash": "<64 lowercase hex>" }`;
-legacy aliases and prior release schemas are rejected. The selected registry
-must contain exactly those singleton roles and raw addresses. `registryHash` is
-computed locally as SHA-256 of the sorted address map encoded as compact JSON
-plus a trailing newline; it is not a manifest field. `manifestHash` is SHA-256
-of the recursively key-sorted manifest with `manifestHash` omitted.
+Set `INDEXER_RELEASE_MANIFEST` to the native deployer's reviewed
+`tonswap-release-v1` manifest file or HTTPS URL. Loopback HTTP is supported for
+local release runs. The supervisor polls it every five seconds. A changed
+`manifestHash` drains and stops the previous child worker before starting a fresh
+process; each release retains its own snapshot files and PostgreSQL schema, so
+old ledger jobs and cursor generations cannot resume under new bindings.
 
-Manifest code pins configure existing perps, option, launchpad and spot ledger
-bindings. Explicit environment pins must agree with that runtime identity.
-External token roots without a manifest code hash remain unqualified unless a
-separate explicit matching root binding is configured. Reserve wallet custody
-still requires exact on-chain discovery and archive evidence; the manifest does
-not fabricate it. Native perps admission artifacts and configured chain/genesis
-authentication remain required. A manifest's deployed identities do not establish
-fresh oracle depth, mint delivery, writer backing or an economically funded Cover
-product.
+The manifest contains `network`, `globalId`, `releaseId`, source/build identity,
+services, singleton `contracts`, child-code `templates`, `tokens`, `spotMarkets`,
+`perpsMarkets`, `options`, and `manifestHash`. Singleton entries are exact
+address/codeHash objects. The SHA-256 digest authenticates recursively key-sorted
+manifest content with `manifestHash` omitted. `/contracts` and `/service-info`
+expose `release: { releaseId, manifestHash }` for the running worker. There is no
+static registry, registry sync, secondary pin source or registry parity check.
+
+Manifest pins configure perps, options, launchpad, T3 recovery and spot ledger
+bindings. External token roots without a manifest code hash remain unqualified.
+Reserve wallet custody still requires exact on-chain identity and archive
+evidence. Native perps admission artifacts and chain/genesis authentication
+remain required. Deployed identities do not establish fresh oracle depth, mint
+delivery, writer backing or an economically funded Cover product.
 
 ## Notes
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
-- Jetton balances use the runtime manifest's explicit token roots (`T3Root`, `TSRoot`, `USDT`, `USDC`, `KUSD`); source-only registry configurations discover keys ending with `Root`. Concurrent HTTP and SSE balance reads share one request per owner. Cold native reads return independently of transaction backfill; store updates still respect the account's history lock. On-chain metadata is cached and refreshed in the background, so slow metadata never delays verified raw balances. Unknown precision continues to omit formatted amounts and decimals; subsequent snapshots include metadata once available. Run `npm run test:balances` for the cold-wallet latency and concurrency regressions.
+- Jetton balances use the runtime manifest's explicit T3, TS, USDT, USDC and KUSD token roots. Concurrent HTTP and SSE balance reads share one request per owner. Cold native reads return independently of transaction backfill; store updates still respect the account's history lock. On-chain metadata is cached and refreshed in the background, so slow metadata never delays verified raw balances. Unknown precision continues to omit formatted amounts and decimals; subsequent snapshots include metadata once available. Run `npm run test:balances` for the cold-wallet latency and concurrency regressions.
 - Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.
 - Swap classifier now also decodes optional execution hints from swap `queryId` (market/limit/twap, optional twap slice/total, and optional token symbol codes) and returns them in both `detail` and `actions` for `kind: "swap"` tx entries.
 - Swap hint decoding also exposes `querySequence` + `queryNonce` (from queryId metadata) so clients can group TWAP slices by run.
@@ -760,7 +751,7 @@ product.
   the actual outbound transfer amount was decoded and matched to the inbound
   swap query ID. It excludes `minOut` fallbacks, normalizes both directions
   into quote-per-base OHLCV, and includes the source transaction IDs in every
-  candle. With a release manifest configured, the requested key, pool, symbols,
+  candle. The requested key, pool, symbols,
   and decimals must exactly match one of its canonical markets.
 - `/accounts/{addr}/swaps` also returns chart helpers:
   - `summary` (status + execution type counters, pending limit count, twap run count)
@@ -787,14 +778,11 @@ product.
 
 ### Exact perps ledger evidence
 
-The runtime manifest pins the current-network `PerpsEngine` code hash automatically.
-An explicit `LEDGER_PERPS_ENGINE_CODE_HASH` must match it; without a runtime manifest,
-configure the independently approved current-network artifact hash. Undefined, empty, or whitespace-only values
-leave perps settlement unconfigured. Every nonempty value must be exactly 64 lowercase
-hexadecimal characters: prefixes, uppercase, surrounding whitespace, and malformed
-values fail startup. There is one registry engine and one hash, with no automatic
-network fallback. Physical wallet transfers remain visible when this binding is absent.
-
+The release manifest supplies the current-network `PerpsEngine` identity and
+approved code hash. Historical account code and state must match that binding;
+RPC-observed code never defines the allowlist. Missing or mismatched deployment
+qualification leaves product settlement unresolved while preserving physical
+wallet transfers.
 Current positions require exactly four counterparty coins in this order: reserved
 LP cash, booked positive funding, collected trader loss, and remaining cumulative
 gross entitlement. OPEN reserves 2N of LP cash and grants entitlement N using the
@@ -974,15 +962,12 @@ negative and process-cleanup tests run with
 
 ### Option exercise, payout and individual refunds
 
-Set `LEDGER_OPTIONS_CODE_HASHES_JSON` to an object containing exactly
-`factoryCodeHash`, `vaultCodeHash`, `shoutCodeHash`, `outperformanceCodeHash`, and
-`walletCodeHash`. Every value must be a lowercase 64-character TON Cell hash from
-the qualified current-network artifacts. The registry supplies `OptionFactory`,
-`OptionVault`, and `T3Root`; their observed code/configuration must match this
-binding. Omitted or empty configuration is unconfigured, with no public-network
-fallback. A missing/mismatched binding leaves option settlement unverified,
-including historical purchases, while preserving known physical movements.
-
+The release manifest's OptionFactory/OptionVault/T3Root singletons and
+`ShoutOption`, `OutperformanceOption` and `JettonWallet` templates supply option
+qualification. Observed
+code/configuration and exact historical evidence must match those pins. Missing
+or mismatched bindings leave option settlement unverified, including historical
+purchases, while preserving known physical movements.
 `option_exercise` identifies the original owner, factory, series and position,
 the exact original FEXC body hash, and the qualified historical factory/product
 state boundaries. Shout requires its product callback and deleted product right;
@@ -1096,11 +1081,11 @@ the same shutdown path used by `npm start`.
 
 ### Launchpad participation and refund ledger evidence
 
-Set `LEDGER_LAUNCHPAD_CODE_HASHES_JSON` to an object containing exactly
-`fixedCodeHash`, `bondingCodeHash`, `auctionCodeHash` and `walletCodeHash`, all lowercase 64-character Cell hashes
-qualified from the deployment artifacts for the selected network. RPC-observed
-code never defines this allowlist. Without qualification, Launchpad token
-movements retain exact cash and fee evidence with unresolved product settlement.
+The release manifest supplies deployment-qualified `SaleFixed`, `SaleBonding`,
+`SaleAuction` and `JettonWallet` template hashes for the
+selected network. RPC-observed code never defines this allowlist. Without
+qualification, Launchpad token movements retain exact cash and fee evidence with
+unresolved product settlement.
 Known sale addresses come from release-manifest markets and observed claim or
 contribution destinations. An empty-payload return can also be discovered through
 its independently resolved source wallet owner.

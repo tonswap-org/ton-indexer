@@ -68,11 +68,9 @@ export const buildOpenApi = (config: Config) => {
             network: { type: ['string', 'null'] },
             count: { type: 'integer' },
             contracts: { type: 'object', additionalProperties: { type: 'string' } },
-            release_id: { type: ['string', 'null'] },
-            registry_hash: { type: ['string', 'null'] },
-            release_manifest_hash: { type: ['string', 'null'] },
+            release: { type: 'object', additionalProperties: false, properties: { releaseId: { type: ['string', 'null'] }, manifestHash: { type: ['string', 'null'] } }, required: ['releaseId', 'manifestHash'] },
           },
-          required: ['count', 'contracts', 'release_id', 'registry_hash', 'release_manifest_hash'],
+          required: ['count', 'contracts', 'release'],
         },
         ServiceInfoResponse: {
           type: 'object',
@@ -91,10 +89,9 @@ export const buildOpenApi = (config: Config) => {
               type: 'object',
               properties: {
                 releaseId: { type: ['string', 'null'] },
-                registryHash: { type: ['string', 'null'] },
-                releaseManifestHash: { type: ['string', 'null'] },
+                manifestHash: { type: ['string', 'null'] },
               },
-              required: ['releaseId', 'registryHash', 'releaseManifestHash'],
+              required: ['releaseId', 'manifestHash'],
             },
           },
           required: [

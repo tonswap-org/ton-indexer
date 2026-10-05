@@ -88,7 +88,7 @@ const config = {
   maxPagesPerAddress: 20,
   globalMaxPages: 100,
 };
-const opcodes = loadOpcodes(undefined);
+const opcodes = loadOpcodes();
 
 const makeWorker = (store: MemoryStore, source: TonDataSource) =>
   new BackfillWorker(config, store, source, opcodes, createLogger('fatal'));

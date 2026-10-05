@@ -16,7 +16,7 @@ const config = {
 };
 
 const store = new MemoryStore({ ...config, maxAddresses: 10 });
-const opcodes = loadOpcodes(undefined);
+const opcodes = loadOpcodes();
 let accountStateCalls = 0;
 const txHash = (lt: number) =>
   Buffer.from(BigInt(lt).toString(16).padStart(64, '0'), 'hex').toString('base64');

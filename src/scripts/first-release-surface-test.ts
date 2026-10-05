@@ -9,6 +9,16 @@ import { loadConfig } from '../config';
 const root = resolve(__dirname, '../..');
 const retiredFiles = [
   'src/config/ledgerBridge.ts',
+  'src/config/ledgerPerps.ts',
+  'src/config/ledgerOptions.ts',
+  'src/config/ledgerLaunchpad.ts',
+  'src/config/ledgerT3.ts',
+  'src/config/ledgerMarkets.ts',
+  'src/config/registry.ts',
+  'src/scripts/refresh-registry.ts',
+  'registry/mainnet.json',
+  'registry/testnet.json',
+  'registry/localnet.json',
   'src/ledger/sccp.ts',
   'src/ledger/sccpWire.ts',
   'src/utils/sccpEvidence.ts',
@@ -27,7 +37,6 @@ const activeRoots = [
   'src/ledger',
   'src/index.ts',
   'src/indexerService.ts',
-  'registry',
   'package.json',
   'README.md',
 ];

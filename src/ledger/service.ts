@@ -44,10 +44,10 @@ export class LedgerService {
       marketBindings?: import("./marketTypes").DlmmMarketBinding[];
       optionFactory?: string;
       optionVault?: string;
-      optionCodeHashes?: import("../config/ledgerOptions").LedgerOptionsCodeHashes;
-      launchpadCodeHashes?: import("../config/ledgerLaunchpad").LedgerLaunchpadCodeHashes;
+      optionCodeHashes?: import("./bindings").LedgerOptionsCodeHashes;
+      launchpadCodeHashes?: import("./bindings").LedgerLaunchpadCodeHashes;
       launchpadControllers?: string[];
-      t3RedemptionBinding?: import("../config/ledgerT3").LedgerT3RedemptionBinding;
+      t3RedemptionBinding?: import("./bindings").LedgerT3RedemptionBinding;
       t3Hub?: string;
       t3Root?: string;
       perpsEngine?: string;

@@ -74,7 +74,7 @@ const testUnknownJettonDecimalsAreOmitted = async () => {
     config,
     new MemoryStore(config),
     source as any,
-    loadOpcodes(undefined),
+    loadOpcodes(),
     [{ master, symbol: 'UNKNOWN' }]
   );
   const balance = await service.getBalance(owner);
@@ -131,7 +131,7 @@ const testPartialBalancePreservesSourceFreshness = async () => {
     config,
     store,
     source as any,
-    loadOpcodes(undefined),
+    loadOpcodes(),
     [{ master, symbol: 'UNKNOWN' }]
   );
 

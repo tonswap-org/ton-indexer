@@ -68,7 +68,7 @@ async function main() {
     {
       releaseId: 'local-run-1',
       registryHash: 'a'.repeat(64),
-      releaseManifestHash: 'b'.repeat(64),
+      manifestHash: 'b'.repeat(64),
     }
   );
   const localHealth = (await localApp.inject({ method: 'GET', url: '/api/indexer/v1/health' })).json();
@@ -79,12 +79,13 @@ async function main() {
   const localInfo = (await localApp.inject({ method: 'GET', url: '/api/indexer/v1/service-info' })).json();
   assert.equal(localInfo.publicBaseUrl, 'http://127.0.0.1:8787');
   assert.equal(localInfo.release.releaseId, 'local-run-1');
-  assert.equal(localInfo.release.registryHash, 'a'.repeat(64));
+  assert.deepEqual(localInfo.release, { releaseId: 'local-run-1', manifestHash: 'b'.repeat(64) });
 
   const contracts = (await localApp.inject({ method: 'GET', url: '/api/indexer/v1/contracts' })).json();
   assert.equal(contracts.network, 'localnet');
-  assert.equal(contracts.release_id, 'local-run-1');
-  assert.equal(contracts.registry_hash, 'a'.repeat(64));
+  assert.deepEqual(contracts.release, localInfo.release);
+  assert.equal('registry_hash' in contracts, false);
+  assert.equal('release_manifest_hash' in contracts, false);
   await localApp.close();
 
   process.stdout.write('service-info ok\n');

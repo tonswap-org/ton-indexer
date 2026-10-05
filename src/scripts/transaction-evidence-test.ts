@@ -134,7 +134,7 @@ export async function runTransactionEvidenceTests() {
   });
   await test('real service plus both HTTP routes return decodable BOCs, honor cap, and never read summary caches', async () => {
     const config = { ...loadConfig(), network: 'testnet' as const, initialHistoryTimeoutMs: 10000 };
-    const service = new IndexerService(config, new MemoryStore(config), makeSource(), loadOpcodes(undefined), []);
+    const service = new IndexerService(config, new MemoryStore(config), makeSource(), loadOpcodes(), []);
     service.getTransactions = async () => { throw Error('summary cache is not evidence'); };
     service.getTransactionsByCursor = async () => { throw Error('summary cursor is not evidence'); };
     const app = fastify({ logger: false }); registerRoutes(app, config, service); await app.ready();
@@ -151,7 +151,7 @@ export async function runTransactionEvidenceTests() {
   });
   await test('HTTP evidence failure cannot return ok:true summary rows', async () => {
     const config = loadConfig();
-    const service = new IndexerService(config, new MemoryStore(config), makeSource(async () => [{ ...head, rawBoc: undefined }]), loadOpcodes(undefined), []);
+    const service = new IndexerService(config, new MemoryStore(config), makeSource(async () => [{ ...head, rawBoc: undefined }]), loadOpcodes(), []);
     const app = fastify({ logger: false }); registerRoutes(app, config, service); await app.ready();
     try {
       const response = await app.inject({ method: 'POST', url: '/jsonRPC', payload: { id: 1, method: 'getTransactions', params: { address: owner.address.toRawString(), lt: head.lt, hash: head.hash } } });

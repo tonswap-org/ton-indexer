@@ -92,7 +92,7 @@ const basicRoutes = (): Routes => ({
       publicBaseUrl: 'https://ti.soramitsu.io',
       readOnly: true,
       endpoints: { openapi: '/api/indexer/v1/openapi.json' },
-      release: { releaseId: null, registryHash: null, releaseManifestHash: null },
+      release: { releaseId: null, manifestHash: null },
     },
   },
   '/api/indexer/v1/contracts': {
@@ -100,9 +100,7 @@ const basicRoutes = (): Routes => ({
       network: 'mainnet',
       count: 1,
       contracts: { T3Root: address(1) },
-      registry_hash: null,
-      release_id: null,
-      release_manifest_hash: null,
+      release: { releaseId: null, manifestHash: null },
     },
   },
   '/api/indexer/v1/openapi.json': { body: openApi() },
@@ -166,8 +164,7 @@ const strictFixture = (root: string, comparisonOnly = false) => {
         endpoints: { openapi: '/api/indexer/v1/openapi.json' },
         release: {
           releaseId,
-          registryHash: parsed.registryHash,
-          releaseManifestHash: parsed.releaseManifestHash,
+          manifestHash: parsed.manifestHash,
         },
       },
     },
@@ -176,9 +173,7 @@ const strictFixture = (root: string, comparisonOnly = false) => {
         network: 'testnet',
         count: Object.keys(contracts).length,
         contracts: parsed.contracts,
-        registry_hash: parsed.registryHash,
-        release_id: releaseId,
-        release_manifest_hash: parsed.releaseManifestHash,
+        release: { releaseId, manifestHash: parsed.manifestHash },
       },
     },
     '/api/indexer/v1/openapi.json': { body: openApi() },
@@ -237,8 +232,7 @@ const strictFixture = (root: string, comparisonOnly = false) => {
   const options: ProductionSmokeOptions = {
     expectedNetwork: 'testnet',
     expectedReleaseId: releaseId,
-    expectedRegistryHash: parsed.registryHash,
-    expectedReleaseManifestHash: parsed.releaseManifestHash,
+    expectedReleaseManifestHash: parsed.manifestHash,
     expectedReleaseManifestPath: manifestPath,
     expectedCorsOrigin,
     hostileCorsOrigin,
@@ -429,7 +423,6 @@ const main = async () => {
       {
         TON_INDEXER_EXPECTED_NETWORK: 'testnet',
         TON_INDEXER_EXPECTED_RELEASE_ID: releaseId,
-        TON_INDEXER_EXPECTED_REGISTRY_HASH: strict.options.expectedRegistryHash,
         TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH:
           strict.options.expectedReleaseManifestHash,
         TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH:
@@ -473,7 +466,6 @@ const main = async () => {
             TON_INDEXER_BASE_URL: baseUrl,
             TON_INDEXER_EXPECTED_NETWORK: 'testnet',
             TON_INDEXER_EXPECTED_RELEASE_ID: releaseId,
-            TON_INDEXER_EXPECTED_REGISTRY_HASH: strict.options.expectedRegistryHash,
             TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH:
               strict.options.expectedReleaseManifestHash,
             TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH:
@@ -492,7 +484,6 @@ const main = async () => {
       /TON_INDEXER_EXPECTED_NETWORK must be explicitly set/,
       {
         expectedReleaseId: strict.options.expectedReleaseId,
-        expectedRegistryHash: strict.options.expectedRegistryHash,
         expectedReleaseManifestHash: strict.options.expectedReleaseManifestHash,
         expectedReleaseManifestPath: strict.options.expectedReleaseManifestPath,
         expectedCorsOrigin,
@@ -500,13 +491,8 @@ const main = async () => {
     );
     await assertSmokeRejects(
       strict.routes,
-      /TON_INDEXER_EXPECTED_REGISTRY_HASH must be an explicit/,
+      /TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH must be an explicit/,
       { expectedNetwork: 'testnet', expectedReleaseId: releaseId }
-    );
-    await assertSmokeRejects(
-      strict.routes,
-      /release manifest registryHash must be/,
-      { ...strict.options, expectedRegistryHash: 'b'.repeat(64) }
     );
     await assertSmokeRejects(
       strict.routes,
@@ -520,10 +506,10 @@ const main = async () => {
         release: Record<string, unknown>;
       }
     ).release;
-    wrongServiceRelease.releaseManifestHash = 'b'.repeat(64);
+    wrongServiceRelease.manifestHash = 'b'.repeat(64);
     await assertSmokeRejects(
       wrongServiceManifest,
-      /service-info releaseManifestHash must be/,
+      /service-info manifestHash must be/,
       strict.options,
       { corsOrigins: [expectedCorsOrigin] }
     );

@@ -63,8 +63,7 @@ const serviceContracts = {
     dockerBuildCommand: 'docker build -t ton-indexer:release .',
     requiredBlockers: [
       'production-deployment-evidence-missing',
-      'live-production-smoke-failing',
-      'mainnet-registry-placeholders-remain'
+      'live-production-smoke-failing'
     ],
     serviceInfo: {
       schemaVersion: 1,
@@ -74,6 +73,10 @@ const serviceContracts = {
       network: 'mainnet',
       publicBaseUrl: 'https://ti.soramitsu.io',
       readOnly: true,
+      release: {
+        releaseId: 'TODO_DEPLOYED_RELEASE_ID',
+        manifestHash: 'TODO_64_HEX_RELEASE_MANIFEST_HASH'
+      },
       endpoints: {
         openapi: '/api/indexer/v1/openapi.json'
       }
@@ -252,7 +255,15 @@ function validateServiceInfo(value, contract, currentPath) {
     return;
   }
 
-  rejectUnsupportedKeys(value, requiredServiceInfoFields, currentPath);
+  const fields = contract.serviceInfo.ecosystem === 'ton' ? [...requiredServiceInfoFields, 'release'] : requiredServiceInfoFields;
+  rejectUnsupportedKeys(value, fields, currentPath);
+  if (contract.serviceInfo.ecosystem === 'ton' && Object.prototype.hasOwnProperty.call(value, 'release')) {
+    if (!value.release || typeof value.release !== 'object' || Array.isArray(value.release)) {
+      fail(`${currentPath}.release must be an object`);
+    } else {
+      rejectUnsupportedKeys(value.release, ['releaseId', 'manifestHash'], `${currentPath}.release`);
+    }
+  }
   for (const field of ['schemaVersion', 'serviceId', 'ecosystem', 'chainId', 'network', 'publicBaseUrl']) {
     if (value[field] !== contract.serviceInfo[field]) {
       fail(`${currentPath}.${field} must be ${contract.serviceInfo[field]}`);
@@ -375,8 +386,11 @@ if (manifest) {
     if (blockerSet.size !== blockers.length) {
       fail('duplicate deployment evidence blocker in manifest');
     }
+    const allowedBlockers = new Set(contract.requiredBlockers);
+    // Historical evidence is preserved without a retired registry dependency.
+    if (manifest.serviceId === 'ti.soramitsu.io') allowedBlockers.add('mainnet-registry-placeholders-remain');
     for (const blocker of blockers) {
-      if (!contract.requiredBlockers.includes(blocker)) {
+      if (!allowedBlockers.has(blocker)) {
         fail(`unsupported deployment evidence blocker in manifest: ${blocker}`);
       }
     }

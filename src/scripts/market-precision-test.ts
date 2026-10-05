@@ -7,7 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readHistoricalJettonRoot, readHistoricalPrecisionContent, resolveHistoricalJettonPrecision, validateHistoricalJettonPrecision, type HistoricalRootArchive } from '../ledger/jettonPrecision';
 import { canonicalLedgerHash, normalizeLedgerEvent } from '../ledger/normalize';
 import { loadOpcodes } from '../utils/opcodes';
-import { parseLedgerMarketBindings } from '../config/ledgerMarkets';
+import { validateMarketBindings } from '../ledger/bindings';
 import { DlmmMarketGraphBuilder } from '../ledger/marketGraph';
 import { projectDlmmMarket } from '../ledger/marketProjection';
 import { PostgresMarketStore, validateMarketProjection } from '../ledger/marketStore';
@@ -45,7 +45,7 @@ test('authentic deployed root metadata explicitly records6 and9 with unchanged c
   readHistoricalJettonRoot(boundary.after.dataBoc);roots++;
  }assert(roots>=10,'fresh deployment and execution boundaries all use the sole current JTRS layout');
 });
-test('root code bindings are mandatory canonical deployment inputs',()=>{assert.deepEqual(parseLedgerMarketBindings(JSON.stringify([binding]),'localnet'),[binding]);for(const key of ['tokenTCodeHash','tokenXCodeHash'] as const){const missing={...binding} as Partial<DlmmMarketBinding>;delete missing[key];assert.throws(()=>parseLedgerMarketBindings(JSON.stringify([missing]),'localnet'));assert.throws(()=>parseLedgerMarketBindings(JSON.stringify([{...binding,[key]:'current-rpc'}]),'localnet'));}});
+test('root code bindings are mandatory canonical deployment inputs',()=>{assert.deepEqual(validateMarketBindings([binding],'localnet'),[binding]);for(const key of ['tokenTCodeHash','tokenXCodeHash'] as const){const missing={...binding} as Partial<DlmmMarketBinding>;delete missing[key];assert.throws(()=>validateMarketBindings([missing],'localnet'));assert.throws(()=>validateMarketBindings([{...binding,[key]:'current-rpc'}],'localnet'));}});
 test('explicit archived precision has source/content/field proof and does not require equality of cross-account logical times',()=>{
  const archive=archived(rootState(binding.tokenT));const known=resolveHistoricalJettonPrecision(rootBinding,execution,archive);assert.equal(known.status,'resolved');assert.equal(known.decimals,6);assert.equal(known.method,'onchain-explicit');assert.equal(known.content!.decimalsText,'6');assert(known.content!.decimalsFieldBoc);assert.equal(known.archive!.executionSeqno,50);validateHistoricalJettonPrecision(known,rootBinding,execution);
  const altered=structuredClone(known);altered.decimals=9;assert.throws(()=>validateHistoricalJettonPrecision(altered,rootBinding,execution));

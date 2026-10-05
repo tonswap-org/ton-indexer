@@ -421,8 +421,7 @@ export const registerRoutes = (
     },
     release: {
       releaseId: registryMetadata?.releaseId ?? null,
-      registryHash: registryMetadata?.registryHash ?? null,
-      releaseManifestHash: registryMetadata?.releaseManifestHash ?? null
+      manifestHash: registryMetadata?.manifestHash ?? null
     }
   };
 
@@ -460,9 +459,7 @@ export const registerRoutes = (
       network: config.network ?? null,
       count: contractEntries.length,
       contracts: contractMap,
-      release_id: registryMetadata?.releaseId ?? null,
-      registry_hash: registryMetadata?.registryHash ?? null,
-      release_manifest_hash: registryMetadata?.releaseManifestHash ?? null
+      release: serviceInfo.release
     };
   });
 
@@ -1678,7 +1675,7 @@ export const registerRoutes = (
         canonicalCandleMarkets.length > 0
           ? canonicalCandleMarkets.find((market) => market.marketKey === marketKey)
           : undefined;
-      if (registryMetadata?.releaseManifestHash && !canonicalMarket) {
+      if (registryMetadata?.manifestHash && !canonicalMarket) {
         return sendError(reply, 404, 'not_found', 'market is absent from the canonical release manifest');
       }
       if (

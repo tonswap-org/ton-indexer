@@ -10,7 +10,7 @@ import { TonDataSource } from '../data/dataSource';
 const config = loadConfig();
 const store = new MemoryStore({ ...config, maxAddresses: 10 });
 const logger = createLogger('fatal');
-const opcodes = loadOpcodes(undefined);
+const opcodes = loadOpcodes();
 
 const dummySource: TonDataSource = {
   network: 'mainnet',

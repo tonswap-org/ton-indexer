@@ -43,7 +43,9 @@ export function validateDeploymentManifest(root = process.cwd()) {
   assert.match(dockerfile, /\bRUN\s+npm\s+ci\b/i, 'Dockerfile must install from package-lock.json with npm ci.');
   assert.match(dockerfile, /\bRUN\s+npm\s+run\s+build\b/i, 'Dockerfile must compile TypeScript during image build.');
   assert.match(dockerfile, /\bRUN\s+npm\s+prune\s+--omit=dev\b/i, 'Dockerfile must prune dev dependencies from runtime node_modules.');
-  assert.match(dockerfile, /COPY\s+--from=build[\s\S]+\/app\/registry\s+\.\/registry/i, 'Dockerfile must carry the reviewed registry files into runtime.');
+  assert.match(dockerfile, /COPY\s+--from=build[^\n]*\/app\/dist\s+\.\/dist/i, 'Dockerfile must carry compiled application code into runtime.');
+  assert.doesNotMatch(dockerfile, /^\s*(?:COPY|ADD)\b[^\n]*\bregistry(?:[\/\s]|$)/im, 'Dockerfile must not bundle retired registry files.');
+  assert.doesNotMatch(dockerfile, /\bINDEXER_RELEASE_MANIFEST\s*=/i, 'Dockerfile must receive the release manifest source at runtime.');
   assert.match(dockerfile, /\bUSER\s+node\b/i, 'Dockerfile must run as the bundled non-root node user.');
   assert.match(dockerfile, /\bEXPOSE\s+8787\b/, 'Dockerfile must expose port 8787.');
   assert.match(dockerfile, /HEALTHCHECK[\s\S]+\/api\/indexer\/v1\/health/i, 'Dockerfile must healthcheck the v1 health route.');
@@ -74,6 +76,8 @@ export function validateDeploymentManifest(root = process.cwd()) {
     'TON_NETWORK=mainnet',
     'ti.soramitsu.io',
     '/api/indexer/v1/service-info',
+    '-e INDEXER_RELEASE_MANIFEST=/release/manifest.json',
+    'dst=/release/manifest.json,readonly',
     'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
   ]) {
     assert.match(productionDoc, new RegExp(escapeRegex(requiredText)), `Production docs must mention ${requiredText}.`);
@@ -125,6 +129,20 @@ const main = () => {
     [CI_WORKFLOW]: readText(process.cwd(), CI_WORKFLOW),
   };
 
+  assertRejectsFixture(
+    {
+      ...actualFiles,
+      [DOCKERFILE]: actualFiles[DOCKERFILE] + '\nCOPY registry ./registry\n',
+    },
+    /Dockerfile must not bundle retired registry files/,
+  );
+  assertRejectsFixture(
+    {
+      ...actualFiles,
+      [DOCKERFILE]: actualFiles[DOCKERFILE] + '\nENV INDEXER_RELEASE_MANIFEST=/release/default.json\n',
+    },
+    /Dockerfile must receive the release manifest source at runtime/,
+  );
   assertRejectsFixture(
     {
       ...actualFiles,

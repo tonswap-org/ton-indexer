@@ -10,7 +10,7 @@ import { projectDlmmMarket } from '../ledger/marketProjection';
 import { PostgresMarketStore } from '../ledger/marketStore';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import { canonicalLedgerHash, normalizeLedgerEvent } from '../ledger/normalize';
-import { parseLedgerMarketBindings } from '../config/ledgerMarkets';
+import { validateMarketBindings } from '../ledger/bindings';
 import { loadOpcodes } from '../utils/opcodes';
 import type { LedgerService } from '../ledger/service';
 import type { TonDataSource } from '../data/dataSource';
@@ -19,9 +19,9 @@ async function main() {
     const f = JSON.parse(readFileSync(`${__dirname}/fixtures/dlmm-referral-liquidity-current/dlmm-liquidity-settlements.json`, 'utf8'));
     const code = (suffix: string) => f.compiler.find((c: any) => c.entrypointFileName.endsWith(suffix)).codeHash;
     const binding: DlmmMarketBinding = { network: 'localnet', pool: f.accounts.pool, router: f.accounts.router, routerCodeHash: code('/dex/router.tolk'), poolCodeHash: code('/dlmm/pool.tolk'), walletCodeHash: code('/jetton/jetton_wallet.tolk'), tokenT: f.accounts.tokenT, tokenX: f.accounts.tokenX, tokenTCodeHash: code('/jetton/jetton_root.tolk'), tokenXCodeHash: code('/jetton/jetton_root.tolk') };
-    assert.deepEqual(parseLedgerMarketBindings(JSON.stringify([binding]), 'localnet'), [binding]);
+    assert.deepEqual(validateMarketBindings([binding], 'localnet'), [binding]);
     for (const changed of [{ ...binding, router: null }, { ...binding, routerCodeHash: null }, { ...binding, routerCodeHash: 'current' }])
-        assert.throws(() => parseLedgerMarketBindings(JSON.stringify([changed]), 'localnet'));
+        assert.throws(() => validateMarketBindings([changed], 'localnet'));
     const db = new PGlite(), pool = { query: async (sql: string, args?: any[]) => args === undefined ? (await db.exec(sql)).at(-1) ?? { rows: [] } : db.query(sql, args), connect: async () => pool, end: async () => db.close() } as unknown as LedgerSqlPool;
     const store = new PostgresLedgerStore(pool), market = new PostgresMarketStore(pool);
     await store.initialize();
