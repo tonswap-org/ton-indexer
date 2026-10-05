@@ -1,3 +1,4 @@
+import { assertCaptureCode } from './capture-build';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -36,11 +37,11 @@ export async function testPerpsRangeWalletIdentity() {
   }
   const folder = 'perps-range-funded-current';
   const provenance = fixture(`${folder}/provenance.json`);
-  assert.equal(provenance.qualification,'qualified-after-native-source-lock');
+  assert.equal(provenance.qualification,'qualified-pure-build-target-closure');
   for(const producer of ['risk','wallets'] as const){
     const receipt=provenance.producerReceipts?.[producer];
     assertPerpsProducerReceipt(receipt,producer,resolve(__dirname,'../../../tonswap_tolk'),
-      receipt?.captureDirectory,Buffer.from(provenance.producerLogs?.[producer]??''));
+      receipt?.captureDirectory,Buffer.from(provenance.producerLogs?.[producer]??''),provenance.buildBindings?.[producer]);
   }
   for (const artifact of provenance.artifacts) {
     const bytes = readFileSync(join(__dirname, 'fixtures', folder, artifact.relative));
@@ -49,10 +50,16 @@ export async function testPerpsRangeWalletIdentity() {
     const receipt=provenance.producerReceipts[artifact.relative==='current-wallets.json'?'wallets':'risk'];
     assert.equal(dirname(artifact.source),receipt.captureDirectory);
     assert.equal(artifact.sha256,receipt.artifacts[basename(artifact.source)]);
+    assert(provenance.buildBindings[receipt.producer].captures[basename(artifact.source)]);
   }
   const open = fixture(`${folder}/open.json`), close = fixture(`${folder}/close.json`);
   const range = fixture(`${folder}/range.json`);
+  for (const account of parallelCapture.wallets) assertCaptureCode('JettonWallet', account.codeBoc, provenance.buildBindings.wallets);
   for (const captured of [open, close, range]) {
+    for (const [field, role] of Object.entries({ engineCode: 'PerpsEngine', poolCode: 'DlmmPool',
+      walletCode: 'JettonWallet', riskVaultCode: 'RiskVault', riskControllerCode: 'RiskController' })) {
+      assertCaptureCode(role, captured[field], provenance.buildBindings.risk);
+    }
     assert.equal(hash(captured.engineCode), provenance.engineCodeHash);
     assert.equal(hash(captured.poolCode), provenance.poolCodeHash);
   }

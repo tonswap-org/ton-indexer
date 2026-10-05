@@ -19,16 +19,14 @@ count. The count does not certify Registry activation, market admission or
 settlement. Run `npx tsx src/scripts/history-integrity-test.ts` after changing
 this boundary; `npm test` includes that check.
 
-The retained Factory fixture binds its complete native source inventory,
-independent compiler BOCs and original transaction/account boundaries. Its five
-temporary compiler entrypoints are derived in memory from the authenticated
-original source and exact mode banners: the five retained canonical renderer
-definitions are identity transforms. Their source, descriptors and imports remain
-hash-bound, but validation does not execute native modules. Changed inputs or mode
-banners fail the captured compiler-input hashes. Clean checkouts do not need generated
-entrypoint files, and leftover generated files cannot supply evidence. The history
-test covers absent entrypoints, altered source/renderer/descriptor bindings,
-omitted inputs and unbound module shadows without modifying the native package.
+The retained Factory fixture authenticates nine compiler BOCs against the reviewed
+pure build manifest and their individual current Tolk import closures. Its capture
+binding separately records the three targets actually observed in the producer.
+Original transaction/account boundaries and callback messages remain mandatory.
+Verification reads retained target declarations as data, independently renders
+virtual opcode inputs, and never imports native build or release helpers. The
+history test rejects missing or changed sources, omitted compiler roles, altered
+code, traversal and symlinks; unrelated native modules cannot supply authority.
 
 System-health snapshots decode the current 21-field RiskController getter with
 separate atomic `configuredGrossBudget` and `committedGrossBudget` values, and
@@ -1575,7 +1573,7 @@ transaction cells and exact historical storage boundaries; older captures remain
 unchanged and cannot enable a compatibility decoder. Run `npm run test:ledger`
 for chain identity, oracle admission, funding, payout, retry and range coverage.
 
-Current jetton wallet identity and settlement readers share the strict `readT3RecoveryWallet` decoder for the tagged three-reference `JTW1` tree, including the fixed 793-bit workchain/hash identity tuple and mandatory mint receipts and referral notifications in the bounded journals cell. Absent delegates require zero fixed fields; flat roots, noncanonical coin widths and omitted-dictionary layouts are rejected. Run `npm run build` and `npm run test:ledger` after changing it. The range identity test uses explicitly qualified current-source sandbox OPEN/CLOSE transactions; the earlier testnet capture remains unchanged and is exercised only as an obsolete-layout rejection. Fixture provenance records the generator, source inventory and original artifact hashes.
+Current jetton wallet identity and settlement readers share the strict `readT3RecoveryWallet` decoder for the tagged three-reference `JTW1` tree, including the fixed 793-bit workchain/hash identity tuple and mandatory mint receipts and referral notifications in the bounded journals cell. Absent delegates require zero fixed fields; flat roots, noncanonical coin widths and omitted-dictionary layouts are rejected. Run `npm run build` and `npm run test:ledger` after changing it. The range identity test uses explicitly qualified current-source sandbox OPEN/CLOSE transactions; the earlier testnet capture remains unchanged and is exercised only as an obsolete-layout rejection. Fixture provenance records the pure-build target closures, reviewed capture maps and original artifact hashes.
 
 Current perps journal qualification uses a 128-record eligibility index. The exact count, unique wire ids, protected paid orders and receipt/index bijection are verified by the sole current state reader. Run `npm run test:ledger` for actual engine callback, settlement and current-source range fixtures.
 
@@ -1658,59 +1656,57 @@ Run `npm run test:ledger:launchpad` to verify all three
 current model captures and their independent wallet/state evidence.
 # Current Perps fixture qualification
 
-Perps ledger fixtures are original local VM captures, not evidence of live
-testnet deployment. Regenerate them through `src/scripts/capture-perps-fixture.ts`
-using Node 26.5.1 with `--no-turbo-fast-api-calls`, `--import tsx`, and `NODE_OPTIONS`
-unset. The producer argument is `risk`, `wallets`, `browser`, `directFee`, or `funding`; the
-second argument is a new absolute output directory. Each run requires its complete
-native suite, binds the transitive TypeScript/Tolk sources and toolchain before
-and after execution, independently recompiles the code, and saves immutable
-artifact hashes and a complete producer log.
+Perps ledger fixtures preserve original local VM transactions and account state
+commitments; they are not evidence of a live testnet deployment. Capture through
+`npm run capture -- <risk|wallets|browser|directFee|funding|factory> <new-absolute-directory>`
+in the native contract repository. The indexer's `capture-perps-fixture.ts` delegates
+to that pure-build producer. Capture directories and their complete logs are
+persistent evidence and must never be recycled as build caches.
 
-`directFeeObserved` runs the same custody assertions with a separately supplied
-observed-gas-price configuration path as its third argument. It records that
-external input and keeps the evidence separate from mandatory stress-400 gas
-qualification. This is a local fee simulation, not a live-chain trade, and
-commercial viability is separate from native-custody isolation.
+Each `tonswap-capture-producer-v1` receipt binds the complete passing suite log,
+artifact bytes, compiled Cell hashes and a `tonswap-capture-build-v1` binding.
+Current recorded runtime fields are Node v26.10.0, Tolk 1.4.2 and Sandbox 0.42.0.
+`fixtures/capture-build/manifest.json` retains the reviewed pure build manifest,
+and its producer subdirectories retain independently reviewed capture maps and all
+selected compiled artifacts. Original compiler BOCs live under `artifacts/`; their
+byte hashes are checked separately from captured Cell hashes. Verifiers
+authenticate the manifest, each executed or embedded target's exact import closure
+against current native sources, and original captured code. Unrelated targets do
+not invalidate a producer. Generated opcode inputs are independently rendered
+from `config/opcodes.json`; no native release helpers or ambient TypeScript
+modules are executed. These receipts do not claim historical producer TypeScript
+source locks or Node executable attestations.
 
-The `refresh-perps-risk-admission-fixture.ts`,
-`refresh-perps-funding-checkpoint-fixture.ts`, and
-`refresh-perps-direct-fee-fixture.ts` scripts require those producer receipts
-when using `--qualified`. `refresh-perps-range-fixture.ts` requires both the risk
-and wallet producer directories. The risk, wallet and funding captures include
-and require their exact VM15 400-nanoton/gas execution configuration; fixture
-provisioning costs and the separately labeled observed-price healthy-query
-measurement are not stress-cost evidence. `refresh-perps-direct-fee-web-fixture.ts`
-takes a complete qualified direct-fee producer directory and exports the genuine
-before/after getters plus current physical FeeRouter custody to the browser.
-Current Perps direct fees create no automatic referral earnings or claims.
-Qualified direct-fee adoption also refreshes the native release OPEN/CLOSE
-causality fixture. Qualified risk adoption to the default canonical directory
-refreshes the native profitable-close counterparty fixture. Both retain their
-complete producer receipt, log and compressed original capture bytes; native
-consumer tests recheck the current producer source closure and original graph
-bindings before proving physical custody. These tests reuse the canonical
-collector and complete-log validator from the sibling indexer source; they
-independently reconstruct the exact dependency list and reject omitted,
-duplicated, reordered or altered entries and conflicting terminal summaries.
-They read selected original artifacts retained in the fixtures, without requiring
-the historical private capture directories. A private risk `--output` export does
-not replace the native release fixture.
-After adopting the qualified risk capture, run
-`refresh-perps-funded-web-fixture.ts <new-absolute-projection-directory>` with
-the same pinned runtime. It projects all ten original operation traces through
-the indexer, checks the current code identities and stress configuration, binds
-indexer source before and after, and publishes seven genuine browser fixtures with
-their complete 53-test native receipt and projector logs. The separate wallet
-producer requires all seven tests, including cold deployment and populated-state
-protection acknowledgement at the exact caller-funded budget.
-For the five browser expiry, rejection, close and fee-excess cases, run
-`export-perps-browser-evidence.ts <absolute-qualified-browser-producer> <new-absolute-projection-directory>`.
-This requires the complete five-test producer receipt and publishes all five
-current original graphs only after their full strict projection succeeds.
-A flag, stale build output, truncated test log,
-or edited source cannot qualify a capture. Run `npm run test:ledger` after
-adoption; its Perps qualification checks reject source drift after capture.
+The risk, range, funding and direct-fee adopters require complete receipts and
+write `qualified-pure-build-target-closure` provenance. Range adoption checks both
+risk and wallet bindings. Retain the matching manifest, reviewed producer binding, original compiler BOCs
+and every selected `current-compiled` artifact when adopting a new capture; changing a retained
+manifest requires reviewing all affected consumers. The verifiers work without
+private staging directories or transient native build output. There is no
+provisional bypass. The factory retains all nine compiler pins and independently
+checks their individual closures, separately from its three observed execution
+targets. Only the known Sandbox treasury and exact factory negative-code cases
+can occur outside compiled targets.
+
+The adopted transaction BOCs, state commitments and historical rejection inputs
+remain unchanged. Risk, wallet and funding captures require their exact VM15
+400-nanoton/gas stress configuration. Fixture provisioning costs and separate
+observed-price measurements are not stress-cost evidence. Direct fees create no
+automatic referral earnings. Adopters update indexer fixtures only; they do not
+rewrite native release evidence.
+
+`refresh-perps-direct-fee-web-fixture.ts` exports physical FeeRouter custody from
+a complete direct-fee producer. After risk adoption,
+`refresh-perps-funded-web-fixture.ts <new-absolute-projection-directory>` projects
+the original operation traces and retains the receipt and projector logs.
+`export-perps-browser-evidence.ts <absolute-browser-producer> <new-absolute-projection-directory>`
+requires the complete five-test producer and strict projection of all five graphs.
+These exports preserve native custody and indexer source checks.
+
+Run `npm run test:capture-build`, `npm run test:ledger` and the complete `npm test`
+after adoption. Truncated logs, stale target closures, omitted compiled roles,
+rehashed substitutions, coordinated target omissions and altered original artifacts
+must be rejected.
 
 Current routed market evidence includes `routing.directFeeSettlement` for the
 physical Router-to-FeeRouter wallet delivery, separately from the Pool-to-Router

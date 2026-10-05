@@ -1,3 +1,4 @@
+import { assertCaptureCode } from './capture-build';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -6,16 +7,12 @@ import { gunzipSync } from 'node:zlib';
 import { Address, Cell, beginCell, loadTransaction } from '@ton/core';
 import { readCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 import { readPerpsState, type PerpsState } from '../ledger/perpsState';
-import { assertCompletePerpsDirectFeeProducer, assertCurrentCompiledCode,
-  perpsDirectFeeProducerSourceInventory } from './perps-direct-fee-qualification';
+import { assertCompletePerpsDirectFeeProducer, assertCurrentCompiledCode } from './perps-direct-fee-qualification';
 import { assertPerpsProducerReceipt } from './perps-fixture-producer';
 
 const folder = join(__dirname, 'fixtures/perps-direct-fee-current');
 const provenance = JSON.parse(readFileSync(join(folder, 'provenance.json'), 'utf8'));
-if (provenance.qualification !== 'qualified-after-native-source-lock' &&
-    process.env.TONSWAP_ALLOW_PROVISIONAL_PERPS_FIXTURE !== '1') {
-  throw Error('Perps direct-fee fixture is provisional; recapture after native source lock');
-}
+assert.equal(provenance.qualification, 'qualified-pure-build-target-closure');
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const artifact = (entry: { file: string; sha256: string; bytes: number }) => {
   const saved = readFileSync(join(folder, entry.file));
@@ -30,19 +27,16 @@ const codes = Object.fromEntries(Object.entries(provenance.code).map(([name, ent
   assert.equal(cells[0].hash().toString('hex'), (entry as any).codeHash, `${name} compiled identity`);
   return [name, (entry as any).codeHash as string];
 }));
-if (provenance.qualification === 'qualified-after-native-source-lock') {
+{
   const log = artifact(provenance.producerRun).toString('utf8');
   assertCompletePerpsDirectFeeProducer(log);
   const nativeRoot = resolve(__dirname, '../../../tonswap_tolk');
   assertPerpsProducerReceipt(provenance.producerReceipt, 'directFee', nativeRoot,
-    provenance.originalCaptureDirectory, Buffer.from(log));
+    provenance.originalCaptureDirectory, Buffer.from(log), provenance.buildBinding);
   for(const entry of Object.values(provenance.artifacts) as {sourceFile:string;sha256:string}[]){
     assert.equal(provenance.producerReceipt.artifacts[entry.sourceFile],entry.sha256,
       'Adopted direct-fee artifact differs from its original producer run');
   }
-  const sourceInventory = perpsDirectFeeProducerSourceInventory(nativeRoot);
-  assert.deepEqual(provenance.nativeSourceInventory, sourceInventory,
-    'Qualified direct-fee fixture no longer matches exact native producer source');
   for (const name of ['PerpsEngine', 'DlmmPool', 'JettonWallet', 'FeeRouter']) {
     const compiled = provenance.compiledArtifacts?.[name], captured = provenance.code?.[name];
     assert(compiled && captured && typeof compiled.path === 'string');
@@ -51,6 +45,8 @@ if (provenance.qualification === 'qualified-after-native-source-lock') {
     const bytes = readFileSync(join(folder, compiled.path));
     assert.equal(sha256(bytes), compiled.sha256, `${name} native compiled artifact SHA-256`);
     assert.equal(assertCurrentCompiledCode(artifact(captured), bytes.toString('utf8'), name), codes[name]);
+    assertCaptureCode(name, artifact(captured), provenance.buildBinding);
+    assert.equal(compiled.sha256, provenance.producerReceipt.compiled[name].sha256);
   }
 }
 const economics = JSON.parse(artifact(provenance.artifacts.economics).toString('utf8'));
@@ -81,7 +77,7 @@ assert(open.length >= 20 && close.length >= 20, 'Both direct-fee legs contain co
 const engine = open.find(row => row.to !== feeWallet.address && row.to && row.oldStorage &&
   (() => { try { readPerpsState(row.oldStorage, codes.PerpsEngine); return true; } catch { return false; } })())?.to;
 assert(engine, 'The original graph contains a canonical current Perps Engine state');
-if (provenance.qualification === 'qualified-after-native-source-lock') {
+{
   assert.equal(provenance.bindings?.engine, engine);
   assert.equal(provenance.bindings?.feeRouter, feeWallet.owner);
   assert.equal(provenance.bindings?.feeRouterWallet, feeWallet.address);
@@ -115,7 +111,7 @@ const readRows = (rows: SavedRow[]) => {
   return { states, routerWalletBalances };
 };
 const opened = readRows(open), closed = readRows(close);
-if (provenance.qualification === 'qualified-after-native-source-lock') {
+{
   const state = opened.states.at(-1)!.after;
   assert.equal(provenance.bindings?.pool, state.markets.get(1)?.pool);
   assert.equal(provenance.bindings?.owner, [...state.positions.values()][0]?.owner);

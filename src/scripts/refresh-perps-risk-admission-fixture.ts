@@ -2,22 +2,24 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { gzipSync } from 'node:zlib';
 import { Address, Cell, loadTransaction } from '@ton/core';
 import { readPerpsState } from '../ledger/perpsState';
 import { readPerpsProducerReceipt, assertPerpsStressChainConfig } from './perps-fixture-producer';
 import { assertCurrentCompiledCode } from './perps-direct-fee-qualification';
+import { retainPerpsCaptureBuild } from './capture-perps-fixture';
 
-// Replace this immutable VM capture set only after its native producer has
-// passed on locked source. Every copied BOC is checked through the live parser.
+// Adopt only a complete pure-build producer receipt. Every original BOC is
+// checked through the current parser; no observed-code enrollment.
 const source=process.argv[2], options=process.argv.slice(3), qualified=options.includes('--qualified');
 const outputAt=options.indexOf('--output');
-if(!source || options.some((value,index)=>value!=='--qualified' && value!=='--output' && !(outputAt>=0 && index===outputAt+1)) ||
+if(!source || !qualified || options.some((value,index)=>value!=='--qualified' && value!=='--output' && !(outputAt>=0 && index===outputAt+1)) ||
     (outputAt>=0 && !options[outputAt+1]))
-  throw Error('Usage: tsx refresh-perps-risk-admission-fixture.ts <producer-dir> [--output <dir>] [--qualified]');
+  throw Error('Usage: tsx refresh-perps-risk-admission-fixture.ts <producer-dir> --qualified [--output <dir>]');
 const target=outputAt>=0?options[outputAt+1]:join(__dirname,'fixtures/perps-risk-admission-current');
 const nativeRoot=resolve(__dirname,'../../../tonswap_tolk');
-const producerReceipt=qualified?readPerpsProducerReceipt(source,'risk',nativeRoot):null;
+const producerReceipt=readPerpsProducerReceipt(source,'risk',nativeRoot);
+const buildBindingJson=readFileSync(join(source,'build-binding.json'),'utf8');
+const buildBinding=JSON.parse(buildBindingJson);
 // Current CFNG is oracle-backed. Require its actual accepted, rejected and
 // reserve-exhausting transaction graphs rather than qualifying an OPEN/CLOSE
 // subset as funding-claim coverage.
@@ -34,7 +36,6 @@ const cases:Record<string,string>={
   'funding-claim-rejected':'pays-earned-funding-from-allocated-LP-cash-and-never-the-trader-margin-wallet-funding-claim-rejected',
   'funding-claim-close':'bounds-accrued-funding-at-actual-LP-capital-and-closes-the-exhausted-counterparty-funding-claim-close',
 };
-mkdirSync(target,{recursive:true});
 const identities=['engineCode','poolCode','walletCode','riskVaultCode','riskControllerCode'] as const;
 const hashes:Record<string,string>={};
 const artifacts:{relative:string;source:string;sha256:string;bytes:number}[]=[];
@@ -46,10 +47,8 @@ for(const [name,sourceStem] of Object.entries(cases)) {
     const hash=Cell.fromBase64(saved[field]).hash().toString('hex');
     assert(!hashes[field] || hashes[field]===hash,`${field} changed within the same native producer run`);
     hashes[field]=hash;
-    if(qualified){
-      const role={engineCode:'PerpsEngine',poolCode:'DlmmPool',walletCode:'JettonWallet',riskVaultCode:'RiskVault',riskControllerCode:'RiskController'}[field];
-      assertCurrentCompiledCode(Buffer.from(saved[field],'base64'),readFileSync(join(source,producerReceipt.compiled[role].file),'utf8'),role);
-    }
+    const role={engineCode:'PerpsEngine',poolCode:'DlmmPool',walletCode:'JettonWallet',riskVaultCode:'RiskVault',riskControllerCode:'RiskController'}[field];
+    assertCurrentCompiledCode(Buffer.from(saved[field],'base64'),readFileSync(join(source,producerReceipt.compiled[role].file),'utf8'),role);
   }
   const engine=Address.parse(saved.engine),engineAccount=BigInt(`0x${engine.hash.toString('hex')}`);
   let engineBoundaries=0;
@@ -68,35 +67,16 @@ for(const [name,sourceStem] of Object.entries(cases)) {
 const provenance={
   source:'Complete VM15 400-nanoton/gas stress PerpsRiskAdmission raw transactions and exact storage boundaries',
   producer:'tests/perps/PerpsRiskAdmission.spec.ts',
-  qualification:qualified?'qualified-after-native-source-lock':'provisional-native-source-changing',
-  producerReceipt,producerLog:qualified?readFileSync(source+'.log','utf8'):null,
+  qualification:'qualified-pure-build-target-closure',
+  producerReceipt,producerLog:readFileSync(source+'.log','utf8'),buildBinding,buildBindingJson,
   engineCodeHash:hashes.engineCode,poolCodeHash:hashes.poolCode,walletCodeHash:hashes.walletCode,
   riskVaultCodeHash:hashes.riskVaultCode,riskControllerCodeHash:hashes.riskControllerCode,
   cases,artifacts,
 };
-let releaseCapture:Buffer|null=null;
-if(qualified && outputAt<0){
-  const original=captures.find(row=>row.relative==='profitable-close.json')!.bytes;
-  const saved=JSON.parse(original.toString('utf8'));
-  const receiptBytes=readFileSync(join(source,'producer-receipt.json'));
-  const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
-  releaseCapture=Buffer.from(JSON.stringify({
-    schema:'tonswap-perps-counterparty-causal-capture-v1',
-    provenance:{source:producerReceipt.suite,sourceSha256:hash(original),
-      engineCodeHash:hashes.engineCode,poolCodeHash:hashes.poolCode,
-      walletCodeHash:hashes.walletCode,riskVaultCodeHash:hashes.riskVaultCode},
-    producerReceiptJson:receiptBytes.toString('utf8'),producerReceiptSha256:hash(receiptBytes),
-    producerLog:readFileSync(source+'.log','utf8'),
-    sourceFile:cases['profitable-close']+'.json',sourceSha256:hash(original),
-    sourceJsonGzip:gzipSync(original,{mtime:0} as any).toString('base64'),
-    engine:saved.engine,owner:saved.owner,root:saved.root,
-    ownerWallet:saved.ownerWallet,riskVault:saved.riskVault,
-    transactions:saved.transactions.map((row:{transaction:string})=>row.transaction),
-  },null,2)+'\n');
-}
-if(qualified)assert.deepEqual(readPerpsProducerReceipt(source,'risk',nativeRoot),producerReceipt,
+assert.deepEqual(readPerpsProducerReceipt(source,'risk',nativeRoot),producerReceipt,
   'Producer evidence or executable source changed during adoption');
+retainPerpsCaptureBuild(source,'risk',producerReceipt);
+mkdirSync(target,{recursive:true});
 for(const capture of captures)writeFileSync(join(target,capture.relative),capture.bytes);
 writeFileSync(join(target,'provenance.json'),`${JSON.stringify(provenance,null,2)}\n`);
-if(releaseCapture)writeFileSync(join(nativeRoot,'tests/fixtures/release/perps-counterparty-delivery.json'),releaseCapture);
 console.log(`Refreshed ${artifacts.length} Perps risk VM cases: Engine ${hashes.engineCode}, Pool ${hashes.poolCode}`);

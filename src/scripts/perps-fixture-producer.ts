@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
-import ts from 'typescript';
+import { isAbsolute, join, resolve } from 'node:path';
+import { assertCaptureBuildBinding, assertCaptureCode, assertRetainedCaptureBinding } from './capture-build';
 import { Cell } from '@ton/core';
 
 export const PERPS_STRESS_CHAIN_CONFIG_HASH = '6afa8bd6ae1aaf8d918b8a6461666601c151d14270d81efddf0f602042c842e6';
@@ -20,62 +20,15 @@ export const PERPS_PRODUCERS = {
   wallets: { suite: 'tests/perps/PerpsExecutionFunding.spec.ts', tests: 7 },
   browser: { suite: 'tests/perps/PerpsBrowserEvidence.spec.ts', tests: 5 },
   directFee: { suite: 'tests/referral/PerpsTradeReferralPayout.spec.ts', tests: 1 },
-  directFeeObserved: { suite: 'tests/referral/PerpsTradeReferralPayout.spec.ts', tests: 1 },
   funding: { suite: 'tests/perps/PerpsEngineFunding.spec.ts', tests: 32 },
 } as const;
 export type PerpsProducer = keyof typeof PERPS_PRODUCERS;
+const PRODUCER_SUITES = { ...PERPS_PRODUCERS, factory: { suite: 'tests/dlmm/DlmmPoolFactory.spec.ts', tests: 29 } };
+type QualifiedProducer = keyof typeof PRODUCER_SUITES;
 export const producerSha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 
-/** Bind executable dependencies; unrelated Router/Options edits cannot bless or
- * invalidate these captures. Tolk imports and local TypeScript imports are
- * traversed recursively, and the exact toolchain lock/configuration is bound. */
-export function perpsProducerSourceInventory(nativeRoot: string) {
-  const files = new Map<string, string>();
-  const rawOptions = ts.readConfigFile(join(nativeRoot, 'tsconfig.json'), ts.sys.readFile).config.compilerOptions;
-  const compilerOptions = ts.convertCompilerOptionsFromJson(rawOptions, nativeRoot).options;
-  const visit = (path: string): void => {
-    path = resolve(path);
-    const name = relative(nativeRoot, path).split('\\').join('/');
-    assert(!name.startsWith('../'), `Producer dependency outside native package: ${path}`);
-    if (files.has(name)) return;
-    const stat = lstatSync(path);
-    assert(stat.isFile() && !stat.isSymbolicLink(), `Producer source must be a physical file: ${path}`);
-    const bytes = readFileSync(path), source = bytes.toString('utf8');
-    files.set(name, producerSha256(bytes));
-    if (/\.[cm]?tsx?$/.test(path)) {
-      for (const entry of ts.preProcessFile(source, true, true).importedFiles) {
-        if (!entry.fileName.startsWith('.')) continue;
-        const dependency = ts.resolveModuleName(entry.fileName, path, compilerOptions, ts.sys).resolvedModule;
-        assert(dependency && !dependency.isExternalLibraryImport, `Unresolved producer import ${entry.fileName} in ${name}`);
-        visit(dependency.resolvedFileName);
-      }
-      for (const match of source.matchAll(/['"](contracts\/[A-Za-z0-9_./-]+\.tolk)['"]/g)) {
-        if (!match[1].endsWith('.generated.tolk')) visit(join(nativeRoot, match[1]));
-      }
-    }
-    if (path.endsWith('.tolk')) {
-      for (const match of source.matchAll(/^\s*import\s+["']([^"']+)["']/gm)) {
-        if (!match[1].startsWith('@stdlib/')) visit(resolve(dirname(path), match[1]));
-      }
-    }
-  };
-  const roles = ['PerpsEngine', 'PerpsEngineBootstrap', 'DlmmPool', 'FeeRouter', 'ReferralRegistry',
-    'ReferralDistributor', 'JettonRoot', 'JettonWallet', 'Treasury', 'EmissionsSplitter', 'RiskVault',
-    'RiskController', 'NativeReturnCollector', 'GasVault', 'InsuranceVault', 'BounceWallet', 'NativeFundingRejector'];
-  for (const name of ['package.json', 'package-lock.json', 'jest.config.cjs', 'tsconfig.json',
-    'tests/setup.maxListeners.ts', 'tests/setup.silenceSandboxLogs.ts',
-    ...Object.values(PERPS_PRODUCERS).map(row => row.suite),
-    ...roles.map(role => `wrappers/${role}.compile.ts`)]) visit(join(nativeRoot, name));
-  for (const dependency of ['@ton/blueprint', '@ton/tolk-js', '@ton/sandbox', '@ton/core', 'ts-jest', 'typescript']) {
-    visit(join(nativeRoot, 'node_modules', dependency, 'package.json'));
-  }
-  const result = [...files].sort(([a], [b]) => a.localeCompare(b)).map(([path, sha256]) => ({ path, sha256 }));
-  assert(result.length > 100, 'Incomplete Perps producer source inventory');
-  return { digest: producerSha256(JSON.stringify(result)), files: result };
-}
-
-export function assertCompletePerpsProducer(log: string, producer: PerpsProducer): void {
-  const { suite, tests } = PERPS_PRODUCERS[producer];
+export function assertCompletePerpsProducer(log: string, producer: QualifiedProducer): void {
+  const { suite, tests } = PRODUCER_SUITES[producer];
   const lines = log.split(/\r?\n/);
   const uniqueLine = (prefix: RegExp, expected: RegExp, label: string): number => {
     const matches = lines.map((line, index) => ({ line, index })).filter(row => prefix.test(row.line));
@@ -85,40 +38,86 @@ export function assertCompletePerpsProducer(log: string, producer: PerpsProducer
   };
   assert.doesNotMatch(log, /^(?:FAIL\s|(?:Test Suites|Tests):.*(?:failed|skipped|pending|todo))/mi);
   const passed = uniqueLine(/^(?:PASS|FAIL)\s/,
-    new RegExp(`^PASS\\s+${suite.split('.').join('\\.')}($|\\s)`), `complete ${suite} result`);
+    new RegExp(`^PASS\\s+(?:[^\\s/]+\\s+)?${suite.split('.').join('\\.')}($|\\s)`), `complete ${suite} result`);
   const suites = uniqueLine(/^Test Suites:/, /^Test Suites:\s+1 passed, 1 total$/, 'complete Test Suites result');
   const cases = uniqueLine(/^Tests:/, new RegExp(`^Tests:\\s+${tests} passed, ${tests} total$`), 'complete Tests result');
   const time = uniqueLine(/^Time:/, /^Time:\s+[0-9]+(?:\.[0-9]+)? s(?:, estimated [0-9]+ s)?$/, 'terminal producer time');
   assert(passed < suites && suites < cases && cases < time, 'Producer terminal summaries are out of order');
 }
 
-export function assertPerpsProducerReceipt(value: any, producer: PerpsProducer, nativeRoot: string,
-  captureDirectory: string, log: Buffer): void {
-  assert.equal(value?.schema, 'tonswap-perps-fixture-producer-v1');
+/** A receipt authenticates this build closure and captured bytes. It does not
+ * claim a historical TypeScript source lock or a pinned Node executable. */
+export function assertPerpsProducerReceipt(value: any, producer: QualifiedProducer, nativeRoot: string,
+  captureDirectory: string, log: Buffer, buildBinding: unknown,
+  compiledRoot = join(__dirname, 'fixtures/capture-build', producer)) {
+  assert.equal(value?.schema, 'tonswap-capture-producer-v1');
   assert.equal(value.producer, producer);
-  assert.equal(value.suite, PERPS_PRODUCERS[producer].suite);
-  assert.equal(value.tests, PERPS_PRODUCERS[producer].tests);
+  assert.equal(value.suite, PRODUCER_SUITES[producer].suite);
+  assert.equal(value.tests, PRODUCER_SUITES[producer].tests);
+  assert.equal(typeof captureDirectory, 'string', 'Missing producer capture directory');
+  assert(isAbsolute(captureDirectory), 'Producer capture directory must be absolute');
   assert.equal(value.captureDirectory, resolve(captureDirectory));
   assert.equal(value.exitCode, 0);
-  assert.equal(value.runtime?.version, 'v26.5.1');
-  assert.equal(value.runtime?.noTurboFastApiCalls, true);
-  assert.match(value.runtime?.binarySha256 ?? '', /^[0-9a-f]{64}$/);
+  assert.deepEqual(value.runtime, { node: 'v26.10.0', tolk: '1.4.2', sandbox: '0.42.0' });
   assert.equal(value.logSha256, producerSha256(log));
   assertCompletePerpsProducer(log.toString('utf8'), producer);
-  assert.deepEqual(value.sourceBefore, value.sourceAfter, 'Producer source changed during capture');
-  assert.deepEqual(value.sourceAfter, perpsProducerSourceInventory(nativeRoot), 'Producer source is stale');
+  assertRetainedCaptureBinding(buildBinding, producer);
+  const binding = assertCaptureBuildBinding(buildBinding, producer, resolve(nativeRoot));
+  assert.deepEqual(value.build, { file: 'build-binding.json',
+    sha256: producerSha256(JSON.stringify(buildBinding, null, 2) + '\n'),
+    manifestSha256: binding.manifestSha256, buildHash: binding.buildHash });
+  assert(value.artifacts && typeof value.artifacts === 'object' && !Array.isArray(value.artifacts));
+  for (const [name, hash] of Object.entries(value.artifacts)) {
+    assertArtifactPath(name);
+    assert.equal(typeof hash, 'string');
+    assert.match(hash as string, /^[0-9a-f]{64}$/, 'Invalid producer artifact hash');
+  }
+  assert.equal(value.artifacts['build-binding.json'], value.build.sha256);
+  for (const name of Object.keys(binding.captures)) {
+    assert(name in value.artifacts, `Bound capture is missing from receipt: ${name}`);
+  }
+  assert(value.compiled && typeof value.compiled === 'object' && !Array.isArray(value.compiled));
+  assert.deepEqual(Object.keys(value.compiled).sort(), Object.keys(binding.targets).sort(),
+    'Compiled roles must equal the executed/embedded target closure');
+  for (const [role, target] of Object.entries(binding.targets)) {
+    const entry = value.compiled[role];
+    assert.equal(entry.file, `current-compiled/${role}.json`);
+    assert.equal(entry.codeHash, target.codeHash, `${role} receipt code hash`);
+    assert.equal(entry.sha256, value.artifacts[entry.file], `${role} compiled inventory hash`);
+    const bytes = physicalArtifact(compiledRoot, entry.file);
+    assert.equal(producerSha256(bytes), entry.sha256, `${role} retained compiled bytes`);
+    const artifact = JSON.parse(bytes.toString('utf8'));
+    assert.equal(artifact.hash, entry.codeHash);
+    assert.equal(typeof artifact.hex, 'string');
+    assert.match(artifact.hex, /^(?:[0-9a-f]{2})+$/, `${role} compiled BOC encoding`);
+    assertCaptureCode(role, Buffer.from(artifact.hex, 'hex'), binding);
+  }
+  return binding;
+}
+
+function assertArtifactPath(name: string) {
+  assert(name.length > 0 && !isAbsolute(name) && !name.includes('\\') &&
+    name.split('/').every(part => part !== '..' && part !== '.' && part.length > 0),
+    'Invalid producer artifact path');
+}
+function physicalArtifact(root: string, name: string): Buffer {
+  assertArtifactPath(name);
+  let path = resolve(root);
+  for (const part of name.split('/')) {
+    path = join(path, part);
+    assert(!lstatSync(path).isSymbolicLink(), 'Producer artifact must not follow symlinks');
+  }
+  assert(lstatSync(path).isFile(), 'Producer artifact is not physical');
+  return readFileSync(path);
 }
 
 export function readPerpsProducerReceipt(captureDirectory: string, producer: PerpsProducer,
   nativeRoot: string, logPath = captureDirectory + '.log') {
-  const receipt = JSON.parse(readFileSync(join(captureDirectory, 'producer-receipt.json'), 'utf8'));
-  assertPerpsProducerReceipt(receipt, producer, nativeRoot, captureDirectory, readFileSync(logPath));
-  assert(Object.keys(receipt.artifacts).length > 0, 'Producer artifact inventory is empty');
+  const receipt = JSON.parse(physicalArtifact(captureDirectory, 'producer-receipt.json').toString('utf8'));
+  const binding = JSON.parse(physicalArtifact(captureDirectory, 'build-binding.json').toString('utf8'));
+  assertPerpsProducerReceipt(receipt, producer, nativeRoot, captureDirectory, readFileSync(logPath), binding, captureDirectory);
   for (const [name, expectedHash] of Object.entries(receipt.artifacts)) {
-    assert(!name.startsWith('/') && !name.split('/').includes('..'), 'Invalid producer artifact path');
-    const path = join(captureDirectory, name), stat = lstatSync(path);
-    assert(stat.isFile() && !stat.isSymbolicLink(), 'Producer artifact is not physical');
-    assert.equal(producerSha256(readFileSync(path)), expectedHash, `Producer artifact changed: ${name}`);
+    assert.equal(producerSha256(physicalArtifact(captureDirectory, name)), expectedHash, `Producer artifact changed: ${name}`);
   }
   return receipt;
 }

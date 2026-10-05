@@ -9,7 +9,7 @@ import { producerSha256, assertPerpsStressChainConfig } from './perps-fixture-pr
 const output = process.argv[2];
 assert(output && resolve(output) === output && !existsSync(output) && !process.argv[3],
   'Usage: refresh-perps-funded-web-fixture.ts <new-absolute-projection-directory>');
-assert.equal(process.version, 'v26.5.1');
+assert.equal(process.version, 'v26.10.0');
 assert(process.execArgv.includes('--no-turbo-fast-api-calls'));
 assert(!process.env.NODE_OPTIONS);
 const indexerRoot = resolve(__dirname, '../..');
@@ -28,7 +28,9 @@ const inventory = () => {
 };
 const sourceBefore = inventory();
 const native = readPerpsRiskFixtureProvenance();
-assert.equal(native.qualification, 'qualified-after-native-source-lock');
+assert.equal(native.qualification, 'qualified-pure-build-target-closure');
+const buildBindingJson=JSON.stringify(native.buildBinding,null,2)+'\n';
+assert.equal(producerSha256(buildBindingJson),native.producerReceipt.build.sha256);
 for (const [field, role] of Object.entries({engine:'PerpsEngine',pool:'DlmmPool',wallet:'JettonWallet',
   riskVault:'RiskVault',riskController:'RiskController'}))
   assert.equal(native[field+'CodeHash'], native.producerReceipt.compiled[role].codeHash);
@@ -60,12 +62,19 @@ const provenance = {
   description: 'Unmodified original Sandbox transaction captures with independent strict indexer projection; local evidence, not deployed testnet history.',
   ...Object.fromEntries(['engine','pool','wallet','riskVault','riskController'].map(role => [role+'CodeHash', native[role+'CodeHash']])),
   sourceDirectory: output, nativeFixtureDirectory: perpsRiskFixtureFolder, files,
+  qualification:'qualified-pure-build-target-closure', buildBinding:native.buildBinding, buildBindingJson,
   producerReceipt: native.producerReceipt, producerLogSha256: producerSha256(producerLog),
   projectorLogSha256: producerSha256(log), projectorSource: sourceBefore,
 };
 staged.set('producer.log', producerLog); staged.set('projector.log', log);
+staged.set('build-binding.json',Buffer.from(buildBindingJson));
+for (const artifact of Object.values(native.producerReceipt.compiled) as {file:string;sha256:string}[]) {
+  const bytes=readFileSync(join(__dirname,'fixtures/capture-build/risk',artifact.file));
+  assert.equal(producerSha256(bytes),artifact.sha256);
+  staged.set(artifact.file,bytes);
+}
 staged.set('provenance.json', Buffer.from(JSON.stringify(provenance, null, 2)+'\n'));
 const target = resolve(__dirname, '../../../tonswap_web/tests/fixtures/perps-funded-current');
 mkdirSync(target, {recursive: true});
-for (const [name, bytes] of staged) writeFileSync(join(target, name), bytes);
+for (const [name, bytes] of staged) {mkdirSync(join(target,name,'..'),{recursive:true});writeFileSync(join(target, name), bytes);}
 console.log(`Adopted ${names.length} current Perps browser projections: ${native.engineCodeHash}`);

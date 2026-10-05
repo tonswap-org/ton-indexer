@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
+import { assertPerpsProducerReceipt } from './perps-fixture-producer';
 import assert from 'node:assert/strict';
 import { Address, Cell, beginCell, loadTransaction, storeTransaction, storeMessage, loadShardAccount, Transaction } from '@ton/core';
-import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
@@ -15,6 +16,7 @@ import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 import { BackfillWorker } from '../workers/backfillWorker';
 import { BlockFollower } from '../workers/blockFollower';
+import { assertCaptureBuildBinding, assertCaptureCode, assertCaptureTargetClosure, assertRetainedCaptureBinding, readCaptureBuildManifest } from './capture-build';
 
 const address = `0:${'1'.repeat(64)}`;
 const hash = (lt: number) =>
@@ -726,105 +728,53 @@ type FactoryCapture = {
   accepted: { account: string; boc: string; hash: string; before: { originalShardAccount: string; codeBoc: string }; after: { originalShardAccount: string; codeBoc: string } };
   emitter: FactoryCapture['accepted']; attempt: FactoryCapture['accepted'];
 };
-// These are the five exact canonical compiler entrypoints used by the retained
-// producer. In the authenticated canonical mode each renderer returns the
-// original source unchanged. Verify that recorded derivation without importing
-// native modules, running their setup side effects or selecting executable code
-// from fixture metadata. Any changed input or mode must match a fresh capture.
-const factoryEntrypoints = [
-  { source: 'contracts/dlmm/pool_factory.tolk', module: 'dlmmPoolFactoryEntrypoint', role: 'DlmmPoolFactory', banner: '' },
-  { source: 'contracts/dlmm/pool.tolk', module: 'dlmmPoolEntrypoint', role: 'DlmmPool', banner: 'canonical TVM-v15' },
-  { source: 'contracts/dlmm/seeding_executor.tolk', module: 'dlmmSeedingExecutorEntrypoint', role: 'DlmmSeedingExecutor', banner: '' },
-  { source: 'contracts/shared/jetton/jetton_root.tolk', module: 'jettonRootEntrypoint', role: 'JettonRoot', banner: 'default' },
-  { source: 'contracts/shared/jetton/jetton_wallet.tolk', module: 'jettonWalletEntrypoint', role: 'JettonWallet', banner: 'default' },
-] as const;
-const factoryGeneratedPaths = factoryEntrypoints.map(row => row.source.replace('.tolk', '.generated.tolk')).sort();
+// The capture's observed execution targets and the fixture's independent
+// compiler inventory are separate facts. Authenticate every retained compiler
+// role against its own reviewed pure-build closure without inventing execution.
 const factoryNativeRoot = resolve(__dirname, '../../../tonswap_tolk');
-const factorySourceHash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 const factoryCompilerRoles = [
   'DlmmPoolFactory', 'DlmmPool', 'DlmmRegistry', 'JettonWallet', 'DlmmSeedingExecutor',
   'GasVault', 'NativeReturnCollector', 'LpVault', 'JettonRoot',
 ] as const;
-// This fixed, reviewed helper authenticates the current deployment artifacts and
-// source graph. Fixture metadata cannot select a build root or executable module.
-// It reads build evidence only; it does not execute native renderers or compilers.
-const factoryBuildAuthority = require(resolve(factoryNativeRoot, 'scripts/release/firstReleaseFixturePreflight.ts')) as {
-  readFirstReleaseFixtureBuildAuthority(root: string): { codes: ReadonlyMap<string, string>; toolchain: {
-    root: string; bytes: Buffer; sha256: string; identity: Readonly<Record<string, string>> } };
-  assertFirstReleaseFixtureBuildAuthority(root: string, authority: { codes: ReadonlyMap<string, string>; toolchain: {
-    root: string; bytes: Buffer; sha256: string; identity: Readonly<Record<string, string>> } }): void;
-  assertFirstReleaseFactoryExecutedImports(root: string, value: unknown, declared: Record<string, string>): void;
-  assertFirstReleaseFixtureCodes(value: unknown, roles: readonly string[], build: ReadonlyMap<string, string>): void;
-};
-const factorySourceAuthority = require(resolve(factoryNativeRoot, 'scripts/release/fixtureRefresh/factory-source-inventory.cjs')) as {
-  factorySourceInventory(root: string, snapshot: { root: string; bytes: Buffer; sha256: string; identity: Readonly<Record<string, string>> }): Record<string, string>;
-};
-let factoryBuild: ReturnType<typeof factoryBuildAuthority.readFirstReleaseFixtureBuildAuthority> | undefined;
-const currentFactoryBuild = () => {
-  factoryBuild ??= factoryBuildAuthority.readFirstReleaseFixtureBuildAuthority(factoryNativeRoot);
-  // A replaced manifest never inherits the former authentication or cached codes.
-  factoryBuildAuthority.assertFirstReleaseFixtureBuildAuthority(factoryNativeRoot, factoryBuild);
-  return factoryBuild;
-};
-const assertFactoryCompilerCodes = (compiler: unknown) => {
-  // Keep build authority independent of the temporary source-only root used
-  // below to verify declared inputs without generated entrypoint files.
-  const authority = currentFactoryBuild();
-  factoryBuildAuthority.assertFirstReleaseFixtureCodes(compiler, factoryCompilerRoles, authority.codes);
+const factoryManifest = readCaptureBuildManifest();
+const assertFactoryCompilerCodes = (compiler: unknown, nativeRoot = factoryNativeRoot) => {
+  assert(compiler && typeof compiler === 'object' && !Array.isArray(compiler));
+  assert.deepEqual(Object.keys(compiler).sort(), [...factoryCompilerRoles].sort(), 'Factory requires all nine independent compiler pins');
   for (const role of factoryCompilerRoles) {
-    const code = (compiler as Record<string, { codeHash: string; boc: string }>)[role]!;
+    const target = assertCaptureTargetClosure(role, nativeRoot, factoryManifest);
+    const code: { codeHash: string; boc: string } = (compiler as Record<string, { codeHash: string; boc: string }>)[role]!;
+    assert(code && typeof code === 'object' && !Array.isArray(code));
+    assert.deepEqual(Object.keys(code).sort(), ['boc', 'codeHash']);
+    assert.equal(code.codeHash, target.codeHash, `${role}: current pure-build code pin`);
     assert.equal(typeof code.boc, 'string', `${role}: retained independent compiler BOC required`);
+    assert.equal(Buffer.from(code.boc, 'base64').toString('base64'), code.boc, `${role}: canonical retained compiler BOC`);
     const cells = Cell.fromBoc(Buffer.from(code.boc, 'base64'));
     assert(cells.length === 1 && !cells[0]!.isExotic, `${role}: one ordinary compiler code Cell required`);
     assert.equal(cells[0]!.hash().toString('hex'), code.codeHash, `${role}: retained independent compiler BOC`);
   }
 };
-const assertFactoryNativeSources = (sources: Record<string, string>, nativeRoot: string): void => {
-  assert(sources && typeof sources === 'object' && !Array.isArray(sources));
-  const paths = Object.keys(sources).sort();
-  // The maintained producer and current build select this complete potential
-  // closure. The fixture cannot select seeds or widen it using executed paths.
-  // The same already-authenticated build authority is used by all of this
-  // process's original callback and tamper checks; derive current inputs anew.
-  const authority = currentFactoryBuild();
-  const expected = factorySourceAuthority.factorySourceInventory(factoryNativeRoot, authority.toolchain);
-  assert.deepEqual(paths, Object.keys(expected).sort(), 'Factory declared source inventory changed');
-  assert.deepEqual(sources, expected, 'Factory declared source bytes changed');
-  assert.deepEqual(paths.filter(path => path.endsWith('.generated.tolk')), factoryGeneratedPaths);
-  const root = realpathSync(nativeRoot), authenticated = new Map<string, string>();
-  for (const filename of paths) {
-    assert.match(filename, /^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+$/);
-    assert(!filename.split('/').some(part => part === '.' || part === '..'));
-    assert.match(sources[filename], /^[0-9a-f]{64}$/);
-    if (factoryGeneratedPaths.includes(filename)) continue;
-    const path = join(root, filename);
-    assert.equal(realpathSync(path), path, `Factory input must not traverse a symlink: ${filename}`);
-    assert(lstatSync(path).isFile(), `Factory input must be a physical file: ${filename}`);
-    const bytes = readFileSync(path);
-    assert.equal(factorySourceHash(bytes), sources[filename], filename);
-    authenticated.set(filename, bytes.toString('utf8'));
+const assertFactoryBuild = (fixture: any, nativeRoot: string) => {
+  assertRetainedCaptureBinding(fixture.buildBinding, 'factory');
+  const binding = assertCaptureBuildBinding(fixture.buildBinding, 'factory', nativeRoot, { manifest: factoryManifest });
+  assertFactoryCompilerCodes(fixture.compiler, nativeRoot);
+  for (const role of Object.keys(binding.targets)) {
+    assert(factoryCompilerRoles.includes(role as typeof factoryCompilerRoles[number]), 'Observed factory target must have an independent compiler pin');
+    assertCaptureCode(role, fixture.compiler[role].boc, binding);
   }
-  // The source, generator definitions, descriptors and their imports have all
-  // been authenticated. Derive the exact retained compiler input in memory;
-  // even the canonical comment banner is covered by its captured SHA-256.
-  for (const entry of factoryEntrypoints) {
-    const modulePath = `wrappers/${entry.module}.ts`, descriptorPath = `wrappers/${entry.role}.compile.ts`;
-    assert(authenticated.has(modulePath) && authenticated.has(descriptorPath) && authenticated.has(entry.source));
-    const rendered = authenticated.get(entry.source)!;
-    const banner = entry.banner ? `// Auto-generated from ${entry.source}\n// Mode: ${entry.banner}\n\n` : '';
-    const generated = entry.source.replace('.tolk', '.generated.tolk');
-    assert.equal(factorySourceHash(banner + rendered), sources[generated], generated);
-  }
-  factoryBuildAuthority.assertFirstReleaseFixtureBuildAuthority(factoryNativeRoot, authority);
+  return binding;
 };
 
 const factoryEvidence = (nativeRoot = factoryNativeRoot) => {
   const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/pool-factory-current-transactions.json'), 'utf8'));
   assert.equal(fixture.schema, 'tonswap-pool-tracker-original-factory-v2');
-  assert.equal(fixture.nativeSourceInventoryModel, 'current-declared-potential-inputs-v1');
-  assertFactoryCompilerCodes(fixture.compiler);
-  assertFactoryNativeSources(fixture.nativeSources, nativeRoot);
-  factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(nativeRoot, fixture.executedNativeSources, fixture.nativeSources);
+  assert.equal(fixture.nativeSourceInventoryModel, 'pure-build-executed-target-closure-v1');
+  assert.equal(fixture.nativeSuite, 'tests/dlmm/DlmmPoolFactory.spec.ts');
+  assert.equal(fixture.tests, 29);
+  const log = readFileSync(resolve(__dirname, 'fixtures/capture-build/factory/producer-log.txt'));
+  assert.equal(createHash('sha256').update(log).digest('hex'), fixture.provenance.nativeLogSha256);
+  assertPerpsProducerReceipt(fixture.provenance.producerReceipt, 'factory', nativeRoot,
+    fixture.provenance.captureDirectory, log, fixture.buildBinding);
+  assertFactoryBuild(fixture, nativeRoot);
   const original = (row: FactoryCapture['accepted'], codeHash: string) => {
     const cell = Cell.fromBase64(row.boc), parsed = loadTransaction(cell.beginParse());
     assert.equal(cell.hash().toString('hex'), row.hash);
@@ -855,85 +805,87 @@ const factoryEvidence = (nativeRoot = factoryNativeRoot) => {
   return { fixture, cases };
 };
 
-const testFactoryEvidenceWithoutGeneratedEntrypoints = () => {
+const testFactoryPureBuildTargetClosures = () => {
   const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/pool-factory-current-transactions.json'), 'utf8'));
-  const sources = fixture.nativeSources as Record<string, string>;
-  assertFactoryNativeSources(sources, factoryNativeRoot);
-  const cleanRoot = mkdtempSync(join(tmpdir(), 'tonswap-factory-source-'));
+  assertFactoryBuild(fixture, factoryNativeRoot);
+  const sources = new Set<string>();
+  for (const role of factoryCompilerRoles) {
+    for (const filename of Object.keys(factoryManifest.manifest.targets[role]!.inputs)) sources.add(filename);
+  }
+  const cleanRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tonswap-factory-source-')));
   try {
-    for (const filename of Object.keys(sources)) {
-      if (factoryGeneratedPaths.includes(filename)) continue;
+    // Opcode modules are virtual compiler inputs derived from this reviewed
+    // configuration, not retained generated files or native renderer modules.
+    const opcodeConfig = 'config/opcodes.json';
+    mkdirSync(join(cleanRoot, 'config'));
+    copyFileSync(join(factoryNativeRoot, opcodeConfig), join(cleanRoot, opcodeConfig));
+    for (const filename of sources) {
+      if (filename.startsWith('contracts/generated/opcodes/')) continue;
       const target = join(cleanRoot, filename);
       mkdirSync(dirname(target), { recursive: true });
       copyFileSync(join(factoryNativeRoot, filename), target);
     }
-    const assertAbsent = () => factoryGeneratedPaths.forEach(filename => assert.equal(existsSync(join(cleanRoot, filename)), false));
-    assertAbsent();
+    assert.equal(existsSync(join(cleanRoot, 'wrappers')), false, 'Pure target verification needs no native TypeScript renderers');
+    assert.equal(factoryEvidence(cleanRoot).cases.length, 3, 'Original accepted callbacks verify from the nine current source closures');
+    mkdirSync(join(cleanRoot, 'wrappers'));
     const shadow = join(cleanRoot, 'wrappers/entrypointWriter.js');
     writeFileSync(shadow, 'globalThis.__factoryUnboundShadowExecuted = true; throw new Error("unbound renderer dependency");');
-    assert.equal(factoryEvidence(cleanRoot).cases.length, 3, 'Original accepted callbacks verify in a clean source-only workspace');
-    assert.equal((globalThis as Record<string, unknown>).__factoryUnboundShadowExecuted, undefined, 'The fixed build helper and source-only validation execute no native renderer or ambient shadow');
+    assert.equal(factoryEvidence(cleanRoot).cases.length, 3);
+    assert.equal((globalThis as Record<string, unknown>).__factoryUnboundShadowExecuted, undefined, 'Closure validation never executes ambient native modules');
     rmSync(shadow);
-    assertAbsent();
     let rejected = 0;
     const rejects = (fn: () => void) => { assert.throws(fn); rejected++; };
     for (const role of factoryCompilerRoles) {
       const omitted = { ...fixture.compiler }; delete omitted[role];
-      rejects(() => assertFactoryCompilerCodes(omitted));
+      rejects(() => assertFactoryCompilerCodes(omitted, cleanRoot));
+      const target = factoryManifest.manifest.targets[role]!;
+      const path = join(cleanRoot, target.source), original = readFileSync(path);
+      try {
+        writeFileSync(path, Buffer.concat([original, Buffer.from('\n// tampered input\n')]));
+        rejects(() => assertFactoryCompilerCodes(fixture.compiler, cleanRoot));
+      } finally { writeFileSync(path, original); }
+      try {
+        rmSync(path);
+        rejects(() => assertFactoryCompilerCodes(fixture.compiler, cleanRoot));
+      } finally { writeFileSync(path, original); }
     }
-    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, UnknownCode: fixture.compiler.DlmmPoolFactory }));
-    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: fixture.compiler.DlmmPool }));
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, UnknownCode: fixture.compiler.DlmmPoolFactory }, cleanRoot));
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: fixture.compiler.DlmmPool }, cleanRoot));
     const arbitraryCode = beginCell().storeUint(0, 1).endCell();
     rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: {
       codeHash: arbitraryCode.hash().toString('hex'), boc: arbitraryCode.toBoc().toString('base64'),
-    } }));
+    } }, cleanRoot));
     rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: {
       ...fixture.compiler.DlmmPoolFactory, boc: arbitraryCode.toBoc().toString('base64'),
-    } }));
+    } }, cleanRoot));
     const withoutBoc = { ...fixture.compiler.DlmmPoolFactory }; delete withoutBoc.boc;
-    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: withoutBoc }));
-    for (const entry of factoryEntrypoints) {
-      for (const filename of [entry.source, `wrappers/${entry.module}.ts`, `wrappers/${entry.role}.compile.ts`]) {
-        const path = join(cleanRoot, filename), original = readFileSync(path);
-        try {
-          writeFileSync(path, Buffer.concat([original, Buffer.from('\n// tampered input\n')]));
-          rejects(() => assertFactoryNativeSources(sources, cleanRoot));
-        } finally { writeFileSync(path, original); }
-      }
-      const generated = entry.source.replace('.tolk', '.generated.tolk');
-      rejects(() => assertFactoryNativeSources({ ...sources, [generated]: '0'.repeat(64) }, cleanRoot));
+    rejects(() => assertFactoryCompilerCodes({ ...fixture.compiler, DlmmPoolFactory: withoutBoc }, cleanRoot));
+    const mutatedBinding = () => JSON.parse(JSON.stringify(fixture.buildBinding));
+    for (const role of Object.keys(fixture.buildBinding.targets)) {
+      const omitted = mutatedBinding(); delete omitted.targets[role];
+      rejects(() => assertCaptureBuildBinding(omitted, 'factory', cleanRoot, { manifest: factoryManifest }));
+      const changed = mutatedBinding(); changed.targets[role].codeHash = '0'.repeat(64);
+      rejects(() => assertCaptureBuildBinding(changed, 'factory', cleanRoot, { manifest: factoryManifest }));
+      const missingInput = mutatedBinding(); delete missingInput.targets[role].inputs[missingInput.targets[role].source];
+      rejects(() => assertCaptureBuildBinding(missingInput, 'factory', cleanRoot, { manifest: factoryManifest }));
+      const traversal = mutatedBinding(); traversal.targets[role].inputs['../outside.tolk'] = '0'.repeat(64);
+      rejects(() => assertCaptureBuildBinding(traversal, 'factory', cleanRoot, { manifest: factoryManifest }));
     }
-    for (const filename of ['contracts/shared/math/integer.tolk', 'wrappers/entrypointWriter.ts', ...factoryGeneratedPaths]) {
-      const omitted = { ...sources }; delete omitted[filename];
-      rejects(() => assertFactoryNativeSources(omitted, cleanRoot));
-    }
-    rejects(() => assertFactoryNativeSources({ ...sources, 'contracts/unknown.generated.tolk': '0'.repeat(64) }, cleanRoot));
-    rejects(() => assertFactoryNativeSources({ ...sources, '../outside.tolk': '0'.repeat(64) }, cleanRoot));
-    const executed = fixture.executedNativeSources as Record<string, string>;
-    factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot, executed, sources);
-    const unknown = 'wrappers/unmodeledDynamicImport.ts';
-    writeFileSync(join(cleanRoot, unknown), 'export const rogue = true;\n');
-    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot,
-      { ...executed, [unknown]: factorySourceHash(readFileSync(join(cleanRoot, unknown))) }, sources));
-    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot,
-      { ...executed, '../outside.ts': '0'.repeat(64) }, sources));
-    const changedExecuted = { ...executed, 'tests/dlmm/DlmmPoolFactory.spec.ts': '0'.repeat(64) };
-    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot, changedExecuted, sources));
-    const missingTest = { ...executed }; delete missingTest['tests/dlmm/DlmmPoolFactory.spec.ts'];
-    rejects(() => factoryBuildAuthority.assertFirstReleaseFactoryExecutedImports(cleanRoot, missingTest, sources));
-    rmSync(join(cleanRoot, unknown));
+    const unknown = mutatedBinding(); unknown.targets.UnknownCode = unknown.targets.DlmmPoolFactory;
+    rejects(() => assertCaptureBuildBinding(unknown, 'factory', cleanRoot, { manifest: factoryManifest }));
     const physicalSource = join(cleanRoot, 'contracts/shared/math/integer.tolk');
     const retainedSource = readFileSync(physicalSource);
     rmSync(physicalSource);
     symlinkSync(join(factoryNativeRoot, 'contracts/shared/math/integer.tolk'), physicalSource);
-    rejects(() => assertFactoryNativeSources(sources, cleanRoot));
+    rejects(() => assertFactoryCompilerCodes(fixture.compiler, cleanRoot));
     rmSync(physicalSource); writeFileSync(physicalSource, retainedSource);
-    assertAbsent();
-    // Even a leftover file with wrong bytes cannot become compiler authority.
-    for (const filename of factoryGeneratedPaths) writeFileSync(join(cleanRoot, filename), 'stale ambient compiler input');
-    assertFactoryNativeSources(sources, cleanRoot);
-    for (const filename of factoryGeneratedPaths) assert.equal(readFileSync(join(cleanRoot, filename), 'utf8'), 'stale ambient compiler input');
-    console.log(`Factory provenance: clean workspace, five in-memory renders and ${rejected} tamper checks passed`);
+    // A changed closure map cannot be repaired by rehashing unrelated bytes.
+    const missingTransitive = mutatedBinding();
+    const transitive = Object.keys(missingTransitive.targets.DlmmPool.inputs).find(filename => filename !== missingTransitive.targets.DlmmPool.source)!;
+    delete missingTransitive.targets.DlmmPool.inputs[transitive];
+    rejects(() => assertCaptureBuildBinding(missingTransitive, 'factory', cleanRoot, { manifest: factoryManifest }));
+    assertFactoryBuild(fixture, cleanRoot);
+    console.log(`Factory provenance: nine pure-build target closures and ${rejected} tamper checks passed`);
   } finally { rmSync(cleanRoot, { recursive: true, force: true }); }
 };
 
@@ -1066,7 +1018,7 @@ const run = async () => {
   await testFollowerRefreshAndCatchUpAreAtomicAgainstQueuedInitialRead();
   await testFollowerCountsActualProgressAcrossShortPages();
   await testSnapshotGenerationInvalidatesCapturedFollowerBatches();
-  testFactoryEvidenceWithoutGeneratedEntrypoints();
+  testFactoryPureBuildTargetClosures();
   await testRejectedInitialForkDoesNotMutatePoolTracker();
   testPoolTrackerNormalizesAndFiltersFactoryMessages();
   process.stdout.write('history integrity ok\n');

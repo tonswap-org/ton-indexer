@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Cell } from '@ton/core';
-import { assertCompletePerpsProducer, perpsProducerSourceInventory } from './perps-fixture-producer';
+import { assertCompletePerpsProducer } from './perps-fixture-producer';
 
 export function assertCompletePerpsDirectFeeProducer(log: string): void {
   assertCompletePerpsProducer(log, 'directFee');
@@ -20,10 +20,4 @@ export function assertCurrentCompiledCode(capturedBoc: Buffer, artifactJson: str
   assert.equal(compiled[0].hash().toString('hex'), expectedHash, `${role} compiled artifact is internally inconsistent`);
   assert.equal(captured[0].hash().toString('hex'), expectedHash, `${role} captured code differs from current compiled source`);
   return expectedHash!;
-}
-
-/** The native graph producer's executable source, independent of fixture bytes. */
-export function perpsDirectFeeProducerSourceInventory(nativeRoot: string): {
-  digest: string; files: { path: string; sha256: string }[] } {
-  return perpsProducerSourceInventory(nativeRoot);
 }

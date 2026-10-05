@@ -195,3 +195,14 @@ When both use the T3 wallet, beneficiary dispatch follows the fee's authenticate
 finalization through the source queue. Preserve both physical fee legs and that
 queue transition; never count two allocations as a second user payment or accept
 an old one-record/immediate-dispatch layout.
+
+Capture qualification uses retained pure-build manifests and per-target Tolk
+import closures (`src/scripts/capture-build.ts`), not a union of producer sources.
+Authenticate every executed/embedded compiled identity and its original bytes;
+keep transaction BOCs, state commitments and historical rejection fixtures intact.
+Never import removed native scripts/release helpers, trust transient build output,
+claim historical producer-source locks absent from the receipt, or add a provisional
+bypass. Capture evidence and runtime admission are separate: this migration does
+not relax the macOS arm64 admission binary/configuration requirements. Run
+`npm run test:capture-build`, all ledger checks, the full suite and the ordinary
+clean-dist build after capture verifier changes.

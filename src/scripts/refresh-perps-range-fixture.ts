@@ -5,13 +5,20 @@ import { Cell } from '@ton/core';
 import { readCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 import { assertCurrentCompiledCode } from './perps-direct-fee-qualification';
 import { readPerpsProducerReceipt, producerSha256, assertPerpsStressChainConfig } from './perps-fixture-producer';
+import { retainPerpsCaptureBuild } from './capture-perps-fixture';
 
 const [riskDirectory, walletDirectory] = process.argv.slice(2);
 assert(riskDirectory && walletDirectory, 'Usage: refresh-perps-range-fixture.ts <risk-producer-dir> <wallet-producer-dir>');
 const nativeRoot = resolve(__dirname, '../../../tonswap_tolk');
 const risk = readPerpsProducerReceipt(riskDirectory, 'risk', nativeRoot);
 const wallets = readPerpsProducerReceipt(walletDirectory, 'wallets', nativeRoot);
-assert.deepEqual(risk.sourceAfter, wallets.sourceAfter, 'Range and Wallet producers have different source');
+const buildBindingJsons = {risk:readFileSync(join(riskDirectory,'build-binding.json'),'utf8'),wallets:readFileSync(join(walletDirectory,'build-binding.json'),'utf8')};
+const buildBindings = {risk:JSON.parse(buildBindingJsons.risk),wallets:JSON.parse(buildBindingJsons.wallets)};
+for (const role of ['PerpsEngine','DlmmPool','JettonWallet','RiskVault','RiskController']) {
+  const a=buildBindings.risk.targets[role],b=buildBindings.wallets.targets[role];
+  assert(a && b, `Both producers must bind selected role ${role}`);
+  assert.deepEqual({source:a.source,codeHash:a.codeHash,inputs:a.inputs}, {source:b.source,codeHash:b.codeHash,inputs:b.inputs}, `${role} differs between producers`);
+}
 const target = join(__dirname, 'fixtures/perps-range-funded-current');
 const prepared = Object.entries({
   'open.json': 'captures-a-funded-round-trip-with-uninterrupted-account-history-open-880.json',
@@ -45,11 +52,15 @@ for(const account of walletState.wallets){
 }
 prepared.push({relative:'current-wallets.json',source:join(walletDirectory,'current-wallets.json'),bytes:walletBytes});
 const provenance = { source:'Current canonical VM15 producers, original funded OPEN/CLOSE account history and independent executed Wallet states; no live testnet claim.',
-  qualification:'qualified-after-native-source-lock', live:false,
+  qualification:'qualified-pure-build-target-closure', live:false,
   engineCodeHash:risk.compiled.PerpsEngine.codeHash, poolCodeHash:risk.compiled.DlmmPool.codeHash,
   walletCodeHash:risk.compiled.JettonWallet.codeHash, riskVaultCodeHash:risk.compiled.RiskVault.codeHash,
-  producerReceipts:{risk,wallets}, producerLogs:{risk:readFileSync(riskDirectory+'.log','utf8'),wallets:readFileSync(walletDirectory+'.log','utf8')},
+  producerReceipts:{risk,wallets},buildBindings,buildBindingJsons, producerLogs:{risk:readFileSync(riskDirectory+'.log','utf8'),wallets:readFileSync(walletDirectory+'.log','utf8')},
   artifacts:prepared.map(row=>({relative:row.relative,source:row.source,sha256:producerSha256(row.bytes),bytes:row.bytes.length})) };
+assert.deepEqual(readPerpsProducerReceipt(riskDirectory,'risk',nativeRoot),risk);
+assert.deepEqual(readPerpsProducerReceipt(walletDirectory,'wallets',nativeRoot),wallets);
+retainPerpsCaptureBuild(riskDirectory,'risk',risk);
+retainPerpsCaptureBuild(walletDirectory,'wallets',wallets);
 for(const row of prepared)writeFileSync(join(target,row.relative),row.bytes);
 writeFileSync(join(target,'provenance.json'),JSON.stringify(provenance,null,2)+'\n');
 console.log(`Adopted ${prepared.length} complete current Perps range/wallet artifacts`);

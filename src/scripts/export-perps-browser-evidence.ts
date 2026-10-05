@@ -9,15 +9,18 @@ import { canonicalLedgerHash } from '../ledger/normalize';
 import { loadOpcodes } from '../utils/opcodes';
 import { perpsWalletAddress } from '../ledger/perpsWire';
 import { assertPerpsStressChainConfig, producerSha256, readPerpsProducerReceipt } from './perps-fixture-producer';
+import { retainPerpsCaptureBuild } from './capture-perps-fixture';
 
 // Replay only original current Sandbox bytes. The producer and all supplied
 // before/after boundaries remain separate from live archive-range qualification.
 const captureRoot=process.argv[2], output=process.argv[3];
 assert(captureRoot && resolve(captureRoot)===captureRoot && output && resolve(output)===output && !existsSync(output) && !process.argv[4],
   'Usage: export-perps-browser-evidence.ts <absolute-qualified-browser-producer> <new-absolute-projection-directory>');
-assert.equal(process.version,'v26.5.1'); assert(process.execArgv.includes('--no-turbo-fast-api-calls'));
+assert.equal(process.version,'v26.10.0'); assert(process.execArgv.includes('--no-turbo-fast-api-calls'));
 assert(!process.env.NODE_OPTIONS);
 const receipt=readPerpsProducerReceipt(captureRoot,'browser',resolve(__dirname,'../../../tonswap_tolk'));
+const buildBindingJson=readFileSync(join(captureRoot,'build-binding.json'),'utf8');
+const buildBinding=JSON.parse(buildBindingJson);
 const indexerRoot=resolve(__dirname,'../..');
 const inventory=()=>{
  const files:Record<string,string>={};
@@ -158,11 +161,14 @@ async function main() {
   kind:'Source-bound current VM15 stress400 original transactions and strict indexer projection; local evidence, not live history',
   scopeLimit:'Bounded original Sandbox account chains; no claim of native historical boundary or complete account-history coverage',
   producer:'tonswap_tolk/tests/perps/PerpsBrowserEvidence.spec.ts',projector:'ton-indexer/src/scripts/export-perps-browser-evidence.ts',
-  ...provenance,files,producerReceipt:receipt,producerLogSha256:producerSha256(producerLog),
+  ...provenance,files,qualification:'qualified-pure-build-target-closure',buildBinding,buildBindingJson,producerReceipt:receipt,producerLogSha256:producerSha256(producerLog),
   projectedSummarySha256:producerSha256(summary),projectorSource:sourceBefore,
  },null,2)+'\n'));
+ retainPerpsCaptureBuild(captureRoot,'browser',receipt);
+ staged.set('build-binding.json',Buffer.from(buildBindingJson));
+ for (const artifact of Object.values(receipt.compiled) as {file:string}[]) staged.set(artifact.file,readFileSync(join(captureRoot,artifact.file)));
  const target=resolve(__dirname,'../../../tonswap_web/tests/fixtures/perps-browser-current');
- mkdirSync(target,{recursive:true});for(const [name,bytes] of staged)writeFileSync(join(target,name),bytes);
+ mkdirSync(target,{recursive:true});for(const [name,bytes] of staged){mkdirSync(join(target,name,'..'),{recursive:true});writeFileSync(join(target,name),bytes);}
  console.log('Adopted five qualified current Perps browser operation graphs');
 }
 main().catch(error=>{console.error(error);process.exitCode=1});

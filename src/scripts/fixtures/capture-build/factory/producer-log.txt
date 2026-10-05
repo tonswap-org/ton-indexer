@@ -1,0 +1,39 @@
+92 targets, 0 compiled, buildHash 9600c7c296875150c88658b4be7ef428af589dfa1f1d8fb34d1c32331449d604
+Factory physical request refund {"refundNano":"1349671993","executorRefundComputeNano":"23011600","moduleBefore":"9290000000","moduleAfter":"7901571651","factoryResidueNano":"86372798"}
+PASS default tests/dlmm/DlmmPoolFactory.spec.ts (103.583 s)
+  DlmmPoolFactory
+    ✓ funds sequential launch proofs and exact active retries at canonical VM fees without spending prior reserves (15840 ms)
+    ✓ keeps independent launch escrows intact through held Pool and Registry messages and caller-funded recovery (10164 ms)
+    ✓ automatically registers a real launch pool with its Registry and Executor before caller-funded LP seeding (20905 ms)
+    ✓ round-trips the canonical split config and routing state layout (26 ms)
+    ✓ rejects non-canonical and prefix-compatible governance endpoints before persistence (311 ms)
+    ✓ commits pool code in the initial address and requires its separate permissionless installation (2679 ms)
+    ✓ rejects mismatched, malformed and underfunded installations without consuming the commitment (1073 ms)
+    ✓ keeps installed code immutable and makes exact repeated delivery harmless (1327 ms)
+    ✓ rejects invalid commitments and retired factory storage instead of accepting another layout (46 ms)
+    ✓ rejects binSpacing outside the supported bounds (903 ms)
+    ✓ rejects initBinId values that underflow the price ladder (726 ms)
+    ✓ rejects pools where tokenX matches the canonical T3 (725 ms)
+    ✓ accepts binSpacing within bounds and registers the pool (2487 ms)
+    ✓ registers pools when the registry address is configured (2465 ms)
+    ✓ blocks the configured KUSD root while creating and acknowledging an allowed launchpad pool (5545 ms)
+    ✓ funds executor-ready acknowledgements across three sequential registry flows at production factory balance (6774 ms)
+    ✓ keeps launch records pending until an exact registry acknowledgement activates and publishes them (415 ms)
+    ✓ keeps direct governance creation pending until exact pool and registry receipts (1366 ms)
+    ✓ enforces exact direct-create and retry funding while preserving immutable wires (1391 ms)
+    ✓ activates direct pools only after the executable pool proof and Registry SPAK, and replays proof exactly (4757 ms)
+    ✓ applies guard params from the create payload (2509 ms)
+    ✓ rejects invalid guard params in the create payload (758 ms)
+    ✓ rejects create when value is too low to fund deploy (742 ms)
+    ✓ uses the compact state-bound create ABI and rejects missing profiles, legacy fields, and trailing data (2326 ms)
+    ✓ lets an unrelated LP create the fixed-profile pool and credits real canonical-wallet deposits without an admin transaction (5827 ms)
+    ✓ enforces its configured KUSD root for public and governed direct creation before reserving a pair (3774 ms)
+    ✓ funds the Registry retry from its caller on a blocked-root Factory under canonical VM fees (688 ms)
+    ✓ rejects public profile injection, wrong pairs and underfunded creation before reserving the pair (2229 ms)
+    ✓ makes another payer replay the same completed public pair without redeployment or oracle trust (3053 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       29 passed, 29 total
+Snapshots:   0 total
+Time:        103.618 s, estimated 104 s
+Ran all test suites within paths "tests/dlmm/DlmmPoolFactory.spec.ts".

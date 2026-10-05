@@ -1,0 +1,1822 @@
+{
+  "schema": "tonswap-build-v1",
+  "tolkVersion": "1.4.2",
+  "buildHash": "9600c7c296875150c88658b4be7ef428af589dfa1f1d8fb34d1c32331449d604",
+  "targets": {
+    "T3": {
+      "source": "contracts/t3/t3.tolk",
+      "codeHash": "5c1751f069c097afbed8bb1b4556bce9a36889e776868810007d82b06bbc3ccc",
+      "bocBytes": 100600,
+      "cells": 1216,
+      "bits": 763047,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/control/control_mesh_messages.tolk": "f14ae4dff0b5eb99c7eaeb2a4641d981735e10688a88e5ab8a6e718c802e7620",
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/generated/opcodes/t3/messages_opcodes.tolk": "b6d2af5e87f20e713852dbbe73b7a2a9f75568630357c205ce71c1ef87b1e39e",
+        "contracts/generated/opcodes/t3/t3_opcodes.tolk": "ac2a99660af2b692518a575cb2e23e279a9d4d7c9b5623c54a0ee9b34b0681cb",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/automation/module_config.tolk": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/control/control_receipt.tolk": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/t3_burn_budget.tolk": "ee021d031f6d82608ebcedc04f032c7ff704d73530150934128b28380321c252",
+        "contracts/shared/jetton/tep74_codec.tolk": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/t3/liquidity_pool.tolk": "f9321c94315563bf730232d6dd5ab4f59556762de180d9fa16d78c5952947c53",
+        "contracts/t3/messages.tolk": "dd402d67668a63f10407922bd349bd5e8bd9ba678371abc90320a69a44a0ae3f",
+        "contracts/t3/pool_admin.tolk": "43d4a045247ba47d0fe322bca36b76245cfe1be8c9a41aec3ea75c53470adf2d",
+        "contracts/t3/receiver_budget.tolk": "29e355108e5629d3099802f03aed5a3ee32d1b793ede6d0e32eee449cc63954a",
+        "contracts/t3/referral.tolk": "e63a72d605365fb4fcf7e65246c05a287b5aa4c805a126dfbb15313ac64caab8",
+        "contracts/t3/relative_peg_budget.tolk": "6160d88241f4078062850e7978e0ab27fe4c588f5985a397bdfb99c9d31257b0",
+        "contracts/t3/t3_receiver_messages.tolk": "578b16590064e07501767092cc39d52b8424267ff87f54ad22d15ce0f55b951d",
+        "contracts/t3/t3.tolk": "08651b3362fd0b3231aca57a7b87f12b16a6292d0ff83f8dfde33c6045cdad23"
+      }
+    },
+    "T3Receiver": {
+      "source": "contracts/t3/t3_receiver.tolk",
+      "codeHash": "300361aa0f8d9cade08d9b722ce60d1cc05e64652dfb6cc43f63c3a4d8fc23d8",
+      "bocBytes": 8990,
+      "cells": 146,
+      "bits": 67859,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/tep74_codec.tolk": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141",
+        "contracts/shared/jetton/tep89_codec.tolk": "fa30dff7e9be5a95cb75f5dd52e0b4878ab217a2ac5d4d7a195af2430d8ad195",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/t3/receiver_budget.tolk": "29e355108e5629d3099802f03aed5a3ee32d1b793ede6d0e32eee449cc63954a",
+        "contracts/t3/t3_receiver_messages.tolk": "578b16590064e07501767092cc39d52b8424267ff87f54ad22d15ce0f55b951d",
+        "contracts/t3/t3_receiver.tolk": "6d496981868219586e8bebe7bf1a29c46130317c69fa2e803a6b16a66e4b915b"
+      }
+    },
+    "JettonRoot": {
+      "source": "contracts/shared/jetton/jetton_root.tolk",
+      "codeHash": "db90bb61b8ae07727bfcfcecb4b4b4517ed31e238c83af7e2390108fc286a1a7",
+      "bocBytes": 14859,
+      "cells": 220,
+      "bits": 112880,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_root_opcodes.tolk": "57e21353838b2aa1ad7a5a8a85fd8ab72f48500d7d99dad1895d868fbb441778",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_root.tolk": "56e1c1d90892c3eec80f26f67726ced05389ccab48690b715b86c8ee372ff439",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/t3_burn_budget.tolk": "ee021d031f6d82608ebcedc04f032c7ff704d73530150934128b28380321c252",
+        "contracts/shared/jetton/tep89_codec.tolk": "fa30dff7e9be5a95cb75f5dd52e0b4878ab217a2ac5d4d7a195af2430d8ad195",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "JettonWallet": {
+      "source": "contracts/shared/jetton/jetton_wallet.tolk",
+      "codeHash": "2f4d9f45154b86c2a94f6420a6a255292fd67469292a18ddbc6ddf1bdb8090e6",
+      "bocBytes": 20061,
+      "cells": 318,
+      "bits": 149249,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/application_ingress.tolk": "97d3f365dd75a57f13ff04dd29cfbdaf176b088d91b97c345e02ec32df27f7d8",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/cover_ingress.tolk": "6ab9441472d0e5d3fb8fdae0936eff31190efa96620a16e29165cc7c411e9167",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/jetton_wallet.tolk": "843dbfc680c23dbddb9662efebfa01f8a23c566e9e657d1578f854196bce5471",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/t3_burn_budget.tolk": "ee021d031f6d82608ebcedc04f032c7ff704d73530150934128b28380321c252",
+        "contracts/shared/jetton/tep74_codec.tolk": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2"
+      }
+    },
+    "TestnetFaucet": {
+      "source": "contracts/testnet/faucet.tolk",
+      "codeHash": "daab2ce673e53973f22b7c8d25f39ae03ce7dbf60632b96ab79813853fd7ed56",
+      "bocBytes": 6134,
+      "cells": 94,
+      "bits": 46476,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/generated/opcodes/testnet/faucet_opcodes.tolk": "476a858b3b558987b40b6f14b3c8f46f18059c3b0d87b11c9256a8939ed8fcf7",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testnet/faucet.tolk": "e4662530039b2ac73e8a0168f68e03efff5f9b9256297e7bc5d376643c3840dd"
+      }
+    },
+    "GasVault": {
+      "source": "contracts/automation/gas_vault.tolk",
+      "codeHash": "e7ea7202a334c79fc98803c38577d9a24891f83f33d3e686fdf02974cd0bb4a1",
+      "bocBytes": 22703,
+      "cells": 308,
+      "bits": 171023,
+      "inputs": {
+        "contracts/automation/gas_vault.tolk": "2997bfc5a9760323ab9540163b601a98dfe518bdea49fa4672e22e02fa020b3a",
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/generated/opcodes/automation/gas_vault_opcodes.tolk": "9c7271afaa558da3f0dbbf2c579e6f68880c7ecc3474e4df980f666a5fd92612",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/automation/job_queue_funding.tolk": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295",
+        "contracts/shared/automation/module_config.tolk": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861",
+        "contracts/shared/automation/native_return_collector_identity.tolk": "c048574ce19bc7ddd6dd53b1221e8d16a4fba01f9386206f25ad5660507f3b9f",
+        "contracts/shared/control/control_receipt.tolk": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f",
+        "contracts/shared/control/gas_telemetry.tolk": "a8cfc670fee4b2b6362e70fd66c9bc188710a7919c5eb6329919d67a57d80bb0",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "NativeReturnCollector": {
+      "source": "contracts/automation/native_return_collector.tolk",
+      "codeHash": "f5b20cb8ad3c76556eb011935a7ab4d2b82a8603bb89985e5fb765bc82e30230",
+      "bocBytes": 1008,
+      "cells": 18,
+      "bits": 7512,
+      "inputs": {
+        "contracts/automation/native_return_collector.tolk": "c0fd5ec99cf0e20556136b8e219f49e354653beb6a31b65000d5bd5558b1d8d2",
+        "contracts/shared/automation/native_return_collector_identity.tolk": "c048574ce19bc7ddd6dd53b1221e8d16a4fba01f9386206f25ad5660507f3b9f",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2"
+      }
+    },
+    "AutomationJobQueue": {
+      "source": "contracts/automation/job_queue.tolk",
+      "codeHash": "bbb4e1d62922529866ee755f974e1ccee59fdf9f80de0fdc9538add4bfd70398",
+      "bocBytes": 11268,
+      "cells": 178,
+      "bits": 85367,
+      "inputs": {
+        "contracts/automation/job_queue.tolk": "e9f638fb15f02a1ed792d2c409acfd21879ca48fc4c642ef4c71eb5cd1e00a10",
+        "contracts/shared/automation/job_queue_funding.tolk": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "AutomationRegistry": {
+      "source": "contracts/automation/registry.tolk",
+      "codeHash": "5c4cd00bacdded51b7a418e67744c16a0aa8248c8982bc9dc83ab0112aef6ba9",
+      "bocBytes": 1268,
+      "cells": 27,
+      "bits": 9350,
+      "inputs": {
+        "contracts/automation/registry.tolk": "51b7f2034d50f59a45060ab74b900c3837d3ddee9d19c30d356e70ed6ded5017",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "ActivationGate": {
+      "source": "contracts/governance/activation_gate.tolk",
+      "codeHash": "5654d8809651c9d62b044d70729a839368d76845c9590e0f024b052f9315963e",
+      "bocBytes": 23309,
+      "cells": 300,
+      "bits": 175949,
+      "inputs": {
+        "contracts/generated/opcodes/governance/activation_gate_opcodes.tolk": "0e3d0f6a9024cfba1d04bbe353f5bebea724fdc8f44176dd8b285cbbda4562a9",
+        "contracts/generated/opcodes/governance/proposal_executor_opcodes.tolk": "0b5c9bb292cedfebf16a9654d4f58cac2907ba261d2cf53a91fb24eb6cfaa5fa",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/governance/activation_gate.tolk": "52163330399197cd0044d7fc22bb69b710944756095099c2645c6bfcfabd0acf",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/operation_journal.tolk": "cd6b8f6705b9cf1f9dfd5e9c74c6366750ba99fc9b8ab6e2d0a1757f9813c63c",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/native/return_budget.tolk": "da052e4385e64ca1f6af368ebad8f5690674793dbd4c659e84ee79b5b11c73fd",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "GovernanceRegistry": {
+      "source": "contracts/governance/registry.tolk",
+      "codeHash": "34ac87fe630a2376b3b686e985528214bc9da0bfc702619049550124809a9ebf",
+      "bocBytes": 5189,
+      "cells": 111,
+      "bits": 38191,
+      "inputs": {
+        "contracts/generated/opcodes/governance/registry_opcodes.tolk": "ae4136234696289149464258adbdfc8070e888574816b8a33e0e5cbfa3056cf4",
+        "contracts/governance/registry.tolk": "8e10d9a512ebd635ad6be620b2e356b144fb858059f64fa6f00b8218139885a2",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "GovernanceTimelock": {
+      "source": "contracts/governance/timelock.tolk",
+      "codeHash": "9b6a08c6cbec81ec2373b06763ab440b20ab01ddfa9b1346a4ba4528410357c5",
+      "bocBytes": 11772,
+      "cells": 199,
+      "bits": 88716,
+      "inputs": {
+        "contracts/generated/opcodes/governance/timelock_opcodes.tolk": "294a21c664b7f8ed12cc68db4ff469f215c274e77f7531681e0e24bf68fa4223",
+        "contracts/governance/timelock.tolk": "8716cc956b2b5cf03fc0d21ca211ee7a059f49ab987cdaf1f47279f4f8bbc289",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "GovernanceProposalExecutor": {
+      "source": "contracts/governance/proposal_executor.tolk",
+      "codeHash": "30d729c2dca5c45567d4da3ded22ab7c556f59d37582cc95aa4ec450c475f8eb",
+      "bocBytes": 11685,
+      "cells": 188,
+      "bits": 88302,
+      "inputs": {
+        "contracts/generated/opcodes/governance/proposal_executor_opcodes.tolk": "0b5c9bb292cedfebf16a9654d4f58cac2907ba261d2cf53a91fb24eb6cfaa5fa",
+        "contracts/governance/proposal_executor.tolk": "d9c3d7fa28ca197e9cbd9394c86d23b9411309319ec90a98d4261e67a63a2b42",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/governance/operation_journal.tolk": "cd6b8f6705b9cf1f9dfd5e9c74c6366750ba99fc9b8ab6e2d0a1757f9813c63c",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/native/return_budget.tolk": "da052e4385e64ca1f6af368ebad8f5690674793dbd4c659e84ee79b5b11c73fd",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "Treasury": {
+      "source": "contracts/governance/treasury.tolk",
+      "codeHash": "089595133de3e87a3de2e7d6f447884fb30745ad04cc03f9b69f0306587aee85",
+      "bocBytes": 22508,
+      "cells": 316,
+      "bits": 168709,
+      "inputs": {
+        "contracts/generated/opcodes/governance/treasury_opcodes.tolk": "3dca06bd146665ad97d293532ce8345ea873bd7f34fde20be4734c356fa8ee12",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/governance/treasury.tolk": "5e1f0791b25d64ffa7528a3076b5c83b937c01abc343263f4bec3f27d4ea2f80",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "Voting": {
+      "source": "contracts/governance/voting.tolk",
+      "codeHash": "81f0fca24bc09aa296bef77c739a870d0cfddd705ae2aad51917a4dba9934ae8",
+      "bocBytes": 40347,
+      "cells": 472,
+      "bits": 306514,
+      "inputs": {
+        "contracts/generated/opcodes/governance/voting_opcodes.tolk": "a2bb6cc81fd526cc5a223f36f778f67afbdf4cba4738dbf9221f5e3e0782bd50",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/governance/voting.tolk": "1b700f183fd26ee29569518d1600e2be221f80dff6c1681591d81a7fd789f53c",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "FeeRouter": {
+      "source": "contracts/treasury/fee_router.tolk",
+      "codeHash": "46ba79e2278fc9e8cd5abfa76a7d4d53ec7685d81736fd53e73d31e6396a0bd7",
+      "bocBytes": 11862,
+      "cells": 197,
+      "bits": 89458,
+      "inputs": {
+        "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/generated/opcodes/treasury/fee_router_opcodes.tolk": "2d4e7700125c127c1fa382ebd8705f0453839a38c429df9f1b714b50176ff002",
+        "contracts/shared/control/control_receipt.tolk": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/treasury/fee_router.tolk": "9db416be9e3b3cb52a5c5bedb0def80d71b217732e25cd6f026fd88936b76165"
+      }
+    },
+    "BuybackExecutor": {
+      "source": "contracts/treasury/buyback_executor.tolk",
+      "codeHash": "41746facaa35345d775172901bd2f0d0896629005ae61593e9e8276103ac0257",
+      "bocBytes": 24155,
+      "cells": 285,
+      "bits": 182577,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/generated/opcodes/treasury/buyback_executor_opcodes.tolk": "4aa79f11143603b22678f6f022ddf2ac72e6146b3948ed219af7f059bf9ca1f0",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/treasury/buyback_executor.tolk": "6df65c02312da188fedea9f2f13df979e8f16af09d24748a0078aad06f1f52f0"
+      }
+    },
+    "DexRouter": {
+      "source": "contracts/dex/router.tolk",
+      "codeHash": "fea1d0e659d1a3859d5ec433e875aaa4e5fc5df9b5c0d42c1632c4720ce32b20",
+      "bocBytes": 124289,
+      "cells": 1495,
+      "bits": 941708,
+      "inputs": {
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/dex/router.tolk": "203f3c2951881ef902bc70d7243129819666d067b4fee0e17d982f4aa7369f53",
+        "contracts/dex/stable_math.tolk": "be051f9b2ceb11e73cac1e00f9e1f879c7524684fc2c75b938881b0e5099bd64",
+        "contracts/dex/twap_native_budget.tolk": "8f405352980aa921925168ee713ee4c90c5870a1aa173139b6ada564acd80967",
+        "contracts/dlmm/constants.tolk": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a",
+        "contracts/generated/opcodes/dex/router_opcodes.tolk": "7134c3496eba0d487ecbed423ad66aa08bce0ce92613be0be3ddd0c08fbcac33",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/automation/job_queue_funding.tolk": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/math/integer.tolk": "c7f63c66b50b6bcc4b1fa77fd71a5123b13cb8403610ac277db59d4caf55f5c3",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "SaleFactory": {
+      "source": "contracts/launchpad/sale_factory.tolk",
+      "codeHash": "b406ec75a1ffeb765ea7799e8212e190ddb1c20bce6ca33b1a1eb628e95c1082",
+      "bocBytes": 21266,
+      "cells": 291,
+      "bits": 158928,
+      "inputs": {
+        "contracts/generated/opcodes/launchpad/sale_factory_opcodes.tolk": "07127a843338aa7b421926a0d04a224310c913186bec39d8169f97b7f58e3914",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/launchpad/sale_config_codec.tolk": "c6ada1c12dbba0fd8b0ef7e576386f7e9e0c2e3cadf6f0d7eac4f8b6074dc874",
+        "contracts/launchpad/sale_factory.tolk": "5dbed2281e870e56fad41a3aa46048ddc15f6e2a9c0c959d1ba0ce3730dfc8d6",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "SaleFixed": {
+      "source": "contracts/launchpad/sale_fixed.tolk",
+      "codeHash": "b39f175ebffab28e68d0d819e4013ddc1c71e15145b5fd8f93b7e314f2abb7c7",
+      "bocBytes": 28654,
+      "cells": 423,
+      "bits": 214074,
+      "inputs": {
+        "contracts/generated/opcodes/launchpad/sale_fixed_opcodes.tolk": "5b3cddc87318fdb758fb8801742540fd4e2eef65fdfb2406a9948083746aa329",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/ingress_utils.tolk": "fc9132258da222daf8e84b7170de7c0b7878a9c9d46e948e91fccefb24e0d1fe",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/launchpad/payment_rejection.tolk": "3784bde334dd82f4b920c178f2e365defa628f0716c694f7e1d2a8b2589b8c2e",
+        "contracts/launchpad/pricing.tolk": "200fceeadc3e0a5cd239eb229969b7cf7eac5d365974e9fa0e3e07400b6665aa",
+        "contracts/launchpad/sale_fixed.tolk": "4e25949b59839da4e360fc4c3bd15dc07659233d3dd7c683278a15432abe150b",
+        "contracts/launchpad/sale_settlement_journal.tolk": "3b76203abadff345ee56b74cf79897e9a18db291bc757dddd1bc68e616a3bcc0",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "SaleBonding": {
+      "source": "contracts/launchpad/sale_bonding.tolk",
+      "codeHash": "a45c03e249dc91e913873ccb8736646590c51be4695a7d8f8568a88aafdf6629",
+      "bocBytes": 27863,
+      "cells": 421,
+      "bits": 207802,
+      "inputs": {
+        "contracts/generated/opcodes/launchpad/sale_bonding_opcodes.tolk": "129396137a6c7814e5d1a77b480407614439ec263db5c6b47821dc236d2f20cf",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/ingress_utils.tolk": "fc9132258da222daf8e84b7170de7c0b7878a9c9d46e948e91fccefb24e0d1fe",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/launchpad/payment_rejection.tolk": "3784bde334dd82f4b920c178f2e365defa628f0716c694f7e1d2a8b2589b8c2e",
+        "contracts/launchpad/pricing.tolk": "200fceeadc3e0a5cd239eb229969b7cf7eac5d365974e9fa0e3e07400b6665aa",
+        "contracts/launchpad/sale_bonding.tolk": "0773c3b99b573c8e1253ed0f2af43e5a6cc3c815396b8846c5c15a8dce1161a5",
+        "contracts/launchpad/sale_config_codec.tolk": "c6ada1c12dbba0fd8b0ef7e576386f7e9e0c2e3cadf6f0d7eac4f8b6074dc874",
+        "contracts/launchpad/sale_settlement_journal.tolk": "3b76203abadff345ee56b74cf79897e9a18db291bc757dddd1bc68e616a3bcc0",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/math/full_math.tolk": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "SaleAuction": {
+      "source": "contracts/launchpad/sale_auction.tolk",
+      "codeHash": "3c1ccb44ff091073d53ee98c104406158715aa99dc3dd9e78ab82fbeb0ea5f25",
+      "bocBytes": 27314,
+      "cells": 416,
+      "bits": 203696,
+      "inputs": {
+        "contracts/generated/opcodes/launchpad/sale_auction_opcodes.tolk": "8e11bc0651b48027ca66b68139832eb966b00b9bf14285dc07c4f3d046ab40c3",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/ingress_utils.tolk": "fc9132258da222daf8e84b7170de7c0b7878a9c9d46e948e91fccefb24e0d1fe",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/launchpad/payment_rejection.tolk": "3784bde334dd82f4b920c178f2e365defa628f0716c694f7e1d2a8b2589b8c2e",
+        "contracts/launchpad/pricing.tolk": "200fceeadc3e0a5cd239eb229969b7cf7eac5d365974e9fa0e3e07400b6665aa",
+        "contracts/launchpad/sale_auction.tolk": "1e4c84daeb0476f4f24496a45c96ec9d56114e49d4fc6cda0fb95dfdea6dea26",
+        "contracts/launchpad/sale_config_codec.tolk": "c6ada1c12dbba0fd8b0ef7e576386f7e9e0c2e3cadf6f0d7eac4f8b6074dc874",
+        "contracts/launchpad/sale_settlement_journal.tolk": "3b76203abadff345ee56b74cf79897e9a18db291bc757dddd1bc68e616a3bcc0",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "DlmmSeedingExecutor": {
+      "source": "contracts/dlmm/seeding_executor.tolk",
+      "codeHash": "a7c8ecb2419af280a43a8397fc355f28e9097d28bf94881ac0799c72a4d7631b",
+      "bocBytes": 14724,
+      "cells": 230,
+      "bits": 111482,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/dlmm/constants.tolk": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a",
+        "contracts/dlmm/math.tolk": "2dc2566c48f55476c69b8b199931d2bf16d26ceb962ef37fb165ddbdda63178a",
+        "contracts/dlmm/seeding_executor.tolk": "10c5ba8992b1278042f14e98dc2e53b2c68aa15b8d344fd7309fb1b1a53d8ab2",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/dlmm/seeding_executor_opcodes.tolk": "05c2f6a67a3b438e434f9a8b74d54e4a16b46e5839356a1d902f7d77320f9507",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/launchpad/payment_rejection.tolk": "3784bde334dd82f4b920c178f2e365defa628f0716c694f7e1d2a8b2589b8c2e",
+        "contracts/launchpad/sale_settlement_journal.tolk": "3b76203abadff345ee56b74cf79897e9a18db291bc757dddd1bc68e616a3bcc0",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/math/full_math.tolk": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "LpVault": {
+      "source": "contracts/launchpad/lp_vault.tolk",
+      "codeHash": "729f7175e753a222aca76301a0dde1078fe8bcce464b9c05d97addf6a4a72a5d",
+      "bocBytes": 24194,
+      "cells": 323,
+      "bits": 181983,
+      "inputs": {
+        "contracts/dlmm/constants.tolk": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a",
+        "contracts/generated/opcodes/launchpad/lp_vault_opcodes.tolk": "757c05f79a36dc23cc4a3a1e3056f8d0255ececb24667dbb2b9a6ef9b92be22d",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/ingress_utils.tolk": "fc9132258da222daf8e84b7170de7c0b7878a9c9d46e948e91fccefb24e0d1fe",
+        "contracts/launchpad/lp_vault.tolk": "eb1cdb071ee57c55f8270f23342514106fc7b58bc425f1dbe54edd66ced0d1f6",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/launchpad/payment_rejection.tolk": "3784bde334dd82f4b920c178f2e365defa628f0716c694f7e1d2a8b2589b8c2e",
+        "contracts/launchpad/sale_settlement_journal.tolk": "3b76203abadff345ee56b74cf79897e9a18db291bc757dddd1bc68e616a3bcc0",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "VestingVault": {
+      "source": "contracts/launchpad/vesting_vault.tolk",
+      "codeHash": "d13b2065231ffc4c51197b0bd61adb74821e2d05a9457eabb6f5c6ae917e54b9",
+      "bocBytes": 11355,
+      "cells": 176,
+      "bits": 85948,
+      "inputs": {
+        "contracts/generated/opcodes/launchpad/vesting_vault_opcodes.tolk": "4bf77288ca360cdceb51418413df6f6f0c5b25c6d3c764357efeb9f810413d82",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/ingress_utils.tolk": "fc9132258da222daf8e84b7170de7c0b7878a9c9d46e948e91fccefb24e0d1fe",
+        "contracts/launchpad/vesting_vault.tolk": "f6c8995f85194ef3b2ee74d768c9096548018a82764dffcf2bf6f899ddfc66df",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "ReferralRegistry": {
+      "source": "contracts/referral/registry.tolk",
+      "codeHash": "c2453807537dc9836415eef640ecbbd07abf0a3c4f29a7ca8f8f18c8feb3c23e",
+      "bocBytes": 12538,
+      "cells": 208,
+      "bits": 94528,
+      "inputs": {
+        "contracts/generated/opcodes/referral/registry_opcodes.tolk": "50268831cbec54d6bd9a9844830778afa1853d084a78b133a14968f3ca54395e",
+        "contracts/referral/registry.tolk": "31fa7d026642c59d9aac06a8157aae32e3cb43f6bd42b8a12658b8abc7dbe5a4",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "ReferralDistributor": {
+      "source": "contracts/referral/distributor.tolk",
+      "codeHash": "0d57c0cbdf76ff3e1e984cc1759270dda6563c8a4df3449a59c08ca1d22911c2",
+      "bocBytes": 80390,
+      "cells": 875,
+      "bits": 613400,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/referral/distributor_opcodes.tolk": "a18f747e9a75a210efbe5bf6ee65de1f37b8b1bee12637d1efaa5db584cdfe83",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/referral/distributor.tolk": "2eee774bac114360102e44f844a5b736637b602eac907e5ec945e17f50a13128",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "EmissionsSplitter": {
+      "source": "contracts/referral/emissions_splitter.tolk",
+      "codeHash": "e0e9b6139fed9649101ec24745fc4e1ef2d3864e3d89c7cea50cafb323b1863c",
+      "bocBytes": 13568,
+      "cells": 205,
+      "bits": 102859,
+      "inputs": {
+        "contracts/generated/opcodes/referral/emissions_splitter_opcodes.tolk": "9cb1a39e1aa3a723d43742b3c4b05ff05b24393d70220f38e2f4c4fc91789591",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/referral/emissions_splitter.tolk": "2c3533cf240d450f424e74099f21116634cc7e8554aa182f36ebfa4da67cded2",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "OptionFactory": {
+      "source": "contracts/options/factory.tolk",
+      "codeHash": "6b806ca90f6026bbefe01341888c416c3127cb733c52d4565b34cc7095289262",
+      "bocBytes": 108544,
+      "cells": 1219,
+      "bits": 825912,
+      "inputs": {
+        "contracts/generated/opcodes/options/factory_opcodes.tolk": "fae72a9485ff875278075128b06fd419d543bd25de956c1f2c401fb875a976e1",
+        "contracts/generated/opcodes/options/snapshot_protocol_opcodes.tolk": "28b1a987ff6ff13913397708cc17f07d1a75b452e3c2c82b59db1ea1f1c7bcfd",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
+        "contracts/options/correlation_utils.tolk": "0f517e2648416399d01948fed35e7dc8eef43f6c5137d69fef71c7c1f825955a",
+        "contracts/options/factory.tolk": "1cc7d5d62110a6b8512c3ed074a248774106684dce231672f07c3201020762a7",
+        "contracts/options/native_budgets.tolk": "094a26783ccf09600566502077b8147958b6a4ba907ce36caa33e198424504fe",
+        "contracts/options/settlement_mode.tolk": "9eeecf3b44d9fc29d8397f9073e7b5cec9feeffb5d977dbe12d6f6f1266136e4",
+        "contracts/options/snapshot_protocol.tolk": "366de91b2c99702e9b1e9b3a01858ea406b854ce5a02c2c808771ddf74ff33e8",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/application_ingress.tolk": "97d3f365dd75a57f13ff04dd29cfbdaf176b088d91b97c345e02ec32df27f7d8",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "OptionSeriesManager": {
+      "source": "contracts/options/series_manager.tolk",
+      "codeHash": "aab8c63e563f3805f104e72e8756c6ac52c5525809883a05e830e757bd7513a0",
+      "bocBytes": 35334,
+      "cells": 441,
+      "bits": 267472,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/options/series_manager_opcodes.tolk": "3c4341b68775a15170d7f3744d2cfba98637ae197bef7e8fd0cdc619633daae6",
+        "contracts/generated/opcodes/options/snapshot_protocol_opcodes.tolk": "28b1a987ff6ff13913397708cc17f07d1a75b452e3c2c82b59db1ea1f1c7bcfd",
+        "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
+        "contracts/options/correlation_utils.tolk": "0f517e2648416399d01948fed35e7dc8eef43f6c5137d69fef71c7c1f825955a",
+        "contracts/options/series_manager.tolk": "986a38e21b47368e4532544bfea0453597e3adc991a32744d48fed9451f01ade",
+        "contracts/options/snapshot_protocol.tolk": "366de91b2c99702e9b1e9b3a01858ea406b854ce5a02c2c808771ddf74ff33e8",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/automation/module_config.tolk": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "OptionVault": {
+      "source": "contracts/options/vault.tolk",
+      "codeHash": "9e10ac8bb01e0079a0e3ac8ba6e10bdff97e1df991ca1f10a2806cef038f3ca5",
+      "bocBytes": 29695,
+      "cells": 376,
+      "bits": 223504,
+      "inputs": {
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/generated/opcodes/options/vault_opcodes.tolk": "0e493f1e43453cc6757581ad5658d7655d1b92a059e7b2a9c0eb43db5b1be81b",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/options/native_budgets.tolk": "094a26783ccf09600566502077b8147958b6a4ba907ce36caa33e198424504fe",
+        "contracts/options/settlement_mode.tolk": "9eeecf3b44d9fc29d8397f9073e7b5cec9feeffb5d977dbe12d6f6f1266136e4",
+        "contracts/options/vault.tolk": "f2635dc16de1a61771cc469581acd15550369c4d9a03b3c1f1d9fbd1d5396668",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "ShoutOption": {
+      "source": "contracts/options/shout_option.tolk",
+      "codeHash": "a96c08eea8aca5a1c9147bbcd07b75465c74b2fef1b5bf4ffe3a32f0c232d70a",
+      "bocBytes": 27880,
+      "cells": 361,
+      "bits": 210443,
+      "inputs": {
+        "contracts/generated/opcodes/options/shout_option_opcodes.tolk": "cd0c90b80a10de6a2266ebc65f854519ff06b7decf9e04dff37a0aa681ab8220",
+        "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
+        "contracts/options/native_budgets.tolk": "094a26783ccf09600566502077b8147958b6a4ba907ce36caa33e198424504fe",
+        "contracts/options/oracle_pull.tolk": "bafbb26ad820ebc5f3aec2702837a5922c45f2d8d93488d580b7798c59d3ea7c",
+        "contracts/options/settlement_mode.tolk": "9eeecf3b44d9fc29d8397f9073e7b5cec9feeffb5d977dbe12d6f6f1266136e4",
+        "contracts/options/shout_option.tolk": "ffeb9ce846ad33052e5ffd8bbf71cd7cdcf52dce06b3fbeb30966c8b94c5b40e",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "OutperformanceOption": {
+      "source": "contracts/options/outperformance_option.tolk",
+      "codeHash": "6bbbe8775c10f64bd050a14478c48e9508aa8fb0c643b8ea08f141982d44455d",
+      "bocBytes": 27892,
+      "cells": 354,
+      "bits": 210799,
+      "inputs": {
+        "contracts/generated/opcodes/options/outperformance_option_opcodes.tolk": "652e41d853e3d544de680fd8ca10943c29f0442f9377b342013a248d5ed11377",
+        "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
+        "contracts/options/oracle_pull.tolk": "bafbb26ad820ebc5f3aec2702837a5922c45f2d8d93488d580b7798c59d3ea7c",
+        "contracts/options/outperformance_option.tolk": "7ba6b6c93f65b7116efc8258f32b6476609f6912a8975d70f86ba275cf72c948",
+        "contracts/options/settlement_mode.tolk": "9eeecf3b44d9fc29d8397f9073e7b5cec9feeffb5d977dbe12d6f6f1266136e4",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "VolIndex": {
+      "source": "contracts/volatility/vol_index.tolk",
+      "codeHash": "027db381e3cc42cf5e88b7b5e34c10100ba7f96dcf2e2f81b1c7968999bed364",
+      "bocBytes": 21605,
+      "cells": 318,
+      "bits": 160935,
+      "inputs": {
+        "contracts/generated/opcodes/options/snapshot_protocol_opcodes.tolk": "28b1a987ff6ff13913397708cc17f07d1a75b452e3c2c82b59db1ea1f1c7bcfd",
+        "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
+        "contracts/options/correlation_utils.tolk": "0f517e2648416399d01948fed35e7dc8eef43f6c5137d69fef71c7c1f825955a",
+        "contracts/options/snapshot_protocol.tolk": "366de91b2c99702e9b1e9b3a01858ea406b854ce5a02c2c808771ddf74ff33e8",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/math/volatility.tolk": "f4974f9dda0fe2d3fd7c9b371dc8c38dfff9f29fb2291132fbae5b425234147e",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/oracle/cover_volatility.tolk": "77d071a1f38d01b3e85cbde4a777b670f7f1b78c5d85b6323c227d9404a0f806",
+        "contracts/shared/oracle/pool_realized.tolk": "197c13cecdbcdf93da88482082bd381ee1e66534443385e93eada4bc1eca41cb",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/volatility/pool_source.tolk": "165bcc13ef1da46ae0a211ec431fe0783094f934ddbee8474d3abb2cd8628748",
+        "contracts/volatility/vol_index.tolk": "ce3984fe1f2c53bc228136db1cedc941803faba9795fddcb92d7720e033d5d2a"
+      }
+    },
+    "ControlMesh": {
+      "source": "contracts/control/control_mesh.tolk",
+      "codeHash": "a4406d7bff94edfccbb3aa4dd68d0f56c247c3af2bf9c4c32441575023a06c9b",
+      "bocBytes": 20149,
+      "cells": 297,
+      "bits": 150827,
+      "inputs": {
+        "contracts/control/control_mesh_messages.tolk": "f14ae4dff0b5eb99c7eaeb2a4641d981735e10688a88e5ab8a6e718c802e7620",
+        "contracts/control/control_mesh.tolk": "a7d88617d80ad8f7b8e1e8784924172f825642cc549435851c876b04d1618bbc",
+        "contracts/control/control_solvers.tolk": "da98c575633aec80a8ed109c081c61f45ebd9fa7fa3d8972ea5ae64208761f75",
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
+        "contracts/generated/opcodes/control/control_mesh_opcodes.tolk": "fb0bbe30a43d6d77978f22229fce793945484c72c310a0148b82fab350613afa",
+        "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa",
+        "contracts/perps/native_budget.tolk": "07039f9d92150bda665b349224da0d7f1bbc4ecb0ab9661a893c4111b032a546",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/control/control_receipt.tolk": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f",
+        "contracts/shared/control/gas_telemetry.tolk": "a8cfc670fee4b2b6362e70fd66c9bc188710a7919c5eb6329919d67a57d80bb0",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/t3/relative_peg_budget.tolk": "6160d88241f4078062850e7978e0ab27fe4c588f5985a397bdfb99c9d31257b0"
+      }
+    },
+    "RiskController": {
+      "source": "contracts/control/risk_controller.tolk",
+      "codeHash": "b93c06f641773966e0aee81f3adc64cfec84aa5c02512c59890b8fc8955e48cb",
+      "bocBytes": 8336,
+      "cells": 114,
+      "bits": 63620,
+      "inputs": {
+        "contracts/control/risk_controller.tolk": "5f69b13648a38bc405181a6f8ccdc74fcd88e0f3af6eab8be3bfcc45839edd73",
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/risk/policy_lease.tolk": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2"
+      }
+    },
+    "RiskVault": {
+      "source": "contracts/risk/risk_vault.tolk",
+      "codeHash": "b4440f5892ea6a404db51e926f754f8390dca6d23788f619b56bd0fe8d93da09",
+      "bocBytes": 43038,
+      "cells": 590,
+      "bits": 322710,
+      "inputs": {
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/risk/risk_vault.tolk": "fbeff1f2775968acdd1da3fd3030e4202710683d0b1ddcdf72a7fc45b13541f6",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "PerpsEngine": {
+      "source": "contracts/perps/perps_engine.tolk",
+      "codeHash": "7cb945ded54aaca9793cd34d9822371abfad78f4b10fb7150ce9918f7cce4fb3",
+      "bocBytes": 273398,
+      "cells": 2761,
+      "bits": 2093701,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/control/control_mesh_messages.tolk": "f14ae4dff0b5eb99c7eaeb2a4641d981735e10688a88e5ab8a6e718c802e7620",
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/perps/perps_engine_opcodes.tolk": "5be424d41668df7f1bdbfb658f7dc99d1640f160280e3fc27368f64b9bfd0afe",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/perps/native_budget.tolk": "07039f9d92150bda665b349224da0d7f1bbc4ecb0ab9661a893c4111b032a546",
+        "contracts/perps/perps_engine.tolk": "5ebd651ca45e36bbce96afff0ab6802f3f4c9997efeb3c34a3cb6234190aa3a7",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/automation/job_queue_funding.tolk": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295",
+        "contracts/shared/automation/module_config.tolk": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/application_ingress.tolk": "97d3f365dd75a57f13ff04dd29cfbdaf176b088d91b97c345e02ec32df27f7d8",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/risk/counterparty.tolk": "406a6e92ee8edc99f4a49287de8c36ae4086f0325fe05311ce9e9c2e03a09ad2",
+        "contracts/shared/risk/policy_lease.tolk": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "PerpsEngineBootstrap": {
+      "source": "contracts/perps/perps_engine_installer.tolk",
+      "codeHash": "5ce7c196de349915d9dbe122873d12c85ffacf30b676b5e8cbf75e5cae148754",
+      "bocBytes": 764,
+      "cells": 11,
+      "bits": 5745,
+      "inputs": {
+        "contracts/perps/perps_engine_installer.tolk": "53915cb0adfd58801e18f129bc0240d73aa3abbc5def0de63c5c4c1056237ebb"
+      }
+    },
+    "InsuranceVault": {
+      "source": "contracts/perps/insurance_vault.tolk",
+      "codeHash": "5910183b1f9d0dd7c13cce1a9c50202cfbd15b0eb94caf4095f6e8c621a9dbb9",
+      "bocBytes": 5643,
+      "cells": 95,
+      "bits": 42536,
+      "inputs": {
+        "contracts/generated/opcodes/perps/insurance_vault_opcodes.tolk": "84c539a92bdbeb9e17291272742b0678dd4cc4864e6649b2af071e4b0c5cacce",
+        "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa",
+        "contracts/perps/insurance_vault.tolk": "cfeec81910fc42240c3c168c371ca5b3cb3ff35f7604814513468bf157ff42fc",
+        "contracts/shared/control/control_receipt.tolk": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "ParisianPolicyManager": {
+      "source": "contracts/cover/policy_manager.tolk",
+      "codeHash": "42dd1ef227b23e9ebcee5c02cd2936d431c68ef85e9a3bfb19513ce7b27f90fb",
+      "bocBytes": 88515,
+      "cells": 1004,
+      "bits": 673686,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/cover/lifecycle.tolk": "defc9c323adf41b235f12665f2035506289d8467670f1e1f330046dfe32a7b85",
+        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
+        "contracts/cover/policy_manager.tolk": "33b283ab1967bd8acaf51d88488af70c37ba9c1591d0d3574b5261b8ed8eb147",
+        "contracts/cover/range_oracle.tolk": "3ff106cd96a3a33c50032c9f8fcd464b9d7dd66a70b3723b9f8d25fe9e51865d",
+        "contracts/cover/vault_health_codec.tolk": "f2123651b74e341a7a12807209b938638f02e15de50579c80c87ecfbe2f0c2b6",
+        "contracts/cover/volatility_oracle.tolk": "67109a7610e5efd4ebd3bf624e4e34452cf33220764ef38f690d886860da03ea",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/cover/policy_manager_opcodes.tolk": "64215462cb61dbf18c65196c219d34e8bc1819d306d512b6f43ca026b03065dd",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/automation/module_config.tolk": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/math/full_math.tolk": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/oracle/cover_volatility.tolk": "77d071a1f38d01b3e85cbde4a777b670f7f1b78c5d85b6323c227d9404a0f806",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/risk/policy_lease.tolk": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "CoverVault": {
+      "source": "contracts/cover/cover_vault.tolk",
+      "codeHash": "881a48e2cd085fe6383e1c9d7e2c505868544d64f78e54df3253e02c80962c39",
+      "bocBytes": 58200,
+      "cells": 654,
+      "bits": 442259,
+      "inputs": {
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/cover/cover_vault.tolk": "b535b36504dfc3aa20a7a4f59357e44dc169a2bd3cadc446c2d0b0a845ff0a00",
+        "contracts/cover/lifecycle.tolk": "defc9c323adf41b235f12665f2035506289d8467670f1e1f330046dfe32a7b85",
+        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
+        "contracts/cover/vault_health_codec.tolk": "f2123651b74e341a7a12807209b938638f02e15de50579c80c87ecfbe2f0c2b6",
+        "contracts/generated/opcodes/cover/cover_vault_opcodes.tolk": "9c8b78b7416ed155af46119bac14becec63e484703e2c6b168a7b8cfe97f033a",
+        "contracts/generated/opcodes/risk/risk_vault_opcodes.tolk": "e53a6f796ba810d33ea1135b759401a66415610ce72ac2790d0dc37771cff164",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/cover_ingress.tolk": "6ab9441472d0e5d3fb8fdae0936eff31190efa96620a16e29165cc7c411e9167",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "AnchorGuard": {
+      "source": "contracts/oracle/anchor_guard.tolk",
+      "codeHash": "ae72f90e01052aaa4c13f8f67e17726f4b1ffd361f0ff836f225534b983e8154",
+      "bocBytes": 3833,
+      "cells": 66,
+      "bits": 28851,
+      "inputs": {
+        "contracts/generated/opcodes/oracle/anchor_guard_opcodes.tolk": "a0a00bd7301c5fd7e4e0e7932f6e461ea3959e6387abc36ea10a5a50f6c65ad7",
+        "contracts/oracle/anchor_guard.tolk": "0f481535fd98408c8a150ed4d980aeb651840ba6eb7784676e5325ac4146ca2c",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "DlmmPool": {
+      "source": "contracts/dlmm/pool.tolk",
+      "codeHash": "bc18fa0218fe56de0dda7aee1ab41eeacc9eff277e96bed87a276e75b3a34385",
+      "bocBytes": 124572,
+      "cells": 1355,
+      "bits": 948154,
+      "inputs": {
+        "contracts/dex/stable_math.tolk": "be051f9b2ceb11e73cac1e00f9e1f879c7524684fc2c75b938881b0e5099bd64",
+        "contracts/dex/twap_native_budget.tolk": "8f405352980aa921925168ee713ee4c90c5870a1aa173139b6ada564acd80967",
+        "contracts/dlmm/constants.tolk": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a",
+        "contracts/dlmm/farming.tolk": "74b2113d19647cd520e3b9146f68b159a38c68dbbaa149d191b31aaf82ec34e4",
+        "contracts/dlmm/math.tolk": "2dc2566c48f55476c69b8b199931d2bf16d26ceb962ef37fb165ddbdda63178a",
+        "contracts/dlmm/pool.tolk": "4dd6fa360ab04c80a032ec82a0f83f056946a02cc451b93735a88225ec6570a5",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/math/full_math.tolk": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a",
+        "contracts/shared/math/integer.tolk": "c7f63c66b50b6bcc4b1fa77fd71a5123b13cb8403610ac277db59d4caf55f5c3",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/oracle/pool_realized.tolk": "197c13cecdbcdf93da88482082bd381ee1e66534443385e93eada4bc1eca41cb",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "DlmmPoolFactory": {
+      "source": "contracts/dlmm/pool_factory.tolk",
+      "codeHash": "ad5aed176bfcbf4c1a66fef7433889b41080326e50bc70ad1293a7dacd97a06a",
+      "bocBytes": 9748,
+      "cells": 155,
+      "bits": 73623,
+      "inputs": {
+        "contracts/dlmm/constants.tolk": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a",
+        "contracts/dlmm/math.tolk": "2dc2566c48f55476c69b8b199931d2bf16d26ceb962ef37fb165ddbdda63178a",
+        "contracts/dlmm/pool_factory.tolk": "e7270575ad692ae45fb0ce890be54d6c830d8291b224f2f7b32704e9fb993f69",
+        "contracts/dlmm/pool_state_init.tolk": "30dcd5f051fa2692e7cdb38133b7dd54b9f573384409c3487f849145405e9f3f",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/math/full_math.tolk": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "DlmmRegistry": {
+      "source": "contracts/dlmm/registry.tolk",
+      "codeHash": "3427a7e61332a428c7482348085686c0ae4f0310d7fe4e40e6eced9973c27a94",
+      "bocBytes": 1812,
+      "cells": 44,
+      "bits": 13199,
+      "inputs": {
+        "contracts/dlmm/constants.tolk": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a",
+        "contracts/dlmm/registry.tolk": "b3fd011916a0a85c43589e8dcc965ee1b5ba21b73bee475c0ac93a207fb800a9",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
+      }
+    },
+    "PerpsOracleUpkeep": {
+      "source": "contracts/automation/perps_oracle_upkeep.tolk",
+      "codeHash": "4c710f2979aede62beaff6f92004ee5bde4f4c31e863c4cae1dab7f13e6cd5eb",
+      "bocBytes": 980,
+      "cells": 22,
+      "bits": 7148,
+      "inputs": {
+        "contracts/automation/perps_oracle_upkeep.tolk": "d56705113c661952b9096ea1485d45c11a6951b03e909295e78558544a96d2fb",
+        "contracts/generated/opcodes/automation/perps_oracle_upkeep_opcodes.tolk": "4b949a4082c063d59ba8510dba6a3e6c00504b95f6e091eac18954076a377e28",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf"
+      }
+    },
+    "ControlMeshUpkeep": {
+      "source": "contracts/automation/control_mesh_upkeep.tolk",
+      "codeHash": "c186134c9b252c2d73e9e73b7c4ab26bb9911295edcca83b819e33e977923b96",
+      "bocBytes": 977,
+      "cells": 22,
+      "bits": 7123,
+      "inputs": {
+        "contracts/automation/control_mesh_upkeep.tolk": "f621065aafefa29cf7b38c37094f5f348c2cd5c7d4539e32dbd9f0d7719caf57",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf"
+      }
+    },
+    "T3Upkeep": {
+      "source": "contracts/automation/t3_upkeep.tolk",
+      "codeHash": "1ae17adf42ef385a80d66b7dbacdad3462ff2b3c7fb25fd4be0d7de3841174bf",
+      "bocBytes": 967,
+      "cells": 21,
+      "bits": 7064,
+      "inputs": {
+        "contracts/automation/t3_upkeep.tolk": "c8b678b85dc9b061e0a34e6974c8a1c9633e27c28d25999a04b1ea4f922df7c6",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf"
+      }
+    },
+    "CoverAutomationUpkeep": {
+      "source": "contracts/automation/cover_automation_upkeep.tolk",
+      "codeHash": "33603f956e5e2a339005df8ea0a4e7938e2d258aae0e38d802eb3db6a72c35cb",
+      "bocBytes": 1444,
+      "cells": 30,
+      "bits": 10655,
+      "inputs": {
+        "contracts/automation/cover_automation_upkeep.tolk": "48451092567e3a80272cd6c4bbdbc7c527e7c9bf52879624c956dcb54c41df8f",
+        "contracts/generated/opcodes/automation/gas_vault_opcodes.tolk": "9c7271afaa558da3f0dbbf2c579e6f68880c7ecc3474e4df980f666a5fd92612",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2"
+      }
+    },
+    "ActivationRawTarget": {
+      "source": "contracts/testing/activation_raw_target.tolk",
+      "codeHash": "2870be952776b171be56fdd1c2fc0c2f19ff0efcc1682f1658383958fc3036e6",
+      "bocBytes": 431,
+      "cells": 10,
+      "bits": 3095,
+      "inputs": {
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/governance/operation_journal.tolk": "cd6b8f6705b9cf1f9dfd5e9c74c6366750ba99fc9b8ab6e2d0a1757f9813c63c",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/native/return_budget.tolk": "da052e4385e64ca1f6af368ebad8f5690674793dbd4c659e84ee79b5b11c73fd",
+        "contracts/testing/activation_raw_target.tolk": "4d6276110f937efcf58f1ba7186a683554028f1779cfb4281f6972ceb18110ed"
+      }
+    },
+    "ActivationReceiptForwarderHarness": {
+      "source": "contracts/testing/activation_receipt_forwarder_harness.tolk",
+      "codeHash": "329b22299fd3d3e638d945c5f8114b8dd65f8367dd2c21aaa7f44262bb73328e",
+      "bocBytes": 251,
+      "cells": 6,
+      "bits": 1776,
+      "inputs": {
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/testing/activation_receipt_forwarder_harness.tolk": "a166e26649b5ef837165a69877279b5da528d6d9f7f6fa3f2a041ef4598ee507"
+      }
+    },
+    "BounceWallet": {
+      "source": "contracts/testing/bounce_wallet.tolk",
+      "codeHash": "3671b32ea3767995b06e9d1862da3002c2d1c175b072d4469fae8bf07a0451e7",
+      "bocBytes": 182,
+      "cells": 4,
+      "bits": 1280,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/bounce_wallet.tolk": "0d7fa428b21c319fcf6bc20701997a834d601312d3494fd87e60a2983c6295f5"
+      }
+    },
+    "ControlMeshReceiptTargetHarness": {
+      "source": "contracts/testing/control_mesh_receipt_target_harness.tolk",
+      "codeHash": "c5f0cad9b8cc74a7407656e35abe7c182292b1cc00d8607ad0b766d338ea14ce",
+      "bocBytes": 1203,
+      "cells": 21,
+      "bits": 8988,
+      "inputs": {
+        "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa",
+        "contracts/shared/control/control_receipt.tolk": "075d90ff60440f2af758c78584f6ffc67c7a31b64e77348f643fd78cf7a2eb6f",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/testing/control_mesh_receipt_target_harness.tolk": "bba4dd16dcf8b7d171d33ee59bbf8418877f928b0b29cf7782064b2cad494dad"
+      }
+    },
+    "ControlSolversHarness": {
+      "source": "contracts/control/ControlSolversHarness.tolk",
+      "codeHash": "3b0b0c55e2e6a0075f8375bd2fa4f1cd8b5e337b0f2652e240ffeeccc2373e05",
+      "bocBytes": 1479,
+      "cells": 37,
+      "bits": 10713,
+      "inputs": {
+        "contracts/control/control_solvers.tolk": "da98c575633aec80a8ed109c081c61f45ebd9fa7fa3d8972ea5ae64208761f75",
+        "contracts/control/ControlSolversHarness.tolk": "4d0728a5c57be740aabbcf8fc769284bf2205fd384d8e7d9d712b6ed2c834010",
+        "contracts/shared/control/gas_telemetry.tolk": "a8cfc670fee4b2b6362e70fd66c9bc188710a7919c5eb6329919d67a57d80bb0"
+      }
+    },
+    "CounterpartyHarness": {
+      "source": "contracts/testing/counterparty_harness.tolk",
+      "codeHash": "ef8d14125ff7e93208e62ded0341cc2aa4070c437d29a65053282f99ec8076d8",
+      "bocBytes": 601,
+      "cells": 13,
+      "bits": 4380,
+      "inputs": {
+        "contracts/shared/risk/counterparty.tolk": "406a6e92ee8edc99f4a49287de8c36ae4086f0325fe05311ce9e9c2e03a09ad2",
+        "contracts/testing/counterparty_harness.tolk": "649f6dd208572ed6acbfa837a10ac78374ba1dd3bbf2a77e269e52a757c70134"
+      }
+    },
+    "CoverVaultStateHarness": {
+      "source": "contracts/testing/cover_vault_state_harness.tolk",
+      "codeHash": "5829a1312a4bf7ea26d3c1e0075830f31392927425659832ccabfd0d8277ab8f",
+      "bocBytes": 59744,
+      "cells": 669,
+      "bits": 454104,
+      "inputs": {
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/cover/cover_vault.tolk": "b535b36504dfc3aa20a7a4f59357e44dc169a2bd3cadc446c2d0b0a845ff0a00",
+        "contracts/cover/lifecycle.tolk": "defc9c323adf41b235f12665f2035506289d8467670f1e1f330046dfe32a7b85",
+        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
+        "contracts/cover/vault_health_codec.tolk": "f2123651b74e341a7a12807209b938638f02e15de50579c80c87ecfbe2f0c2b6",
+        "contracts/generated/opcodes/cover/cover_vault_opcodes.tolk": "9c8b78b7416ed155af46119bac14becec63e484703e2c6b168a7b8cfe97f033a",
+        "contracts/generated/opcodes/risk/risk_vault_opcodes.tolk": "e53a6f796ba810d33ea1135b759401a66415610ce72ac2790d0dc37771cff164",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/cover_ingress.tolk": "6ab9441472d0e5d3fb8fdae0936eff31190efa96620a16e29165cc7c411e9167",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/cover_vault_state_harness.tolk": "5b20d25a67f16859d1996f357cf445c66c01ce83c5730daa4f4b5d9155025081"
+      }
+    },
+    "DexRouterHarness": {
+      "source": "contracts/testing/dex_router_harness.tolk",
+      "codeHash": "5e02458304d615dc01fecf89fb6b8d329c454a76cf32912d95853c2e4844aa54",
+      "bocBytes": 125443,
+      "cells": 1533,
+      "bits": 949560,
+      "inputs": {
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/dex/router.tolk": "203f3c2951881ef902bc70d7243129819666d067b4fee0e17d982f4aa7369f53",
+        "contracts/dex/stable_math.tolk": "be051f9b2ceb11e73cac1e00f9e1f879c7524684fc2c75b938881b0e5099bd64",
+        "contracts/dex/twap_native_budget.tolk": "8f405352980aa921925168ee713ee4c90c5870a1aa173139b6ada564acd80967",
+        "contracts/dlmm/constants.tolk": "d8cc807b661f189f23411ad3017196e105b9cb211ea61aa3a12ab6511d45f07a",
+        "contracts/generated/opcodes/dex/router_opcodes.tolk": "7134c3496eba0d487ecbed423ad66aa08bce0ce92613be0be3ddd0c08fbcac33",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/automation/job_queue_funding.tolk": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/math/integer.tolk": "c7f63c66b50b6bcc4b1fa77fd71a5123b13cb8403610ac277db59d4caf55f5c3",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/dex_router_harness.tolk": "694a2d996fd0509f663ddb1b35bf008a87a15b94cfee7ad12937367d47dbb9b4"
+      }
+    },
+    "DlmmRejectingRgcfGasVault": {
+      "source": "contracts/testing/dlmm_rejecting_rgcf_gas_vault.tolk",
+      "codeHash": "80472339dfdc1d67ba960404fd8a336a4dfeafcbed1ef0eae2e79fb7cf376e6e",
+      "bocBytes": 68,
+      "cells": 2,
+      "bits": 416,
+      "inputs": {
+        "contracts/testing/dlmm_rejecting_rgcf_gas_vault.tolk": "67523bf4e1056ffbaadd8d2a5b7cfc526d72be0f626460af6db7c272b6ffcbfe"
+      }
+    },
+    "FixedPointHarness": {
+      "source": "contracts/testing/fixed_point_harness.tolk",
+      "codeHash": "077dd7c15fe349ecd671d6eb2a9a6b6c0f54e4b7917e72aefc25c39a78f70453",
+      "bocBytes": 492,
+      "cells": 25,
+      "bits": 3151,
+      "inputs": {
+        "contracts/shared/math/fixed_point.tolk": "b7abe578423e746e620735d00e87ee42ad52995069267fcab7fe45425cb89194",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/fixed_point_harness.tolk": "134ab7c0b4b7a81c912526612f0ab1f6f8c8370a635bc87b0d60098866a37e0f"
+      }
+    },
+    "FullMathHarness": {
+      "source": "contracts/testing/full_math_harness.tolk",
+      "codeHash": "2abbecfb61601a941a77b99691ae12bff7bcc8256f3541789f9ee5949bc14d1e",
+      "bocBytes": 185,
+      "cells": 18,
+      "bits": 887,
+      "inputs": {
+        "contracts/shared/math/full_math.tolk": "b874d8c6d9e495ba221d671b534be2b3a9e730e905d1ba7c9e0e275b4207b90a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/full_math_harness.tolk": "37d914654d9a9810a465cbd9a12aab9e031d058252c052223e83bd2266260013"
+      }
+    },
+    "FundingRejector": {
+      "source": "contracts/testing/funding_rejector.tolk",
+      "codeHash": "6a6e5b83db42ce22b58d002cc4ab199c73ce02826b4c616b8951d5fc07865778",
+      "bocBytes": 207,
+      "cells": 5,
+      "bits": 1444,
+      "inputs": {
+        "contracts/generated/opcodes/testing/funding_rejector_opcodes.tolk": "c48ffe16a5fb7fe4d1cffac7008163b42098a0cef6c28b0c6387266d173342df",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/funding_rejector.tolk": "f96b5c67e720850fd96fe1150c03d041df2c7965e1264d554bc7ef8aaa10aabb"
+      }
+    },
+    "GasTelemetryHarness": {
+      "source": "contracts/testing/gas_telemetry_harness.tolk",
+      "codeHash": "9895285572bb0a64a9cc0a99f496fe47db763959bf74d12d9c197496ebd814c3",
+      "bocBytes": 87,
+      "cells": 6,
+      "bits": 457,
+      "inputs": {
+        "contracts/shared/control/gas_telemetry.tolk": "a8cfc670fee4b2b6362e70fd66c9bc188710a7919c5eb6329919d67a57d80bb0",
+        "contracts/testing/gas_telemetry_harness.tolk": "40954fb46f88ba1f0e9fb4b597acecf6297f3b2f471488279fec68a6f37bd23e"
+      }
+    },
+    "GovernanceRawTarget": {
+      "source": "contracts/testing/governance_raw_target.tolk",
+      "codeHash": "8d6749338857a22c6ea38b1ad358ecdbde19f249d40aea712c64af2b1ee3a886",
+      "bocBytes": 1874,
+      "cells": 31,
+      "bits": 14090,
+      "inputs": {
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/governance/operation_journal.tolk": "cd6b8f6705b9cf1f9dfd5e9c74c6366750ba99fc9b8ab6e2d0a1757f9813c63c",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/native/return_budget.tolk": "da052e4385e64ca1f6af368ebad8f5690674793dbd4c659e84ee79b5b11c73fd",
+        "contracts/testing/governance_raw_target.tolk": "573857f6ba55e30df0f11edb073f88fe898bc41c50d4807036ccdde4c5633bf5"
+      }
+    },
+    "GovernanceTimelockTarget": {
+      "source": "contracts/testing/governance_timelock_target.tolk",
+      "codeHash": "02d023681f647bc7c638589ffeb2f2d9819d3a6d8d393e484a6549abc424e6e0",
+      "bocBytes": 920,
+      "cells": 17,
+      "bits": 6828,
+      "inputs": {
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/governance_timelock_target.tolk": "584f28f627a212423bb135396d8deab5e758b30910b98330682593b5e5c9bc77"
+      }
+    },
+    "JettonNativeReceiver": {
+      "source": "contracts/testing/jetton_native_receiver.tolk",
+      "codeHash": "61c9762206591973faf0ce18cc05024536e480e4291996b11cc4b2c2718075c1",
+      "bocBytes": 820,
+      "cells": 14,
+      "bits": 6111,
+      "inputs": {
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/testing/jetton_native_receiver.tolk": "d17e5c6a114f9e13e5229ea9c3a6205f459698e218033f2979011f8302e9e020"
+      }
+    },
+    "LaunchpadReferralJournalHarness": {
+      "source": "contracts/testing/launchpad_referral_journal_harness.tolk",
+      "codeHash": "46027377c78f035e4d1723412b8cfda8aa4279bc8ccc4f48061ee5a77d4c2342",
+      "bocBytes": 10500,
+      "cells": 166,
+      "bits": 79429,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/launchpad/native_budget.tolk": "ac5dc2e5a8b7e53e4ec6a2d265c42c5b881081b4da283cfb912894906ba11cc4",
+        "contracts/launchpad/payment_rejection.tolk": "3784bde334dd82f4b920c178f2e365defa628f0716c694f7e1d2a8b2589b8c2e",
+        "contracts/launchpad/sale_settlement_journal.tolk": "3b76203abadff345ee56b74cf79897e9a18db291bc757dddd1bc68e616a3bcc0",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/launchpad_referral_journal_harness.tolk": "29afb1567000407f1fc46b7d5ce1f660e7a108ef546e24f745775ffb3c77cff2"
+      }
+    },
+    "LaunchpadRejectingSale": {
+      "source": "contracts/testing/launchpad_rejecting_sale.tolk",
+      "codeHash": "5bb12e188c1589b7d670db48fb7cf14e2ee090b0e409b6eea94bd05daca9f919",
+      "bocBytes": 198,
+      "cells": 3,
+      "bits": 1432,
+      "inputs": {
+        "contracts/testing/launchpad_rejecting_sale.tolk": "4db58e9da12dc4b0153e1a0e769eccf127641e763d20b0e37a1b654d01b01816"
+      }
+    },
+    "MockJettonWallet": {
+      "source": "contracts/testing/mock_jetton_wallet.tolk",
+      "codeHash": "8495f8411085fc1a79c0cd59cd846bdf57682d6f81f972b0a349b1366b173aad",
+      "bocBytes": 1584,
+      "cells": 31,
+      "bits": 11768,
+      "inputs": {
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/mock_jetton_wallet.tolk": "bedcdcca17aeaf54ed9c2d94f6016dec65cb71c17288ec9f6a7438695de0c125"
+      }
+    },
+    "MockTep89DiscoveryAdapter": {
+      "source": "contracts/testing/tep89_discovery_adapter.tolk",
+      "codeHash": "8d3eff8fafdf7d542915ea2ab6c77a338ee54e6c85e8e308cb11c86a3fd78fc5",
+      "bocBytes": 358,
+      "cells": 8,
+      "bits": 2563,
+      "inputs": {
+        "contracts/shared/jetton/tep89_codec.tolk": "fa30dff7e9be5a95cb75f5dd52e0b4878ab217a2ac5d4d7a195af2430d8ad195",
+        "contracts/testing/tep74_89_mock_types.tolk": "3bcb5ebd68e240679bb3ef73cada29376d926faf32876632a93e4be1c3752266",
+        "contracts/testing/tep89_discovery_adapter.tolk": "9e9e771d3f88a3ae2ce7042695f10eb4c2c15f210537ee63a65ef87b699ad52b"
+      }
+    },
+    "MockTepJettonRoot": {
+      "source": "contracts/testing/tep74_89_mock_root.tolk",
+      "codeHash": "450aaae782ae57c067255a40ba5f15a80aff764d694dc558c833307c1c3278b3",
+      "bocBytes": 658,
+      "cells": 12,
+      "bits": 4883,
+      "inputs": {
+        "contracts/shared/jetton/tep89_codec.tolk": "fa30dff7e9be5a95cb75f5dd52e0b4878ab217a2ac5d4d7a195af2430d8ad195",
+        "contracts/testing/tep74_89_mock_root.tolk": "090cf3476e506ff0f69f24d9be3ab8733736401a11d05211b74cbee4ca53300c",
+        "contracts/testing/tep74_89_mock_types.tolk": "3bcb5ebd68e240679bb3ef73cada29376d926faf32876632a93e4be1c3752266"
+      }
+    },
+    "MockTepJettonWallet": {
+      "source": "contracts/testing/tep74_89_mock_wallet.tolk",
+      "codeHash": "f0bb45e80ff65779bd4a82e6dc891a2fab873b58f2d70c7a76c5cbfd3f73b506",
+      "bocBytes": 898,
+      "cells": 18,
+      "bits": 6616,
+      "inputs": {
+        "contracts/shared/jetton/tep74_codec.tolk": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141",
+        "contracts/testing/tep74_89_mock_types.tolk": "3bcb5ebd68e240679bb3ef73cada29376d926faf32876632a93e4be1c3752266",
+        "contracts/testing/tep74_89_mock_wallet.tolk": "a074b56a1faa0690a565472b76c536dbb4bd293e2fa2c8e5d5decde9c82e26b2"
+      }
+    },
+    "NativeFundingHarness": {
+      "source": "contracts/testing/native_funding_harness.tolk",
+      "codeHash": "0c0862efdf1aca843bd982e31218afe82ac1e011e9a13dde16e6f1d13ebe8d72",
+      "bocBytes": 1203,
+      "cells": 23,
+      "bits": 8911,
+      "inputs": {
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/testing/native_funding_harness.tolk": "e542f9e3dc47bb322a805b33c872db6bd551640b213d5503a2b681a02fddeae3"
+      }
+    },
+    "NativeFundingRejector": {
+      "source": "contracts/testing/native_funding_rejector.tolk",
+      "codeHash": "518d0eb00be1f7f0fad78262006c5b33dc922fa10684a05099b0ba43ce18600b",
+      "bocBytes": 117,
+      "cells": 4,
+      "bits": 748,
+      "inputs": {
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/testing/native_funding_rejector.tolk": "bcc6754197a1e69c033c9c6389b9443af26ff20602edae71726f7c0a3d3dc893"
+      }
+    },
+    "OracleSafetyHarness": {
+      "source": "contracts/testing/oracle_safety_harness.tolk",
+      "codeHash": "d51a4235194b4f31c0100359d483b8a1d5aaff85ebcbb837c52362e81b121b04",
+      "bocBytes": 1440,
+      "cells": 31,
+      "bits": 10638,
+      "inputs": {
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/oracle_safety_harness.tolk": "d0f9f0781820594cff03dde8124e0f3d13493b7fa668c40b9bc1d8e69840b3c4"
+      }
+    },
+    "OverflowDecodeHarness": {
+      "source": "contracts/testing/overflow_decode_harness.tolk",
+      "codeHash": "19ec2fac4810ff850c93455ac454d653ef1f39d0544aa862daa7b8232f068ffe",
+      "bocBytes": 463,
+      "cells": 16,
+      "bits": 3165,
+      "inputs": {
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/overflow_decode_harness.tolk": "2a38e3d0b6d4a23bc0e25339890f76ff5441132b2085c702b44f745cb76584dd"
+      }
+    },
+    "PerpsAutomationHarness": {
+      "source": "contracts/testing/perps_automation_harness.tolk",
+      "codeHash": "23278cc519f45f6c0599073cfad8ab86bdf37f2c4e745d4e1a11512b6cb5c834",
+      "bocBytes": 377,
+      "cells": 10,
+      "bits": 2663,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/testing/perps_automation_harness_opcodes.tolk": "a3f1ec244a2a32e46d43fba5cbfb3627121be2c4e13085fb2d2c740ea37fc7a8",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/perps_automation_harness.tolk": "b624ad201caaaf26b3d249d88c1f330fe1bf1d43eb56cb51280b5bc4ba59c292"
+      }
+    },
+    "PerpsFundingHarness": {
+      "source": "contracts/testing/perps_funding_harness.tolk",
+      "codeHash": "005506f0c2f862c11c4b94334e99787ada2ee010bfd40109a28328d760032041",
+      "bocBytes": 205,
+      "cells": 10,
+      "bits": 1284,
+      "inputs": {
+        "contracts/perps/funding.tolk": "d45de4c4a2275b77f7772cacbbd3b40991cb601a391948db8dd92651d87e71fb",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/perps_funding_harness.tolk": "05793e0e85ae02bdc45d43b9598b3123e2c502c37604a53ca1cca5273bb4879e"
+      }
+    },
+    "PerpsMarketParamsHarness": {
+      "source": "contracts/testing/perps_market_params_harness.tolk",
+      "codeHash": "d0aaaf533cbeaa4891a8213a7c9df8dd55baaa484d4b5f685af255a4ce5bcea3",
+      "bocBytes": 182,
+      "cells": 8,
+      "bits": 1159,
+      "inputs": {
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/perps_market_params_harness.tolk": "15b0f73c3a53007bd63a74bbbef7c16c847aac80153daf70b8f5e9d9a816244e"
+      }
+    },
+    "PerpsOraclePoolHarness": {
+      "source": "contracts/testing/perps_oracle_pool_harness.tolk",
+      "codeHash": "70217a74cf696d542b1e2c564ba4b862a2744a8c03e7654c27f399fd7bb29b7e",
+      "bocBytes": 206,
+      "cells": 3,
+      "bits": 1496,
+      "inputs": {
+        "contracts/testing/perps_oracle_pool_harness.tolk": "b78631290b03a9342b7a48b5f935c025355b30c7153da6cfc7c1c6d0752f0cce"
+      }
+    },
+    "PerpsOrderPlanHarness": {
+      "source": "contracts/testing/perps_order_plan_harness.tolk",
+      "codeHash": "2c3dc8f6b54f771406947449e9cac4c4dcc861b8f98b38ea5cb6739be6b98b89",
+      "bocBytes": 276022,
+      "cells": 2787,
+      "bits": 2113799,
+      "inputs": {
+        "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
+        "contracts/control/control_mesh_messages.tolk": "f14ae4dff0b5eb99c7eaeb2a4641d981735e10688a88e5ab8a6e718c802e7620",
+        "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
+        "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
+        "contracts/generated/opcodes/perps/perps_engine_opcodes.tolk": "5be424d41668df7f1bdbfb658f7dc99d1640f160280e3fc27368f64b9bfd0afe",
+        "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
+        "contracts/perps/native_budget.tolk": "07039f9d92150bda665b349224da0d7f1bbc4ecb0ab9661a893c4111b032a546",
+        "contracts/perps/perps_engine.tolk": "5ebd651ca45e36bbce96afff0ab6802f3f4c9997efeb3c34a3cb6234190aa3a7",
+        "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
+        "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
+        "contracts/shared/automation/job_queue_funding.tolk": "9bdae74bdd70a32c0210d5027d44817b458589f01adb1f7257bef2f5270db295",
+        "contracts/shared/automation/module_config.tolk": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861",
+        "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
+        "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
+        "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/jetton/application_ingress.tolk": "97d3f365dd75a57f13ff04dd29cfbdaf176b088d91b97c345e02ec32df27f7d8",
+        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
+        "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
+        "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
+        "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
+        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
+        "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
+        "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
+        "contracts/shared/oracle/safety_payload.tolk": "cc971db038ad155ab6ac397b0aacea6d77267fc9f75aa89caebb5ec0148f9f6b",
+        "contracts/shared/oracle/safety.tolk": "7bb0ec59068de03c2b0ff097395522842720d050b44d93d9fabc5b402fae4b41",
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
+        "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
+        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/risk/counterparty.tolk": "406a6e92ee8edc99f4a49287de8c36ae4086f0325fe05311ce9e9c2e03a09ad2",
+        "contracts/shared/risk/policy_lease.tolk": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/perps_order_plan_harness.tolk": "52effc198e7233a3da388f04f27dd188b3128f04bafd1a56817c30a43e4e48e2"
+      }
+    },
+    "RegistryHarness": {
+      "source": "contracts/testing/registry_harness.tolk",
+      "codeHash": "bab84367f0ac22494667f6254a0a7c04cf4c6279e92a46fc3efc3be45588c40f",
+      "bocBytes": 1304,
+      "cells": 41,
+      "bits": 9114,
+      "inputs": {
+        "contracts/generated/opcodes/testing/registry_harness_opcodes.tolk": "5c91267a4ad14eaf6a4d2df76c9f50d10e6846b01c6c154714b7b86bf1841979",
+        "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/registry_harness.tolk": "253408f49a8503b5d57b60f51c926b65b23bb3273667b4a129fcef30152817bf"
+      }
+    },
+    "RejectingSplitter": {
+      "source": "contracts/testing/rejecting_splitter.tolk",
+      "codeHash": "2550f4b6458ef8c760127cd14958f680a9d015d73255ba50088fda012635d66a",
+      "bocBytes": 65,
+      "cells": 2,
+      "bits": 392,
+      "inputs": {
+        "contracts/generated/opcodes/testing/rejecting_splitter_opcodes.tolk": "abb9a8a145497e0e394bea7cc2c2e70e18a8a977f62c056b262470deeaff92cc",
+        "contracts/testing/rejecting_splitter.tolk": "cdbcacbc178f48ecb58c3c5ef7b2121fae79dd3cb42de12d214141184c486665"
+      }
+    },
+    "RiskControllerMockProduct": {
+      "source": "contracts/control/risk_controller_mock_product.tolk",
+      "codeHash": "b2a75f0e1360c54305651187014cf152d82b07831a1aaa11f237ef2fb6652829",
+      "bocBytes": 794,
+      "cells": 20,
+      "bits": 5758,
+      "inputs": {
+        "contracts/control/risk_controller_mock_product.tolk": "9fbdc7b93ea2aa9307c7244eebe8d7df373029816f926f2a3d02e465a3fdcefb",
+        "contracts/shared/risk/policy_lease.tolk": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8"
+      }
+    },
+    "SerializationHarness": {
+      "source": "contracts/testing/serialization_harness.tolk",
+      "codeHash": "8ac539803b5b800448c478d23c216b94c6bfa9d883a4bc96fbebe9fdb3ccdbd7",
+      "bocBytes": 663,
+      "cells": 43,
+      "bits": 3967,
+      "inputs": {
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
+        "contracts/testing/serialization_harness.tolk": "39bce95414ec4233f1674d6388d62452913421448d4fcb14d4f56baf598b2e72"
+      }
+    },
+    "StableMathHarness": {
+      "source": "contracts/testing/stable_math_harness.tolk",
+      "codeHash": "ad41e3907078935f9e0b3c4986875727de1b75c59b4836d9697a33560bf2a372",
+      "bocBytes": 364,
+      "cells": 14,
+      "bits": 2427,
+      "inputs": {
+        "contracts/dex/stable_math.tolk": "be051f9b2ceb11e73cac1e00f9e1f879c7524684fc2c75b938881b0e5099bd64",
+        "contracts/shared/math/integer.tolk": "c7f63c66b50b6bcc4b1fa77fd71a5123b13cb8403610ac277db59d4caf55f5c3",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/stable_math_harness.tolk": "19a4d35ee0edec5acea06b6edb678d6f1681bcf655c3a7cc8c9ade037e9ca32b"
+      }
+    },
+    "T3LiquidityPoolHarness": {
+      "source": "contracts/testing/t3_liquidity_pool_harness.tolk",
+      "codeHash": "4b1dda69a5246210f10b2e9175d5cd625d1fe9f9a866257a95b84b2bcaa33d63",
+      "bocBytes": 2400,
+      "cells": 57,
+      "bits": 17497,
+      "inputs": {
+        "contracts/generated/opcodes/t3/messages_opcodes.tolk": "b6d2af5e87f20e713852dbbe73b7a2a9f75568630357c205ce71c1ef87b1e39e",
+        "contracts/generated/opcodes/testing/t3_liquidity_pool_harness_opcodes.tolk": "519e8d70256fadb864433df588c69d6ef47457064a5b736e7f5f1581582a5f62",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/t3/liquidity_pool.tolk": "f9321c94315563bf730232d6dd5ab4f59556762de180d9fa16d78c5952947c53",
+        "contracts/t3/messages.tolk": "dd402d67668a63f10407922bd349bd5e8bd9ba678371abc90320a69a44a0ae3f",
+        "contracts/testing/t3_liquidity_pool_harness.tolk": "864ed136a90362b2e309194e4b11d1d858087f7484c38aa1096a71a3b4772cf6"
+      }
+    },
+    "T3MessagesHarness": {
+      "source": "contracts/testing/t3_messages_harness.tolk",
+      "codeHash": "e00e5c40c4320b032743b043e7c98175a45ef3af30844f3996cabacb9a2bb789",
+      "bocBytes": 569,
+      "cells": 19,
+      "bits": 3934,
+      "inputs": {
+        "contracts/generated/opcodes/t3/messages_opcodes.tolk": "b6d2af5e87f20e713852dbbe73b7a2a9f75568630357c205ce71c1ef87b1e39e",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/t3/messages.tolk": "dd402d67668a63f10407922bd349bd5e8bd9ba678371abc90320a69a44a0ae3f",
+        "contracts/testing/t3_messages_harness.tolk": "02207d8c8cedfaf6369e9aacf3abef686382f9c98d168451d34e348e53a10408"
+      }
+    },
+    "TepJettonCodecHarness": {
+      "source": "contracts/testing/tep_jetton_codec_harness.tolk",
+      "codeHash": "19868d511bdb019106780f2e3b42690289721b5ca9dd43b70946051be091008d",
+      "bocBytes": 391,
+      "cells": 14,
+      "bits": 2644,
+      "inputs": {
+        "contracts/shared/jetton/tep74_codec.tolk": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141",
+        "contracts/shared/jetton/tep89_codec.tolk": "fa30dff7e9be5a95cb75f5dd52e0b4878ab217a2ac5d4d7a195af2430d8ad195",
+        "contracts/testing/tep_jetton_codec_harness.tolk": "29456cadb2f7c67eb7fb996cb4f109b80d749b7f0167c55a9c026c1295658395"
+      }
+    },
+    "TwapHarness": {
+      "source": "contracts/testing/twap_harness.tolk",
+      "codeHash": "f939a5344aaeb14285b16fc36a234af49655e9f919c911b203018fe25643922d",
+      "bocBytes": 239,
+      "cells": 16,
+      "bits": 1375,
+      "inputs": {
+        "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/twap_harness.tolk": "e459deb61a46e8b4bb90ac167626cacb096fb6eef6ac9508d8ab7ed42bcff08d"
+      }
+    },
+    "VolatilityMathHarness": {
+      "source": "contracts/testing/volatility_math_harness.tolk",
+      "codeHash": "bf07be1fa449cd5caba0c33eef794c51d2c57bb940bac4d68455bd523093f163",
+      "bocBytes": 494,
+      "cells": 25,
+      "bits": 3145,
+      "inputs": {
+        "contracts/shared/math/volatility.tolk": "f4974f9dda0fe2d3fd7c9b371dc8c38dfff9f29fb2291132fbae5b425234147e",
+        "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
+        "contracts/testing/volatility_math_harness.tolk": "bbdb73824ccfd2b32371ab35180d3e2adfeb75fc258c26ea4bd3ffccc66616b5"
+      }
+    },
+    "WrapperTemplateExample": {
+      "source": "contracts/testing/wrapper_template_example.tolk",
+      "codeHash": "3ecbd813f2a7cf63ce4de603a1453277f6a7f9736ecad91477ace70e6fd9ad13",
+      "bocBytes": 99,
+      "cells": 6,
+      "bits": 553,
+      "inputs": {
+        "contracts/testing/wrapper_template_example.tolk": "c9cd7e01b7bf1f4073677115127853a3cd254992ef634b6da1370e161be2612f"
+      }
+    }
+  }
+}

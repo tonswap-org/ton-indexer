@@ -1,3 +1,4 @@
+import { assertCaptureCode } from './capture-build';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -14,15 +15,14 @@ async function main() {
     join(__dirname, 'fixtures/perps-funding-checkpoint-current');
   const bytes = readFileSync(join(directory, 'funding-remainder.json'));
   const provenance = JSON.parse(readFileSync(join(directory, 'provenance.json'), 'utf8'));
-  if (provenance.qualification !== 'qualified-after-native-source-lock' &&
-      process.env.TONSWAP_ALLOW_PROVISIONAL_PERPS_FIXTURE !== '1') {
-    throw Error('Perps funding VM fixture is stale or provisional; recapture after native source lock');
-  }
+  assert.equal(provenance.qualification, 'qualified-pure-build-target-closure');
   const saved = JSON.parse(bytes.toString('utf8'));
   assertPerpsStressChainConfig(saved.chainConfig);
-  if(provenance.qualification==='qualified-after-native-source-lock'){
+  {
     assertPerpsProducerReceipt(provenance.producerReceipt,'funding',resolve(__dirname,'../../../tonswap_tolk'),
-      dirname(provenance.originalCapture),Buffer.from(provenance.producerLog??''));
+      dirname(provenance.originalCapture),Buffer.from(provenance.producerLog??''),provenance.buildBinding);
+    assert(provenance.buildBinding.captures[basename(provenance.originalCapture)]);
+    assertCaptureCode('PerpsEngine', saved.codeBoc, provenance.buildBinding);
     assert.equal(producerSha256(bytes),provenance.producerReceipt.artifacts[basename(provenance.originalCapture)]);
   }
   assert.equal(createHash('sha256').update(bytes).digest('hex'), provenance.sha256);
