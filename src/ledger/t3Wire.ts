@@ -167,6 +167,8 @@ export const mintRequest = (m?: RawMessage) =>
     const referrer = referralAddress(s.loadRef());
     return { queryId, recipient, slippage, basketRaw, referrer };
   });
+export const mintRetry = (m?: RawMessage) =>
+  parse(m, 0x4d525459, (s) => ({ owner: address(s), queryId: u64(s) }));
 export const mintReceipt = (m?: RawMessage) =>
   parse(m, T3_MINT_RECEIPT, (s) => {
     const queryId = u64(s),

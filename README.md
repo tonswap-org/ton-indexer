@@ -396,8 +396,18 @@ their actual transaction and forwarding fees remain separate movements.
 business receipt basket and a typed root mint request, canonical recipient wallet
 credit, wallet/root acknowledgements, hub consumption, and root finalization.
 The root query/wire/hash is distinct from the business query. Replayed root
-messages add no second mint credit. Staged deposits and failed/bounced mint
-attempts retain observed gross debits and fees with incomplete settlement.
+messages add no second mint credit. A parked mint retry additionally requires
+the current Hub's exact transaction archives: the unique original funded admission,
+each authenticated failure into `failedMints`, and each owner/query retry that
+rotates the unchanged liability into the live lane. Code, transaction LT/hash,
+receipt and refund authority must match; missing or conflicting boundaries keep
+settlement incomplete. Recovery retains original fees and invitation data and
+the physical native fees across attempts. Staged deposits and unresolved
+failed/bounced attempts retain observed gross debits and fees. Run
+`npx tsx src/scripts/ledger-t3-test.ts` and `npm run test:ledger` after changes.
+Mint protocol fees come from the original execution's exact six-coin fee-bucket
+transition, unchanged single buckets, and matching supply and gross reserve
+changes. Missing or conflicting fee states retain unavailable attribution.
 `t3_redeem` requires the original owner burn intent, authenticated root-to-hub
 proof and acknowledgement round trip, durable `redemption_identity` payout ID,
 and every actual receiver wallet credit and credited acknowledgement. Receipt

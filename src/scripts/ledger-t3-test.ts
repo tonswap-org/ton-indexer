@@ -1,4 +1,5 @@
 import { writeCurrentJettonWalletStorage } from "../ledger/jettonWalletState";
+import './t3-mint-fees-test';
 import assert from "node:assert/strict";
 import { Address, Cell, Dictionary, beginCell } from "@ton/core";
 import { createHash } from "node:crypto";
@@ -50,10 +51,10 @@ const query = "9007199254741033",
   payout = "9007199254741067",
   refundPayout = "9223372036854775813",
   amount = 2n ** 80n + 31n;
-function wrapNativeFundingMessage(message: RawMessage) {
+function wrapNativeFundingMessage(message: RawMessage, correlationId = wire) {
   const business = Cell.fromBase64(message.body!);
   const envelope = beginCell().storeUint(NATIVE_FUNDING, 32)
-    .storeUint(BigInt(wire), 64).storeUint(0, 8).storeUint(0, 32)
+    .storeUint(BigInt(correlationId), 64).storeUint(0, 8).storeUint(0, 32)
     .storeAddress(A(owner)).storeRef(business).endCell();
   message.body = envelope.toBoc().toString('base64');
   message.op = NATIVE_FUNDING;
@@ -62,11 +63,33 @@ function emptyReferralState(completedMints?: Dictionary<bigint, Cell>) {
   return beginCell().storeUint(0, 32).storeCoins(0).storeUint(1, 64).storeUint(0, 64).storeUint(0, 64)
     .storeRef(Cell.EMPTY).storeRef(beginCell().storeUint(0, 64).storeUint(0, 64).storeDict(null).storeDict(null)).storeDict(completedMints ?? null).endCell();
 }
-function emptyBounceState() {
+function emptyBounceState(mintState = Cell.EMPTY) {
   return beginCell().storeAddress(null).storeUint(0, 32).storeUint(0, 32).storeCoins(0).storeInt(0, 64)
-    .storeRef(Cell.EMPTY).storeRef(beginCell().storeUint(1, 64).storeDict(null)
+    .storeRef(mintState).storeRef(beginCell().storeUint(1, 64).storeDict(null)
       .storeDict(null).storeDict(null).storeDict(null))
     .storeRef(emptyReferralState()).endCell();
+}
+function mintJournal(status: number, rootId: string, minted: bigint, receipt: Cell, requestHash = 0n) {
+  const idle = status === 0;
+  const funding = beginCell().storeUint(idle ? 0n : BigInt(query), 64)
+    .storeUint(0, 8).storeUint(0, 32).storeAddress(A(idle ? address(0) : owner)).endCell();
+  return beginCell().storeUint(status, 8).storeUint(idle ? 0n : BigInt(query), 64)
+    .storeUint(idle ? 0n : BigInt(rootId), 64).storeCoins(idle ? 0n : minted)
+    .storeAddress(idle ? null : A(owner)).storeRef(beginCell()
+      .storeAddress(idle ? null : A(owner)).storeUint(requestHash, 256)
+      .storeCoins(status === 1 ? 360_000_000n : status === 5 ? 20_000_000n : 0n)
+      .storeRef(idle ? Cell.EMPTY : receipt).storeRef(funding)).endCell();
+}
+const mintBusinessKey = () => BigInt('0x' + beginCell().storeUint(0x54334d52, 32)
+  .storeAddress(A(owner)).storeUint(BigInt(query), 64).endCell().hash().toString('hex'));
+function mintLane(nextId: string, journal: Cell, failed?: Dictionary<bigint, Cell>) {
+  return beginCell().storeUint(BigInt(nextId), 64).storeUint(1, 64)
+    .storeUint(0, 8).storeUint(0, 64).storeRef(journal).storeDict(failed ?? null).endCell();
+}
+function feeCell(proportional = [0n, 0n, 0n], single = [0n, 0n, 0n]) {
+  const builder = beginCell();
+  [...proportional, ...single].forEach(amount => builder.storeCoins(amount));
+  return builder.endCell();
 }
 const inviterCell = (referrer: string | null = null) => beginCell().storeAddress(referrer ? A(referrer) : null).endCell();
 function state(
@@ -76,6 +99,7 @@ function state(
   balance = [1000n, 0n, 0n],
   bounce = emptyBounceState(),
   enabled = 1,
+  fees = feeCell(),
 ) {
   const peg = beginCell()
     .storeUint(0, 8)
@@ -91,7 +115,7 @@ function state(
     .storeUint(0, 48);
   const s = beginCell().storeInt(100, 24).storeUint(30, 16).storeCoins(supply);
   balance.forEach((v) => s.storeCoins(v));
-  s.storeRef(Cell.EMPTY)
+  s.storeRef(fees)
     .storeRef(Cell.EMPTY)
     .storeUint(0, 208)
     .storeRef(
@@ -281,7 +305,9 @@ function fixture() {
   };
   return { input, config, identity, msg, tx, transfer };
 }
-function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped = false) {
+function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped = false,
+  parked: boolean | number | 'duplicate-finalize' = false,
+  economics?: { beforeBalances: bigint[]; fees: bigint[]; minted: bigint }) {
   const f = fixture(),
     note = beginCell()
       .storeUint(w.DEPOSIT_NOTE, 32)
@@ -317,7 +343,7 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped
     f.tx(hub, d.notification);
     return [d];
   });
-  const minted = basket.reduce(
+  const minted = economics?.minted ?? basket.reduce(
       (a, v) => a + (basket.every((n) => n > 0n) ? v : (v * 9900n) / 10000n),
       0n,
     ),
@@ -365,7 +391,130 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped
     );
     f.tx(owner, undefined, [originMessage]);
   }
+  const archives = new Map<string, Cell>();
+  const proportional = basket.every(n => n > 0n);
+  const beforeBalances = economics?.beforeBalances ?? (proportional ? basket : [1000n, 0n, 0n]);
+  const beforeSupply = beforeBalances.reduce((total, n) => total + n, 0n);
+  const afterBalances = basket.map((n, i) => n + beforeBalances[i]);
+  const assessedFees = economics?.fees ?? basket.map(n => proportional ? 0n : n - n * 9900n / 10000n);
+  const originalBefore = (lane: Cell) => state(100, 100, beforeSupply, beforeBalances, emptyBounceState(lane), 1, feeCell());
+  const committed = (lane: Cell) => state(100, 100, beforeSupply + minted, afterBalances,
+    emptyBounceState(lane), 1, feeCell(assessedFees));
+  let originalAdmission: RawTransaction | undefined;
+  let failedRoot: RawTransaction | undefined;
+  let parkedAt: RawTransaction | undefined;
+  const failedAttempts: RawTransaction[] = [], parkedAttempts: RawTransaction[] = [], retryAttempts: RawTransaction[] = [];
+  const durableReceipt = beginCell().storeUint(w.T3_MINT_RECEIPT, 32)
+    .storeUint(BigInt(query), 64).storeAddress(A(owner)).storeCoins(minted)
+    .storeCoins(basket[0]).storeCoins(basket[1]).storeCoins(basket[2]).storeMaybeRef(null).endCell();
+  if (parked) {
+    const failures = parked === true || parked === 'duplicate-finalize' ? 1 : parked;
+    const initialRootId = (BigInt(rootQuery) - BigInt(failures)).toString();
+    for (let attempt = 0; attempt < failures; attempt++) {
+      const previousRootId = (BigInt(initialRootId) + BigInt(attempt)).toString(),
+        nextRootId = (BigInt(previousRootId) + 1n).toString();
+      const previousStart = f.msg(hub, root, beginCell().storeUint(w.MINT_START, 32)
+      .storeUint(BigInt(previousRootId), 64).storeCoins(minted).storeAddress(A(owner))
+      .storeAddress(A(hub)).storeCoins(0).storeRef(Cell.EMPTY).endCell());
+      wrapNativeFundingMessage(previousStart, previousRootId);
+      previousStart.value = '400000000';
+      if (attempt > 0) {
+        originMessage = f.msg(owner, hub, beginCell().storeUint(0x4d525459, 32)
+          .storeAddress(A(owner)).storeUint(BigInt(query), 64).endCell());
+        originMessage.value = '920000000';
+        f.tx(owner, undefined, [originMessage]);
+      }
+      const admitted = f.tx(hub, originMessage, [previousStart]);
+      if (attempt === 0) {
+        originalAdmission = admitted;
+        archives.set(admitted.prevTransactionLt!, originalBefore(
+          mintLane(initialRootId, mintJournal(0, '0', 0n, Cell.EMPTY))));
+      } else retryAttempts.push(admitted);
+      archives.set(admitted.lt, committed(mintLane(nextRootId,
+        mintJournal(1, previousRootId, minted, durableReceipt))));
+      let failedHash = 0n;
+      let duplicateFinal: RawMessage | undefined;
+      let returned: RawMessage;
+      if (parked === 'duplicate-finalize') {
+        const previousWire = (BigInt(wire) - 1n).toString();
+        failedHash = BigInt('0x' + w.mintRequestHash(root, tw, {
+          ...internalValue, wireId: previousWire, queryId: previousRootId, requestHash: '0'.repeat(64),
+        }));
+        const previousInternal = f.msg(root, tw, beginCell().storeUint(w.MINT_INTERNAL, 32)
+          .storeUint(BigInt(previousWire), 64).storeUint(BigInt(previousRootId), 64)
+          .storeCoins(minted).storeUint(failedHash, 256).storeRef(beginCell()
+            .storeAddress(A(hub)).storeAddress(A(owner)).storeCoins(0)).storeRef(Cell.EMPTY).endCell());
+        wrapNativeFundingMessage(previousInternal, previousRootId);
+        f.tx(root, previousStart, [previousInternal]);
+        const walletBounce = f.msg(tw, root, beginCell().storeUint(0xfffffffe, 32)
+          .storeRef(Cell.fromBase64(previousInternal.body!))
+          .storeRef(beginCell().storeCoins(340_000_000n).storeBit(false).storeUint(0, 64).storeUint(0, 32))
+          .storeUint(0, 8).storeInt(1103, 32).storeBit(false).endCell());
+        walletBounce.bounced = true;
+        failedRoot = f.tx(tw, previousInternal, [walletBounce]);
+        failedRoot.success = false; failedRoot.status = 'failed'; failedAttempts.push(failedRoot);
+        const negative = f.msg(root, hub, beginCell().storeUint(0x4a4d4246, 32)
+          .storeUint(BigInt(previousWire), 64).storeUint(BigInt(previousRootId), 64)
+          .storeCoins(minted).storeAddress(A(owner)).storeUint(failedHash, 256).endCell());
+        wrapNativeFundingMessage(negative, previousRootId);
+        f.tx(root, walletBounce, [negative]);
+        const finalizeBody = () => beginCell().storeUint(w.MINT_FINALIZE, 32)
+          .storeUint(BigInt(previousRootId), 64).storeCoins(minted).storeAddress(A(owner))
+          .storeUint(failedHash, 256).endCell();
+        const finalize = f.msg(hub, root, finalizeBody()); wrapNativeFundingMessage(finalize, previousRootId);
+        const settling = f.tx(hub, negative, [finalize]);
+        const settlingState = committed(mintLane(nextRootId, mintJournal(5, previousRootId, minted, durableReceipt, failedHash)));
+        archives.set(settling.lt, settlingState);
+        const pendingRetry = f.msg(owner, hub, beginCell().storeUint(0x4d525459, 32)
+          .storeAddress(A(owner)).storeUint(BigInt(query), 64).endCell());
+        pendingRetry.value = '500000000'; f.tx(owner, undefined, [pendingRetry]);
+        const finalizeAgain = f.msg(hub, root, finalizeBody()); wrapNativeFundingMessage(finalizeAgain, previousRootId);
+        const pending = f.tx(hub, pendingRetry, [finalizeAgain]);
+        archives.set(pending.lt, settlingState); retryAttempts.push(pending);
+        const finalizedBody = () => beginCell().storeUint(w.MINT_FINALIZED, 32)
+          .storeUint(BigInt(previousRootId), 64).storeCoins(minted).storeAddress(A(owner))
+          .storeUint(failedHash, 256).endCell();
+        returned = f.msg(root, hub, finalizedBody()); wrapNativeFundingMessage(returned, previousRootId);
+        f.tx(root, finalize, [returned]);
+        duplicateFinal = f.msg(root, hub, finalizedBody()); wrapNativeFundingMessage(duplicateFinal, previousRootId);
+        f.tx(root, finalizeAgain, [duplicateFinal]);
+      } else {
+        returned = f.msg(root, hub, beginCell().storeUint(0xfffffffe, 32)
+      .storeRef(Cell.fromBase64(previousStart.body!))
+      .storeRef(beginCell().storeCoins(400_000_000n).storeBit(false)
+        .storeUint(0, 64).storeUint(0, 32).endCell())
+      .storeUint(0, 8).storeInt(1103, 32).storeBit(false).endCell());
+        returned.bounced = true;
+        failedRoot = f.tx(root, previousStart, [returned]);
+        failedRoot.success = false;
+        failedRoot.status = 'failed';
+        failedAttempts.push(failedRoot);
+      }
+      parkedAt = f.tx(hub, returned);
+      parkedAttempts.push(parkedAt);
+      const failed = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+      failed.set(mintBusinessKey(), mintJournal(2, previousRootId, minted, durableReceipt, failedHash));
+      const parkedState = committed(mintLane(nextRootId, mintJournal(0, '0', 0n, Cell.EMPTY), failed));
+      archives.set(parkedAt.lt, parkedState);
+      if (duplicateFinal) {
+        const late = f.tx(hub, duplicateFinal);
+        archives.set(late.lt, parkedState); parkedAttempts.push(late);
+      }
+    }
+    originMessage = f.msg(owner, hub, beginCell().storeUint(0x4d525459, 32)
+      .storeAddress(A(owner)).storeUint(BigInt(query), 64).endCell());
+    f.tx(owner, undefined, [originMessage]);
+  }
+  if (parked) {
+    wrapNativeFundingMessage(start, rootQuery);
+    start.value = '400000000';
+    originMessage.value = '920000000';
+  }
   const origin = f.tx(hub, originMessage, [start]);
+  if (!parked) archives.set(origin.prevTransactionLt!, originalBefore(
+    mintLane(rootQuery, mintJournal(0, '0', 0n, Cell.EMPTY))));
+  archives.set(origin.lt, committed(
+    mintLane((BigInt(rootQuery) + 1n).toString(), mintJournal(1, rootQuery, minted, durableReceipt))));
   const internal = f.msg(
     root,
     tw,
@@ -451,19 +600,23 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped
   );
   f.tx(root, final, [finalized]);
   f.tx(hub, finalized);
-  if (wrapped) {
+  if (wrapped || parked) {
     for (const message of [start, internal, accepted, success, final, finalized])
-      wrapNativeFundingMessage(message);
+      if (message.op !== NATIVE_FUNDING) wrapNativeFundingMessage(message, parked ? rootQuery : wire);
   }
-  const data = state();
-  f.input.stateAt = async () => ({
-    seqno: 10,
+  f.input.stateAt = async (account, lt, hash) => {
+    if (account !== hub) return null;
+    const archived = archives.get(lt);
+    return archived ? ({
+    seqno: Number(lt),
     state: {
       accountState: "active",
+      lastTxLt: lt, lastTxHash: hash,
       codeBoc: code.toBoc().toString("base64"),
-      dataBoc: data.toBoc().toString("base64"),
+      dataBoc: archived.toBoc().toString("base64"),
     } as any,
-  });
+  }) : null;
+  };
   return {
     ...f,
     credit,
@@ -473,6 +626,13 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped
     deposit,
     internal,
     accepted,
+    originalAdmission,
+    failedRoot,
+    parkedAt,
+    archives,
+    failedAttempts,
+    parkedAttempts,
+    retryAttempts,
   };
 }
 function rejectedMintRefund(stage: 'queued' | 'dispatching' | 'credited', kind: 3 | 5 = 3) {
@@ -834,12 +994,14 @@ function redeem(sliced = false, recovery = false, referrer: string | null = null
   // This wire fixture burns half the outstanding supply, so its 1% fee is
   // nonterminal. A full-supply proportional burn exits at gross backing.
   const data = state(100, 100, 2n * n, [2n * n, 0n, 0n]);
-  f.input.stateAt = async () => ({
-    seqno: 10,
+  const afterData = state(100, 100, n, [2n * n - net, 0n, 0n]);
+  f.input.stateAt = async (_account, lt, hash) => ({
+    seqno: Number(lt),
     state: {
       accountState: "active",
+      lastTxLt: lt, lastTxHash: hash,
       codeBoc: code.toBoc().toString("base64"),
-      dataBoc: data.toBoc().toString("base64"),
+      dataBoc: (lt === execute.lt ? afterData : data).toBoc().toString("base64"),
     } as any,
   });
   if (wrapped) {
@@ -1478,7 +1640,7 @@ async function recoveryTests() {
             .toString("base64");
         },
       ]);
-  for (const relation of ["equal", "reversed"] as const)
+  for (const relation of ["reversed"] as const)
     for (const [label, account, name] of boundaries)
       mutations.push([
         `${label} has ${relation} archive sequence numbers`,
@@ -1509,6 +1671,16 @@ async function recoveryTests() {
       label,
     );
   }
+  const intrablockBurn = recoveredRedeem();
+  for (const snapshot of intrablockBurn.archives.values()) snapshot.seqno = 10;
+  const intrablockBurnEvents = (await projectOwnerLedger(intrablockBurn.input)).events;
+  const intrablockBurnEvent = intrablockBurnEvents.find(e => e.kind === 't3_redeem')!;
+  assert.equal(intrablockBurnEvent.settlement?.status, 'confirmed');
+  assert.equal(intrablockBurnEvent.settlement?.t3?.burnRecovery?.status, 'accepted');
+  assert.equal(intrablockBurnEvents.flatMap(e => e.movements).filter(m => m.purpose === 't3_burn').length, 1,
+    'Exact intrablock recovery does not repeat the burn');
+  assert.equal(intrablockBurnEvents.flatMap(e => e.movements).filter(m => m.purpose === 't3_payout').length, 1,
+    'Exact intrablock recovery does not repeat the payout');
   const conflictingIdentity = recoveredRedeem();
   conflictingIdentity.input.t3Hubs!.get(hub)!.redemptions.get(query)!.payoutId =
     "999";
@@ -1753,7 +1925,8 @@ async function main() {
   const referredMintEvent = (await projectOwnerLedger(referredMint.input)).events.find(e => e.kind === "t3_mint")!;
   assert.equal(referredMintEvent.settlement?.status, "confirmed");
   assert.equal(referredMintEvent.settlement?.t3?.referrer, other);
-  const referredBasket = mint([amount, amount, amount], other);
+  const threeBasket = [1_000_000_000n, 1_000_000_001n, 1_000_000_002n];
+  const referredBasket = mint(threeBasket, other);
   assert.equal((await projectOwnerLedger(referredBasket.input)).events.find(e => e.kind === "t3_mint")?.settlement?.t3?.referrer, other);
   const referredRedemption = recoveredRedeem(other);
   const referredRedeemEvent = (await projectOwnerLedger(referredRedemption.input)).events.find(e => e.kind === "t3_redeem")!;
@@ -1818,21 +1991,55 @@ async function main() {
       (v) => v.direction === "fee" && v.asset.kind === "native",
     ),
   );
-  const three = mint([amount, amount + 1n, amount + 2n]);
+  const three = mint(threeBasket);
   const threeEvent = (await projectOwnerLedger(three.input)).events.find(
     (e) => e.kind === "t3_mint",
   )!;
   assert.equal(threeEvent.settlement?.status, "confirmed");
   assert.deepEqual(
     threeEvent.settlement?.t3?.basketRaw,
-    [amount, amount + 1n, amount + 2n].map(String),
+    threeBasket.map(String),
   );
   assert.deepEqual(threeEvent.settlement?.t3?.feeAmountsRaw, ["0", "0", "0"]);
   assert.equal(
     threeEvent.movements.filter((m) => m.purpose === "t3_collateral").length,
     3,
   );
-  const missingLeg = mint([amount, amount + 1n, amount + 2n]);
+  const proportionalTwo = mint([100n, 100n, 0n], null, false, false,
+    { beforeBalances: [1000n, 1000n, 0n], fees: [0n, 0n, 0n], minted: 200n });
+  const proportionalTwoEvent = (await projectOwnerLedger(proportionalTwo.input)).events.find(e => e.kind === 't3_mint')!;
+  assert.equal(proportionalTwoEvent.settlement?.status, 'confirmed');
+  assert.equal(proportionalTwoEvent.settlement?.t3?.feeBreakdown, 'verified');
+  assert.deepEqual(proportionalTwoEvent.settlement?.t3?.feeAmountsRaw, ['0', '0', '0']);
+  assert.equal(proportionalTwoEvent.movements.filter(m => m.purpose === 'protocol_fee').length, 0,
+    'Two active proportional reserve legs do not incur an invented imbalance fee');
+  const skewedTwo = mint([200n, 100n, 0n], null, false, false,
+    { beforeBalances: [1000n, 1000n, 0n], fees: [2n, 1n, 0n], minted: 297n });
+  const skewedTwoEvent = (await projectOwnerLedger(skewedTwo.input)).events.find(e => e.kind === 't3_mint')!;
+  assert.equal(skewedTwoEvent.settlement?.status, 'confirmed');
+  assert.equal(skewedTwoEvent.settlement?.t3?.feeBreakdown, 'verified');
+  assert.deepEqual(skewedTwoEvent.settlement?.t3?.feeAmountsRaw, ['2', '1', '0']);
+  assert.equal(skewedTwoEvent.movements.filter(m => m.purpose === 'protocol_fee')
+    .reduce((total, movement) => total + BigInt(movement.amountRaw), 0n), 3n);
+  const skewedThree = mint([100n, 101n, 102n], null, false, false,
+    { beforeBalances: [1000n, 1000n, 1000n], fees: [1n, 2n, 2n], minted: 298n });
+  const skewedThreeEvent = (await projectOwnerLedger(skewedThree.input)).events.find(e => e.kind === 't3_mint')!;
+  assert.equal(skewedThreeEvent.settlement?.status, 'confirmed');
+  assert.equal(skewedThreeEvent.settlement?.t3?.feeBreakdown, 'verified');
+  assert.deepEqual(skewedThreeEvent.settlement?.t3?.feeAmountsRaw, ['1', '2', '2'],
+    'Three nonzero legs do not exempt an imbalanced mint');
+  const staleFee = mint();
+  const exactFeeArchive = staleFee.input.stateAt;
+  staleFee.input.stateAt = async (account, lt, hash) => {
+    const snapshot = await exactFeeArchive(account, lt, hash);
+    return snapshot && lt === staleFee.origin.lt ? { ...snapshot, state: { ...snapshot.state,
+      lastTxHash: Buffer.alloc(32).toString('base64') } } : snapshot;
+  };
+  const staleFeeEvent = (await projectOwnerLedger(staleFee.input)).events.find(e => e.kind === 't3_mint')!;
+  assert.equal(staleFeeEvent.settlement?.status, 'confirmed', 'Physical token delivery remains independently proved');
+  assert.equal(staleFeeEvent.settlement?.t3?.feeBreakdown, 'unavailable',
+    'A stale fee state cannot fabricate verified attribution');
+  const missingLeg = mint(threeBasket);
   missingLeg.input.chains.get(wallets[1])!.transactions = [];
   assert.equal(
     (await projectOwnerLedger(missingLeg.input)).events.find(
@@ -1846,6 +2053,7 @@ async function main() {
     hub,
     beginCell()
       .storeUint(0x4d525459, 32)
+      .storeAddress(A(owner))
       .storeUint(BigInt(query), 64)
       .endCell(),
   );
@@ -1857,6 +2065,146 @@ async function main() {
     "unavailable",
     "mint retry state cannot substitute for original fee assessment state",
   );
+  assert.equal(retried.settlement?.status, 'incomplete',
+    'A retry message without an authenticated original liability stays unresolved');
+  const recoveredMint = mint([amount, 0n, 0n], other, false, true);
+  const recoveredEvents = (await projectOwnerLedger(recoveredMint.input)).events;
+  const recovered = recoveredEvents.find(e => e.kind === 't3_mint')!;
+  assert.equal(recovered.settlement?.status, 'confirmed', JSON.stringify({
+    status: recovered.settlement?.status, issues: recovered.issues, queryId: recovered.settlement?.t3?.queryId,
+  }));
+  assert.equal(recovered.settlement?.t3?.feeBreakdown, 'verified');
+  assert.equal(recovered.settlement?.t3?.referrer, other,
+    'Recovery retains the original deposit invitation');
+  assert.equal(recovered.movements.filter(m => m.purpose === 't3_mint').length, 1);
+  assert.equal(recovered.movements.filter(m => m.purpose === 't3_collateral' || m.purpose === 'protocol_fee')
+    .reduce((total, movement) => total + BigInt(movement.amountRaw), 0n), amount,
+    'Recovery attributes the original physical debit exactly once');
+  for (const attempted of [recoveredMint.originalAdmission!, recoveredMint.failedRoot!,
+    recoveredMint.parkedAt!, recoveredMint.origin]) {
+    assert(recovered.settlement?.t3?.localNetworkFees.some(fee => fee.transaction.lt === attempted.lt),
+      `Missing native fee attribution for mint attempt ${attempted.lt}`);
+  }
+  const twice = mint([amount, 0n, 0n], other, false, 2);
+  const twiceEvent = (await projectOwnerLedger(twice.input)).events.find(e => e.kind === 't3_mint')!;
+  assert.equal(twiceEvent.settlement?.status, 'confirmed', JSON.stringify(twiceEvent.issues));
+  assert.equal(twiceEvent.settlement?.t3?.feeBreakdown, 'verified');
+  assert.equal(twiceEvent.settlement?.t3?.referrer, other);
+  assert.notEqual(w.mintStart(twice.originalAdmission!.outMessages[0])!.queryId,
+    w.mintStart(twice.failedRoot!.inMessage)!.queryId,
+    'The original wire differs from the most recently parked wire');
+  for (const attempted of [...twice.failedAttempts, ...twice.parkedAttempts, ...twice.retryAttempts])
+    assert(twiceEvent.settlement?.t3?.localNetworkFees.some(fee => fee.transaction.lt === attempted.lt),
+      'Every intermediate attempt retains its physical native fees');
+  const duplicatedFinality = mint([amount, 0n, 0n], other, false, 'duplicate-finalize');
+  const duplicateEvent = (await projectOwnerLedger(duplicatedFinality.input)).events.find(e => e.kind === 't3_mint')!;
+  assert.equal(duplicateEvent.settlement?.status, 'confirmed', JSON.stringify(duplicateEvent.issues));
+  assert.equal(duplicateEvent.movements.filter(m => m.purpose === 't3_mint').length, 1);
+  for (const attempted of [...duplicatedFinality.parkedAttempts, ...duplicatedFinality.retryAttempts])
+    assert(duplicateEvent.settlement?.t3?.localNetworkFees.some(fee => fee.transaction.lt === attempted.lt),
+      'The exact duplicate finalizer and pending finalize retry retain their native fees');
+  const intrablock = mint([amount, 0n, 0n], null, false, true);
+  const intrablockState = intrablock.input.stateAt;
+  intrablock.input.stateAt = async (account, lt, hash) => {
+    const snapshot = await intrablockState(account, lt, hash);
+    return snapshot ? { ...snapshot, seqno: 10 } : null;
+  };
+  assert.equal((await projectOwnerLedger(intrablock.input)).events.find(e => e.kind === 't3_mint')?.settlement?.status,
+    'confirmed', 'Exact distinct intrablock boundaries may share one containing masterchain seqno');
+  const unresolvedRetry = async (label: string, mutate: (f: ReturnType<typeof mint>) => void) => {
+    const fixture = mint([amount, 0n, 0n], other, false, true);
+    mutate(fixture);
+    const events = (await projectOwnerLedger(fixture.input)).events;
+    assert.equal(events.find(e => e.kind === 't3_mint')?.settlement?.status, 'incomplete', label);
+    assert.equal(events.filter(e => e.kind === 't3_mint' && e.settlement?.status === 'confirmed').length, 0, label);
+  };
+  await unresolvedRetry('Missing original admission archive cannot verify a recovered mint',
+    f => { f.archives.delete(f.originalAdmission!.lt); });
+  await unresolvedRetry('Missing retained-liability archive cannot verify a recovered mint',
+    f => { f.archives.delete(f.parkedAt!.lt); });
+  await unresolvedRetry('A retry cannot name a different business owner', f => {
+    f.origin.inMessage = f.msg(owner, hub, beginCell().storeUint(0x4d525459, 32)
+      .storeAddress(A(other)).storeUint(BigInt(query), 64).endCell());
+  });
+  await unresolvedRetry('A finalized callback cannot park a SENT start refusal', f => {
+    const impossible = f.msg(root, hub, beginCell().storeUint(w.MINT_FINALIZED, 32)
+      .storeUint(BigInt(rootQuery) - 1n, 64).storeCoins(f.minted).storeAddress(A(owner)).storeUint(0, 256).endCell());
+    wrapNativeFundingMessage(impossible, (BigInt(rootQuery) - 1n).toString());
+    Object.assign(f.parkedAt!.inMessage!, impossible);
+  });
+  await unresolvedRetry('A retry cannot substitute another retained amount', f => {
+    const failed = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+    const receipt = beginCell().storeUint(w.T3_MINT_RECEIPT, 32).storeUint(BigInt(query), 64)
+      .storeAddress(A(owner)).storeCoins(f.minted).storeCoins(amount).storeCoins(0).storeCoins(0)
+      .storeMaybeRef(null).endCell();
+    failed.set(mintBusinessKey(), mintJournal(2, (BigInt(rootQuery) - 1n).toString(), f.minted + 1n, receipt));
+    f.archives.set(f.parkedAt!.lt, state(100, 100, 1000n + f.minted, [1000n + amount, 0n, 0n],
+      emptyBounceState(mintLane(rootQuery, mintJournal(0, '0', 0n, Cell.EMPTY), failed)), 1,
+      feeCell([amount - f.minted, 0n, 0n])));
+  });
+  await unresolvedRetry('A foreign Hub code archive cannot verify recovery', f => {
+    const original = f.input.stateAt;
+    f.input.stateAt = async (account, lt, hash) => {
+      const snapshot = await original(account, lt, hash);
+      return snapshot && lt === f.origin.lt ? { ...snapshot, state: { ...snapshot.state,
+        codeBoc: beginCell().storeUint(99, 32).endCell().toBoc().toString('base64') } } : snapshot;
+    };
+  });
+  for (const [label, mutate] of [
+    ['stale transaction LT', (snapshot: any) => { snapshot.state.lastTxLt = '1'; }],
+    ['different transaction hash', (snapshot: any) => { snapshot.state.lastTxHash = Buffer.alloc(32).toString('base64'); }],
+    ['decreasing masterchain seqno', (snapshot: any) => { snapshot.seqno = 0; }],
+    ['unsafe masterchain seqno', (snapshot: any) => { snapshot.seqno = Number.MAX_SAFE_INTEGER + 1; }],
+  ] as const) {
+    await unresolvedRetry(`A ${label} archive cannot verify recovery`, f => {
+      const original = f.input.stateAt;
+      f.input.stateAt = async (account, lt, hash) => {
+        const snapshot = await original(account, lt, hash);
+        if (!snapshot || lt !== f.origin.lt) return snapshot;
+        const changed = { ...snapshot, state: { ...snapshot.state } };
+        mutate(changed);
+        return changed;
+      };
+    });
+  }
+  const missingIntermediate = mint([amount, 0n, 0n], other, false, 2);
+  missingIntermediate.archives.delete(missingIntermediate.retryAttempts[0].lt);
+  assert.equal((await projectOwnerLedger(missingIntermediate.input)).events.find(e => e.kind === 't3_mint')?.settlement?.status,
+    'incomplete', 'Missing intermediate rotation archives cannot be inferred from matching business terms');
+  for (const mode of ['refusal-on-finalizing', 'wrong-final-hash', 'wrong-final-authority'] as const) {
+    const malformed = mint([amount, 0n, 0n], other, false, 'duplicate-finalize');
+    const old = malformed.parkedAt!.inMessage!;
+    if (mode === 'refusal-on-finalizing') {
+      const original = malformed.originalAdmission!.outMessages[0];
+      const rich = malformed.msg(root, hub, beginCell().storeUint(0xfffffffe, 32)
+        .storeRef(Cell.fromBase64(original.body!)).storeRef(beginCell().storeCoins(400_000_000n)
+          .storeBit(false).storeUint(0, 64).storeUint(0, 32))
+        .storeUint(0, 8).storeInt(1103, 32).storeBit(false).endCell());
+      rich.bounced = true; Object.assign(old, rich);
+    } else {
+      const finalized = w.mintFinalize(old, w.MINT_FINALIZED)!;
+      const business = beginCell().storeUint(w.MINT_FINALIZED, 32).storeUint(BigInt(finalized.queryId), 64)
+        .storeCoins(BigInt(finalized.amountRaw)).storeAddress(A(owner))
+        .storeUint(mode === 'wrong-final-hash' ? BigInt('0x' + finalized.requestHash) + 1n : BigInt('0x' + finalized.requestHash), 256).endCell();
+      const envelope = beginCell().storeUint(NATIVE_FUNDING, 32).storeUint(BigInt(finalized.queryId), 64)
+        .storeUint(0, 8).storeUint(0, 32).storeAddress(A(mode === 'wrong-final-authority' ? other : owner))
+        .storeRef(business).endCell();
+      Object.assign(old, malformed.msg(root, hub, envelope));
+    }
+    const event = (await projectOwnerLedger(malformed.input)).events.find(e => e.kind === 't3_mint')!;
+    assert.equal(event.settlement?.status, 'incomplete', mode);
+  }
+  await unresolvedRetry('Trailing fields in the current mint lane are rejected', f => {
+    const archived = f.archives.get(f.origin.lt)!;
+    const payload = archived.refs[0], bounce = payload.refs[3], lane = bounce.refs[0];
+    const replacement = beginCell().storeSlice(lane.beginParse()).storeBit(false).endCell();
+    const replace = (cell: Cell, index: number, ref: Cell) => {
+      const builder = beginCell().storeBits(cell.bits);
+      cell.refs.forEach((old, i) => builder.storeRef(i === index ? ref : old));
+      return builder.endCell();
+    };
+    f.archives.set(f.origin.lt, replace(archived, 0, replace(payload, 3, replace(bounce, 0, replacement))));
+  });
   const noHistory = mint();
   noHistory.input.chains.get(root)!.historyComplete = false;
   assert.equal(

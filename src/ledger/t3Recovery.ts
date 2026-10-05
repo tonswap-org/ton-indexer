@@ -88,12 +88,12 @@ async function boundary<T>(
             codeHash,
       );
     // Cached JSON must meet the same exact transaction boundary as a fresh
-    // archive lookup. One account has only one final state per masterchain
-    // block; an unavailable intrablock state must never be interpolated.
+    // archive lookup. Authenticated intrablock replay may retain the same
+    // containing block seqno; unavailable cursor states are never interpolated.
     if (
       !matches(before, n.raw.prevTransactionLt, n.raw.prevTransactionHash) ||
       !matches(after, n.raw.lt, n.raw.hash) ||
-      before.seqno >= after.seqno
+      before.seqno > after.seqno
     )
       return null;
     return {

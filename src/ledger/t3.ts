@@ -7,9 +7,11 @@ import type {
 } from "./types";
 import type { Flow, Node, ProjectionInput } from "./project";
 import { canonicalLedgerAddress, canonicalLedgerHash } from "./normalize";
-import { bodyCell, NOTIFY, tokenWire } from "./wire";
+import { bodyCell, businessBodyCell, NOTIFY, tokenWire } from "./wire";
 import * as w from "./t3Wire";
 import { recoverT3Burn } from "./t3Recovery";
+import { recoverParkedT3Mint } from "./t3MintRecovery";
+import { mintFeesFromStateTransition } from "./t3MintFees";
 export type LedgerT3Hub = {
   address: string;
   root: string;
@@ -154,22 +156,25 @@ export async function decodeT3(
   };
   const feeState = async (hub: LedgerT3Hub, n: Node) => {
     try {
-      if (!n.raw.prevTransactionLt || !n.raw.prevTransactionHash) return null;
+      if (!n.raw.prevTransactionLt || !n.raw.prevTransactionHash ||
+        !/^[1-9][0-9]*$/.test(n.raw.prevTransactionLt) || !/^[1-9][0-9]*$/.test(n.raw.lt) ||
+        BigInt(n.raw.prevTransactionLt) >= BigInt(n.raw.lt)) return null;
       const before = await input.stateAt(
           hub.address,
           n.raw.prevTransactionLt,
           n.raw.prevTransactionHash,
         ),
         after = await input.stateAt(hub.address, n.raw.lt, n.raw.hash);
+      const matches = (snapshot: typeof before, lt: string, hash: string) => Boolean(snapshot &&
+        Number.isSafeInteger(snapshot.seqno) && snapshot.seqno >= 0 && snapshot.state.accountState === 'active' &&
+        snapshot.state.lastTxLt === lt && snapshot.state.lastTxHash &&
+        canonicalLedgerHash(snapshot.state.lastTxHash) === canonicalLedgerHash(hash) &&
+        snapshot.state.codeBoc && Cell.fromBase64(snapshot.state.codeBoc).hash().toString('hex') === hub.codeHash);
       if (
         !before?.state.dataBoc ||
         !after?.state.dataBoc ||
-        [before, after].some(
-          (s) =>
-            !s.state.codeBoc ||
-            Cell.fromBase64(s.state.codeBoc).hash().toString("hex") !==
-              hub.codeHash,
-        )
+        !matches(before, n.raw.prevTransactionLt, n.raw.prevTransactionHash) ||
+        !matches(after, n.raw.lt, n.raw.hash) || before.seqno > after.seqno
       )
         return null;
       const b = w.t3State(before.state.dataBoc),
@@ -177,6 +182,7 @@ export async function decodeT3(
       if (a.root !== hub.root || b.root !== hub.root) return null;
       return {
         state: b,
+        after: a,
         evidence: {
           kind: "t3_mint" as const,
           stateBeforeHash: b.dataHash,
@@ -230,7 +236,7 @@ export async function decodeT3(
             r?.recipient === input.owner &&
             r.amountRaw === succeeded.amountRaw &&
             r.amountRaw !== "0"
-            ? [{ r, node: receiptFor(hubNode, i) }]
+            ? [{ r, node: receiptFor(hubNode, i), cell: businessBodyCell(m)! }]
             : [];
         }),
         receipt = one(receipts);
@@ -275,10 +281,15 @@ export async function decodeT3(
             n.raw.outMessages.some((_, i) => receiptFor(n, i)?.id === credit.node.id)
             ? [{ node: n, start }] : [];
         }) : [],
-        root = one(roots),
-        originCandidate = root ? one(nodes.filter((n) =>
+        root = one(roots);
+      let originCandidate = root ? one(nodes.filter((n) =>
           n.account === hub.address && ok(n) &&
           n.raw.outMessages.some((_, i) => receiptFor(n, i)?.id === root.node.id))) : null;
+      const mintRecovery = originCandidate && w.mintRetry(originCandidate.raw.inMessage)
+        ? await recoverParkedT3Mint({ input, hub, nodes, retry: originCandidate, receipt: receipt.cell,
+            rootQueryId: succeeded.queryId, receiptFor })
+        : null;
+      if (mintRecovery) originCandidate = mintRecovery.origin;
       // A caller may reuse the same query after the first mint. Bind a direct
       // mint to the exact Hub notification that sent its Root request, and a
       // staged mint only to notifications consumed before that request.
@@ -316,7 +327,7 @@ export async function decodeT3(
         continue;
       }
       seen.set(key, anchor);
-      let ns: Node[] = [hubNode, ...(receipt.node ? [receipt.node] : [])];
+      let ns: Node[] = [hubNode, ...(receipt.node ? [receipt.node] : []), ...(mintRecovery?.attempts ?? [])];
       const meta: NonNullable<NonNullable<LedgerEvent["settlement"]>["t3"]> = {
         hub: hub.address,
         root: hub.root,
@@ -409,6 +420,7 @@ export async function decodeT3(
           source: hub.root,
           destination: input.owner,
           evidence: {
+            ...(mintRecovery?.evidence ?? {}),
             kind: "t3_mint",
             opcode: w.MINT_INTERNAL,
             bodyHash: bodyCell(credit.node.raw.inMessage)!
@@ -457,13 +469,10 @@ export async function decodeT3(
             w.depositNote(initialNote.forward)?.flags === 1,
         );
       const state = origin && initialMint ? await feeState(hub, origin) : null;
-      if (state && funding) {
-        const bps = BigInt(Math.min(10000, state.state.mintFeeBps)),
-          fees = r.basketRaw.map((v) =>
-            r.basketRaw.filter((x) => x !== "0").length === 3
-              ? "0"
-              : (BigInt(v) - (BigInt(v) * (10000n - bps)) / 10000n).toString(),
-          );
+      const fees = state && funding
+        ? mintFeesFromStateTransition(state.state, state.after, r.basketRaw, r.amountRaw)
+        : null;
+      if (state && fees) {
         meta.feeBreakdown = "verified";
         meta.feeAmountsRaw = fees;
         meta.feeEvidence = state.evidence;
