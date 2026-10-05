@@ -24,6 +24,7 @@ import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
 import { validateMainnetRegistry } from './config/registry';
 import { buildRegistryBundle, RegistryMetadata } from './config/releaseManifest';
+import { applyRuntimeManifestBindings } from './config/runtimeManifestBindings';
 import { Pool } from 'pg';
 import { PostgresLedgerStore } from './ledger/store';
 import { LedgerService } from './ledger/service';
@@ -78,6 +79,8 @@ const start = async () => {
     validateMainnetRegistry(registry);
   }
 
+  if (registryMetadata?.runtime) applyRuntimeManifestBindings(config, registryMetadata.runtime);
+
   if (registry.PerpsEngine) {
     if (config.network !== 'testnet' || !config.ledgerPerpsEngineCodeHash || !config.perpsAdmissionArtifacts) {
       throw new Error('The registered PerpsEngine requires a qualified testnet admission runtime and exact artifact pins.');
@@ -94,7 +97,9 @@ const start = async () => {
   }
 
   const opcodes = loadOpcodes(config.opcodesPath);
-  const jettonRoots = Object.entries(registry)
+  const jettonRoots = registryMetadata?.runtime
+    ? registryMetadata.runtime.tokens.map(token => ({ master: token.root, symbol: token.symbol }))
+    : Object.entries(registry)
     .filter(([key, value]) => key.endsWith('Root') && value && !value.startsWith('REPLACE_'))
     .map(([key, value]) => ({ master: value, symbol: key.replace(/Root$/, '') }));
   const poolTracker = new PoolTracker(registry);
@@ -156,7 +161,7 @@ const start = async () => {
       registry.VestingVault,
       ...(registryMetadata?.markets ?? []).map(market => market.sale)
     ].filter((value): value is string => Boolean(value)),
-    t3Hub: registry.T3Hub,
+    t3Hub: registry.T3,
     t3Root: registry.T3Root,
     t3RedemptionBinding: config.ledgerT3RedemptionBinding,
     perpsEngine: registry.PerpsEngine,

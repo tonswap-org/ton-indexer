@@ -13,7 +13,7 @@ This repository contains a **TypeScript TONSWAP indexer service** plus the desig
   `INDEXER_RELEASE_MANIFEST_PATH` at the matching canonical manifest.
 - `src/`: TypeScript implementation (server, store, data source, workers, API).
 - Snapshots: optional JSON snapshots for in-memory state are supported via `SNAPSHOT_PATH` + `SNAPSHOT_ON_EXIT`.
-- `src/ledger/` and `sql/ledger.sql`: PostgreSQL account ledger with independent chain-verified backfill, immutable cursor snapshots, and explicit decoding gaps. Configure `INDEXER_DATABASE_URL`; run `npm run bootstrap:ledger` and `npm run test:ledger`. T3 settlement uses registry T3Hub/T3Root identities and exact receipt/credit evidence, including deterministic controller-owned receiver custody. A queued redemption receipt is never final delivery. Lost-ACK recovery additionally requires `LEDGER_T3_REDEMPTION_BINDING_JSON`, the unchanged qualified manifest `T3Redemption` subobject, and exact historical wallet/root/hub state transitions. Unconfigured or conflicting release code and missing archives remain unresolved; acceptance does not prove payout or journal cleanup. Perps requires explicit `LEDGER_PERPS_ENGINE_CODE_HASH` bound to the current registry engine; exact historical code/state and typed payout evidence are mandatory. Booked collateral/funding are contract claims, while position margin is a subset and must not be counted twice. Financial amounts are atomic strings. Never infer a product settlement from a transfer request or claim portfolio/tax completeness from account history alone.
+- `src/ledger/` and `sql/ledger.sql`: PostgreSQL account ledger with independent chain-verified backfill, immutable cursor snapshots, and explicit decoding gaps. Configure `INDEXER_DATABASE_URL`; run `npm run bootstrap:ledger` and `npm run test:ledger`. T3 settlement uses registry T3/T3Root identities and exact receipt/credit evidence, including deterministic controller-owned receiver custody. A queued redemption receipt is never final delivery. Lost-ACK recovery additionally requires `LEDGER_T3_REDEMPTION_BINDING_JSON`, the separately authenticated current-release reserve-route binding, and exact historical wallet/root/hub state transitions. Unconfigured or conflicting release code and missing archives remain unresolved; acceptance does not prove payout or journal cleanup. Perps requires an exact `LEDGER_PERPS_ENGINE_CODE_HASH` bound to the current registry engine, supplied by the runtime manifest or explicit configuration; exact historical code/state and typed payout evidence are mandatory. Booked collateral/funding are contract claims, while position margin is a subset and must not be counted twice. Financial amounts are atomic strings. Never infer a product settlement from a transfer request or claim portfolio/tax completeness from account history alone.
 
 ## What This Repo Is (and Isn’t)
 
@@ -32,11 +32,13 @@ Option lifecycle qualification uses `LEDGER_OPTIONS_CODE_HASHES_JSON` with exact
 - Keep key names consistent across networks.
 - `registry/mainnet.json` is intentionally a placeholder; it should be replaced with real addresses before any mainnet usage.
 - `registry/testnet.json` should be refreshed whenever testnet deployments change.
-- When a canonical release manifest is configured, its network and complete
-  contract map must exactly match the selected registry. The service exposes the
+- The sole runtime manifest schema is `tonswap-release-v1`: singleton entries
+  are exact address/codeHash objects, reserves use USDT/USDC/KUSD roles, and the
+  hub role is T3. Its network/globalId and complete singleton address map must
+  exactly match the selected registry; legacy release schemas are rejected. The service exposes the
   resulting registry and manifest hashes from `/contracts` and `/service-info`.
-- First-release perps instruments bind `perpsPool`, `contractRoles.perpsPool`
-  and `codeHashes.perpsPool` explicitly. Oracle pool candles use the canonical
+- First-release perps instruments bind the declared market ID and symbol to
+  the explicit spot pool and `templates.DlmmPool` code hash. Oracle pool candles use the canonical
   `perps-oracle:{marketId}` key; never substitute a spot pool by symbol. Current
   engine state requires the exact bounded 128-record oracle journal and eligibility index in the
   second market-stats reference. Older layouts are unsupported, including when

@@ -11,10 +11,10 @@ import {
   readCanonicalReleaseManifest,
 } from '../config/releaseManifest';
 import {
-  CANONICAL_RELEASE_CONTRACT_COUNT,
   runProductionSmoke,
   type ProductionSmokeOptions,
 } from './production-smoke';
+import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 type Route = {
   status?: number;
@@ -31,7 +31,7 @@ type ServerOptions = {
   preflightAllowHeaders?: string;
 };
 
-const releaseId = 'tonswap-v1-test';
+const releaseId = runtimeManifestFixture().releaseId;
 const expectedCorsOrigin = 'https://test.tonswap.org';
 const hostileCorsOrigin = 'https://hostile.tonswap.invalid';
 const smokeEnvironmentNames = [
@@ -109,58 +109,13 @@ const basicRoutes = (): Routes => ({
 });
 
 const releaseMarkets = () => {
-  let nextAddress = 20;
-  return (['fixed', 'bonding', 'dutch'] as const).map((saleModel, index) => ({
-    saleModel,
-    key:`market-${index+1}`,optionTemplateId:index+1,optionExpiry:'1900000000',configuration:'ready',lifecycle:'not-run',
-    codeHashes:{perpsPool:'b'.repeat(64)},
-    contractRoles:{perpsPool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}PerpsPool`,tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
-    oracle:{status:'pending',reason:'history-incomplete-or-stale',observationTimestamp:'0',windows:['300','1800','7200'].map(seconds=>({seconds,available:false,elapsed:'0',priceQ64:'0'}))},
-    symbol: ['FIX', 'BOND', 'DUTCH'][index],
-    tokenRoot: address(nextAddress++),
-    sale: address(nextAddress++),
-    lpVault: address(nextAddress++),
-    coverSource:address(nextAddress),
-    pool: address(nextAddress++),
-    perpsPool: address(300+index),
-    optionAddress: address(nextAddress++),
-    perpsMarketId: index + 1,
-    optionSeriesId: String(index + 1),
-    coverPolicyId: `cover-${index + 1}`,
-    decimals: 9,
-    quoteDecimals: 9,
-  }));
+  const fixture = runtimeManifestFixture();
+  return fixture.spotMarkets.map(spot => ({ ...spot,
+    tokenRoot: fixture.tokens.find(token => token.symbol === spot.symbol)!.root, decimals: 9 }));
 };
-
-const releaseContracts = (markets: ReturnType<typeof releaseMarkets>) => {
-  const contracts: Record<string, string> = {
-    KusdDiscovery: address(2),
-    KusdRoot: address(2),
-    UsdcDiscovery: address(3),
-    UsdcRoot: address(3),
-    UsdtDiscovery: address(4),
-    UsdtRoot: address(4),
-    TestnetFaucet: address(5),
-  };
-  for (const market of markets) {
-    const model = `${market.saleModel[0].toUpperCase()}${market.saleModel.slice(1)}`;
-    contracts[`Launchpad${model}TokenRoot`] = market.tokenRoot;
-    contracts[`Launchpad${model}Sale`] = market.sale;
-    contracts[`Launchpad${model}LpVault`] = market.lpVault;
-    contracts[`Launchpad${model}Pool`] = market.pool;
-    contracts[`Launchpad${model}PerpsPool`] = market.perpsPool;
-    contracts[`Launchpad${model}Option`] = market.optionAddress;
-  }
-  let filler = 1;
-  while (Object.keys(contracts).length < CANONICAL_RELEASE_CONTRACT_COUNT) {
-    contracts[`CanonicalRole${String(filler).padStart(2, '0')}`] = address(100 + filler);
-    filler += 1;
-  }
-  return Object.fromEntries(
-    Object.entries(contracts).sort(([left], [right]) => left.localeCompare(right))
-  );
-};
-
+const releaseContracts = (_markets: ReturnType<typeof releaseMarkets>) => Object.fromEntries(
+  Object.entries(runtimeManifestFixture().contracts).map(([role, contract]) => [role, contract!.address])
+);
 const writeReleaseManifest = (
   root: string,
   name: string,
@@ -168,27 +123,13 @@ const writeReleaseManifest = (
   markets: ReturnType<typeof releaseMarkets>,
   spots = markets,
 ) => {
-  const unsigned = {
-    schema: 'tonswap-first-release-manifest-v1',
-    schemaVersion: 1,
-    candidateDigest:'a'.repeat(64),attemptId:'first-attempt',setup:'ready',lifecycle:'not-run',
-    codeHashes:Object.fromEntries(Object.keys(contracts).map(key=>[key,'b'.repeat(64)])),
-    sourceHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
-    artifactHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
-    network: 'ton:testnet',
-    releaseId,
-    registryHash: hashRegistry(contracts),
-    contracts,
-    markets,
-    spotMarkets: spots.map(market => ({key: market.key, symbol: market.symbol, pool: market.pool, tokenRoot: market.tokenRoot,
-      decimals: market.decimals, quoteDecimals: 9, configuration: 'ready', lifecycle: 'not-run', oracle: market.oracle,
-      codeHashes: {tokenRoot: 'b'.repeat(64), pool: 'b'.repeat(64)},
-      contractRoles: {tokenRoot: market.contractRoles.tokenRoot, pool: market.contractRoles.pool}})),
-    approvedComparisons: [],
-  };
-  const manifest = { ...unsigned, manifestHash: hashReleaseManifest(unsigned) };
+  const manifest = runtimeManifestFixture({
+    contracts: Object.fromEntries(Object.entries(contracts).map(([role, address]) => [role, { address, codeHash: 'a'.repeat(64) }])),
+    spotMarkets: spots.map(({ symbol, pool, binSpacing, feePips }) => ({ symbol, pool, binSpacing, feePips })),
+    perpsMarkets: markets.map((market, i) => ({ marketId: i + 1, symbol: market.symbol, pool: market.pool })),
+  });
   const manifestPath = join(root, name);
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
   return { manifest, manifestPath };
 };
 
@@ -233,7 +174,7 @@ const strictFixture = (root: string, comparisonOnly = false) => {
     '/api/indexer/v1/contracts': {
       body: {
         network: 'testnet',
-        count: CANONICAL_RELEASE_CONTRACT_COUNT,
+        count: Object.keys(contracts).length,
         contracts: parsed.contracts,
         registry_hash: parsed.registryHash,
         release_id: releaseId,
@@ -466,7 +407,7 @@ const main = async () => {
     });
 
     const paired = strictFixture(root, true);
-    assert.equal(paired.manifest.markets.length, 1);
+    assert.equal(paired.manifest.perpsMarkets.length, 1);
     assert.equal(paired.manifest.spotMarkets.length, 2);
     await withServer(paired.routes, async baseUrl => runProductionSmoke(baseUrl, paired.options), {corsOrigins: [expectedCorsOrigin]});
     const emptyComparison = cloneRoutes(paired.routes), secondSpot = readCanonicalReleaseManifest(paired.manifestPath, 'testnet').spotMarkets[1],
@@ -592,7 +533,7 @@ const main = async () => {
       count: number;
       contracts: Record<string, string>;
     };
-    delete shortContractBody.contracts.CanonicalRole01;
+    delete shortContractBody.contracts.ControlMesh;
     shortContractBody.count -= 1;
     await assertSmokeRejects(
       shortContracts,
@@ -601,30 +542,10 @@ const main = async () => {
       { corsOrigins: [expectedCorsOrigin] }
     );
 
-    const mismatchedDiscoveryContracts = {
-      ...strict.contracts,
-      KusdDiscovery: address(999),
-    };
-    const mismatchedManifest = writeReleaseManifest(
-      root,
-      'mismatched-discovery.json',
-      mismatchedDiscoveryContracts,
-      strict.markets
-    );
-    const mismatchParsed = readCanonicalReleaseManifest(
-      mismatchedManifest.manifestPath,
-      'testnet'
-    );
-    await assertSmokeRejects(
-      strict.routes,
-      /release manifest KusdDiscovery must exactly equal KusdRoot/,
-      {
-        ...strict.options,
-        expectedRegistryHash: mismatchParsed.registryHash,
-        expectedReleaseManifestHash: mismatchParsed.releaseManifestHash,
-        expectedReleaseManifestPath: mismatchedManifest.manifestPath,
-      }
-    );
+    const retiredManifestPath = join(root, 'retired-schema.json');
+    const retired = { ...strict.manifest, schema: 'tonswap-first-release-manifest-v1' };
+    writeFileSync(retiredManifestPath, JSON.stringify({ ...retired, manifestHash: hashReleaseManifest(retired) }));
+    assert.throws(() => readCanonicalReleaseManifest(retiredManifestPath, 'testnet'), /schema must be tonswap-release-v1/);
 
     const writable = cloneRoutes(strict.routes);
     (writable['/api/indexer/v1/service-info'].body as Record<string, unknown>).readOnly = false;

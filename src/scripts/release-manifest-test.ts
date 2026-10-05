@@ -1,472 +1,126 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
-  chmodSync,
-  linkSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import {
-  buildRegistryBundle,
-  hashReleaseManifest,
-  hashRegistry,
-  readCanonicalReleaseManifest,
-} from '../config/releaseManifest';
+import { buildRegistryBundle, hashReleaseManifest, hashRegistry, readCanonicalReleaseManifest } from '../config/releaseManifest';
+import { applyRuntimeManifestBindings } from '../config/runtimeManifestBindings';
+import type { Config } from '../config';
+import { runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'ton-indexer-release-manifest-')));
-const addressA = `0:${'1'.repeat(64)}`;
-const addressB = `0:${'2'.repeat(64)}`;
-const usdtRootAndDiscovery = `0:${'a'.repeat(64)}`;
-const usdcRootAndDiscovery = `0:${'b'.repeat(64)}`;
-const kusdRootAndDiscovery = `0:${'c'.repeat(64)}`;
-const reserveRootDiscoveryPairs = [
-  ['UsdtRoot', 'UsdtDiscovery', usdtRootAndDiscovery],
-  ['UsdcRoot', 'UsdcDiscovery', usdcRootAndDiscovery],
-  ['KusdRoot', 'KusdDiscovery', kusdRootAndDiscovery],
-] as const;
-const marketAddresses = Array.from(
-  { length: 15 },
-  (_, index) => `0:${(index + 3).toString(16).padStart(64, '0')}`
-);
-const releaseMarkets = (['fixed', 'bonding', 'dutch'] as const).map((saleModel, index) => ({
-  saleModel,
-  key:`market-${index+1}`,optionTemplateId:index+1,optionExpiry:'1900000000',configuration:'ready',lifecycle:'not-run',quoteDecimals:9,
-  codeHashes:{perpsPool:'b'.repeat(64)},
-  contractRoles:{perpsPool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}PerpsPool`,tokenRoot:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}TokenRoot`,pool:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Pool`,optionAddress:`Launchpad${saleModel[0].toUpperCase()+saleModel.slice(1)}Option`},
-  oracle:{status:'pending',reason:'history-incomplete-or-stale',observationTimestamp:'0',windows:['300','1800','7200'].map(seconds=>({seconds,available:false,elapsed:'0',priceQ64:'0'}))},
-  symbol: `R${index + 1}`,
-  tokenRoot: marketAddresses[index * 5],
-  sale: marketAddresses[index * 5 + 1],
-  lpVault: marketAddresses[index * 5 + 2],
-  pool: marketAddresses[index * 5 + 3],
-  perpsPool: `0:${(index + 200).toString(16).padStart(64, '0')}`,
-  coverSource:marketAddresses[index * 5 + 3],
-  optionAddress: marketAddresses[index * 5 + 4],
-  perpsMarketId: index + 1,
-  optionSeriesId: String(index + 1),
-  coverPolicyId: `cover-${index + 1}`,
-  decimals: index + 6,
-}));
-const releaseSpots = releaseMarkets.map(market => ({key: market.key, symbol: market.symbol, pool: market.pool,
-  tokenRoot: market.tokenRoot, decimals: market.decimals, quoteDecimals: 9, configuration: 'ready', lifecycle: 'not-run', oracle: market.oracle,
-  codeHashes: {tokenRoot: 'b'.repeat(64), pool: 'b'.repeat(64)},
-  contractRoles: {tokenRoot: market.contractRoles.tokenRoot, pool: market.contractRoles.pool}}));
-const contracts = {
-  DlmmPoolFactory: addressA,
-  T3Root: addressB,
-  UsdtRoot: usdtRootAndDiscovery,
-  UsdtDiscovery: usdtRootAndDiscovery,
-  UsdcRoot: usdcRootAndDiscovery,
-  UsdcDiscovery: usdcRootAndDiscovery,
-  KusdRoot: kusdRootAndDiscovery,
-  KusdDiscovery: kusdRootAndDiscovery,
-  LaunchpadFixedTokenRoot: releaseMarkets[0].tokenRoot,
-  LaunchpadFixedSale: releaseMarkets[0].sale,
-  LaunchpadFixedLpVault: releaseMarkets[0].lpVault,
-  LaunchpadFixedPool: releaseMarkets[0].pool,
-  LaunchpadFixedPerpsPool: releaseMarkets[0].perpsPool,
-  LaunchpadFixedOption: releaseMarkets[0].optionAddress,
-  LaunchpadBondingTokenRoot: releaseMarkets[1].tokenRoot,
-  LaunchpadBondingSale: releaseMarkets[1].sale,
-  LaunchpadBondingLpVault: releaseMarkets[1].lpVault,
-  LaunchpadBondingPool: releaseMarkets[1].pool,
-  LaunchpadBondingPerpsPool: releaseMarkets[1].perpsPool,
-  LaunchpadBondingOption: releaseMarkets[1].optionAddress,
-  LaunchpadDutchTokenRoot: releaseMarkets[2].tokenRoot,
-  LaunchpadDutchSale: releaseMarkets[2].sale,
-  LaunchpadDutchLpVault: releaseMarkets[2].lpVault,
-  LaunchpadDutchPool: releaseMarkets[2].pool,
-  LaunchpadDutchPerpsPool: releaseMarkets[2].perpsPool,
-  LaunchpadDutchOption: releaseMarkets[2].optionAddress,
-};
-
 const writeManifest = (name: string, overrides: Record<string, unknown> = {}) => {
   const path = join(root, name);
-  const unsigned = {
-    schema: 'tonswap-first-release-manifest-v1',
-    schemaVersion: 1,
-    candidateDigest:'a'.repeat(64),attemptId:'first-attempt',setup:'ready',lifecycle:'not-run',
-    codeHashes:Object.fromEntries(Object.keys(contracts).map(key=>[key,'b'.repeat(64)])),
-    sourceHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
-    artifactHashes:{contracts:'c'.repeat(64),indexer:'d'.repeat(64),web:'e'.repeat(64)},
-    network: 'ton:localnet',
-    releaseId: 'local-run-1',
-    contracts,
-    registryHash: hashRegistry(contracts),
-    markets: releaseMarkets,
-    spotMarkets: releaseSpots,
-    approvedComparisons: [],
-    ...overrides,
-  };
-  const serializable = JSON.parse(JSON.stringify(unsigned));
-  writeFileSync(
-    path,
-    `${JSON.stringify({ ...serializable, manifestHash: hashReleaseManifest(serializable) }, null, 2)}\n`
-  );
+  writeFileSync(path, JSON.stringify(runtimeManifestFixture(overrides), null, 2) + '\n');
   return path;
 };
-
+const fixture = runtimeManifestFixture();
+const contracts = Object.fromEntries(Object.entries(fixture.contracts).map(([role, c]) => [role, c!.address]));
+const config = () => ({ network: 'testnet', ledgerMarketBindings: [] } as unknown as Config);
 try {
   const path = writeManifest('good.json');
-  const parsed = readCanonicalReleaseManifest(path, 'localnet');
-  assert.equal(parsed.releaseId, 'local-run-1');
-  assert.equal(parsed.registryHash, hashRegistry(contracts));
+  const parsed = readCanonicalReleaseManifest(path, 'testnet');
   assert.deepEqual(parsed.contracts, contracts);
-  for (const field of ['contracts', 'codeHashes', 'artifactCodeHashes', 'webAddresses']) {
-    for (const role of ['ClmmRouter', 'ClmmPoolFactory', 'ClmmPool', 'clmmRouter', 'FarmFactory', 'farmFactory', 'BootstrapFactory', 'BootstrapPool', 'BootstrapEscrow', 'DlmmMigrator', 'SigmammPool', 'PositionNft', 'PositionCollection']) {
-      const retired = writeManifest(`retired-${field}-${role}.json`, { [field]: { ...contracts, [role]: addressA } });
-      assert.throws(() => readCanonicalReleaseManifest(retired, 'localnet'), /Unsupported first-release contract roles/);
-    }
+  assert.equal(parsed.registryHash, hashRegistry(contracts));
+  assert.equal(parsed.releaseManifestHash, fixture.manifestHash);
+  assert.equal(parsed.markets.length, 1);
+  assert.equal(parsed.spotMarkets.length, 3);
+  assert.equal(parsed.markets[0].perpsCandleMarketKey, 'perps-oracle:1');
+  assert.equal(parsed.markets[0].perpsPoolCodeHash, fixture.templates.DlmmPool);
+  assert.equal(parsed.markets[0].optionAddress, undefined, 'an independent option catalog never invents a perps-series pair');
+  assert.equal(parsed.markets[0].oracle, undefined, 'manifest identity is not current oracle readiness');
+  assert.equal(parsed.markets[0].coverPolicyId, undefined);
+  assert.equal(parsed.approvedComparisons[0].comparisonPool, fixture.spotMarkets[1].pool);
+  assert.deepEqual(buildRegistryBundle(contracts, 'testnet', path).metadata.runtime, fixture);
+  const spotOnly = readCanonicalReleaseManifest(writeManifest('spot-only.json', { perpsMarkets: [], options: [] }), 'testnet');
+  assert.equal(spotOnly.markets.length, 0); assert.equal(spotOnly.spotMarkets.length, 3);
+  const withSeries = readCanonicalReleaseManifest(writeManifest('two-series.json', { options: [fixture.options[0],
+    { ...fixture.options[0], seriesId: '2', option: runtimeAddress(301) }, fixture.options[1]] }), 'testnet');
+  assert.equal(withSeries.runtime.options.length, 3);
+  for (const network of ['mainnet', 'localnet'] as const) {
+    const current = writeManifest(network + '.json', { network: `ton:${network}`, globalId: network === 'mainnet' ? -239 : -3,
+      releaseId: `${network}-unit-${fixture.source.build.slice(0, 12)}` });
+    assert.equal(readCanonicalReleaseManifest(current, network).runtime.globalId, network === 'mainnet' ? -239 : -3);
   }
-  assert.throws(() => buildRegistryBundle({ ...contracts, ClmmPoolFactory: addressA }, 'localnet'), /Unsupported first-release contract roles/);
-  for (const [rootLabel, discoveryLabel, address] of reserveRootDiscoveryPairs) {
-    assert.equal(parsed.contracts[rootLabel], address);
-    assert.equal(parsed.contracts[discoveryLabel], address);
-    assert.equal(parsed.contracts[discoveryLabel], parsed.contracts[rootLabel]);
-  }
-  assert.equal(parsed.releaseManifestHash, hashReleaseManifest(JSON.parse(readFileSync(path, 'utf8'))));
-
-  const bundle = buildRegistryBundle(contracts, 'localnet', path);
-  assert.deepEqual(bundle.contracts, contracts);
-  for (const [rootLabel, discoveryLabel, address] of reserveRootDiscoveryPairs) {
-    assert.equal(bundle.contracts[rootLabel], address);
-    assert.equal(bundle.contracts[discoveryLabel], address);
-    assert.equal(bundle.contracts[discoveryLabel], bundle.contracts[rootLabel]);
-  }
-  assert.equal(bundle.metadata.releaseId, 'local-run-1');
-  assert.equal(bundle.metadata.registryHash, hashRegistry(contracts));
-
-  const marketContracts = contracts;
-  const marketPath = writeManifest('markets.json', {
-    contracts: marketContracts,
-    registryHash: hashRegistry(marketContracts),
-    markets: releaseMarkets,
-  });
-  const parsedMarkets = readCanonicalReleaseManifest(marketPath, 'localnet').markets;
-  assert.equal(parsedMarkets[0].perpsPool, releaseMarkets[0].perpsPool);
-  assert.notEqual(parsedMarkets[0].perpsPool, parsedMarkets[0].marketAddress);
-  assert.equal(parsedMarkets[0].perpsCandleMarketKey, 'perps-oracle:1');
-  assert.equal(parsedMarkets[0].perpsPoolCodeHash, 'b'.repeat(64));
-  for (const [name, replacement, error] of [
-    ['missing-perps-pool', { perpsPool: undefined }, /perpsPool contract binding/],
-    ['foreign-perps-pool', { perpsPool: releaseMarkets[0].pool }, /perpsPool contract binding/],
-    ['missing-perps-role', { contractRoles: { ...releaseMarkets[0].contractRoles, perpsPool: undefined } }, /perpsPool contract binding/],
-    ['missing-perps-code', { codeHashes: {} }, /perpsPool code binding/],
-    ['foreign-perps-code', { codeHashes: { perpsPool: 'f'.repeat(64) } }, /perpsPool code binding/],
-    ['oversized-perps-market', { perpsMarketId: 0x100000000 }, /perpsMarketId/],
-  ] as const) {
-    assert.throws(() => readCanonicalReleaseManifest(writeManifest(`${name}.json`, {
-      markets: releaseMarkets.map((market, index) => index === 0 ? { ...market, ...replacement } : market),
-    }), 'localnet'), error);
-  }
-  assert.deepEqual(
-    parsedMarkets.map((market) => ({
-      marketKey: market.marketKey,
-      marketAddress: market.marketAddress,
-      assetDecimals: market.assetDecimals,
-      quoteDecimals: market.quoteDecimals,
-    })),
-    [
-      {
-        marketKey: 'spot:R1-T3',
-        marketAddress: releaseMarkets[0].pool,
-        assetDecimals: 6,
-        quoteDecimals: 9,
-      },
-      {
-        marketKey: 'spot:R2-T3',
-        marketAddress: releaseMarkets[1].pool,
-        assetDecimals: 7,
-        quoteDecimals: 9,
-      },
-      {
-        marketKey: 'spot:R3-T3',
-        marketAddress: releaseMarkets[2].pool,
-        assetDecimals: 8,
-        quoteDecimals: 9,
-      },
-    ]
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('spoofed-market.json', {
-          contracts: marketContracts,
-          registryHash: hashRegistry(marketContracts),
-          markets: releaseMarkets.map((market, index) =>
-            index === 0 ? { ...market, pool: `0:${'9'.repeat(64)}` } : market
-          ),
-        }),
-        'localnet'
-      ),
-    /pool contract binding/
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('mismatched-option.json', {
-          markets: releaseMarkets.map((market, index) =>
-            index === 0 ? { ...market, optionAddress: addressA } : market
-          ),
-        }),
-        'localnet'
-      ),
-    /optionAddress contract binding/
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('duplicate-product-ids.json', {
-          markets: releaseMarkets.map((market, index) =>
-            index === 1
-              ? {
-                  ...market,
-                  perpsMarketId: releaseMarkets[0].perpsMarketId,
-                  optionSeriesId: releaseMarkets[0].optionSeriesId,
-                  coverPolicyId: releaseMarkets[0].coverPolicyId,
-                }
-              : market
-          ),
-        }),
-        'localnet'
-      ),
-    /duplicate perpsMarketId/
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('market-pool-unrelated-contract.json', {
-          markets: releaseMarkets.map((market, index) =>
-            index === 0 ? { ...market, pool: addressA } : market
-          ),
-        }),
-        'localnet'
-      ),
-    /pool contract binding/
-  );
-
-  // One derivative instrument and a comparison-only spot pool remain distinct inventories.
-  const paired = {markets: [releaseMarkets[0]], spotMarkets: releaseSpots.slice(0, 2),
-    approvedComparisons: [{templateId: 10, baseSymbol: releaseSpots[0].symbol, comparisonSymbol: releaseSpots[1].symbol,
-      basePool: releaseSpots[0].pool, comparisonPool: releaseSpots[1].pool}]};
-  const pairedRead = readCanonicalReleaseManifest(writeManifest('paired-spot.json', paired), 'localnet');
-  assert.equal(pairedRead.markets.length, 1);
-  assert.equal(pairedRead.spotMarkets.length, 2);
-  assert.deepEqual(pairedRead.approvedComparisons, paired.approvedComparisons);
-  assert.equal(pairedRead.spotMarkets[1].poolCodeHash, 'b'.repeat(64));
-  assert(!('perpsMarketId' in pairedRead.spotMarkets[1]), 'comparison spot cannot invent a derivative');
-  const pairedBundle = buildRegistryBundle(contracts, 'localnet', writeManifest('paired-bundle.json', paired));
-  assert.deepEqual(pairedBundle.metadata.spotMarkets, pairedRead.spotMarkets);
-  assert.deepEqual(pairedBundle.metadata.approvedComparisons, pairedRead.approvedComparisons);
-  const firstSpot = paired.spotMarkets[0], comparison = paired.approvedComparisons[0];
-  for (const [label, change] of [
-    ['missing spots', {spotMarkets: undefined}], ['empty spots', {spotMarkets: []}],
-    ['missing comparisons', {approvedComparisons: undefined}],
-    ['duplicate spot pool', {spotMarkets: [firstSpot, {...paired.spotMarkets[1], pool: firstSpot.pool}]}],
-    ['missing pool code', {spotMarkets: [{...firstSpot, codeHashes: {tokenRoot: 'b'.repeat(64)}}]}],
-    ['wrong token code', {spotMarkets: [{...firstSpot, codeHashes: {...firstSpot.codeHashes, tokenRoot: 'f'.repeat(64)}}]}],
-    ['wrong pool code', {spotMarkets: [{...firstSpot, codeHashes: {...firstSpot.codeHashes, pool: 'f'.repeat(64)}}]}],
-    ['wrong pool role', {spotMarkets: [{...firstSpot, contractRoles: {...firstSpot.contractRoles, pool: 'T3Root'}}]}],
-    ['wrong quote precision', {spotMarkets: [{...firstSpot, quoteDecimals: 6}]}],
-    ['missing underlying spot', {spotMarkets: [paired.spotMarkets[1]]}],
-    ['invented spot derivative', {spotMarkets: [{...firstSpot, perpsMarketId: 2}]}],
-    ['self comparison', {approvedComparisons: [{...comparison, comparisonPool: comparison.basePool, comparisonSymbol: comparison.baseSymbol}]}],
-    ['foreign comparison pool', {approvedComparisons: [{...comparison, comparisonPool: addressA}]}],
-    ['wrong comparison symbol', {approvedComparisons: [{...comparison, comparisonSymbol: 'IMPOSTOR'}]}],
-    ['duplicate comparison', {approvedComparisons: [comparison, {...comparison}]}],
-    ['duplicate pair', {approvedComparisons: [comparison, {...comparison, templateId: 11}]}],
-    ['invalid comparison template', {approvedComparisons: [{...comparison, templateId: 0}]}],
-    ['Shout template collision', {approvedComparisons: [{...comparison, templateId: releaseMarkets[0].optionTemplateId}]}],
-  ] as const) assert.throws(() => readCanonicalReleaseManifest(writeManifest(`paired-bad-${label}.json`, {...paired, ...change}), 'localnet'), /Release manifest/, label);
-
-  const objectAddressPath = writeManifest('object-address.json', {
-    network: 'ton:localnet',
-    contracts: Object.fromEntries(
-      Object.entries(contracts).map(([key, address]) => [key, { address }])
-    ),
-  });
-  assert.throws(() => readCanonicalReleaseManifest(objectAddressPath, 'localnet'), /must be a raw address string/);
-  assert.throws(() => readCanonicalReleaseManifest(writeManifest('retired-schema.json', {schema:'tonswap-testnet-release-v1'}), 'localnet'), /schema must be tonswap-first-release-manifest-v1/);
-  const pending = readCanonicalReleaseManifest(writeManifest('pending-one-market.json', {markets:[releaseMarkets[0]]}), 'localnet');
-  assert.equal(pending.markets.length, 1);
-  assert.equal(pending.markets[0].oracle?.status, 'pending');
-  assert.equal(pending.markets[0].coverPolicyId, undefined);
-  assert.throws(() => readCanonicalReleaseManifest(writeManifest('false-oracle-ready.json', {markets:[{...releaseMarkets[0],oracle:{...releaseMarkets[0].oracle,status:'ready'}}]}), 'localnet'), /oracle ready/);
-
-  assert.throws(
-    () => buildRegistryBundle({ ...contracts, T3Root: addressA }, 'localnet', path),
-    /address mismatch for T3Root/
-  );
-  assert.throws(
-    () => buildRegistryBundle({ T3Root: addressB }, 'localnet', path),
-    /key mismatch/
-  );
-  assert.throws(
-    () => readCanonicalReleaseManifest(path, 'testnet'),
-    /network mismatch/
-  );
-  assert.throws(
-    () => readCanonicalReleaseManifest(writeManifest('bad-schema.json', { schemaVersion: 2 }), 'localnet'),
-    /schemaVersion must be 1/
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('missing-schema-version.json', { schemaVersion: undefined }),
-        'localnet'
-      ),
-    /schemaVersion must be 1/
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('missing-markets.json', { markets: undefined }),
-        'localnet'
-      ),
-    /markets must contain configured/
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('empty-markets.json', { markets: [] }),
-        'localnet'
-      ),
-    /markets must contain configured/
-  );
-  assert.throws(
-    () => readCanonicalReleaseManifest(writeManifest('bad-hash.json', { registryHash: '0'.repeat(64) }), 'localnet'),
-    /registryHash does not match/
-  );
+  assert.throws(() => readCanonicalReleaseManifest(path, 'mainnet'), /network mismatch/);
+  const fail = (label: string, change: Record<string, unknown>, error = /Release manifest/) =>
+    assert.throws(() => readCanonicalReleaseManifest(writeManifest(label + '.json', change), 'testnet'), error, label);
+  fail('old-schema', { schema: 'tonswap-first-release-manifest-v1' }, /schema must be tonswap-release-v1/);
+  fail('old-fields', { candidateDigest: 'a'.repeat(64) }, /top-level fields/);
+  fail('wrong-network-domain', { globalId: -239 }, /network\/globalId/);
+  fail('wrong-source', { source: { ...fixture.source, contracts: 'not-a-git-sha' } });
+  fail('wrong-release-build', { releaseId: 'testnet-unit-123456789abc' });
+  fail('missing-wallet-template', { templates: { ...fixture.templates, JettonWallet: undefined } });
+  fail('unknown-role', { contracts: { ...fixture.contracts, T3Hub: fixture.contracts.T3 } });
+  fail('old-address-entry', { contracts: { ...fixture.contracts, T3: contracts.T3 } });
+  fail('missing-code-hash', { contracts: { ...fixture.contracts, T3: { address: contracts.T3 } } });
+  fail('friendly-address', { contracts: { ...fixture.contracts, T3: { ...fixture.contracts.T3, address: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c' } } });
+  fail('duplicate-singleton', { contracts: { ...fixture.contracts, T3: { ...fixture.contracts.T3, address: contracts.T3Root } } });
+  fail('wrong-token-root', { tokens: fixture.tokens.map(t => t.symbol === 'T3' ? { ...t, root: runtimeAddress(999) } : t) });
+  fail('wrong-quote-precision', { tokens: fixture.tokens.map(t => t.symbol === 'T3' ? { ...t, decimals: 6 } : t) });
+  fail('wrong-reserve-root', { tokens: fixture.tokens.map(t => t.symbol === 'USDT' ? { ...t, root: contracts.PerpsEngine } : t) });
+  fail('foreign-perps-pool', { perpsMarkets: [{ ...fixture.perpsMarkets[0], pool: runtimeAddress(999) }] });
+  fail('unsupported-perps-id', { perpsMarkets: [{ ...fixture.perpsMarkets[0], marketId: 5 }] });
+  fail('duplicate-perps-id', { perpsMarkets: [...fixture.perpsMarkets, fixture.perpsMarkets[0]] });
+  fail('duplicate-spot', { spotMarkets: [...fixture.spotMarkets, fixture.spotMarkets[0]] });
+  fail('oracle-readiness-claim', { spotMarkets: [{ ...fixture.spotMarkets[0], oracle: { status: 'ready' } }] });
+  fail('self-comparison', { options: [{ ...fixture.options[1], comparisonSymbol: 'USDT' }] });
+  fail('partial-series', { options: [{ ...fixture.options[1], seriesId: '2' }] });
+  fail('duplicate-series', { options: [fixture.options[0], { ...fixture.options[0], option: runtimeAddress(302) }] });
+  fail('conflicting-template', { options: [fixture.options[0], { ...fixture.options[1], templateId: 1 }] });
+  fail('service-secret', { services: { ...fixture.services, tonRpc: 'https://user:secret@example.org' } });
   const tamperedPath = writeManifest('tampered.json');
-  const tampered = JSON.parse(readFileSync(tamperedPath, 'utf8'));
-  tampered.releaseId = 'tampered-after-hash';
-  writeFileSync(tamperedPath, `${JSON.stringify(tampered, null, 2)}\n`);
-  assert.throws(
-    () => readCanonicalReleaseManifest(tamperedPath, 'localnet'),
-    /manifestHash does not match/
-  );
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(
-        writeManifest('bad-address.json', { contracts: { T3Root: 'not-an-address' } }),
-        'localnet'
-      ),
-    /invalid TON address/
-  );
+  const tampered = JSON.parse(readFileSync(tamperedPath, 'utf8')); tampered.services.platform = 'https://other.example';
+  writeFileSync(tamperedPath, JSON.stringify(tampered));
+  assert.throws(() => readCanonicalReleaseManifest(tamperedPath, 'testnet'), /manifestHash does not match/);
 
-  assert.throws(
-    () => readCanonicalReleaseManifest('good.json', 'localnet'),
-    /canonical absolute path/
-  );
+  const bound = config(); applyRuntimeManifestBindings(bound, parsed.runtime);
+  assert.equal(bound.ledgerPerpsEngineCodeHash, fixture.contracts.PerpsEngine!.codeHash);
+  assert.equal(bound.ledgerOptionsCodeHashes?.walletCodeHash, fixture.templates.JettonWallet);
+  assert.equal(bound.ledgerLaunchpadCodeHashes?.fixedCodeHash, fixture.templates.SaleFixed);
+  assert.equal(bound.ledgerMarketBindings.length, 3);
+  assert.equal(bound.ledgerMarketBindings[0].router, contracts.DexRouter);
+  assert.equal(bound.ledgerT3RedemptionBinding, undefined, 'reserve wallet identity must be separately authenticated');
+  applyRuntimeManifestBindings(bound, parsed.runtime);
+  const conflict = config(); conflict.ledgerPerpsEngineCodeHash = 'f'.repeat(64);
+  assert.throws(() => applyRuntimeManifestBindings(conflict, parsed.runtime), /LEDGER_PERPS_ENGINE_CODE_HASH conflicts/);
+  const wrongMarket = config(); wrongMarket.ledgerMarketBindings = [{ ...bound.ledgerMarketBindings[0], pool: runtimeAddress(999) }];
+  assert.throws(() => applyRuntimeManifestBindings(wrongMarket, parsed.runtime), /LEDGER_MARKET_BINDINGS_JSON conflicts/);
+  const external = runtimeManifestFixture({ contracts: Object.fromEntries(Object.entries(fixture.contracts).filter(([role]) => role !== 'USDT')) });
+  const externalConfig = config(); applyRuntimeManifestBindings(externalConfig, external);
+  assert.equal(externalConfig.ledgerMarketBindings.length, 2, 'a missing external root hash remains unresolved');
 
-  const symlinkPath = join(root, 'manifest-symlink.json');
-  symlinkSync(path, symlinkPath);
-  assert.throws(
-    () => readCanonicalReleaseManifest(symlinkPath, 'localnet'),
-    /must not contain symlink aliases/
-  );
-  unlinkSync(symlinkPath);
-
-  const hardlinkPath = join(root, 'manifest-hardlink.json');
-  linkSync(path, hardlinkPath);
-  assert.throws(
-    () => readCanonicalReleaseManifest(hardlinkPath, 'localnet'),
-    /single-link regular file/
-  );
-  unlinkSync(hardlinkPath);
-
-  const unsafeModePath = writeManifest('unsafe-mode.json');
-  chmodSync(unsafeModePath, 0o664);
-  assert.throws(
-    () => readCanonicalReleaseManifest(unsafeModePath, 'localnet'),
-    /not group\/other-writable/
-  );
-
-  const duplicateKeyPath = join(root, 'duplicate-key.json');
-  const duplicateKeyRaw = readFileSync(path, 'utf8').replace(
-    '"releaseId": "local-run-1",',
-    '"releaseId": "shadowed-release",\n  "releaseId": "local-run-1",'
-  );
-  writeFileSync(duplicateKeyPath, duplicateKeyRaw);
-  assert.throws(
-    () => readCanonicalReleaseManifest(duplicateKeyPath, 'localnet'),
-    /duplicate object key "releaseId"/
-  );
-
-  const racePath = writeManifest('race-target.json');
-  const raceReplacementPath = writeManifest('race-replacement.json', {
-    releaseId: 'replacement-release',
-  });
-  assert.throws(
-    () =>
-      readCanonicalReleaseManifest(racePath, 'localnet', {
-        afterOpen: () => renameSync(raceReplacementPath, racePath),
-      }),
-    /single-link regular file|changed during/
-  );
-
+  assert.throws(() => buildRegistryBundle({ ...contracts, T3Root: runtimeAddress(999) }, 'testnet', path), /address mismatch/);
+  assert.throws(() => buildRegistryBundle({ T3Root: contracts.T3Root }, 'testnet', path), /key mismatch/);
+  assert.throws(() => readCanonicalReleaseManifest('good.json', 'testnet'), /canonical absolute path/);
+  const symlinkPath = join(root, 'symlink.json'); symlinkSync(path, symlinkPath);
+  assert.throws(() => readCanonicalReleaseManifest(symlinkPath, 'testnet'), /symlink/); unlinkSync(symlinkPath);
+  const hardlinkPath = join(root, 'hardlink.json'); linkSync(path, hardlinkPath);
+  assert.throws(() => readCanonicalReleaseManifest(hardlinkPath, 'testnet'), /single-link/); unlinkSync(hardlinkPath);
+  const unsafe = writeManifest('unsafe.json'); chmodSync(unsafe, 0o664);
+  assert.throws(() => readCanonicalReleaseManifest(unsafe, 'testnet'), /not group\/other-writable/);
+  const duplicate = join(root, 'duplicate.json');
+  writeFileSync(duplicate, readFileSync(path, 'utf8').replace('"schema": "tonswap-release-v1",', '"schema": "tonswap-release-v1", "schema": "tonswap-release-v1",'));
+  assert.throws(() => readCanonicalReleaseManifest(duplicate, 'testnet'), /duplicate object key/);
+  const race = writeManifest('race.json'), replacement = writeManifest('replacement.json');
+  assert.throws(() => readCanonicalReleaseManifest(race, 'testnet', { afterOpen: () => renameSync(replacement, race) }), /single-link|changed during/);
   const plain = buildRegistryBundle(contracts, 'testnet');
-  assert.equal(plain.metadata.releaseId, null);
-  assert.equal(plain.metadata.releaseManifestHash, null);
-  assert.equal(plain.metadata.registryHash, hashRegistry(contracts));
+  assert.equal(plain.metadata.releaseManifestHash, null); assert.equal(plain.metadata.registryHash, hashRegistry(contracts));
 
-  const testnetManifest = writeManifest('sync-testnet.json', { network: 'ton:testnet' });
-  mkdirSync(join(root, 'registry'));
-  const registryPath = join(root, 'registry/testnet.json');
-  const syncCommand = resolve(__dirname, 'refresh-registry.ts');
-  const tsx = resolve(__dirname, '../../node_modules/tsx/dist/cli.mjs');
+  mkdirSync(join(root, 'registry')); const registryPath = join(root, 'registry/testnet.json');
+  const syncCommand = resolve(__dirname, 'refresh-registry.ts'), tsx = resolve(__dirname, '../../node_modules/tsx/dist/cli.mjs');
   const sync = (...args: string[]) => spawnSync(process.execPath, [tsx, syncCommand, ...args], {
-    cwd: root, encoding: 'utf8', timeout: 15_000,
-    env: { ...process.env, INDEXER_RELEASE_MANIFEST_PATH: '' },
+    cwd: root, encoding: 'utf8', timeout: 15_000, env: { ...process.env, INDEXER_RELEASE_MANIFEST_PATH: '' },
   });
-  const exactRegistry = JSON.stringify(contracts, null, 2) + '\n';
-  writeFileSync(registryPath, exactRegistry);
-  const checked = sync('--check', testnetManifest);
-  assert.equal(checked.status, 0, checked.stderr);
-  assert.equal(JSON.parse(checked.stdout).mode, 'check');
-  assert.equal(readFileSync(registryPath, 'utf8'), exactRegistry);
+  const exact = JSON.stringify(contracts, null, 2) + '\n'; writeFileSync(registryPath, exact);
+  assert.equal(sync('--check', path).status, 0); assert.equal(readFileSync(registryPath, 'utf8'), exact);
+  const { T3Root: omitted, ...missing } = contracts;
+  for (const registry of [missing, { ...contracts, T3Root: runtimeAddress(999) }, { ...contracts, ExtraRole: runtimeAddress(999) }]) {
+    const retained = JSON.stringify(registry); writeFileSync(registryPath, retained);
+    assert.equal(sync('--check', path).status, 1); assert.equal(readFileSync(registryPath, 'utf8'), retained);
+  }
+  assert.equal(sync(path).status, 0); assert.deepEqual(JSON.parse(readFileSync(registryPath, 'utf8')), contracts);
   assert.deepEqual(readdirSync(join(root, 'registry')), ['testnet.json']);
-
-  const { T3Root: _omitted, ...missingRole } = contracts;
-  for (const [label, registry] of Object.entries({
-    changedAddress: { ...contracts, T3Root: addressA },
-    missingRole,
-    extraRole: { ...contracts, UnreviewedContract: addressA },
-  })) {
-    const retained = JSON.stringify(registry) + '\n';
-    writeFileSync(registryPath, retained);
-    const result = sync('--check', testnetManifest);
-    assert.equal(result.status, 1, label);
-    assert.match(result.stderr, /Registry\/release manifest (key|address) mismatch/, label);
-    assert.equal(readFileSync(registryPath, 'utf8'), retained, `${label}: check must not write`);
-    assert.deepEqual(readdirSync(join(root, 'registry')), ['testnet.json']);
-  }
-  writeFileSync(registryPath, exactRegistry);
-  for (const args of [
-    ['--check', path], ['--check', tamperedPath], ['--check'],
-    ['--unknown', testnetManifest], ['--check', testnetManifest, 'extra'],
-  ]) {
-    assert.equal(sync(...args).status, 1, JSON.stringify(args));
-    assert.equal(readFileSync(registryPath, 'utf8'), exactRegistry);
-  }
-  writeFileSync(registryPath, JSON.stringify(missingRole));
-  const synced = sync(testnetManifest);
-  assert.equal(synced.status, 0, synced.stderr);
-  assert.equal(JSON.parse(synced.stdout).mode, 'sync');
-  assert.deepEqual(JSON.parse(readFileSync(registryPath, 'utf8')), contracts);
-  assert.equal(sync('--check', testnetManifest).status, 0);
-
-  process.stdout.write('release manifest registry parity ok\n');
-} finally {
-  rmSync(root, { recursive: true, force: true });
-}
+  assert.equal(sync('--check', path).status, 0);
+  process.stdout.write('runtime release manifest identities, bindings and registry parity passed\n');
+} finally { rmSync(root, { recursive: true, force: true }); }

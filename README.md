@@ -383,7 +383,7 @@ is the actual debit. Excess refund attribution remains explicit and unresolved.
 This proves purchase activation, not a cash-equivalent asset valuation, taxation,
 or a later exercise, settlement, payout, cancellation or refund.
 
-T3 mint and redemption use the configured `T3Hub` and `T3Root` registry roles.
+T3 mint and redemption use the configured `T3` and `T3Root` registry roles.
 The graph verifies the hub's tagged storage root, root emitter, three immutable
 reserve root/vault identities, and the deterministic receiver code/address and
 controller. Its related accounts include the hub, root, reserve vaults, and all
@@ -417,7 +417,7 @@ supply delta or incomplete custody history cannot confirm redemption.
 
 A lost initial burn acknowledgement can be recovered by the owner's explicit
 `REDM` continuation. Configure `LEDGER_T3_REDEMPTION_BINDING_JSON` with the exact
-qualified release manifest's `contractBindings.T3Redemption` object: active
+separately authenticated current-release reserve-route binding: active
 network, raw hub/root addresses, four approved TON Cell hashes
 (`hubCodeHash`, `rootCodeHash`, `walletCodeHash`, `receiverCodeHash`), and three
 ordered `reserveRoutes` containing raw `root`, `vault`, and `discovery` addresses.
@@ -728,17 +728,30 @@ npm run sync-registry -- --check /absolute/path/to/release-manifest.json
 ```
 `sync-registry` validates the release schema, network and hashes, then atomically replaces the entire contract map. It never merges addresses from old deployments or `tmp_debug`. `--check` performs the same canonical manifest validation and verifies every bundled registry role and address without writing files; missing, extra or changed entries exit unsuccessfully. Use it to catch stale repository setup data before publication. The bundled map is a source snapshot, not proof of the currently deployed release: verify the public `/contracts` and `/service-info` release identity and hashes against the same reviewed manifest. A different or retired public deployment must not be copied into a fresh candidate.
 
-Release runs may instead provide the canonical
-`tonswap-first-release-manifest-v1` manifest with `network`, `releaseId`, `contracts`,
-`registryHash`, and `manifestHash`. Contract entries may be address strings or
-`{ "address": "..." }` objects. The selected registry must contain exactly the
-same keys and address strings. `registryHash` is SHA-256 of the sorted contract
-map encoded as compact JSON plus a trailing newline; `manifestHash` is SHA-256
-of the recursively key-sorted manifest with the `manifestHash` field omitted.
+Release runs provide the sole `tonswap-release-v1` runtime manifest from the
+native deployer. It contains `network`, `globalId`, `releaseId`, source/build
+identity, services, singleton `contracts`, child-code `templates`, `tokens`,
+`spotMarkets`, `perpsMarkets`, `options`, and `manifestHash`. Every singleton is
+exactly `{ "address": "0:<64 lowercase hex>", "codeHash": "<64 lowercase hex>" }`;
+legacy aliases and prior release schemas are rejected. The selected registry
+must contain exactly those singleton roles and raw addresses. `registryHash` is
+computed locally as SHA-256 of the sorted address map encoded as compact JSON
+plus a trailing newline; it is not a manifest field. `manifestHash` is SHA-256
+of the recursively key-sorted manifest with `manifestHash` omitted.
+
+Manifest code pins configure existing perps, option, launchpad and spot ledger
+bindings. Explicit environment pins must agree with that runtime identity.
+External token roots without a manifest code hash remain unqualified unless a
+separate explicit matching root binding is configured. Reserve wallet custody
+still requires exact on-chain discovery and archive evidence; the manifest does
+not fabricate it. Native perps admission artifacts and configured chain/genesis
+authentication remain required. A manifest's deployed identities do not establish
+fresh oracle depth, mint delivery, writer backing or an economically funded Cover
+product.
 
 ## Notes
 - This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
-- Jetton balances are fetched for registry keys ending with `Root` (e.g., `T3Root`, `TSRoot`, `UsdtRoot`). Concurrent HTTP and SSE balance reads share one request per owner. Cold native reads return independently of transaction backfill; store updates still respect the account's history lock. On-chain metadata is cached and refreshed in the background, so slow metadata never delays verified raw balances. Unknown precision continues to omit formatted amounts and decimals; subsequent snapshots include metadata once available. Run `npm run test:balances` for the cold-wallet latency and concurrency regressions.
+- Jetton balances use the runtime manifest's explicit token roots (`T3Root`, `TSRoot`, `USDT`, `USDC`, `KUSD`); source-only registry configurations discover keys ending with `Root`. Concurrent HTTP and SSE balance reads share one request per owner. Cold native reads return independently of transaction backfill; store updates still respect the account's history lock. On-chain metadata is cached and refreshed in the background, so slow metadata never delays verified raw balances. Unknown precision continues to omit formatted amounts and decimals; subsequent snapshots include metadata once available. Run `npm run test:balances` for the cold-wallet latency and concurrency regressions.
 - Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.
 - Swap classifier now also decodes optional execution hints from swap `queryId` (market/limit/twap, optional twap slice/total, and optional token symbol codes) and returns them in both `detail` and `actions` for `kind: "swap"` tx entries.
 - Swap hint decoding also exposes `querySequence` + `queryNonce` (from queryId metadata) so clients can group TWAP slices by run.
@@ -774,8 +787,9 @@ of the recursively key-sorted manifest with the `manifestHash` field omitted.
 
 ### Exact perps ledger evidence
 
-Set `LEDGER_PERPS_ENGINE_CODE_HASH` to the qualified current-network `PerpsEngine`
-artifact hash from the release manifest. Undefined, empty, or whitespace-only values
+The runtime manifest pins the current-network `PerpsEngine` code hash automatically.
+An explicit `LEDGER_PERPS_ENGINE_CODE_HASH` must match it; without a runtime manifest,
+configure the independently approved current-network artifact hash. Undefined, empty, or whitespace-only values
 leave perps settlement unconfigured. Every nonempty value must be exactly 64 lowercase
 hexadecimal characters: prefixes, uppercase, surrounding whitespace, and malformed
 values fail startup. There is one registry engine and one hash, with no automatic
@@ -1492,27 +1506,23 @@ after changing these decoders; the lifecycle suite includes distinct physical
 payments with identical business queries and forged-header/journal negatives.
 
 
-The canonical release manifest requires an explicit `spotMarkets` inventory and
-`approvedComparisons`, independent of derivative `markets`. Each spot entry binds
-its pool and token root to the registry roles and exact candidate code hashes,
-with declared base precision and 9-decimal T3 quote precision. Comparison templates
-bind two distinct certified pools, symbols and roots; they cannot reuse a Shout
-instrument template. Missing spot/comparison fields and synthetic perps entries
-are unsupported. The indexer exposes candle aliases for every explicit spot pool
-and only the actual registered derivative oracle pools. A comparison-only USDC/T3
-pool therefore has a spot chart without inventing perps market 2. Validate changes
-with `npm run build`, `tsx src/scripts/release-manifest-test.ts`,
-`tsx src/scripts/market-candles-test.ts`, and
-`tsx src/scripts/production-smoke-adversarial-test.ts`.
-
+The runtime manifest's `spotMarkets`, `perpsMarkets` and `options` inventories
+are independent. Spot pools bind a declared token symbol/root/precision and the
+current DLMM template hash, with 9-decimal T3 as quote. Perps entries bind actual
+market IDs to those pools, and outperformance templates bind two distinct spot
+symbols. Template-only options do not fabricate a series address. The indexer
+exposes every explicit spot chart and only registered perps oracle candle keys;
+a comparison-only pool therefore has a spot chart without inventing a perps
+market. Validate changes with `npm run build`,
+`tsx src/scripts/release-manifest-test.ts`, `tsx src/scripts/market-candles-test.ts`,
+and `tsx src/scripts/production-smoke-adversarial-test.ts`.
 
 Publication transport smoke checks all declared spot candle endpoints and their
 returned canonical pool/root/symbol/precision metadata. Complete zero-trade
 history is valid for a fresh comparison pool: the returned array and count must
 agree and obey the requested 0–2 candle limit. Nonempty candles must have valid
 OHLC/volume data and distinct physical source transaction IDs. This transport
-check does not certify oracle readiness or replace the separate release-matrix
-checks of explicitly journaled real trades; authentic 300/1800/7200 pool windows
+check does not certify oracle readiness or prove actual product transactions; authentic 300/1800/7200 pool windows
 remain a separate readiness requirement.
 
 

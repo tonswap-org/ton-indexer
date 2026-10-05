@@ -1,4 +1,3 @@
-import { Address } from '@ton/core';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
@@ -13,8 +12,8 @@ import {
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { Network } from './index';
 import { assertCurrentContractRoles } from './registry';
+import { parseRuntimeReleaseManifest, type RuntimeReleaseManifest } from './runtimeManifest';
 
-type ReleaseManifestContract = string;
 
 export type RegistryMarketMetadata = {
   saleModel?: 'fixed' | 'bonding' | 'dutch';
@@ -23,12 +22,12 @@ export type RegistryMarketMetadata = {
   tokenRoot: string;
   sale?: string;
   lpVault?: string;
-  optionAddress: string;
+  optionAddress?: string;
   perpsMarketId: number;
   perpsPool: string;
   perpsPoolCodeHash: string;
   perpsCandleMarketKey: string;
-  optionSeriesId: string;
+  optionSeriesId?: string;
   coverPolicyId?: string;
   assetSymbol: string;
   quoteSymbol: string;
@@ -41,7 +40,7 @@ export type RegistryMarketMetadata = {
 export type RegistrySpotMarketMetadata = Pick<RegistryMarketMetadata,
   'marketKey' | 'marketAddress' | 'tokenRoot' | 'assetSymbol' | 'quoteSymbol' |
   'assetDecimals' | 'quoteDecimals' | 'configuration' | 'oracle'> & {
-    tokenRootCodeHash: string;
+    tokenRootCodeHash?: string;
     poolCodeHash: string;
   };
 export type RegistryApprovedComparison = {
@@ -52,19 +51,7 @@ export type RegistryApprovedComparison = {
   comparisonPool: string;
 };
 
-export type CanonicalReleaseManifest = {
-  schema?: unknown;
-  schemaVersion?: unknown;
-  network?: unknown;
-  releaseId?: unknown;
-  registryHash?: unknown;
-  manifestHash?: unknown;
-  contracts?: Record<string, ReleaseManifestContract>;
-  markets?: unknown;
-  spotMarkets?: unknown;
-  approvedComparisons?: unknown;
-  [key: string]: unknown;
-};
+export type CanonicalReleaseManifest = RuntimeReleaseManifest;
 
 export type RegistryMetadata = {
   releaseId: string | null;
@@ -73,20 +60,12 @@ export type RegistryMetadata = {
   markets?: RegistryMarketMetadata[];
   spotMarkets?: RegistrySpotMarketMetadata[];
   approvedComparisons?: RegistryApprovedComparison[];
+  runtime?: RuntimeReleaseManifest;
 };
 
 export type RegistryBundle = {
   contracts: Record<string, string>;
   metadata: RegistryMetadata;
-};
-
-const normalizeNetwork = (value: unknown): Network | null => {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase().replace(/^ton:/, '');
-  if (normalized === 'mainnet' || normalized === 'testnet' || normalized === 'localnet') {
-    return normalized;
-  }
-  return null;
 };
 
 const sortedRecord = (input: Record<string, string>) =>
@@ -350,114 +329,28 @@ export const hashReleaseManifest = (manifest: Record<string, unknown>) => {
   return sha256(stableJson(unsigned));
 };
 
-const parseContracts = (value: unknown): Record<string, string> => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Release manifest contracts must be an object');
+const instrumentMetadata = (manifest: RuntimeReleaseManifest) => {
+  const token = (symbol: string) => manifest.tokens.find(t => t.symbol === symbol)!;
+  const spotMarkets: RegistrySpotMarketMetadata[] = manifest.spotMarkets.map(spot => {
+    const base = token(spot.symbol);
+    const rootCodeHash = Object.values(manifest.contracts).find(c => c?.address === base.root)?.codeHash;
+    return { marketKey: `spot:${spot.symbol}-T3`, marketAddress: spot.pool, tokenRoot: base.root,
+      ...(rootCodeHash ? { tokenRootCodeHash: rootCodeHash } : {}), poolCodeHash: manifest.templates.DlmmPool,
+      assetSymbol: spot.symbol, quoteSymbol: 'T3', assetDecimals: base.decimals, quoteDecimals: 9 };
+  }).sort((a, b) => a.marketKey.localeCompare(b.marketKey));
+  const markets: RegistryMarketMetadata[] = manifest.perpsMarkets.map(market => {
+    const spot = spotMarkets.find(s => s.assetSymbol === market.symbol)!;
+    return { ...spot, perpsMarketId: market.marketId, perpsPool: market.pool,
+      perpsPoolCodeHash: manifest.templates.DlmmPool, perpsCandleMarketKey: `perps-oracle:${market.marketId}` };
+  }).sort((a, b) => a.perpsMarketId - b.perpsMarketId);
+  const comparisons = new Map<number, RegistryApprovedComparison>();
+  for (const option of manifest.options.filter(o => o.kind === 'outperformance')) {
+    const base = spotMarkets.find(s => s.assetSymbol === option.symbol)!;
+    const comparison = spotMarkets.find(s => s.assetSymbol === option.comparisonSymbol)!;
+    comparisons.set(option.templateId, { templateId: option.templateId, baseSymbol: base.assetSymbol,
+      comparisonSymbol: comparison.assetSymbol, basePool: base.marketAddress, comparisonPool: comparison.marketAddress });
   }
-  const contracts: Record<string, string> = {};
-  for (const [key, candidate] of Object.entries(value as Record<string, ReleaseManifestContract>)) {
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(key)) {
-      throw new Error(`Release manifest contract key is invalid: ${key}`);
-    }
-    if (typeof candidate !== 'string') throw new Error(`Release manifest contract ${key} must be a raw address string`);
-    const address = candidate;
-    try {
-      if (Address.parse(address).toRawString() !== address || !/^0:[0-9a-f]{64}$/.test(address) || address === `0:${'0'.repeat(64)}`) throw new Error('noncanonical');
-    } catch {
-      throw new Error(`Release manifest contract ${key} has an invalid TON address`);
-    }
-    contracts[key] = address;
-  }
-  if (Object.keys(contracts).length === 0) {
-    throw new Error('Release manifest contracts must not be empty');
-  }
-  return sortedRecord(contracts);
-};
-
-const parseMarkets = (value: unknown, contracts: Record<string,string>, codeHashes: Record<string,string>): RegistryMarketMetadata[] => {
-  if (!Array.isArray(value) || value.length === 0) throw new Error('Release manifest markets must contain configured instruments');
-  const sets = Object.fromEntries(['key','symbol','pool','perpsPool','optionAddress','perpsMarketId','optionSeriesId'].map(key => [key,new Set<unknown>()]));
-  return value.map((market: any, index) => {
-    const require = (ok: unknown, field: string) => { if (!ok) throw new Error(`Release manifest market ${index} ${field}`); };
-    const uint = (v:unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]*)$/.test(v);
-    require(market && typeof market === 'object', 'must be an object');
-    require(typeof market.key === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(market.key), 'key');
-    require(typeof market.symbol === 'string' && /^[A-Z0-9_.$-]{1,32}$/.test(market.symbol) && market.symbol !== 'T3', 'symbol');
-    for (const field of ['tokenRoot','pool','perpsPool','optionAddress']) {
-      const role = market.contractRoles?.[field];
-      require(typeof role === 'string' && typeof market[field] === 'string' && /^0:[0-9a-f]{64}$/.test(market[field]) && contracts[role] === market[field], `${field} contract binding`);
-    }
-    require(typeof market.codeHashes?.perpsPool === 'string' && /^[0-9a-f]{64}$/.test(market.codeHashes.perpsPool) &&
-      market.codeHashes.perpsPool === codeHashes[market.contractRoles.perpsPool], 'perpsPool code binding');
-    require(Number.isSafeInteger(market.perpsMarketId) && market.perpsMarketId > 0 && market.perpsMarketId <= 0xffffffff, 'perpsMarketId');
-    require(uint(market.optionSeriesId) && BigInt(market.optionSeriesId) > 0n, 'optionSeriesId');
-    require(Number.isSafeInteger(market.optionTemplateId) && market.optionTemplateId > 0 && uint(market.optionExpiry) && BigInt(market.optionExpiry) > 0n, 'option configuration');
-    require(market.coverSource === market.pool, 'cover source');
-    require(market.configuration === 'ready' && market.lifecycle === 'not-run', 'configuration/lifecycle');
-    for (const field of ['decimals','quoteDecimals']) require(Number.isInteger(market[field]) && market[field] >= 0 && market[field] <= 18, field);
-    for (const [field, seen] of Object.entries(sets)) { require(!seen.has(market[field]), `duplicate ${field}`); seen.add(market[field]); }
-    const oracle = market.oracle;
-    require(oracle && ['pending','ready'].includes(oracle.status) && uint(oracle.observationTimestamp), 'oracle');
-    require(Array.isArray(oracle.windows) && JSON.stringify(oracle.windows.map((w:any)=>w.seconds)) === '["300","1800","7200"]', 'oracle windows');
-    for (const window of oracle.windows) require(typeof window.available === 'boolean' && uint(window.elapsed) && uint(window.priceQ64), 'oracle window');
-    if (oracle.status === 'ready') require(oracle.reason === null && oracle.windows.every((w:any)=>w.available && BigInt(w.elapsed)>=BigInt(w.seconds) && BigInt(w.priceQ64)>0n), 'oracle ready');
-    else require(oracle.reason === 'history-incomplete-or-stale', 'oracle pending');
-    return {marketKey:`spot:${market.symbol}-T3`,marketAddress:market.pool,tokenRoot:market.tokenRoot,optionAddress:market.optionAddress,
-      perpsPool:market.perpsPool,perpsPoolCodeHash:market.codeHashes.perpsPool,perpsCandleMarketKey:`perps-oracle:${market.perpsMarketId}`,
-      perpsMarketId:market.perpsMarketId,optionSeriesId:market.optionSeriesId,assetSymbol:market.symbol,quoteSymbol:'T3',assetDecimals:market.decimals,
-      quoteDecimals:market.quoteDecimals,configuration:market.configuration,oracle};
-  }).sort((a,b)=>a.marketKey.localeCompare(b.marketKey));
-};
-
-const parseSpotMarkets = (value: unknown, contracts: Record<string, string>, codeHashes: Record<string, string>): RegistrySpotMarketMetadata[] => {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 16) throw Error('Release manifest spotMarkets must contain explicit spot pools');
-  const sets = Object.fromEntries(['key', 'symbol', 'pool', 'tokenRoot'].map(key => [key, new Set<unknown>()]));
-  return value.map((market: any, index) => {
-    const need = (ok: unknown, field: string) => { if (!ok) throw Error(`Release manifest spot market ${index} ${field}`); };
-    const uint = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]*)$/.test(v);
-    need(market && typeof market === 'object' && !Array.isArray(market), 'must be an object');
-    need(JSON.stringify(Object.keys(market).sort()) === JSON.stringify(['key','symbol','pool','tokenRoot','decimals','quoteDecimals','codeHashes','contractRoles','configuration','oracle','lifecycle'].sort()), 'must have exactly the current spot fields');
-    need(typeof market.key === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(market.key), 'key');
-    need(typeof market.symbol === 'string' && /^[A-Z0-9_.$-]{1,32}$/.test(market.symbol) && market.symbol !== 'T3', 'symbol');
-    for (const map of ['codeHashes','contractRoles']) need(market[map] && JSON.stringify(Object.keys(market[map]).sort()) === '["pool","tokenRoot"]', `${map} inventory`);
-    for (const field of ['tokenRoot','pool']) {
-      const role = market.contractRoles[field];
-      need(typeof role === 'string' && /^0:[0-9a-f]{64}$/.test(market[field]) && contracts[role] === market[field], `${field} contract binding`);
-      need(/^[0-9a-f]{64}$/.test(market.codeHashes[field]) && codeHashes[role] === market.codeHashes[field], `${field} code binding`);
-    }
-    need(market.pool !== market.tokenRoot && market.tokenRoot !== contracts.T3Root, 'distinct pool/base/quote');
-    need(Number.isInteger(market.decimals) && market.decimals >= 0 && market.decimals <= 18 && market.quoteDecimals === 9, 'decimals');
-    need(market.configuration === 'ready' && market.lifecycle === 'not-run', 'configuration/lifecycle');
-    for (const [field, seen] of Object.entries(sets)) { need(!seen.has(market[field]), `duplicate ${field}`); seen.add(market[field]); }
-    const oracle = market.oracle;
-    need(oracle && ['pending','ready'].includes(oracle.status) && uint(oracle.observationTimestamp), 'oracle');
-    need(Array.isArray(oracle.windows) && JSON.stringify(oracle.windows.map((w: any) => w.seconds)) === '["300","1800","7200"]', 'oracle windows');
-    for (const window of oracle.windows) need(typeof window.available === 'boolean' && uint(window.elapsed) && uint(window.priceQ64), 'oracle window');
-    if (oracle.status === 'ready') need(oracle.reason === null && oracle.windows.every((w: any) => w.available && BigInt(w.elapsed) >= BigInt(w.seconds) && BigInt(w.priceQ64) > 0n), 'oracle ready');
-    else need(oracle.reason === 'history-incomplete-or-stale', 'oracle pending');
-    return {marketKey: `spot:${market.symbol}-T3`, marketAddress: market.pool, tokenRoot: market.tokenRoot,
-      tokenRootCodeHash: market.codeHashes.tokenRoot, poolCodeHash: market.codeHashes.pool,
-      assetSymbol: market.symbol, quoteSymbol: 'T3', assetDecimals: market.decimals, quoteDecimals: 9,
-      configuration: market.configuration, oracle};
-  }).sort((a,b) => a.marketKey.localeCompare(b.marketKey));
-};
-
-const parseApprovedComparisons = (value: unknown, spots: RegistrySpotMarketMetadata[]): RegistryApprovedComparison[] => {
-  if (!Array.isArray(value)) throw Error('Release manifest approvedComparisons must be explicit');
-  const templates = new Set<number>(), pairs = new Set<string>();
-  return value.map((comparison: any, index) => {
-    const need = (ok: unknown, field: string) => { if (!ok) throw Error(`Release manifest approved comparison ${index} ${field}`); };
-    need(comparison && typeof comparison === 'object' && !Array.isArray(comparison) &&
-      JSON.stringify(Object.keys(comparison).sort()) === '["basePool","baseSymbol","comparisonPool","comparisonSymbol","templateId"]', 'fields');
-    need(Number.isSafeInteger(comparison.templateId) && comparison.templateId > 0 && comparison.templateId <= 0xffffffff, 'templateId');
-    const base = spots.find(s => s.marketAddress === comparison.basePool && s.assetSymbol === comparison.baseSymbol),
-      quote = spots.find(s => s.marketAddress === comparison.comparisonPool && s.assetSymbol === comparison.comparisonSymbol);
-    need(base && quote && base.marketAddress !== quote.marketAddress && base.tokenRoot !== quote.tokenRoot && base.assetSymbol !== quote.assetSymbol, 'distinct certified spot pair');
-    const pair = `${comparison.basePool}:${comparison.comparisonPool}`;
-    need(!templates.has(comparison.templateId) && !pairs.has(pair), 'duplicate template or pair');
-    templates.add(comparison.templateId); pairs.add(pair);
-    return {...comparison};
-  }).sort((a,b) => a.templateId - b.templateId);
+  return { markets, spotMarkets, approvedComparisons: [...comparisons.values()].sort((a, b) => a.templateId - b.templateId) };
 };
 
 const assertRegistryParity = (
@@ -493,87 +386,23 @@ export const readCanonicalReleaseManifest = (
   markets: RegistryMarketMetadata[];
   spotMarkets: RegistrySpotMarketMetadata[];
   approvedComparisons: RegistryApprovedComparison[];
+  runtime: RuntimeReleaseManifest;
 } => {
-  let raw: string;
-  let parsed: CanonicalReleaseManifest;
+  let parsed: unknown;
   try {
-    raw = readStableReleaseManifest(path, testHooks);
+    const raw = readStableReleaseManifest(path, testHooks);
     assertNoDuplicateJsonObjectKeys(raw);
-    parsed = JSON.parse(raw) as CanonicalReleaseManifest;
+    parsed = JSON.parse(raw);
   } catch (error) {
     throw new Error(`Failed to read release manifest at ${path}: ${(error as Error).message}`);
   }
-
-  if (parsed.schema !== 'tonswap-first-release-manifest-v1') {
-    throw new Error('Release manifest schema must be tonswap-first-release-manifest-v1');
-  }
-  for (const field of ['contracts', 'codeHashes', 'artifactCodeHashes', 'webAddresses']) {
-    const values = parsed[field];
-    if (values && typeof values === 'object' && !Array.isArray(values)) {
-      assertCurrentContractRoles(values as Record<string, unknown>);
-    }
-  }
-  const network = normalizeNetwork(parsed.network);
-  if (parsed.schemaVersion !== 1) {
-    throw new Error('Release manifest schemaVersion must be 1');
-  }
-  if (!network) {
-    throw new Error('Release manifest network must be mainnet, testnet, or localnet');
-  }
-  if (network !== expectedNetwork) {
-    throw new Error(`Release manifest network mismatch: expected ${expectedNetwork}, got ${network}`);
-  }
-  if (typeof parsed.releaseId !== 'string' || !parsed.releaseId.trim()) {
-    throw new Error('Release manifest releaseId must be a non-empty string');
-  }
-  const releaseManifestHash = hashReleaseManifest(parsed);
-  if (
-    typeof parsed.manifestHash !== 'string' ||
-    parsed.manifestHash.toLowerCase() !== releaseManifestHash
-  ) {
-    throw new Error('Release manifest manifestHash does not match its canonical contents');
-  }
-
-  const contracts = parseContracts(parsed.contracts);
-  if (parsed.network !== `ton:${network}` || !['testnet','localnet'].includes(network) ||
-      typeof parsed.attemptId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(parsed.attemptId) ||
-      typeof parsed.candidateDigest !== 'string' || !/^[0-9a-f]{64}$/.test(parsed.candidateDigest) || parsed.setup !== 'ready' || parsed.lifecycle !== 'not-run') {
-    throw new Error('Release manifest candidate/attempt/configuration identity is invalid');
-  }
-  const codeHashes = parsed.codeHashes as Record<string,string>;
-  if (!codeHashes || JSON.stringify(Object.keys(codeHashes).sort()) !== JSON.stringify(Object.keys(contracts).sort()) ||
-      Object.values(codeHashes).some(hash=>typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) throw new Error('Release manifest code/address inventory is invalid');
-  for (const field of ['sourceHashes','artifactHashes']) {
-    const map = parsed[field] as Record<string,string>;
-    if (!map || JSON.stringify(Object.keys(map).sort()) !== '["contracts","indexer","web"]' || Object.values(map).some(hash=>typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) throw new Error(`Release manifest ${field} is invalid`);
-  }
-  const markets = parseMarkets(parsed.markets, contracts, codeHashes);
-  const spotMarkets = parseSpotMarkets(parsed.spotMarkets, contracts, codeHashes);
-  for (const market of markets) {
-    const spot = spotMarkets.find(s => s.marketAddress === market.marketAddress);
-    if (!spot || spot.tokenRoot !== market.tokenRoot || spot.assetSymbol !== market.assetSymbol ||
-        spot.assetDecimals !== market.assetDecimals || spot.quoteDecimals !== market.quoteDecimals)
-      throw Error(`Release manifest instrument ${market.marketKey} must bind an explicit spot market`);
-  }
-  const approvedComparisons = parseApprovedComparisons(parsed.approvedComparisons, spotMarkets);
-  for (const comparison of approvedComparisons) {
-    if ((parsed.markets as any[]).some(market => market.optionTemplateId === comparison.templateId))
-      throw Error('Release manifest approved comparison template collides with a derivative template');
-  }
-  const registryHash = hashRegistry(contracts);
-  if (typeof parsed.registryHash !== 'string' || parsed.registryHash.toLowerCase() !== registryHash) {
-    throw new Error('Release manifest registryHash does not match its contracts');
-  }
-
-  return {
-    contracts,
-    releaseId: parsed.releaseId.trim(),
-    registryHash,
-    releaseManifestHash,
-    markets,
-    spotMarkets,
-    approvedComparisons
-  };
+  const runtime = parseRuntimeReleaseManifest(parsed, expectedNetwork);
+  const releaseManifestHash = hashReleaseManifest(runtime);
+  if (runtime.manifestHash !== releaseManifestHash)
+    throw Error('Release manifest manifestHash does not match its canonical contents');
+  const contracts = sortedRecord(Object.fromEntries(Object.entries(runtime.contracts).map(([role, contract]) => [role, contract!.address])));
+  return { contracts, releaseId: runtime.releaseId, registryHash: hashRegistry(contracts), releaseManifestHash,
+    ...instrumentMetadata(runtime), runtime };
 };
 
 export const buildRegistryBundle = (
@@ -607,7 +436,8 @@ export const buildRegistryBundle = (
       releaseManifestHash: manifest.releaseManifestHash,
       markets: manifest.markets,
       spotMarkets: manifest.spotMarkets,
-      approvedComparisons: manifest.approvedComparisons
+      approvedComparisons: manifest.approvedComparisons,
+      runtime: manifest.runtime
     }
   };
 };

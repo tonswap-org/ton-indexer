@@ -9,9 +9,9 @@ export const REQUIRED_MAINNET_REGISTRY_KEYS = [
   'ReferralRegistry',
   'T3Root',
   'TSRoot',
-  'UsdtRoot',
-  'UsdcRoot',
-  'KusdRoot',
+  'USDT',
+  'USDC',
+  'KUSD',
   'DlmmRegistry',
   'DlmmPoolFactory'
 ] as const;

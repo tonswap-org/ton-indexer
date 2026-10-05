@@ -97,15 +97,8 @@ export type ProductionSmokeOptions = {
 };
 
 const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
-export const CANONICAL_RELEASE_CONTRACT_COUNT = 63;
 const DEFAULT_HOSTILE_CORS_ORIGIN = 'https://hostile.tonswap.invalid';
 const SHA256_RE = /^[0-9a-f]{64}$/;
-const RELEASE_DISCOVERY_ROOT_PAIRS = [
-  ['KusdDiscovery', 'KusdRoot'],
-  ['UsdcDiscovery', 'UsdcRoot'],
-  ['UsdtDiscovery', 'UsdtRoot'],
-] as const;
-
 type StrictReleaseExpectation = {
   releaseId: string;
   registryHash: string;
@@ -292,21 +285,6 @@ const requireCanonicalOrigin = (value: string | undefined, label: string): strin
   return value;
 };
 
-const assertDiscoveryRootEqualities = (
-  contracts: Record<string, unknown>,
-  label: string
-): void => {
-  for (const [discovery, root] of RELEASE_DISCOVERY_ROOT_PAIRS) {
-    if (
-      typeof contracts[discovery] !== 'string' ||
-      typeof contracts[root] !== 'string' ||
-      contracts[discovery] !== contracts[root]
-    ) {
-      throw new Error(`${label} ${discovery} must exactly equal ${root}.`);
-    }
-  }
-};
-
 function resolveStrictReleaseExpectation(
   options: ProductionSmokeOptions,
   expectedNetwork: 'mainnet' | 'testnet' | 'localnet',
@@ -398,9 +376,8 @@ function resolveStrictReleaseExpectation(
     `release manifest manifestHash must be ${exactReleaseManifestHash}`
   );
   assert.ok(Object.keys(manifest.contracts).length > 0, 'release manifest must bind deployed contracts');
-  assertDiscoveryRootEqualities(manifest.contracts, 'release manifest');
-  assert.ok(manifest.contracts.TestnetFaucet, 'release manifest must include TestnetFaucet');
-  assert.ok(manifest.markets.length > 0, 'release manifest must contain configured markets');
+  if (expectedNetwork === 'testnet') assert.ok(manifest.contracts.TestnetFaucet, 'release manifest must include TestnetFaucet');
+  assert.ok(manifest.spotMarkets.length > 0, 'release manifest must contain configured spot markets');
 
   return {
     releaseId,
@@ -428,7 +405,6 @@ function assertExactReleaseContracts(
     'contracts payload count must match the supplied release manifest'
   );
   assert.deepEqual(contracts, expected.contracts, 'contracts payload must exactly match the release manifest');
-  assertDiscoveryRootEqualities(contracts, 'contracts payload');
 }
 
 function assertCandleHistory(
