@@ -18,6 +18,7 @@ import { NATIVE_FUNDING } from "../ledger/nativeFunding";
 import * as w from "../ledger/t3Wire";
 import { perpsWalletAddress } from "../ledger/perpsWire";
 import { readT3RecoveryHub, t3ReceiptKey } from "../ledger/t3RecoveryState";
+import { readT3MintJournal } from "../ledger/t3MintState";
 import { validateT3RedemptionBinding } from "../ledger/bindings";
 import {
   projectionFingerprint,
@@ -406,7 +407,7 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped
   const failedAttempts: RawTransaction[] = [], parkedAttempts: RawTransaction[] = [], retryAttempts: RawTransaction[] = [];
   const durableReceipt = beginCell().storeUint(w.T3_MINT_RECEIPT, 32)
     .storeUint(BigInt(query), 64).storeAddress(A(owner)).storeCoins(minted)
-    .storeCoins(basket[0]).storeCoins(basket[1]).storeCoins(basket[2]).storeMaybeRef(null).endCell();
+    .storeCoins(basket[0]).storeCoins(basket[1]).storeCoins(basket[2]).endCell();
   if (parked) {
     const failures = parked === true || parked === 'duplicate-finalize' ? 1 : parked;
     const initialRootId = (BigInt(rootQuery) - BigInt(failures)).toString();
@@ -571,7 +572,6 @@ function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped
         .storeCoins(basket[0])
         .storeCoins(basket[1])
         .storeCoins(basket[2])
-        .storeMaybeRef(null)
         .endCell(),
     ),
     final = f.msg(
@@ -645,7 +645,7 @@ function rejectedMintRefund(stage: 'queued' | 'dispatching' | 'credited', kind: 
   const zeroReceipt = f.msg(hub, owner, beginCell()
     .storeUint(w.T3_MINT_RECEIPT, 32).storeUint(BigInt(query), 64)
     .storeAddress(A(owner)).storeCoins(0).storeCoins(raw).storeCoins(0)
-    .storeCoins(0).storeMaybeRef(null).endCell());
+    .storeCoins(0).endCell());
   const hubAdmission = f.tx(hub, deposit.notification, [zeroReceipt]);
   f.tx(owner, zeroReceipt);
   const businessQueryId = kind === 3 ? query : hubAdmission.lt;
@@ -875,7 +875,6 @@ function redeem(sliced = false, recovery = false, referrer: string | null = null
       .storeCoins(0)
       .storeUint(0, 8)
       .storeUint(0, 8)
-      .storeMaybeRef(null)
       .endCell(),
   );
   const payoutPayload = beginCell()
@@ -969,7 +968,6 @@ function redeem(sliced = false, recovery = false, referrer: string | null = null
           .storeCoins(0)
           .storeUint(0, 8)
           .storeUint(0, 8)
-          .storeMaybeRef(null)
           .endCell(),
       );
     f.tx(hub, undefined, [receipt, second.request]);
@@ -1946,7 +1944,7 @@ async function main() {
   assert.throws(() => w.t3State(state(100, 100, 1000n, [1000n, 0n, 0n], Cell.EMPTY).toBoc().toString("base64")), "Old hub storage without referral state is unsupported");
 
   const archivedReceipt = beginCell().storeUint(w.T3_MINT_RECEIPT, 32).storeUint(25, 64).storeAddress(A(owner)).storeCoins(100)
-    .storeCoins(100).storeCoins(0).storeCoins(0).storeMaybeRef(null).endCell();
+    .storeCoins(100).storeCoins(0).storeCoins(0).endCell();
   const archivedMint = beginCell().storeUint(4, 8).storeUint(25, 64).storeUint(3, 64).storeCoins(100)
     .storeAddress(A(owner)).storeRef(beginCell().storeAddress(A(owner))
       .storeUint(42, 256).storeCoins(0).storeRef(archivedReceipt)
@@ -1956,6 +1954,32 @@ async function main() {
   const archivedKey = BigInt(`0x${beginCell().storeUint(0x54334d52, 32).storeAddress(A(owner)).storeUint(25, 64).endCell().hash().toString('hex')}`);
   completedMints.set(archivedKey, archivedMint);
   assert.doesNotThrow(() => w.readT3ReferralState(emptyReferralState(completedMints)));
+  assert.equal(readT3MintJournal(archivedMint).queryId, '25');
+  const receiptFixture = fixture();
+  const fixedRedeemReceipt = beginCell().storeUint(w.T3_REDEEM_RECEIPT, 32)
+    .storeUint(25, 64).storeAddress(A(owner)).storeCoins(100)
+    .storeCoins(100).storeCoins(0).storeCoins(0).storeUint(0, 8).storeUint(0, 8).endCell();
+  for (const [body, decode] of [[archivedReceipt, w.mintReceipt], [fixedRedeemReceipt, w.redeemReceipt]] as const) {
+    assert.equal(body.refs.length, 0);
+    assert.equal(decode(receiptFixture.msg(hub, owner, body))?.amountRaw, '100');
+    for (const malformed of [
+      beginCell().storeSlice(body.beginParse()).storeBit(0).endCell(),
+      beginCell().storeSlice(body.beginParse()).storeMaybeRef(Cell.EMPTY).endCell(),
+      beginCell().storeSlice(body.beginParse()).storeRef(Cell.EMPTY).endCell(),
+    ]) {
+      assert.equal(decode(receiptFixture.msg(hub, owner, malformed)), null,
+        'Receipt decoders reject trailing payload bits and references');
+      if (body === archivedReceipt) {
+        const malformedJournal = beginCell().storeBits(archivedMint.bits)
+          .storeRef(beginCell().storeBits(archivedMint.refs[0].bits)
+            .storeRef(malformed).storeRef(archivedMint.refs[0].refs[1])).endCell();
+        assert.throws(() => readT3MintJournal(malformedJournal));
+        const invalidCompleted = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
+        invalidCompleted.set(archivedKey, malformedJournal);
+        assert.throws(() => w.readT3ReferralState(emptyReferralState(invalidCompleted)));
+      }
+    }
+  }
   completedMints.set(archivedKey + 1n, archivedMint);
   assert.throws(() => w.readT3ReferralState(emptyReferralState(completedMints)), /archived mint identity/);
   assert.equal(w.t3State(state().toBoc().toString("base64")).mintFeeBps, 100);
@@ -2135,8 +2159,7 @@ async function main() {
   await unresolvedRetry('A retry cannot substitute another retained amount', f => {
     const failed = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
     const receipt = beginCell().storeUint(w.T3_MINT_RECEIPT, 32).storeUint(BigInt(query), 64)
-      .storeAddress(A(owner)).storeCoins(f.minted).storeCoins(amount).storeCoins(0).storeCoins(0)
-      .storeMaybeRef(null).endCell();
+      .storeAddress(A(owner)).storeCoins(f.minted).storeCoins(amount).storeCoins(0).storeCoins(0).endCell();
     failed.set(mintBusinessKey(), mintJournal(2, (BigInt(rootQuery) - 1n).toString(), f.minted + 1n, receipt));
     f.archives.set(f.parkedAt!.lt, state(100, 100, 1000n + f.minted, [1000n + amount, 0n, 0n],
       emptyBounceState(mintLane(rootQuery, mintJournal(0, '0', 0n, Cell.EMPTY), failed)), 1,
@@ -2273,7 +2296,7 @@ async function main() {
   const repeatedReceipt = mintedThenRepeated.msg(hub, owner, beginCell()
     .storeUint(w.T3_MINT_RECEIPT, 32).storeUint(BigInt(query), 64)
     .storeAddress(A(owner)).storeCoins(0).storeCoins(amount)
-    .storeCoins(0).storeCoins(0).storeMaybeRef(null).endCell());
+    .storeCoins(0).storeCoins(0).endCell());
   const repeatedAdmission = mintedThenRepeated.tx(hub, rejectedRepeat.notification,
     [repeatedReceipt]);
   mintedThenRepeated.tx(owner, repeatedReceipt);
@@ -2396,7 +2419,6 @@ async function main() {
         .storeCoins(0)
         .storeUint(0, 8)
         .storeUint(0, 8)
-        .storeMaybeRef(null)
         .endCell(),
     );
   overpaid.execute.outMessages[0] = bad;

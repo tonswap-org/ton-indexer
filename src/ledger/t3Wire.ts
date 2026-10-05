@@ -105,7 +105,7 @@ export function readT3ReferralState(c: Cell) {
       controlBudget !== 0n || !((refundKind === 0 && moduleId === 0) || (refundKind === 1 && moduleId > 0)) ||
       receipt.loadUint(32) !== T3_MINT_RECEIPT || receipt.loadUintBig(64) !== businessQuery ||
       !receipt.loadAddress().equals(recipient) || receipt.loadCoins() !== amount) throw Error('T3 archived mint identity');
-    basket(receipt); receipt.loadMaybeRef(); end(receipt);
+    basket(receipt); end(receipt);
   }
   let registry: string | null = null, feeRouter: string | null = null, t3Root: string | null = null;
   if (moduleKey > 0) {
@@ -175,7 +175,6 @@ export const mintReceipt = (m?: RawMessage) =>
       recipient = address(s),
       amountRaw = coins(s),
       basketRaw = basket(s);
-    s.loadMaybeRef();
     return { queryId, recipient, amountRaw, basketRaw };
   });
 export const redeemReceipt = (m?: RawMessage) =>
@@ -186,7 +185,6 @@ export const redeemReceipt = (m?: RawMessage) =>
       basketRaw = basket(s),
       mode = s.loadUint(8),
       outputToken = s.loadUint(8);
-    s.loadMaybeRef();
     return { queryId, recipient, amountRaw, basketRaw, mode, outputToken };
   });
 export const redeemRequest = (m?: RawMessage) =>

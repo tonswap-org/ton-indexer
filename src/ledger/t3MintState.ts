@@ -1,6 +1,6 @@
 import { Address, Cell, Dictionary, beginCell } from '@ton/core';
 import { decodeNativeFundingContext } from './nativeFunding';
-import { t3State } from './t3Wire';
+import { basket, T3_MINT_RECEIPT, t3State } from './t3Wire';
 
 const end = (s: ReturnType<Cell['beginParse']>) => s.endParse();
 export const t3MintKey = (owner: string, queryId: string) => BigInt('0x' + beginCell()
@@ -28,6 +28,16 @@ export function readT3MintJournal(cell: Cell) {
   if (!cell.equals(encoded) || status > 5 ||
     (status !== 0 && (!recipient || !destination || queryId === '0' || rootQueryId === '0' || amountRaw === '0')))
     throw Error('Noncanonical current T3 mint journal');
+  if (status !== 0) {
+    const receiptBody = receipt.beginParse();
+    if (receiptBody.loadUint(32) !== T3_MINT_RECEIPT ||
+      receiptBody.loadUintBig(64).toString() !== queryId ||
+      !receiptBody.loadAddress().equals(recipient!) ||
+      receiptBody.loadCoins().toString() !== amountRaw)
+      throw Error('T3 mint journal receipt identity');
+    basket(receiptBody);
+    end(receiptBody);
+  }
   return { status, queryId, rootQueryId, amountRaw, recipient: recipient?.toRawString() ?? null,
     owner: destination?.toRawString() ?? null, requestHash, controlBudget, receipt, funding, cell };
 }

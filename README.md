@@ -375,6 +375,11 @@ This proves purchase activation, not a cash-equivalent asset valuation, taxation
 or a later exercise, settlement, payout, cancellation or refund.
 
 T3 mint and redemption use the release manifest's `T3` and `T3Root` singleton roles.
+Their receipts contain only fixed inline fields; the current ABI has no optional
+payload bit or reference. Mint journals validate that exact receipt and its query,
+recipient and amount, including failed and completed entries. Trailing payload
+data is rejected. Optional request payloads remain accepted and are ignored by
+the Hub.
 The graph verifies the hub's tagged storage root, root emitter, three immutable
 reserve root/vault identities, and the deterministic receiver code/address and
 controller. Its related accounts include the hub, root, reserve vaults, and all
