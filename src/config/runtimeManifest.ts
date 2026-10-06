@@ -241,7 +241,7 @@ const assertNoDuplicateJsonObjectKeys = (raw: string): void => {
 
 export function parseRuntimeReleaseManifest(value: unknown, expectedNetwork: Network): RuntimeReleaseManifest {
   const result = validateReleaseManifest(value);
-  if (!result.ok) {
+  if (result.ok === false) {
     if (result.errors.includes('schema')) throw Error('Release manifest schema must be tonswap-release-v1');
     if (result.errors.includes('manifestHash')) throw Error('Release manifest manifestHash does not match its canonical contents');
     throw Error(`Release manifest is invalid: ${result.errors.join(', ')}`);
