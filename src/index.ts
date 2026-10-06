@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import { registerLedgerReadinessRoute } from './ledger/readiness';
 import { createIndexerShutdown } from './shutdown';
 import { NativeAdmissionPool } from './data/admission/nativePool';
 import helmet from '@fastify/helmet';
@@ -172,6 +173,7 @@ const start = async (manifest: LoadedManifest) => {
     registryMetadata
   );
   registerLedgerRoutes(app,ledger);
+  registerLedgerReadinessRoute(app, { config, metadata: registryMetadata, pool: ledgerPool });
   registerMarketLedgerRoutes(app,marketLedger);
   const snapshotAutosaveTimer =
     config.snapshotAutosaveEnabled && config.snapshotPath

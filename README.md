@@ -70,6 +70,37 @@ npm run test:historical-replay
 INDEXER_RELEASE_MANIFEST=/absolute/path/to/release-manifest.json npm run start
 ```
 
+The ordinary build also executes `sql/ledger.sql` and the release-identity DDL in
+a fresh in-memory PostgreSQL fixture, writing the canonical catalog to
+`dist/ledger/canonicalSchema.generated.js` and the compiled identity to
+`dist/build-id.json`. The build SHA-256 covers the JSON object of sorted
+root-relative paths to raw-file SHA-256 hashes for every regular `dist/**/*.js`
+and `sql/ledger.sql`; the generated ID excludes itself. The compiled worker pins
+this identity when it imports the readiness module and rechecks the files on
+every readiness request. Replacing an ID cannot change that running pin.
+
+`GET /api/indexer/v1/ledger/readiness` returns the
+`tonswap-native-ledger-readiness-v1` document only for the exact native testnet
+manifest, authenticated compiled build and configured durable ledger. Its
+`release`, `build: { sha256, sqlSha256 }`, `database: { schema, manifestHash }`,
+manifest-derived service identity and canonical ISO `checkedAt` support the
+native deployment guard. A repeatable-read, read-only transaction checks the
+exact search path, full singleton release hash, canonical relations, columns,
+constraints, indexes, sequence configuration, row-security policies, triggers
+and table access. It never initializes a namespace, enrolls
+an account or collects history. Missing storage, source-only workers, altered
+compiled files or schema drift return HTTP 503; all responses use `no-store`.
+NOT NULL is authenticated through each exact column's `attnotnull` flag. The
+build fixture's PostgreSQL 18 named NOT NULL records are validated against their
+single mandatory column and projected away because the sole native PostgreSQL
+16 target represents this same SQL enforcement through the column flag. Primary,
+unique, check and foreign-key constraints retain their exact definitions and
+enforcement; unknown constraint kinds are rejected. This does not admit a
+different SQL schema or provide a storage fallback.
+Run `npm run test:ledger:readiness` for the compiled-file, route and actual catalog
+regressions. Production qualification still runs the installed compiled store
+against its separately owned native PostgreSQL runtime.
+
 ## Test
 ```bash
 npm test

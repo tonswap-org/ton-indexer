@@ -322,6 +322,22 @@ const dlmmLiquidity = {
 };
 
 export const ledgerSchemas = {
+  LedgerReadiness: {
+    type: 'object', additionalProperties: false,
+    required: ['schema', 'ecosystem', 'network', 'chainId', 'serviceId', 'publicBaseUrl', 'release', 'build', 'database', 'checkedAt'],
+    properties: {
+      schema: { const: 'tonswap-native-ledger-readiness-v1' }, ecosystem: { const: 'ton' },
+      network: { const: 'testnet' }, chainId: { const: 'ton:testnet' },
+      serviceId: { type: 'string' }, publicBaseUrl: { type: 'string', format: 'uri' },
+      release: { type: 'object', additionalProperties: false, required: ['releaseId', 'manifestHash'],
+        properties: { releaseId: { type: 'string' }, manifestHash: hash256 } },
+      build: { type: 'object', additionalProperties: false, required: ['sha256', 'sqlSha256'],
+        properties: { sha256: hash256, sqlSha256: hash256 } },
+      database: { type: 'object', additionalProperties: false, required: ['schema', 'manifestHash'],
+        properties: { schema: { type: 'string', pattern: '^tonswap_[0-9a-f]{55}$' }, manifestHash: hash256 } },
+      checkedAt: { type: 'string', format: 'date-time' },
+    },
+  },
   DlmmDepositMetadata: dlmmDeposit,
   DlmmLiquidityReceipt: dlmmReceipt,
   DlmmLiquidityMetadata: dlmmLiquidity,
@@ -1381,6 +1397,18 @@ export const ledgerSchemas = {
   },
 };
 export const ledgerPaths = {
+  '/api/indexer/v1/ledger/readiness': {
+    get: {
+      summary: 'Native testnet durable-ledger deployment readiness',
+      description: 'Authenticates the pinned running compiled JavaScript and SQL and reads the exact current release namespace, full manifest identity, canonical catalog and table access in one read-only snapshot. Does not enroll accounts or collect history. Response is never cached.',
+      responses: {
+        200: { description: 'Authenticated compiled build and current canonical PostgreSQL namespace',
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/LedgerReadiness' } } } },
+        503: { description: 'Durable database, release binding, canonical schema or compiled build unavailable',
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+      },
+    },
+  },
   "/api/indexer/v1/accounts/{addr}/ledger/discoveries": {
     get: {
       summary: "Durable publication discovery for owner ledger changes",

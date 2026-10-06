@@ -19,6 +19,8 @@ assert.ok(spec.paths['/api/indexer/v1/contracts']);
 assert.ok(spec.paths['/api/indexer/v1/service-info']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs']);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/ledger']);
+assert.ok(spec.paths['/api/indexer/v1/ledger/readiness'].get.responses[503]);
+assert.deepEqual(spec.components.schemas.LedgerReadiness.properties.build.required, ['sha256', 'sqlSha256']);
 assert.ok(spec.components.schemas.LedgerEvent.properties.movements);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs'].get.responses[503]);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/swaps']);

@@ -1,5 +1,18 @@
 # TONSWAP Indexer Roadmap
 
+## Durable-ledger deployment readiness — 2026-10-06
+
+`GET /api/indexer/v1/ledger/readiness` is a read-only native testnet deployment
+gate. HTTP 200 uses `tonswap-native-ledger-readiness-v1` with exact manifest
+service/release identity, the pinned compiled JS/SQL hashes, the full durable
+database release identity and canonical ISO `checkedAt`. The actual configured
+PostgreSQL namespace must match the generated canonical SQL catalog in one
+repeatable-read snapshot. Missing storage, identity/schema drift or changed
+compiled files returns HTTP 503. Requests do not initialize storage, enroll
+accounts or collect history, and responses cannot be cached. The native release
+producer separately qualifies the installed compiled store on its owned native
+PostgreSQL runtime before its guard admits this build and endpoint.
+
 ## Current Perps qualification — 2026-09-27
 
 The current decoder distinguishes ordinary CLOSE's empty context, MODIFY's
