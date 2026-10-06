@@ -65,8 +65,8 @@ export type Config = {
   logLevel: string;
   adminToken?: string;
   releaseManifestSource?: string;
-  serviceId: string;
-  publicBaseUrl: string;
+  serviceId?: string;
+  publicBaseUrl?: string;
 };
 
 const numberFromEnv = (
@@ -307,7 +307,7 @@ export const loadConfig = (): Config => {
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
     adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN') || stringFromEnv('INDEXER_ADMIN_API_KEY'),
     releaseManifestSource: stringFromEnv('INDEXER_RELEASE_MANIFEST'),
-    serviceId: stringFromEnv('INDEXER_SERVICE_ID', 'ti.soramitsu.io')!,
-    publicBaseUrl: stringFromEnv('INDEXER_PUBLIC_BASE_URL', 'https://ti.soramitsu.io')!,
+    serviceId: stringFromEnv('INDEXER_SERVICE_ID'),
+    publicBaseUrl: stringFromEnv('INDEXER_PUBLIC_BASE_URL'),
   };
 };

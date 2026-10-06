@@ -1,8 +1,9 @@
-import { Config } from '../config';
+import type { RegistryMetadata } from '../config/releaseManifest';
 import { ledgerPaths, ledgerSchemas } from '../ledger/openapi';
+import { resolveServiceMetadata, type ServiceMetadataConfig } from './serviceMetadata';
 
-export const buildOpenApi = (config: Config) => {
-  const serviceId = config.serviceId?.trim() || 'ti.soramitsu.io';
+export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryMetadata) => {
+  const { serviceId } = resolveServiceMetadata(config, metadata);
   return {
     openapi: '3.1.0',
     info: {
@@ -81,7 +82,7 @@ export const buildOpenApi = (config: Config) => {
             ecosystem: { type: 'string', enum: ['ton'] },
             chainId: { type: 'string' },
             network: { type: 'string' },
-            publicBaseUrl: { type: 'string', format: 'uri' },
+            publicBaseUrl: { type: ['string', 'null'], format: 'uri' },
             readOnly: { type: 'boolean' },
             capabilities: { type: 'array', items: { type: 'string' } },
             endpoints: { type: 'object', additionalProperties: { type: 'string' } },

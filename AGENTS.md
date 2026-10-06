@@ -27,6 +27,7 @@ Option lifecycle qualification uses manifest-approved factory, vault, Shout, Out
 - The sole runtime input is required `INDEXER_RELEASE_MANIFEST`, using schema `tonswap-release-v1`. Singleton entries are exact address/codeHash objects; reserves use USDT/USDC/KUSD token roles and the hub role is T3. Network/globalId and manifestHash must validate. No registry files, ledger pin environment variables, opcode file loading or parity checks are supported.
 - Poll every five seconds. Stop the old child worker before starting a changed manifest in a fresh process. Snapshots and PostgreSQL schemas are scoped to manifestHash; never resume old jobs under new bindings or delete retained release state.
 - `/contracts` and `/service-info` expose `release: { releaseId, manifestHash }`. Opcode definitions are bundled. Runtime ledger limits use `INDEXER_MAX_WATCHED_ACCOUNTS`, `INDEXER_MAX_PAGES_PER_SYNC` and `INDEXER_MAX_RELATED_ACCOUNTS`.
+- Native service metadata derives its public URL and service ID from the current manifest's `services.indexer`; config identity/URL only describes standalone services. Advertise fresh reads only with exact current native network/release/hash bindings. Never default metadata to an unrelated public deployment.
 - First-release perps instruments bind the declared market ID and symbol to
   the explicit spot pool and `templates.DlmmPool` code hash. Oracle pool candles use the canonical
   `perps-oracle:{marketId}` key; never substitute a spot pool by symbol. Current

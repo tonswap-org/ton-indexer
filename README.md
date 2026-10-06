@@ -594,8 +594,13 @@ have defaults or are required only for their documented feature:
 - `INDEXER_MAX_WATCHED_ACCOUNTS` (default: `1000`, range: `1..100000`)
 - `INDEXER_MAX_PAGES_PER_SYNC` (default: `20`, range: `1..100`)
 - `INDEXER_MAX_RELATED_ACCOUNTS` (default: `256`, range: `1..1024`)
-- `INDEXER_SERVICE_ID` (default: `ti.soramitsu.io`)
-- `INDEXER_PUBLIC_BASE_URL` (default: `https://ti.soramitsu.io`)
+- Native-release service metadata uses the manifest's exact `services.indexer` URL,
+  with its host and mount path as the service ID. Exact current release bindings
+  advertise `fresh-read` and `/api/indexer/v1/readFresh` in `/service-info`.
+- `INDEXER_SERVICE_ID` (optional standalone service identity; without an explicit ID
+  or URL, metadata names `ton-indexer:<network>`)
+- `INDEXER_PUBLIC_BASE_URL` (optional standalone public URL; absent means `null`;
+  the active native manifest is authoritative for release services)
 - `CORS_ENABLED` (`true` to enable CORS headers; default `true`)
 - `CORS_ALLOW_ORIGIN` (default: `*`; `reflect` is treated as wildcard without credentials)
 - `CORS_ALLOW_ORIGINS` (comma-separated exact-origin allowlist; when set, only matching origins receive credentialed CORS headers)

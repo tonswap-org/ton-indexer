@@ -110,12 +110,12 @@ for (const retired of ['clmmFactory', 'clmmPoolHashHigh', 'clmmPoolHashLow', 'ma
 const serviceInfoProps =
   spec.components?.schemas?.ServiceInfoResponse?.properties ??
   ({} as Record<string, { enum?: string[] }>);
-assert.equal(serviceInfoProps.serviceId?.enum?.[0], 'ti.soramitsu.io');
+assert.equal(serviceInfoProps.serviceId?.enum?.[0], `ton-indexer:${loadConfig().network}`);
 assert.equal(serviceInfoProps.ecosystem?.enum?.[0], 'ton');
 const healthProps =
   spec.components?.schemas?.HealthStatus?.properties ??
   ({} as Record<string, { enum?: string[] }>);
-assert.equal(healthProps.serviceId?.enum?.[0], 'ti.soramitsu.io');
+assert.equal(healthProps.serviceId?.enum?.[0], `ton-indexer:${loadConfig().network}`);
 assert.equal(healthProps.ecosystem?.enum?.[0], 'ton');
 
 console.log('openapi ok');

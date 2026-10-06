@@ -35,6 +35,7 @@ import { buildDocsHtml } from './docsHtml';
 import { publicAdmissionError, publicErrorMessage, sendError } from './errors';
 import { isAdmissionMethod } from '../data/admission/protocol';
 import type { FreshReadCall } from '../data/freshRead';
+import { currentNativeRuntime, resolveServiceMetadata } from './serviceMetadata';
 
 const BALANCE_STREAM_POLL_MS = 1_500;
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
@@ -388,8 +389,7 @@ export const registerRoutes = (
     }
     return null;
   };
-  const serviceId = config.serviceId?.trim() || 'ti.soramitsu.io';
-  const publicBaseUrl = config.publicBaseUrl?.trim() || 'https://ti.soramitsu.io';
+  const { serviceId, publicBaseUrl, freshReads } = resolveServiceMetadata(config, registryMetadata);
   const serviceIdentity = {
     serviceId,
     ecosystem: 'ton',
@@ -410,6 +410,7 @@ export const registerRoutes = (
       'account-state',
       'run-get-method',
       'run-get-methods',
+      ...(freshReads ? ['fresh-read'] : []),
       'market-candles'
     ],
     endpoints: {
@@ -422,6 +423,7 @@ export const registerRoutes = (
       state: '/api/indexer/v1/accounts/{addr}/state',
       runGetMethod: '/api/indexer/v1/runGetMethod',
       runGetMethods: '/api/indexer/v1/runGetMethods',
+      ...(freshReads ? { readFresh: '/api/indexer/v1/readFresh' } : {}),
       marketCandles: '/api/indexer/v1/markets/{market}/candles'
     },
     release: {
@@ -923,9 +925,8 @@ export const registerRoutes = (
     }
     // Only the active native manifest may describe this fresh runtime. Old
     // registry metadata or a configured URL cannot establish release identity.
-    const manifest = registryMetadata?.runtime;
-    if (!manifest || manifest.schema !== 'tonswap-release-v1' || manifest.network !== `ton:${network}`
-      || registryMetadata?.releaseId !== manifest.releaseId || registryMetadata?.manifestHash !== manifest.manifestHash)
+    const manifest = currentNativeRuntime(network, registryMetadata);
+    if (!manifest)
       return sendError(reply, 503, 'fresh_read_unavailable', 'Fresh chain read unavailable.');
     try {
       const response = await withTimeout(service.readFresh(calls), FRESH_READ_TIMEOUT_MS);
@@ -1016,7 +1017,7 @@ export const registerRoutes = (
   });
 
   app.get('/api/indexer/v1/openapi.json', async () => {
-    return buildOpenApi(config as any);
+    return buildOpenApi(config, registryMetadata);
   });
 
   app.get('/api/indexer/v1/docs', async (_request, reply) => {
