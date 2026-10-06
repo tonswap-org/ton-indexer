@@ -33,6 +33,8 @@ import {
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
 import { publicAdmissionError, publicErrorMessage, sendError } from './errors';
+import { isAdmissionMethod } from '../data/admission/protocol';
+import type { FreshReadCall } from '../data/freshRead';
 
 const BALANCE_STREAM_POLL_MS = 1_500;
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
@@ -41,6 +43,8 @@ const GET_METHOD_MAX_STACK_ITEMS = 16;
 const GET_METHOD_MAX_BATCH_CALLS = 64;
 const GET_METHOD_BATCH_CONCURRENCY = 10;
 const GET_METHOD_CALL_TIMEOUT_MS = 6_000;
+const FRESH_READ_MAX_CALLS = 32;
+const FRESH_READ_TIMEOUT_MS = 18_000;
 const RPC_PROXY_DEFAULT_TIMEOUT_MS = 30_000;
 const RPC_PROXY_DEFAULT_RETRY_ATTEMPTS = 4;
 const RPC_PROXY_DEFAULT_RETRY_DELAY_MS = 600;
@@ -307,7 +311,8 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T
 
 const classifyRateLimitBucket = (url: string) => {
   const path = url.split('?')[0] || '';
-  if (path === '/jsonRPC' || path === '/api/v2/jsonRPC' || path.startsWith('/api/indexer/v1/runGetMethod')) {
+  if (path === '/jsonRPC' || path === '/api/v2/jsonRPC' || path.startsWith('/api/indexer/v1/runGetMethod')
+    || path === '/api/indexer/v1/readFresh') {
     return 'rpc' as const;
   }
   if (path.startsWith('/api/indexer/v1/stream')) return 'stream' as const;
@@ -891,6 +896,44 @@ export const registerRoutes = (
 
   app.post('/jsonRPC', handleToncenterCompat);
   app.post('/api/v2/jsonRPC', handleToncenterCompat);
+
+  app.post('/api/indexer/v1/readFresh', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const body = asRecord(request.body);
+    const rawCalls = body?.calls;
+    if (!body || Object.keys(body).some(key => key !== 'calls') || !Array.isArray(rawCalls)
+      || rawCalls.length < 1 || rawCalls.length > FRESH_READ_MAX_CALLS)
+      return sendError(reply, 400, 'invalid_fresh_read', 'Use 1 to 32 current chain read calls.');
+    const calls: FreshReadCall[] = [];
+    for (const raw of rawCalls) {
+      const call = asRecord(raw);
+      const address = readString(call?.address);
+      if (!call || !address || !isValidAddress(address))
+        return sendError(reply, 400, 'invalid_fresh_read', 'Invalid fresh read address.');
+      if (call.kind === 'account' && Object.keys(call).every(key => ['kind', 'address'].includes(key))) {
+        calls.push({ kind: 'account', address: Address.parse(address).toRawString() });
+      } else if (call.kind === 'getter' && Object.keys(call).every(key => ['kind', 'address', 'method', 'stack'].includes(key))) {
+        const method = readString(call.method);
+        if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method) || isAdmissionMethod(method))
+          return sendError(reply, 400, 'invalid_fresh_read', 'Invalid fresh getter method.');
+        const parsed = parseStackArgs(call.stack);
+        if (!parsed.ok) return sendError(reply, 400, 'invalid_fresh_read', parsed.error ?? 'Invalid fresh getter stack.');
+        calls.push({ kind: 'getter', address: Address.parse(address).toRawString(), method, args: parsed.args ?? [] });
+      } else return sendError(reply, 400, 'invalid_fresh_read', 'Use an account or getter read.');
+    }
+    // Only the active native manifest may describe this fresh runtime. Old
+    // registry metadata or a configured URL cannot establish release identity.
+    const manifest = registryMetadata?.runtime;
+    if (!manifest || manifest.schema !== 'tonswap-release-v1' || manifest.network !== `ton:${network}`
+      || registryMetadata?.releaseId !== manifest.releaseId || registryMetadata?.manifestHash !== manifest.manifestHash)
+      return sendError(reply, 503, 'fresh_read_unavailable', 'Fresh chain read unavailable.');
+    try {
+      const response = await withTimeout(service.readFresh(calls), FRESH_READ_TIMEOUT_MS);
+      return { ...response, release: { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash } };
+    } catch {
+      return sendError(reply, 503, 'fresh_read_unavailable', 'Fresh chain read unavailable.');
+    }
+  });
 
   app.post('/api/indexer/v1/runGetMethod', async (request, reply) => {
     const body = asRecord(request.body);

@@ -18,6 +18,8 @@ import {
 } from '@ton/core';
 import { LiteClient, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
 import { BoundedLiteEngine } from './boundedLiteEngine';
+import { assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
+  FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 import { errorDiagnostic, type Logger } from '../utils/logger';
 import { Functions } from 'ton-lite-client/dist/schema';
 import { Network } from '../models';
@@ -475,6 +477,25 @@ export class LiteClientDataSource implements TonDataSource {
     return this.readAccountStateAtBlock(address, master.last);
   }
 
+  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
+    const queriedAt = Date.now();
+    // Do not enter the datasource head cache or the LiteClient account loader.
+    const master = await this.call(client => client.getMasterchainInfoExt());
+    assertFreshNetwork(this.network, master.init);
+    const head = freshMasterchainBlock(master.last);
+    const results = await executeFreshCalls(calls, async call => {
+      const address = Address.parse(call.address).toRawString();
+      if (call.kind === 'account') return { kind: 'account', address,
+        state: await this.readAccountStateAtBlock(address, master.last, true) };
+      const result = await this.runGetMethodAtBlock(Address.parse(address), call.method, call.args, master.last, true);
+      if (!result) throw new FreshReadUnavailableError();
+      return { kind: 'getter', address, ...result };
+    });
+    const batch: FreshReadBatch = { network: this.network, readContext: { source: 'lite', head, queriedAt }, results };
+    assertFreshReadBatch(batch, calls, this.network, queriedAt);
+    return batch;
+  }
+
   async getAccountStateAtSeqno(address: string, seqno: number): Promise<AccountStateResponse> {
     if (!Number.isSafeInteger(seqno) || seqno < 0) throw new Error('Invalid archival block');
     return this.readAccountStateAtBlock(address, (await this.lookupMasterchainBlock(seqno)).id);
@@ -546,13 +567,22 @@ export class LiteClientDataSource implements TonDataSource {
     return replayHistoricalAccount({ address: parsed, cursor, predecessor, steps });
   }
 
-  private async readAccountStateAtBlock(address: string, block: LiteBlockId): Promise<AccountStateResponse> {
+  private async readAccountStateAtBlock(address: string, block: LiteBlockId, uncached = false): Promise<AccountStateResponse> {
     const parsed = Address.parse(address);
-    const state = await this.call((client) => client.getAccountState(parsed, block));
+    const state = await this.call((client) => uncached ? client.getAccountStateRaw(parsed, block) : client.getAccountState(parsed, block));
+    if (uncached) {
+      assertFreshBlock(state.block, freshMasterchainBlock(block));
+    }
+    if (state.state === undefined || typeof state.balance?.coins !== 'bigint' || state.balance.coins < 0n)
+      throw new Error('Invalid current lite account state.');
     const lastTx = state.lastTx;
+    if (lastTx !== null && (typeof lastTx?.lt !== 'bigint' || lastTx.lt < 0n || lastTx.lt > 0xffffffffffffffffn
+      || typeof lastTx.hash !== 'bigint' || lastTx.hash < 0n || lastTx.hash >= (1n << 256n)
+      || (lastTx.lt === 0n) !== (lastTx.hash === 0n))) throw new Error('Invalid current lite account transaction pointer.');
     const account = state.state ?? null;
     const storageState = account?.storage?.state;
     const storageType = storageState?.type;
+    if (account && !['uninit', 'active', 'frozen'].includes(storageType ?? '')) throw new Error('Invalid current lite account storage state.');
     const accountState =
       !account || storageType === 'uninit'
         ? ('uninitialized' as const)
@@ -618,11 +648,14 @@ export class LiteClientDataSource implements TonDataSource {
     target: Address,
     method: string,
     args: TupleItem[],
-    block: LiteBlockId
+    block: LiteBlockId,
+    strict = false
   ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
     const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
     const res = await this.call((client) => client.runMethod(target, method, params, block));
     assertBlockId(res.block, block, `Getter ${method} masterchain block`);
+    if (strict && (!Number.isSafeInteger(res.exitCode) || (res.result !== null && typeof res.result !== 'string')))
+      throw new FreshReadUnavailableError();
     const exitCode = typeof res?.exitCode === 'number' ? res.exitCode : Number.NaN;
     if (!Number.isFinite(exitCode)) return null;
     const stack =

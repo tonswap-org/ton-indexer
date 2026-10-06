@@ -7,6 +7,7 @@ import {
   TransactionCursor
 } from './dataSource';
 import { JettonMetadata, Network } from '../models';
+import { assertFreshReadBatch, FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 
 type RunGetMethodResult = { exitCode: number; stack: TupleItem[] } | null;
 
@@ -57,6 +58,17 @@ export class ResilientTonDataSource implements TonDataSource {
     const secondary = await callSafely(() => this.fallback.getMasterchainInfo());
     if (secondary) return secondary;
     throw new Error('Masterchain info unavailable from both data sources.');
+  }
+
+  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
+    const startedAt = Date.now();
+    for (const source of [this.primary, this.fallback]) {
+      if (source.network !== this.network || !source.readFresh) continue;
+      const result = await callSafely(() => source.readFresh!(calls));
+      if (!result) continue;
+      try { assertFreshReadBatch(result, calls, this.network, startedAt); return result; } catch { /* try a complete fresh source */ }
+    }
+    throw new FreshReadUnavailableError();
   }
 
   async getAccountState(address: string): Promise<AccountStateResponse> {

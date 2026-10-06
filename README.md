@@ -105,6 +105,27 @@ Run `npx tsx src/scripts/response-cache-test.ts` for the getter freshness,
 coalescing and public JSON-RPC regressions. `npm test` includes these cases;
 `npm run build` typechecks and compiles the service for `npm run start`.
 
+`POST /api/indexer/v1/readFresh` is the transaction-preflight read path. Its body
+is `{ "calls": [{ "kind": "account", "address": "0:..." }, { "kind": "getter",
+"address": "0:...", "method": "get_wallet_data", "stack": [] }] }` (1–32 calls).
+Each request acquires a new uncached masterchain head, checks the source's actual
+network zero state, and reads every call at that exact block. Account reads return
+the full queried code, data, state and atomic native balance; they never use the
+indexer's persisted account projection. A resilient provider replaces the whole
+batch, never merges observations from different heads. The response includes the
+current native manifest's release ID/hash and `readContext: { source, head,
+queriedAt }`; `head` contains workchain, shard, seqno and hexadecimal root/file
+hashes. `queriedAt` is the head-query start time in epoch milliseconds, not a
+claim about block creation time. Responses use `Cache-Control: no-store` and
+unavailable, incomplete, wrong-network or wrong-block observations fail with
+503 `fresh_read_unavailable`. Getter VM exit codes remain actual outcomes.
+Perps admission stays on its bounded verified native executor and cannot enter
+this generic fresh getter path. Run `npm run test:fresh-read` for these guarantees.
+All HTTP account reads use the current SDK account shape: malformed or missing
+atomic balances and partial transaction cursors fail instead of becoming zero or
+empty history. Explicit null cursors and complete uint64-zero/hash-zero cursors
+remain valid observations of unused accounts.
+
 ## Durable account ledger
 
 Each raw-history append must match its generation's network and physical account.

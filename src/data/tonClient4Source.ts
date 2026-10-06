@@ -11,6 +11,9 @@ import {
   TonDataSource
 } from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
+import { canonicalAccountHash, parseAccountTransactionPointer } from './accountState';
+import { assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
+  FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 import {
   cellFromAccountCodeBoc,
   isSuccessfulGetterResult,
@@ -154,68 +157,6 @@ const createTonClient4 = (endpoint: string): TonClient4Like => {
   });
 };
 
-const readStateKind = (value: unknown): 'active' | 'uninitialized' | 'frozen' | null => {
-  const record = asRecord(value);
-  const typeRaw = typeof value === 'string' ? value : typeof record?.type === 'string' ? record.type : null;
-  const normalized = (typeRaw ?? '').trim().toLowerCase();
-  if (normalized === 'active') return 'active';
-  if (normalized === 'frozen') return 'frozen';
-  if (normalized === 'uninit' || normalized === 'uninitialized' || normalized === 'inactive') return 'uninitialized';
-  return null;
-};
-
-const readBocString = (value: unknown): string | null => {
-  if (typeof value === 'string' && value.trim().length > 0) return value.trim();
-  if (value && typeof value === 'object' && 'bytes' in value) {
-    const bytes = (value as Record<string, unknown>).bytes;
-    if (typeof bytes === 'string' && bytes.trim().length > 0) return bytes.trim();
-  }
-  return null;
-};
-
-const readCellLikeBoc = (value: unknown): string | null => {
-  const direct = readBocString(value);
-  if (direct) return direct;
-  if (!value || typeof value !== 'object') return null;
-  const candidate = value as { toBoc?: (...args: unknown[]) => Buffer | Uint8Array };
-  if (typeof candidate.toBoc !== 'function') return null;
-  try {
-    const boc = candidate.toBoc();
-    return Buffer.from(boc).toString('base64');
-  } catch {
-    return null;
-  }
-};
-
-const readNestedRecord = (value: unknown, key: string): Record<string, unknown> | null => {
-  const record = asRecord(value);
-  if (!record) return null;
-  return asRecord(record[key]);
-};
-
-const readBalanceString = (value: unknown): string => {
-  if (typeof value === 'string' && value.trim().length > 0) return value.trim();
-  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
-  if (typeof value === 'bigint') return value.toString(10);
-  const record = asRecord(value);
-  if (!record) return '0';
-  const coins = record.coins;
-  if (typeof coins === 'string' && coins.trim().length > 0) return coins.trim();
-  if (typeof coins === 'number' && Number.isFinite(coins)) return String(Math.trunc(coins));
-  if (typeof coins === 'bigint') return coins.toString(10);
-  return '0';
-};
-
-const readLastTxLt = (lastTx: unknown): string | undefined => {
-  const record = asRecord(lastTx);
-  if (!record) return undefined;
-  const lt = record.lt;
-  if (typeof lt === 'string' && lt.trim().length > 0) return lt.trim();
-  if (typeof lt === 'number' && Number.isFinite(lt)) return String(Math.trunc(lt));
-  if (typeof lt === 'bigint') return lt.toString(10);
-  return undefined;
-};
-
 const decodeHash32 = (value: unknown): Buffer | null => {
   if (Buffer.isBuffer(value)) return value.length === 32 ? Buffer.from(value) : null;
   if (typeof value !== 'string') return null;
@@ -235,12 +176,6 @@ const requireHash32 = (value: unknown, label: string): Buffer => {
   const decoded = decodeHash32(value);
   if (!decoded) throw new Error(`${label} must be a 32-byte hex or base64 transaction hash.`);
   return decoded;
-};
-
-const readLastTxHash = (lastTx: unknown): string | undefined => {
-  const record = asRecord(lastTx);
-  if (!record) return undefined;
-  return decodeHash32(record.hash)?.toString('base64');
 };
 
 const parseRunMethodResponse = (response: unknown): { exitCode: number; stack: TupleItem[] } | null => {
@@ -329,6 +264,52 @@ export class TonClient4DataSource implements TonDataSource {
     return this.mapAccountStateResponse(account);
   }
 
+  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
+    const queriedAt = Date.now();
+    const master = await this.call(client => client.getLastBlock());
+    assertFreshNetwork(this.network, master.init);
+    const head = freshMasterchainBlock(master.last);
+    const results = await executeFreshCalls(calls, async call => {
+      const address = Address.parse(call.address).toRawString();
+      if (call.kind === 'account') {
+        const account = await this.call(client => client.getAccount(head.seqno, Address.parse(address)));
+        assertFreshBlock(account.block, head);
+        return { kind: 'account', address, state: this.mapAccountStateResponse(account) };
+      }
+      const response = await this.call(client => client.runMethod(head.seqno, Address.parse(address), call.method, call.args));
+      assertFreshBlock(response.block, head);
+      if (!Number.isSafeInteger(response.exitCode) || !Array.isArray(response.result)) throw new FreshReadUnavailableError();
+      return { kind: 'getter', address, exitCode: response.exitCode, stack: response.result };
+    });
+    const batch: FreshReadBatch = { network: this.network, readContext: { source: 'http4', head, queriedAt }, results };
+    assertFreshReadBatch(batch, calls, this.network, queriedAt);
+    return batch;
+  }
+
+  private mapAccountStateResponse(response: unknown, lite = false): AccountStateResponse {
+    const account = asRecord(asRecord(response)?.account);
+    const balance = asRecord(account?.balance)?.coins;
+    const state = asRecord(account?.state);
+    if (typeof balance !== 'string' || !/^(0|[1-9]\d*)$/.test(balance)
+      || !state || !['active', 'uninit', 'frozen'].includes(String(state.type))) throw new Error('Invalid current HTTP account state.');
+    const pointer = parseAccountTransactionPointer(account?.last);
+    if (state.type === 'active') {
+      if (lite) {
+        canonicalAccountHash(state.codeHash);
+        canonicalAccountHash(state.dataHash);
+      } else {
+        for (const value of [state.code, state.data]) {
+          if (value !== null && (typeof value !== 'string' || Cell.fromBoc(Buffer.from(value, 'base64')).length !== 1))
+            throw new Error('Invalid current HTTP account code or data.');
+        }
+      }
+    }
+    if (state.type === 'frozen') canonicalAccountHash(state.stateHash);
+    return { balance, accountState: state.type === 'uninit' ? 'uninitialized' : state.type as 'active' | 'frozen',
+      codeBoc: state.type === 'active' && !lite ? state.code as string | null : null,
+      dataBoc: state.type === 'active' && !lite ? state.data as string | null : null, ...pointer };
+  }
+
   async getAccountStateAtSeqno(address: string, seqno: number): Promise<AccountStateResponse> {
     if (!Number.isSafeInteger(seqno) || seqno < 0) throw new Error('Invalid archival block');
     return this.mapAccountStateResponse(await this.call(client => client.getAccount(seqno, Address.parse(address))));
@@ -338,37 +319,7 @@ export class TonClient4DataSource implements TonDataSource {
     const last = await this.getLastBlockCached();
     const parsed = Address.parse(address);
     const account = await this.call((client) => client.getAccountLite(last.last.seqno, parsed));
-    return this.mapAccountStateResponse(account);
-  }
-
-  private mapAccountStateResponse(account: unknown): AccountStateResponse {
-    const accountRecord = asRecord(account);
-    const accountStateRecord = readNestedRecord(accountRecord, 'account');
-    const stateRaw = accountStateRecord?.state;
-    const stateType = readStateKind(stateRaw);
-    const stateRecord = asRecord(stateRaw);
-    const nestedStateRecord = readNestedRecord(stateRecord, 'state');
-
-    const codeBoc =
-      readCellLikeBoc(stateRecord?.code) ??
-      readCellLikeBoc(nestedStateRecord?.code) ??
-      readCellLikeBoc(accountStateRecord?.code) ??
-      null;
-    const dataBoc =
-      readCellLikeBoc(stateRecord?.data) ??
-      readCellLikeBoc(nestedStateRecord?.data) ??
-      readCellLikeBoc(accountStateRecord?.data) ??
-      null;
-    const lastTx = accountStateRecord?.last ?? accountRecord?.last;
-
-    return {
-      balance: readBalanceString(accountStateRecord?.balance ?? accountRecord?.balance),
-      lastTxLt: readLastTxLt(lastTx),
-      lastTxHash: readLastTxHash(lastTx),
-      accountState: stateType,
-      codeBoc,
-      dataBoc
-    };
+    return this.mapAccountStateResponse(account, true);
   }
 
   async getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]> {
@@ -380,10 +331,10 @@ export class TonClient4DataSource implements TonDataSource {
     if (!cursorLt || !cursorHash) {
       const last = await this.getLastBlockCached();
       const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
-      const lastTx = account.account.last;
-      if (!lastTx) return [];
-      cursorLt = lastTx.lt;
-      cursorHash = lastTx.hash;
+      const pointer = parseAccountTransactionPointer(asRecord(asRecord(account)?.account)?.last);
+      if (pointer.lastTxLt === undefined) return [];
+      cursorLt = pointer.lastTxLt;
+      cursorHash = pointer.lastTxHash;
     }
 
     if (!cursorLt || !cursorHash) {

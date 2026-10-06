@@ -205,6 +205,8 @@ export type TonBlockIdExt = {
 
 export interface TonDataSource {
   network: Network;
+  /** Uncached current head, complete same-head account/getter observations, or failure. */
+  readFresh?(calls: import('./freshRead').FreshReadCall[]): Promise<import('./freshRead').FreshReadBatch>;
   getMasterchainInfo(): Promise<MasterchainInfo>;
   getAccountState(address: string): Promise<AccountStateResponse>;
   getAccountStateLite?(address: string): Promise<AccountStateResponse>;

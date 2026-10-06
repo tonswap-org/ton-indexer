@@ -108,6 +108,41 @@ export const buildOpenApi = (config: Config) => {
             'release'
           ],
         },
+        FreshReadRequest: {
+          type: 'object', additionalProperties: false, required: ['calls'],
+          properties: { calls: { type: 'array', minItems: 1, maxItems: 32, items: { oneOf: [
+            { type: 'object', additionalProperties: false, required: ['kind', 'address'],
+              properties: { kind: { const: 'account' }, address: { type: 'string' } } },
+            { type: 'object', additionalProperties: false, required: ['kind', 'address', 'method'],
+              properties: { kind: { const: 'getter' }, address: { type: 'string' }, method: { type: 'string', pattern: '^[a-zA-Z0-9_]{1,64}$' },
+                stack: { type: 'array', items: { type: 'array', items: {} } } } }
+          ] } } }
+        },
+        FreshReadResponse: {
+          type: 'object', required: ['network', 'release', 'readContext', 'results'],
+          properties: {
+            network: { type: 'string', enum: ['testnet', 'mainnet', 'localnet'] },
+            release: { type: 'object', required: ['releaseId', 'manifestHash'], properties: {
+              releaseId: { type: 'string' }, manifestHash: { type: 'string', pattern: '^[a-f0-9]{64}$' } } },
+            readContext: { type: 'object', required: ['source', 'head', 'queriedAt'], properties: {
+              source: { type: 'string', enum: ['lite', 'http4'] },
+              queriedAt: { type: 'integer', description: 'Uncached masterchain query start in epoch milliseconds; not block creation time.' },
+              head: { type: 'object', required: ['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex'], properties: {
+                workchain: { const: -1 }, shard: { const: '-9223372036854775808' }, seqno: { type: 'integer', minimum: 0 },
+                rootHashHex: { type: 'string', pattern: '^[a-f0-9]{64}$' }, fileHashHex: { type: 'string', pattern: '^[a-f0-9]{64}$' } } }
+            } },
+            results: { type: 'array', items: { oneOf: [
+              { type: 'object', required: ['kind', 'address', 'balance_raw', 'account_state', 'code_boc', 'data_boc', 'last_tx_lt', 'last_tx_hash'],
+                properties: { kind: { const: 'account' }, address: { type: 'string' }, balance_raw: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
+                  account_state: { type: 'string', enum: ['active', 'uninitialized', 'frozen'] },
+                  code_boc: { type: ['string', 'null'] }, data_boc: { type: ['string', 'null'] },
+                  last_tx_lt: { type: ['string', 'null'] }, last_tx_hash: { type: ['string', 'null'] } } },
+              { type: 'object', required: ['kind', 'address', 'stack', 'exit_code', 'gas_used'], properties: {
+                kind: { const: 'getter' }, address: { type: 'string' }, stack: { type: 'array', items: { type: 'array', items: {} } },
+                exit_code: { type: 'integer' }, gas_used: { type: 'null' } } }
+            ] } }
+          }
+        },
         RunGetMethodRequest: {
           type: 'object',
           properties: {
@@ -1054,6 +1089,16 @@ export const buildOpenApi = (config: Config) => {
             },
           },
         },
+      },
+      '/api/indexer/v1/readFresh': {
+        post: { summary: 'Read complete current account state and getters at one uncached masterchain head',
+          requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/FreshReadRequest' } } } },
+          responses: {
+            200: { description: 'Same-head observations; Cache-Control: no-store', content: { 'application/json': { schema: { $ref: '#/components/schemas/FreshReadResponse' } } } },
+            400: { description: 'Invalid fresh read request', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+            503: { description: 'Fresh current-network observation unavailable', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
       },
       '/api/indexer/v1/runGetMethod': {
         post: {

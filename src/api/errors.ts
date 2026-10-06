@@ -8,6 +8,8 @@ export type ErrorCode = AdmissionErrorCode
   | 'cursor_mismatch'
   | 'invalid_method'
   | 'invalid_stack'
+  | 'invalid_fresh_read'
+  | 'fresh_read_unavailable'
   | 'rate_limited'
   | 'shutting_down'
   | 'metrics_disabled'
