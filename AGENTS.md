@@ -44,6 +44,11 @@ Option lifecycle qualification uses manifest-approved factory, vault, Shout, Out
   mandatory remainingEntitlementRaw. Margin deposits cannot reset it and withdrawals
   retain entry principal N. Pure synthetic vectors never replace current native
   fixture provenance or establish a universal LP zero-loss guarantee.
+  Engine extras retain the exact uint32-to-referenced-cell pending risk-policy
+  dictionary after collectors and T3. Only absent market slots 2-4 may retain
+  exact unissued, blocked commitments; registered markets consume them. Reject
+  pruned/malformed dictionaries, trailing fields, nonempty lease credit and
+  registered-market overlap. Pending commitments are not executable leases.
   Every receipt has the mandatory current order reference. Paid linear OPEN/CLOS
   stores the original request, full OPEN notification or empty CLOSE notification,
   native budget, terminal outcome/reason and originally requested pool. Intake

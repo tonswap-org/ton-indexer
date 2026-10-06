@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { Address, Cell, Dictionary, beginCell, loadShardAccount, loadTransaction } from '@ton/core';
 import { perpsOracleTradeTransition, readPerpsOracleRefreshes, readPerpsState } from '../ledger/perpsState';
 import { PERPS_CLAIM, PERPS_CLOSE, PERPS_OPEN } from '../ledger/perpsWire';
@@ -243,6 +245,119 @@ const collectorSlice = currentExtras.refs[0].beginParse();
 const fundingCollector = collectorSlice.loadAddress();
 const controlCollector = collectorSlice.loadAddress();
 assert(!fundingCollector.equals(controlCollector));
+const originalCurrent = readPerpsState(currentStorage, currentCodeHash);
+const governance = currentRegistry.refs[0].beginParse().loadMaybeAddress();
+const policyController = new Address(0, Buffer.alloc(32, 0xee));
+assert(!governance?.equals(policyController));
+const pendingPolicy = (marketId: number, overrides: Partial<{
+  controller: Address | null; policyId: number; scope: number; registrationVersion: number; leaseSecs: number;
+  epoch: bigint; sourceVersion: number; configVersion: number; validUntil: bigint; grossBudget: bigint;
+  consumedGross: bigint; posture: number; flags: number;
+}> = {}) => {
+  const p = { controller: policyController as Address | null, policyId: marketId, scope: marketId,
+    registrationVersion: 1, leaseSecs: 120, epoch: 0n, sourceVersion: 0, configVersion: 0,
+    validUntil: 0n, grossBudget: 0n, consumedGross: 0n, posture: 4, flags: 1, ...overrides };
+  return beginCell().storeAddress(p.controller).storeUint(p.policyId, 32).storeUint(p.scope, 32)
+    .storeUint(p.registrationVersion, 32).storeUint(p.leaseSecs, 32).storeUint(p.epoch, 64)
+    .storeUint(p.sourceVersion, 32).storeUint(p.configVersion, 32).storeInt(p.validUntil, 64)
+    .storeUint(p.grossBudget, 64).storeUint(p.consumedGross, 64).storeUint(p.posture, 8).storeUint(p.flags, 8).endCell();
+};
+const policyMap = (entries: [number, Cell][]) => {
+  const bindings = Dictionary.empty(Dictionary.Keys.Uint(32), Dictionary.Values.Cell());
+  for (const [id, value] of entries) bindings.set(id, value);
+  return beginCell().storeDict(bindings).endCell();
+};
+const withPendingPolicyMap = (map: Cell, options: { swapRefs?: boolean; omitRef?: boolean; mask?: boolean; trailer?: boolean } = {}) => {
+  const bits = currentExtras.beginParse(), mask = bits.loadUint(8);
+  assert.equal(mask & 32, 0, 'The original current-source archive has no pending future market bindings');
+  const extras = beginCell().storeUint(options.mask === false ? mask : mask | 32, 8).storeSlice(bits);
+  if (!options.omitRef) extras.storeRef(map);
+  if (options.trailer) extras.storeBit(0);
+  let changedExtras = extras.endCell();
+  if (options.swapRefs) {
+    const refs = [...changedExtras.refs];
+    [refs[refs.length - 1], refs[refs.length - 2]] = [refs[refs.length - 2], refs[refs.length - 1]];
+    changedExtras = withRefs(changedExtras, refs);
+  }
+  const router = withRefs(currentRouter, [changedExtras, ...currentRouter.refs.slice(1)]);
+  const config = withRefs(currentConfig, [router, ...currentConfig.refs.slice(1)]);
+  const registry = withRefs(currentRegistry, [currentRegistry.refs[0], config, ...currentRegistry.refs.slice(2)]);
+  return withRefs(currentData, [registry, ...currentData.refs.slice(1)]).toBoc().toString('base64');
+};
+// Preserve the actual current OPEN graph while adding the same native
+// RiskPolicyBindingMapPersisted shape used for absent future market slots.
+assert.equal(originalCurrent.pendingRiskPolicies.size, 0);
+const futureBindings = readPerpsState(withPendingPolicyMap(policyMap([
+  [2, pendingPolicy(2)], [3, pendingPolicy(3)], [4, pendingPolicy(4)],
+])), currentCodeHash);
+assert.deepEqual([...futureBindings.pendingRiskPolicies.keys()], [2, 3, 4]);
+for (const [marketId, policy] of futureBindings.pendingRiskPolicies) assert.deepEqual(policy, {
+  controller: policyController.toRawString(), policyId: marketId, scope: marketId,
+  registrationVersion: 1, leaseSecs: 120, epoch: '0', sourceVersion: 0, configVersion: 0,
+  validUntil: '0', grossBudget: '0', consumedGross: '0', posture: 4, flags: 1,
+});
+assert.deepEqual(futureBindings.markets, originalCurrent.markets);
+assert.deepEqual(futureBindings.positions, originalCurrent.positions);
+assert.deepEqual(futureBindings.accounts, originalCurrent.accounts);
+const semanticStateValue = (value: unknown): unknown => {
+  // Adding an unrelated reference changes the decoded BOC backing buffer.
+  // Preserve every oracle field and authenticate Cells by their own graph.
+  if (value instanceof Cell) return { cellHash: value.hash().toString('hex'), cellBoc: value.toBoc().toString('base64') };
+  if (value instanceof Map) return [...value].map(([key, entry]) => [semanticStateValue(key), semanticStateValue(entry)]);
+  if (Array.isArray(value)) return value.map(semanticStateValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, semanticStateValue(entry)]));
+  return value;
+};
+assert.deepEqual(semanticStateValue(futureBindings.oracleRefreshes), semanticStateValue(originalCurrent.oracleRefreshes));
+assert.notEqual(futureBindings.configHash, originalCurrent.configHash, 'Pending commitments remain bound into the exact configuration hash');
+assert.notEqual(futureBindings.dataHash, originalCurrent.dataHash);
+for (const overrides of [
+  { controller: null }, { policyId: 0 }, { policyId: 3 }, { scope: 3 }, { registrationVersion: 0 },
+  { leaseSecs: 0 }, { leaseSecs: 121 }, { epoch: 1n }, { sourceVersion: 1 }, { configVersion: 1 },
+  { validUntil: -1n }, { validUntil: 1n }, { grossBudget: 1n }, { consumedGross: 1n },
+  { posture: 0 }, { posture: 5 }, { flags: 0 }, { flags: 3 }, { flags: 8 },
+  ...(governance ? [{ controller: governance }] : []),
+]) assert.throws(() => readPerpsState(withPendingPolicyMap(policyMap([[2, pendingPolicy(2, overrides)]])), currentCodeHash),
+  'A future binding is the exact unissued, blocked risk_policy_empty commitment');
+for (const id of [0, 1, 5, 0xffffffff])
+  assert.throws(() => readPerpsState(withPendingPolicyMap(policyMap([[id, pendingPolicy(id)]])), currentCodeHash));
+const validPolicy = pendingPolicy(2), validMap = policyMap([[2, validPolicy]]);
+const pruned = beginCell().storeUint(1, 8).storeUint(1, 8).storeUint(0n, 256).storeUint(0, 16).endCell({ exotic: true });
+for (const malformed of [
+  empty, policyMap([]), beginCell().storeRef(validPolicy).endCell(),
+  beginCell().storeSlice(validMap.beginParse()).storeBit(0).endCell(),
+  beginCell().storeSlice(validMap.beginParse()).storeRef(empty).endCell(),
+  policyMap([[2, empty]]), policyMap([[2, pruned]]),
+  policyMap([[2, beginCell().storeBits(validPolicy.bits).storeRef(empty).endCell()]]),
+  policyMap([[2, beginCell().storeSlice(validPolicy.beginParse()).storeBit(0).endCell()]]),
+  beginCell().storeDict(Dictionary.empty(Dictionary.Keys.Uint(32), raw).set(2, validPolicy)).endCell(),
+  beginCell().storeBit(1).storeRef(pruned).endCell(),
+]) assert.throws(() => readPerpsState(withPendingPolicyMap(malformed), currentCodeHash),
+  'Missing, inline, pruned or trailing dictionary/value data never becomes a future binding');
+for (const options of [{ swapRefs: true }, { omitRef: true }, { mask: false }, { trailer: true }])
+  assert.throws(() => readPerpsState(withPendingPolicyMap(validMap, options), currentCodeHash), 'Extras references are exact and ordered');
+const forkMap = policyMap([[2, pendingPolicy(2)], [3, pendingPolicy(3)]]);
+assert.equal(forkMap.refs[0].refs.length, 2);
+for (const fork of [beginCell().storeSlice(forkMap.refs[0].beginParse()).storeBit(0).endCell(),
+  withRefs(forkMap.refs[0], [pruned, forkMap.refs[0].refs[1]]),
+  withRefs(forkMap.refs[0], [forkMap.refs[0].refs[0]])])
+  assert.throws(() => readPerpsState(withPendingPolicyMap(beginCell().storeBit(1).storeRef(fork).endCell()), currentCodeHash),
+    'Complete dictionary fork evidence is mandatory');
+const existingMarket = originalCurrent.markets.keys().next().value!;
+const mapsWithFutureRegistered = currentData.refs[1];
+const registered = mapsWithFutureRegistered.refs[0].beginParse().loadDict(Dictionary.Keys.Uint(32), raw);
+const overlapId = 2;
+assert(!registered.has(overlapId));
+const originalMarket = registered.get(existingMarket)!, originalStats = originalMarket.refs[1];
+const overlapFundingAndRisk = beginCell().storeRef(originalStats.refs[3].refs[0]).storeRef(empty).endCell();
+const overlapStats = withRefs(originalStats, [originalStats.refs[0], originalStats.refs[1], empty, overlapFundingAndRisk]);
+registered.set(overlapId, withRefs(originalMarket, [originalMarket.refs[0], overlapStats]));
+const overlapMaps = withRefs(mapsWithFutureRegistered, [beginCell().storeDict(registered).endCell(), ...mapsWithFutureRegistered.refs.slice(1)]);
+assert(readPerpsState(withRefs(currentData, [currentData.refs[0], overlapMaps, ...currentData.refs.slice(2)])
+  .toBoc().toString('base64'), currentCodeHash).markets.has(overlapId));
+const overlapData = Cell.fromBase64(withPendingPolicyMap(validMap));
+assert.throws(() => readPerpsState(withRefs(overlapData, [overlapData.refs[0], overlapMaps, ...overlapData.refs.slice(2)])
+  .toBoc().toString('base64'), currentCodeHash), /pending risk policy overlaps/, 'A pending future binding cannot also belong to a registered market');
 const withCollectors = (first: Address, second: Address) => {
   const collectors = beginCell().storeAddress(first).storeAddress(second).endCell();
   const extras = withRefs(currentExtras, [collectors, ...currentExtras.refs.slice(1)]);
@@ -296,6 +411,22 @@ assert.equal(readPerpsState(current, historicalCode).oracleRefreshes.size, readP
 const actual = readPerpsState(currentStorage, currentCodeHash);
 assert(actual.positions.size > 0);
 assert([...actual.positions.values()].every(position => BigInt(position.counterparty.reservedRaw) > 0n));
+// Original live state that exposed the pending-policy decoder failure. This
+// observation is a schema regression, not historical transaction/replay proof.
+const liveBytes = gunzipSync(readFileSync(join(__dirname, 'fixtures/perps-pending-risk-policies-live.01.json.gz')));
+assert.equal(liveBytes.length, 397204);
+assert.equal(createHash('sha256').update(liveBytes).digest('hex'), '2b38e4937788d7da9a30d2dfcb3037da46bedb22a211ceaa1ec6f09284d91340');
+const live = JSON.parse(liveBytes.toString('utf8'));
+assert.equal(live.schema, 'tonswap-live-perps-state-observation-v1');
+assert.equal(live.network, 'testnet');
+assert.deepEqual(live.head, { seqno: 89411541, timestamp: 1791266143 });
+assert.equal(live.state.accountState, 'active');
+assert.equal(Cell.fromBase64(live.state.codeBoc).hash().toString('hex'), live.codeHash);
+const liveState = readPerpsState(live.state.dataBoc, live.codeHash);
+assert.equal(liveState.dataHash, '418ef81e3b2020b127fa27e2fd15e2ce28bf611ff257c5468b41d57a7ffe4d5d');
+assert.deepEqual([...liveState.pendingRiskPolicies.keys()], [2, 3, 4]);
+assert.deepEqual([...liveState.markets.keys()], [1]);
+assert(liveState.positions.size > 0, 'The live first trade and pending future policies coexist');
 for (const path of ['perps-oracle-execution/funding-remainder.json',
   'perps-order-plans-current/funding-remainder-current.json',
   'perps-order-plans-current/engine-exhausted-current.json']) {

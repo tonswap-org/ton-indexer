@@ -93,6 +93,54 @@ export function readPerpsRiskPolicy(cell: Cell): PerpsRiskPolicy | null {
       BigInt(policy.validUntil) < 0n || policy.posture > 4 || policy.flags > 7) throw Error('Invalid perps risk policy');
   return policy;
 }
+function readPendingPerpsRiskPolicies(cell: Cell, governance: Address | null): Map<number, PerpsRiskPolicy> {
+  if (cell.isExotic) throw Error('Incomplete perps pending risk policy dictionary');
+  const wrapper = cell.beginParse();
+  const root = wrapper.loadMaybeRef();
+  end(wrapper);
+  if (!root) throw Error('Empty perps pending risk policy dictionary');
+  // Dictionary.load skips pruned branches and does not reject fork trailers.
+  // Verify the complete uint32 -> ^Cell tree before decoding its entries.
+  const nodes = [{ cell: root, bits: 32 }];
+  let leaves = 0;
+  while (nodes.length) {
+    const node = nodes.pop()!;
+    if (node.cell.isExotic) throw Error('Incomplete perps pending risk policy dictionary');
+    const s = node.cell.beginParse();
+    let length = 0;
+    if (!s.loadBit()) {
+      while (s.loadBit()) {
+        if (++length > node.bits) throw Error('Invalid perps pending risk policy dictionary label');
+      }
+      s.skip(length);
+    } else {
+      const same = s.loadBit();
+      if (same) s.loadBit();
+      length = s.loadUint(Math.ceil(Math.log2(node.bits + 1)));
+      if (length > node.bits) throw Error('Invalid perps pending risk policy dictionary label');
+      if (!same) s.skip(length);
+    }
+    const remaining = node.bits - length;
+    if (s.remainingBits || s.remainingRefs !== (remaining ? 2 : 1))
+      throw Error('Invalid perps pending risk policy dictionary node');
+    if (remaining) {
+      nodes.push({ cell: s.loadRef(), bits: remaining - 1 }, { cell: s.loadRef(), bits: remaining - 1 });
+    } else if (++leaves > 3) throw Error('Perps pending risk policy capacity exceeded');
+  }
+  const entries = Dictionary.loadDirect(Dictionary.Keys.Uint(32), Dictionary.Values.Cell(), root);
+  const policies = new Map<number, PerpsRiskPolicy>();
+  for (const [marketId, value] of entries) {
+    if (value.isExotic) throw Error('Invalid perps pending risk policy');
+    const policy = readPerpsRiskPolicy(value);
+    if (!policy || marketId < 2 || marketId > 4 || policy.policyId !== marketId || policy.scope !== marketId ||
+        governance?.equals(Address.parse(policy.controller)) || policy.epoch !== '0' || policy.sourceVersion !== 0 ||
+        policy.configVersion !== 0 || policy.validUntil !== '0' || policy.grossBudget !== '0' ||
+        policy.consumedGross !== '0' || policy.posture !== 4 || policy.flags !== 1)
+      throw Error('Invalid perps pending risk policy');
+    policies.set(marketId, policy);
+  }
+  return policies;
+}
 export type PerpsOracleRefreshReceipt = {
   queryId: string;
   wireQueryId: string;
@@ -271,6 +319,7 @@ export type PerpsState = {
   accounts: Map<string, PerpsAccount>;
   positions: Map<string, PerpsPosition>;
   markets: Map<number, PerpsMarket>;
+  pendingRiskPolicies: Map<number, PerpsRiskPolicy>;
   pending: Map<string, PerpsPending>;
   oracleRefreshes: Map<number, Map<string, PerpsOracleRefreshReceipt>>;
 };
@@ -316,7 +365,11 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
   const risk = { oracleDegraded, tvlDegraded, oracleDriftLevel };
   const reg = registry.beginParse();
   if (reg.remainingBits !== 0 || reg.remainingRefs !== 4) throw Error('Perps canonical registry references');
-  reg.loadRef();
+  const registryState = reg.loadRef().beginParse();
+  const governance = registryState.loadMaybeAddress();
+  registryState.skip(16);
+  registryState.loadRef();
+  end(registryState);
   const config = reg.loadRef();
   reg.loadRef();
   const maintenance = reg.loadRef().beginParse();
@@ -349,7 +402,6 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
   const walletIngressProtection = {epoch:Number(epoch),ready,quarantinedRaw:quarantined.toString()};
   end(r);
   const mask = extras.loadUint(8);
-  if (mask & 32) throw Error("Perps unsupported pending risk policy journal");
   if (mask & 1 || !(mask & 128)) throw Error("Perps configured collateral");
   if (mask & 2) extras.loadMaybeAddress();
   if (mask & 4) extras.skip(32);
@@ -372,6 +424,7 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
     root = token.loadAddress().toRawString(),
     walletCode = token.loadRef();
   end(token);
+  const pendingRiskPolicies = mask & 32 ? readPendingPerpsRiskPolicies(extras.loadRef(), governance) : new Map<number, PerpsRiskPolicy>();
   end(extras);
   const m = maps.beginParse(),
     marketCell = m.loadRef(),
@@ -498,6 +551,8 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
       riskPolicy,
     });
   }
+  if ([...pendingRiskPolicies.keys()].some(marketId => markets.has(marketId)))
+    throw Error('Perps pending risk policy overlaps a registered market');
   const q = queues.beginParse();
   if (q.remainingBits !== 0 || q.remainingRefs !== 3) throw Error('Perps canonical queue bundle');
   q.loadRef();
@@ -592,6 +647,7 @@ export function readPerpsState(boc: string, qualifiedCodeHash: string): PerpsSta
     accounts,
     positions,
     markets,
+    pendingRiskPolicies,
     pending,
     oracleRefreshes,
   };

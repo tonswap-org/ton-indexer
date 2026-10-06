@@ -1617,6 +1617,19 @@ Two persistent owned worker processes authenticate the signature chain and a fre
 
 Perps economic qualification uses only the current isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Run `npx tsx src/scripts/ledger-perps-test.ts`, `npx tsx src/scripts/perps-counterparty-economics-test.ts`, `npx tsx src/scripts/perps-risk-admission-test.ts`, and `npx tsx src/scripts/perps-oracle-state-test.ts`, followed by the complete `npm run test:ledger`.
 
+The current engine extras also retain future market risk-policy commitments as
+an exact uint32-to-referenced-cell dictionary after the collectors and T3
+references. The state decoder exposes `pendingRiskPolicies` separately from
+registered market leases. Only absent slots 2-4 may hold the native unissued,
+blocked commitment: no epoch, expiry or gross credit has been granted. Dictionary
+completeness, every commitment field and registered-market exclusion are checked.
+`npx tsx src/scripts/perps-oracle-state-test.ts` covers current-source state with
+future bindings and rejects malformed, pruned, tampered and trailing layouts;
+it also retains the original testnet state that exposed the pending-policy
+failure. That live observation tests schema decoding, not historical transaction
+or replay qualification. Run `npm run test:ledger` and `npm run build` after
+changing this decoder.
+
 The current oracle journal distinguishes an ordinary CLOSE's empty context, a
 MODIFY's complete prior position, and a managed CLOSE or funding claim's exact
 position commitment plus native sponsor. Pending kind and terminal reason have

@@ -14,14 +14,14 @@ const positionKey = wire.perpsPositionKey(owner, 1), lossKey = beginCell().store
 const base = (): PerpsState => ({ root, walletCode: Cell.EMPTY, feeBps: 0, feeTreasury: null, router: null,
     walletIngressProtection:{epoch:1,ready:true,quarantinedRaw:'0'}, riskVault: vault, riskVaultBucketId: 1, nativeSettlement: null, directFeeEscrow: null,
     risk: { oracleDegraded: false, tvlDegraded: false, oracleDriftLevel: 0 }, riskNonce: '1', riskActions: new Map(), counterpartyMaintenance: { cursor: '0'.repeat(64), sequence: '0', positionCount: 0 }, configHash: 'a'.repeat(64), dataHash: 'b'.repeat(64),
-    accounts: new Map([[owner, { ...emptyPerpsAccount(), collateralRaw: (25n * unit).toString(), openPositionCount: 1 }],
+    pendingRiskPolicies: new Map(), accounts: new Map([[owner, { ...emptyPerpsAccount(), collateralRaw: (25n * unit).toString(), openPositionCount: 1 }],
         [other, { ...emptyPerpsAccount(), collateralRaw: (500n * unit).toString() }]]), positions: new Map(), pending: new Map(), oracleRefreshes: new Map(),
     markets: new Map([[1, { pool, depthRaw: (2n ** 90n).toString(), alphaRaw: '0', betaRaw: '0', maxLeverageBps: 10000, maintenanceBps: 500,
                 fundingIndexRaw: '0', fundingRemainderRaw: '0', fundingRateBpsRaw: '0', fundingValidUntil: '0', lastFundingTs: '0',
                 oraclePriceHealthy: true, markRaw: unit.toString(), controlFeeDeltaBps: 0, clampBps: 100, adlDeficitRaw: '0', riskPolicy: null }]]) });
 const clone = (s: PerpsState): PerpsState => ({ ...s, accounts: new Map([...s.accounts].map(([k, v]) => [k, { ...v }])),
     positions: new Map([...s.positions].map(([k, v]) => [k, { ...v, counterparty: { ...v.counterparty } }])), markets: new Map([...s.markets].map(([k, v]) => [k, { ...v }])),
-    pending: new Map([...s.pending].map(([k, v]) => [k, { ...v }])), riskActions: new Map(s.riskActions) });
+    pending: new Map([...s.pending].map(([k, v]) => [k, { ...v }])), pendingRiskPolicies: new Map([...s.pendingRiskPolicies].map(([k, v]) => [k, { ...v }])), riskActions: new Map(s.riskActions) });
 function action(s: PerpsState, notional: bigint, reserve: bigint, payout?: bigint, beneficiary = owner) {
     const previous = s.riskActions.get(perpsRiskActionKey(1, subject));
     let body: Cell;
