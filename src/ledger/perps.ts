@@ -503,7 +503,7 @@ export async function decodePerps(
               : null;
           const cleared =
             bp &&
-            [10, 12].includes(bp.kind) &&
+            bp.kind === 12 &&
             bp.owner === input.owner &&
             bp.wireId === pending!.wireId &&
             bp.amountRaw === amount.toString() &&

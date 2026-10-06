@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Address, Cell, beginCell, loadTransaction } from '@ton/core';
+import { Address, Cell, Dictionary, beginCell, loadTransaction } from '@ton/core';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { projectOwnerLedger, type ProjectionInput, type LedgerChain, type Node } from '../ledger/project';
 import { canonicalLedgerHash } from '../ledger/normalize';
-import { readPerpsState, type PerpsOracleTradeOrder } from '../ledger/perpsState';
+import { perpsPending, readPerpsState, type PerpsOracleTradeOrder } from '../ledger/perpsState';
 import { loadOpcodes } from '../utils/opcodes';
-import { perpsWalletAddress, perpsMessage } from '../ledger/perpsWire';
+import { perpsWalletAddress, perpsMessage, perpsTransferKey } from '../ledger/perpsWire';
 import { businessOpcode as opcode, messageKey } from '../ledger/wire';
 import { readPerpsOracleExecution, type PerpsBoundary } from '../ledger/perpsOracle';
 import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
@@ -174,6 +174,47 @@ async function main() {
     if (process.env.PERPS_ORACLE_LEDGER_EXPORT_DIR) writeFileSync(join(process.env.PERPS_ORACLE_LEDGER_EXPORT_DIR, `${name}-ledger.json`),
       JSON.stringify({ ...f, events: result.events }, null, 2));
     console.log(`PASS real Tolk ${name}: original wallet debit, exact oracle/vault/policy continuation and terminal economics`);
+  }
+  for (const terminalKind of [12, 10]) {
+    const { f, input, rows, states, engineCodeHash } = fixture('vault-rejected');
+    const finalizers = rows.filter((row: any) => row.account === f.engine && opcode(row.raw.inMessage) === 0x4a53464b
+      && perpsPending(readPerpsState(row.oldStorage, engineCodeHash), f.ownerWallet)?.kind === 12
+      && !perpsPending(readPerpsState(row.newStorage, engineCodeHash), f.ownerWallet));
+    assert.equal(finalizers.length, 1, 'Current native refund has one exact kind12-to-cleared engine finalizer');
+    const finalizer = finalizers[0];
+    if (terminalKind === 10) {
+      // Adversarial historical-state substitution only: retain every original native
+      // transaction and cash ACK while replacing the terminal refund journal kind.
+      const original = Cell.fromBase64(finalizer.oldStorage), queues = original.refs[2];
+      const rawValue = {
+        serialize: (value: Cell, builder: any) => builder.storeSlice(value.beginParse()),
+        parse: (slice: any) => { const value = slice.asCell(); slice.skip(slice.remainingBits); while (slice.remainingRefs) slice.loadRef(); return value; },
+      };
+      const transfers = queues.refs[1].beginParse().loadDict(Dictionary.Keys.BigUint(256), rawValue);
+      const key = BigInt('0x' + perpsTransferKey(f.ownerWallet)), value = transfers.get(key)!;
+      assert(value); const transfer = value.beginParse(); assert.equal(transfer.loadUint(8), 12);
+      transfers.set(key, beginCell().storeUint(terminalKind, 8).storeSlice(transfer).endCell());
+      const withRefs = (cell: Cell, refs: readonly Cell[]) => {
+        const builder = beginCell().storeBits(cell.bits); for (const ref of refs) builder.storeRef(ref); return builder.endCell();
+      };
+      const substituted = withRefs(original, [original.refs[0], original.refs[1],
+        withRefs(queues, [queues.refs[0], beginCell().storeDict(transfers).endCell(), queues.refs[2]]), original.refs[3]]).toBoc().toString('base64');
+      const snapshot = states.get(`${f.engine}:${finalizer.raw.prevTransactionLt}:${canonicalLedgerHash(finalizer.raw.prevTransactionHash)}`);
+      assert(snapshot); snapshot.state.dataBoc = substituted;
+      assert.equal(perpsPending(readPerpsState(substituted, engineCodeHash), f.ownerWallet)?.kind, 10);
+    }
+    const result = await projectOwnerLedger(input);
+    const event = result.events.find(event => event.kind === 'perps_operation');
+    assert(event?.settlement?.perps);
+    const payout = event.settlement.perps.payout;
+    assert.equal(payout.amountRaw, event.settlement.perps.depositRaw, 'Both witnesses retain the same original physical refund amount');
+    assert.equal(payout.status, terminalKind === 12 ? 'completed' : 'pending',
+      'Only the current native success-finalizing kind12 proves that the original refund journal cleared');
+    if (terminalKind === 10) {
+      assert.deepEqual(payout.evidence, []);
+      assert(event.issues.includes('perps_payout_settlement_pending'));
+      assert(!event.movements.some(m => m.purpose === 'perps_payout'));
+    } else assert(payout.evidence.length > 0);
   }
   for (const missingOpcode of [0x5256414b, 0x52505253]) {
     const { f, input, rows, states } = fixture('open-accepted');
