@@ -87,6 +87,7 @@ async function liteCases() {
 
 async function httpCases() {
   let heads = 0, mismatch = false, missingStack = false;
+  let historyReads = 0;
   let coins: unknown = '101';
   let last: unknown = null;
   let accountState: unknown = { type: 'active', code: boc, data: boc };
@@ -100,6 +101,7 @@ async function httpCases() {
       account: { balance: { coins }, state: accountState, last } }; },
     async getAccountLite(seqno: number) { return { account: { balance: { coins },
       state: { type: 'active', codeHash: cell.hash().toString('base64'), dataHash: cell.hash().toString('base64') }, last } }; },
+    async getAccountTransactions() { historyReads++; return []; },
     async runMethod(seqno: number) { seen.push(seqno); return { block: encode(block(mismatch ? seqno + 1 : seqno)), exitCode: 17,
       ...(missingStack ? {} : { result: [] }) }; }
   };
@@ -135,8 +137,12 @@ async function httpCases() {
   }
   last = { lt: '0', hash: zeroHash };
   assert.equal((await source.readFresh([calls[0]])).results[0].kind, 'account', 'A complete zero chain pointer is valid');
+  assert.deepEqual(await source.getTransactions(address, 1), [], 'A verified zero pointer has no transaction history');
+  assert.equal(historyReads, 0, 'A verified zero pointer must not query transaction history at LT zero');
   last = null;
   assert.equal((await source.getAccountState(address)).lastTxLt, undefined, 'Explicitly absent chain pointer remains absent');
+  assert.deepEqual(await source.getTransactions(address, 1), [], 'An explicitly absent pointer has no transaction history');
+  assert.equal(historyReads, 0, 'An explicitly absent pointer must not query transaction history');
   accountState = { type: 'uninit' };
   const unused = await source.readFresh([calls[0]]);
   assert.equal(unused.results[0].kind === 'account' && unused.results[0].state.accountState, 'uninitialized');

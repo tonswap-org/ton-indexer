@@ -332,7 +332,7 @@ export class TonClient4DataSource implements TonDataSource {
       const last = await this.getLastBlockCached();
       const account = await this.call((client) => client.getAccount(last.last.seqno, parsed));
       const pointer = parseAccountTransactionPointer(asRecord(asRecord(account)?.account)?.last);
-      if (pointer.lastTxLt === undefined) return [];
+      if (pointer.lastTxLt === undefined || pointer.lastTxLt === '0') return [];
       cursorLt = pointer.lastTxLt;
       cursorHash = pointer.lastTxHash;
     }
