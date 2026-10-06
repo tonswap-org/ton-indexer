@@ -176,7 +176,8 @@ function occupiedFactoryFixture(kind: 1 | 2, wire: bigint) {
     const cell = factoryData(p).refs[2]!.beginParse().loadDict(Dictionary.Keys.BigUint(128), inline).get(f.key)!;
     return beginCell().storeBits(cell.bits).storeRef(beginCell()
       .storeAddress(A(refundOwner)).storeUint(buyWire, 64).storeUint(p.custodyWire, 64)
-      .storeUint(p.refundWire, 64).storeCoins(20).storeCoins(p.excess).storeCoins(p.walletFunding)).endCell();
+      .storeUint(p.refundWire, 64).storeCoins(20).storeCoins(p.excess).storeCoins(p.walletFunding)
+      .storeCoins(p.buyFunding).storeUint(p.referralOperationId, 64)).endCell();
   };
   for (const stage of ["initial", "origin", "recovery"] as const) {
     const tx = stage === "initial" ? f.initialFactory : stage === "origin" ? f.origin : f.recovery,

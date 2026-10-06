@@ -84,7 +84,9 @@ function factoryData(
             .storeUint(0, 64)
             .storeCoins(20)
             .storeCoins(0)
-            .storeCoins(0),
+            .storeCoins(0)
+            .storeCoins(0)
+            .storeUint(0, 64),
         )
         .endCell(),
     );

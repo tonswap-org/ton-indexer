@@ -50,7 +50,9 @@ export function readOptionPositionState(
     refundWireId = m.loadUintBig(64).toString(),
     protocolFeeRaw = m.loadCoins().toString(),
     excessRaw = m.loadCoins().toString(),
-    walletFundingRaw = m.loadCoins().toString();
+    walletFundingRaw = m.loadCoins().toString(),
+    buyFundingRaw = m.loadCoins().toString(),
+    referralOperationId = m.loadUintBig(64).toString();
   end(m);
   return {
     owner,
@@ -69,6 +71,8 @@ export function readOptionPositionState(
     protocolFeeRaw,
     excessRaw,
     walletFundingRaw,
+    buyFundingRaw,
+    referralOperationId,
     dataHash: data.hash().toString("hex"),
   };
 }

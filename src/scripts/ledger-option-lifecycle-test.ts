@@ -91,6 +91,8 @@ type Position = {
   custodyWire: bigint;
   refundWire: bigint;
   walletFunding: bigint;
+  buyFunding: bigint;
+  referralOperationId: bigint;
 };
 const position = (overrides: Partial<Position> = {}): Position => ({
   owner,
@@ -104,6 +106,8 @@ const position = (overrides: Partial<Position> = {}): Position => ({
   custodyWire: 56n,
   refundWire: 0n,
   walletFunding: 0n,
+  buyFunding: 0n,
+  referralOperationId: 0n,
   ...overrides,
 });
 type Claim = {
@@ -286,7 +290,9 @@ function factoryData(
             .storeUint(p.refundWire, 64)
             .storeCoins(20)
             .storeCoins(p.excess)
-            .storeCoins(p.walletFunding),
+            .storeCoins(p.walletFunding)
+            .storeCoins(p.buyFunding)
+            .storeUint(p.referralOperationId, 64),
         )
         .endCell(),
     );

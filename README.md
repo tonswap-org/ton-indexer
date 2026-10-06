@@ -1573,6 +1573,15 @@ remain a separate readiness requirement.
 
 The current options Vault writer reserve includes the mandatory `pendingClaimQueryId:uint64` after cumulative backing returned. Archive decoding retains that exact identity (zero means no active claim) and rejects missing or trailing fields. Factory current `position_info` is a ten-field tuple including the recorded net premium and protocol fee; historical cash qualification continues to read exact archived `OptionBuyMeta.protocolFee` and never substitutes the current getter or current fee configuration.
 
+Historical Factory positions require the complete current `OptionBuyMeta` reference:
+refund owner, three uint64 wire IDs, protocol fee, excess jettons, wallet funding,
+buy funding, and the uint64 referral operation ID, in that order. Buy funding and
+the referral operation ID are mandatory even when zero and are decoded as exact
+decimal strings. Missing, truncated, or trailing metadata is rejected; there is
+no older-layout fallback. `npm run test:ledger` includes the strict position-state
+codec checks and current-layout purchase, exercise, refund, abort, and bounce
+projection tests.
+
 DLMM deposit projection treats a business query as a reusable pending slot. Each
 applying transaction selects its earlier contribution through the exact archived
 notification commitment, then verifies both original physical payments and the
