@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { constants, closeSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { PERPS_PRODUCERS, type PerpsProducer, producerSha256 } from './perps-fixture-producer';
+import { PERPS_CAPTURE_NODE_VERSION, PERPS_PRODUCERS, type PerpsProducer, producerSha256 } from './perps-fixture-producer';
 
 /** Retain producer artifacts under the deliberately adopted common manifest.
  * A single fixture adopter cannot replace that shared build authority. */
@@ -40,11 +40,11 @@ function main() {
   assert(Object.hasOwn(PERPS_PRODUCERS, producer) && directory && resolve(directory) === directory && !process.argv[4],
     'Usage: capture-perps-fixture.ts <risk|wallets|browser|directFee|funding> <new-absolute-directory>');
   assert(!process.env.NODE_OPTIONS, 'NODE_OPTIONS must be unset');
-  assert.equal(process.version, 'v26.10.0', 'Use the reviewed native capture runtime');
+  assert.equal(process.version, PERPS_CAPTURE_NODE_VERSION, 'Use the reviewed native capture runtime');
   const nativeRoot = resolve(__dirname, '../../../tonswap_tolk');
   const runner = join(nativeRoot, 'tests/helpers/captureRun.ts');
   assert(existsSync(runner), 'The native pure-build capture CLI must be available on master');
-  const result = spawnSync(process.execPath, ['--require', 'ts-node/register/transpile-only', runner, producer, directory],
+  const result = spawnSync(process.execPath, ['--no-turbo-fast-api-calls', '--require', 'ts-node/register/transpile-only', runner, producer, directory],
     { cwd: nativeRoot, env: process.env, stdio: 'inherit' });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, 'Native pure-build capture failed');

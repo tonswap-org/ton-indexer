@@ -6,6 +6,7 @@ import { assertCaptureBuildBinding, assertCaptureCode, assertRetainedCaptureBind
 import { Cell } from '@ton/core';
 
 export const PERPS_STRESS_CHAIN_CONFIG_HASH = '6afa8bd6ae1aaf8d918b8a6461666601c151d14270d81efddf0f602042c842e6';
+export const PERPS_CAPTURE_NODE_VERSION = 'v22.23.3';
 export function assertPerpsStressChainConfig(value: unknown): void {
   assert.equal(typeof value, 'string', 'Perps capture requires its exact execution chain config');
   const cells = Cell.fromBoc(Buffer.from(value as string, 'base64'));
@@ -58,7 +59,7 @@ export function assertPerpsProducerReceipt(value: any, producer: QualifiedProduc
   assert(isAbsolute(captureDirectory), 'Producer capture directory must be absolute');
   assert.equal(value.captureDirectory, resolve(captureDirectory));
   assert.equal(value.exitCode, 0);
-  assert.deepEqual(value.runtime, { node: 'v26.10.0', tolk: '1.4.2', sandbox: '0.42.0' });
+  assert.deepEqual(value.runtime, { node: PERPS_CAPTURE_NODE_VERSION, tolk: '1.4.2', sandbox: '0.42.0' });
   assert.equal(value.logSha256, producerSha256(log));
   assertCompletePerpsProducer(log.toString('utf8'), producer);
   assertRetainedCaptureBinding(buildBinding, producer);

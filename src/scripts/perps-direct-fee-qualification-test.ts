@@ -55,6 +55,8 @@ const validate = (value: unknown, selectedBinding = binding) => assertPerpsProdu
 assert.doesNotThrow(() => validate(receipt));
 assert.throws(() => validate({ ...receipt, schema: 'tonswap-perps-fixture-producer-v1' }));
 assert.throws(() => validate({ ...receipt, runtime: { ...receipt.runtime, node: 'v26.5.1' } }));
+assert.throws(() => validate({ ...receipt, runtime: { ...receipt.runtime, node: 'v26.10.0' } }),
+  'The former producer runtime cannot qualify the current Node 22 capture cohort');
 assert.throws(() => validate({ ...receipt, exitCode: 1 }));
 assert.throws(() => validate({ ...receipt, captureDirectory: '/tmp/another-run' }));
 assert.throws(() => validate({ ...receipt, build: { ...receipt.build, sha256: '0'.repeat(64) } }));

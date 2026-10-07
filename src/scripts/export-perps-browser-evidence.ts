@@ -8,7 +8,7 @@ import { projectOwnerLedger, type ProjectionInput, type LedgerChain } from '../l
 import { canonicalLedgerHash } from '../ledger/normalize';
 import { loadOpcodes } from '../utils/opcodes';
 import { perpsWalletAddress } from '../ledger/perpsWire';
-import { assertPerpsStressChainConfig, producerSha256, readPerpsProducerReceipt } from './perps-fixture-producer';
+import { PERPS_CAPTURE_NODE_VERSION, assertPerpsStressChainConfig, producerSha256, readPerpsProducerReceipt } from './perps-fixture-producer';
 import { retainPerpsCaptureBuild } from './capture-perps-fixture';
 
 // Replay only original current Sandbox bytes. The producer and all supplied
@@ -16,7 +16,7 @@ import { retainPerpsCaptureBuild } from './capture-perps-fixture';
 const captureRoot=process.argv[2], output=process.argv[3];
 assert(captureRoot && resolve(captureRoot)===captureRoot && output && resolve(output)===output && !existsSync(output) && !process.argv[4],
   'Usage: export-perps-browser-evidence.ts <absolute-qualified-browser-producer> <new-absolute-projection-directory>');
-assert.equal(process.version,'v26.10.0'); assert(process.execArgv.includes('--no-turbo-fast-api-calls'));
+assert.equal(process.version,PERPS_CAPTURE_NODE_VERSION); assert(process.execArgv.includes('--no-turbo-fast-api-calls'));
 assert(!process.env.NODE_OPTIONS);
 const receipt=readPerpsProducerReceipt(captureRoot,'browser',resolve(__dirname,'../../../tonswap_tolk'));
 const buildBindingJson=readFileSync(join(captureRoot,'build-binding.json'),'utf8');

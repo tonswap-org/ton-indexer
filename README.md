@@ -1765,7 +1765,10 @@ persistent evidence and must never be recycled as build caches.
 
 Each `tonswap-capture-producer-v1` receipt binds the complete passing suite log,
 artifact bytes, compiled Cell hashes and a `tonswap-capture-build-v1` binding.
-Current recorded runtime fields are Node v26.10.0, Tolk 1.4.2 and Sandbox 0.42.0.
+Current recorded runtime fields are Node v22.23.3, Tolk 1.4.2 and Sandbox 0.42.0.
+The native capture launcher preserves the reviewed `--no-turbo-fast-api-calls`
+flag in the actual Jest child; invoke Node directly with that flag, rather than
+placing it in `NODE_OPTIONS`, which Node rejects.
 `fixtures/capture-build/manifest.json` retains the reviewed pure build manifest,
 and its producer subdirectories retain independently reviewed capture maps and all
 selected compiled artifacts. Original compiler BOCs live under `artifacts/`; their

@@ -4,12 +4,12 @@ import { join, resolve, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Cell } from '@ton/core';
 import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
-import { producerSha256, assertPerpsStressChainConfig } from './perps-fixture-producer';
+import { PERPS_CAPTURE_NODE_VERSION, producerSha256, assertPerpsStressChainConfig } from './perps-fixture-producer';
 
 const output = process.argv[2];
 assert(output && resolve(output) === output && !existsSync(output) && !process.argv[3],
   'Usage: refresh-perps-funded-web-fixture.ts <new-absolute-projection-directory>');
-assert.equal(process.version, 'v26.10.0');
+assert.equal(process.version, PERPS_CAPTURE_NODE_VERSION);
 assert(process.execArgv.includes('--no-turbo-fast-api-calls'));
 assert(!process.env.NODE_OPTIONS);
 const indexerRoot = resolve(__dirname, '../..');

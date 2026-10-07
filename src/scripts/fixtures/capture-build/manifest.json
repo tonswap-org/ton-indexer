@@ -1,14 +1,14 @@
 {
   "schema": "tonswap-build-v1",
   "tolkVersion": "1.4.2",
-  "buildHash": "9600c7c296875150c88658b4be7ef428af589dfa1f1d8fb34d1c32331449d604",
+  "buildHash": "85ebd1826adb6096ab0f9e592b073adb9b839adb7e12b260b0f351f02bcf4520",
   "targets": {
     "T3": {
       "source": "contracts/t3/t3.tolk",
-      "codeHash": "5c1751f069c097afbed8bb1b4556bce9a36889e776868810007d82b06bbc3ccc",
-      "bocBytes": 100600,
-      "cells": 1216,
-      "bits": 763047,
+      "codeHash": "199c9d94ef73895f6d2459f7b07436f748d49a6657b9d1a9ba7aa5a154cf93b5",
+      "bocBytes": 100646,
+      "cells": 1219,
+      "bits": 763383,
       "inputs": {
         "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
         "contracts/control/control_mesh_messages.tolk": "f14ae4dff0b5eb99c7eaeb2a4641d981735e10688a88e5ab8a6e718c802e7620",
@@ -38,17 +38,18 @@
         "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
         "contracts/t3/liquidity_pool.tolk": "f9321c94315563bf730232d6dd5ab4f59556762de180d9fa16d78c5952947c53",
-        "contracts/t3/messages.tolk": "dd402d67668a63f10407922bd349bd5e8bd9ba678371abc90320a69a44a0ae3f",
+        "contracts/t3/messages.tolk": "e49cd0eb35f44a8318882db579148ab70a24b4f967361b56f82eded04d828c28",
         "contracts/t3/pool_admin.tolk": "43d4a045247ba47d0fe322bca36b76245cfe1be8c9a41aec3ea75c53470adf2d",
         "contracts/t3/receiver_budget.tolk": "29e355108e5629d3099802f03aed5a3ee32d1b793ede6d0e32eee449cc63954a",
         "contracts/t3/referral.tolk": "e63a72d605365fb4fcf7e65246c05a287b5aa4c805a126dfbb15313ac64caab8",
         "contracts/t3/relative_peg_budget.tolk": "6160d88241f4078062850e7978e0ab27fe4c588f5985a397bdfb99c9d31257b0",
         "contracts/t3/t3_receiver_messages.tolk": "578b16590064e07501767092cc39d52b8424267ff87f54ad22d15ce0f55b951d",
-        "contracts/t3/t3.tolk": "08651b3362fd0b3231aca57a7b87f12b16a6292d0ff83f8dfde33c6045cdad23"
+        "contracts/t3/t3.tolk": "9d5f3896858990c505bea0eee35a2d3a99773c916428f1c47b02105ed94cb3ae"
       }
     },
     "T3Receiver": {
@@ -113,7 +114,8 @@
         "contracts/shared/jetton/tep74_codec.tolk": "b4069905180f12f88030bba044c9252fc755808642a2a6db507b4b403f503141",
         "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2"
       }
     },
@@ -248,15 +250,16 @@
     },
     "GovernanceTimelock": {
       "source": "contracts/governance/timelock.tolk",
-      "codeHash": "9b6a08c6cbec81ec2373b06763ab440b20ab01ddfa9b1346a4ba4528410357c5",
-      "bocBytes": 11772,
+      "codeHash": "73b014e69fe49f11f78398c52c851d244d5fc6203d138e24dc34fe3af9b355b3",
+      "bocBytes": 12078,
       "cells": 199,
-      "bits": 88716,
+      "bits": 91158,
       "inputs": {
         "contracts/generated/opcodes/governance/timelock_opcodes.tolk": "294a21c664b7f8ed12cc68db4ff469f215c274e77f7531681e0e24bf68fa4223",
-        "contracts/governance/timelock.tolk": "8716cc956b2b5cf03fc0d21ca211ee7a059f49ab987cdaf1f47279f4f8bbc289",
+        "contracts/governance/timelock.tolk": "8f5b457f819bb32474d5a451bc05d22d7217be344158291878357a3dcc975b87",
         "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
         "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/governance/timelock_native_budget.tolk": "a2247f4cb555aa56b74a9cdccee39b9eeb4e1f18fac1e8f54d993e4ac9df4b8c",
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
@@ -291,34 +294,33 @@
       "inputs": {
         "contracts/generated/opcodes/governance/treasury_opcodes.tolk": "3dca06bd146665ad97d293532ce8345ea873bd7f34fde20be4734c356fa8ee12",
         "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
-        "contracts/governance/treasury.tolk": "5e1f0791b25d64ffa7528a3076b5c83b937c01abc343263f4bec3f27d4ea2f80",
+        "contracts/governance/treasury.tolk": "257dda58cfe895c6f8dc21d4d8769baf0f973bbe718410cfb6a12e403adcffbd",
         "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
         "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
-        "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
         "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
         "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
         "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
-        "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
         "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
       }
     },
     "Voting": {
       "source": "contracts/governance/voting.tolk",
-      "codeHash": "81f0fca24bc09aa296bef77c739a870d0cfddd705ae2aad51917a4dba9934ae8",
-      "bocBytes": 40347,
-      "cells": 472,
-      "bits": 306514,
+      "codeHash": "3989dcca1ecc247bb67446bd068b4d083732e5079be0a7c4f3d0af792f73f20b",
+      "bocBytes": 40536,
+      "cells": 474,
+      "bits": 307946,
       "inputs": {
         "contracts/generated/opcodes/governance/voting_opcodes.tolk": "a2bb6cc81fd526cc5a223f36f778f67afbdf4cba4738dbf9221f5e3e0782bd50",
         "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
-        "contracts/governance/voting.tolk": "1b700f183fd26ee29569518d1600e2be221f80dff6c1681591d81a7fd789f53c",
+        "contracts/governance/voting.tolk": "3cd8e7f15552fb69d22e315ccb9c2e6102ba0aced760cf501f9b711688385d73",
         "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
         "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
+        "contracts/shared/governance/timelock_native_budget.tolk": "a2247f4cb555aa56b74a9cdccee39b9eeb4e1f18fac1e8f54d993e4ac9df4b8c",
         "contracts/shared/jetton/burn_budget.tolk": "c7562afa148871e375571ba6dce6b66d0ff12f506d448d764c95492122ec4d9f",
         "contracts/shared/jetton/jetton_types.tolk": "03d510a91a47602f3c39a4d82aff5da3fcf33b56f26da44e45a3a777704ca84c",
         "contracts/shared/jetton/jetton_utils.tolk": "2ac070ceca26e6925d84fe5c7db0a4ebfbb503dbeb0e460f8b94d900c5ee89a2",
@@ -350,8 +352,9 @@
         "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
         "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
         "contracts/treasury/fee_router.tolk": "9db416be9e3b3cb52a5c5bedb0def80d71b217732e25cd6f026fd88936b76165"
@@ -359,10 +362,10 @@
     },
     "BuybackExecutor": {
       "source": "contracts/treasury/buyback_executor.tolk",
-      "codeHash": "41746facaa35345d775172901bd2f0d0896629005ae61593e9e8276103ac0257",
-      "bocBytes": 24155,
-      "cells": 285,
-      "bits": 182577,
+      "codeHash": "0304e12ba4f46e70d436d51a82b72370bdf369dc9e23748939c732251f50b150",
+      "bocBytes": 23362,
+      "cells": 273,
+      "bits": 176820,
       "inputs": {
         "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
         "contracts/generated/opcodes/treasury/buyback_executor_opcodes.tolk": "4aa79f11143603b22678f6f022ddf2ac72e6146b3948ed219af7f059bf9ca1f0",
@@ -374,9 +377,10 @@
         "contracts/shared/jetton/jetton_wallet_storage.tolk": "205e9b36645fde729cadfb867f69ce8a0e0d7cc5a2cf1c2e38e3d284730de0dd",
         "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
-        "contracts/treasury/buyback_executor.tolk": "6df65c02312da188fedea9f2f13df979e8f16af09d24748a0078aad06f1f52f0"
+        "contracts/treasury/buyback_executor.tolk": "bfd090fdc33d026c3da17c4e93f6ce40a1bfe6bb299d736449333f234789307b"
       }
     },
     "DexRouter": {
@@ -406,8 +410,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
       }
@@ -458,8 +463,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
@@ -492,8 +498,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
@@ -525,8 +532,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
@@ -562,8 +570,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
@@ -594,8 +603,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/overflow_decode.tolk": "ab1344ed76a9422db6bd22afe2bf2e7f360d8a2ac79595bad8862124e65ceb17",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
@@ -639,8 +649,9 @@
         "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
       }
@@ -656,7 +667,7 @@
         "contracts/generated/opcodes/automation/heartbeat_opcodes.tolk": "0af75d5cdfa596310f3de89e07e696b7e33a8d6dcb0b0e4ab60bf1a258f18fb5",
         "contracts/generated/opcodes/referral/distributor_opcodes.tolk": "a18f747e9a75a210efbe5bf6ee65de1f37b8b1bee12637d1efaa5db584cdfe83",
         "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
-        "contracts/referral/distributor.tolk": "2eee774bac114360102e44f844a5b736637b602eac907e5ec945e17f50a13128",
+        "contracts/referral/distributor.tolk": "f3708f6d1a3fc2d36e41111a08d21ebaca56f5c366a53d7a341e4f3dcb9d5383",
         "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
         "contracts/shared/constants/gas_reserve.tolk": "f23225f02836f751c095f1a29a59237dd55ae50f7a57e055f93d28330ea2dec1",
         "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
@@ -666,8 +677,9 @@
         "contracts/shared/jetton/mint_budget.tolk": "6d31c484d8dccb1b5f69155e8ae0d883c6ac0dec824509665257f9d934c2d674",
         "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
       }
@@ -695,20 +707,20 @@
     },
     "OptionFactory": {
       "source": "contracts/options/factory.tolk",
-      "codeHash": "6b806ca90f6026bbefe01341888c416c3127cb733c52d4565b34cc7095289262",
-      "bocBytes": 108544,
+      "codeHash": "67047f4754a3d7bc7ab6783fb004659e1820f2abc1b5c0fa71fd2c025d2da9d4",
+      "bocBytes": 108557,
       "cells": 1219,
-      "bits": 825912,
+      "bits": 826016,
       "inputs": {
         "contracts/generated/opcodes/options/factory_opcodes.tolk": "fae72a9485ff875278075128b06fd419d543bd25de956c1f2c401fb875a976e1",
         "contracts/generated/opcodes/options/snapshot_protocol_opcodes.tolk": "28b1a987ff6ff13913397708cc17f07d1a75b452e3c2c82b59db1ea1f1c7bcfd",
         "contracts/generated/opcodes/shared/jetton/jetton_types_opcodes.tolk": "d3beb591e796e44b2e8252ff721b090c6153101253c1a9886f7576f919176c61",
         "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
         "contracts/options/correlation_utils.tolk": "0f517e2648416399d01948fed35e7dc8eef43f6c5137d69fef71c7c1f825955a",
-        "contracts/options/factory.tolk": "1cc7d5d62110a6b8512c3ed074a248774106684dce231672f07c3201020762a7",
+        "contracts/options/factory.tolk": "2d7b8abdacb4fc1d3960196a175eca8b5751ec27bfdcca2108ceeca5e14aa066",
         "contracts/options/native_budgets.tolk": "094a26783ccf09600566502077b8147958b6a4ba907ce36caa33e198424504fe",
         "contracts/options/settlement_mode.tolk": "9eeecf3b44d9fc29d8397f9073e7b5cec9feeffb5d977dbe12d6f6f1266136e4",
-        "contracts/options/snapshot_protocol.tolk": "366de91b2c99702e9b1e9b3a01858ea406b854ce5a02c2c808771ddf74ff33e8",
+        "contracts/options/snapshot_protocol.tolk": "402df8a924b1b6c891861eec6b0f5de5b075fff8a5b1f4a16466b421131365df",
         "contracts/risk/native_budget.tolk": "4db35deaf5b49953d636753baca3c79451e4280b71a01d2e1d3112e6d8fc1863",
         "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
         "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
@@ -724,8 +736,9 @@
         "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
       }
@@ -743,8 +756,8 @@
         "contracts/generated/opcodes/options/snapshot_protocol_opcodes.tolk": "28b1a987ff6ff13913397708cc17f07d1a75b452e3c2c82b59db1ea1f1c7bcfd",
         "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
         "contracts/options/correlation_utils.tolk": "0f517e2648416399d01948fed35e7dc8eef43f6c5137d69fef71c7c1f825955a",
-        "contracts/options/series_manager.tolk": "986a38e21b47368e4532544bfea0453597e3adc991a32744d48fed9451f01ade",
-        "contracts/options/snapshot_protocol.tolk": "366de91b2c99702e9b1e9b3a01858ea406b854ce5a02c2c808771ddf74ff33e8",
+        "contracts/options/series_manager.tolk": "d1cdb26bfa66b997452e539ff7f0815bda3987c84d6b9cbe2ae2b6edffbe2637",
+        "contracts/options/snapshot_protocol.tolk": "402df8a924b1b6c891861eec6b0f5de5b075fff8a5b1f4a16466b421131365df",
         "contracts/shared/automation/gas_vault_namespaces.tolk": "8df6ea11eb1a2926a58e31f8e86dd06b0cbb805c199d572c6bb40027ea947fc9",
         "contracts/shared/automation/module_config.tolk": "e30ce0c74b7ce336db39f56373c516253a0b92669c92aa50ed1fc44881493861",
         "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
@@ -829,15 +842,15 @@
     },
     "VolIndex": {
       "source": "contracts/volatility/vol_index.tolk",
-      "codeHash": "027db381e3cc42cf5e88b7b5e34c10100ba7f96dcf2e2f81b1c7968999bed364",
-      "bocBytes": 21605,
+      "codeHash": "069f43b29e98c570d262ea15500996d07764b47581d3609cbd6b11cf5522ccd3",
+      "bocBytes": 21618,
       "cells": 318,
-      "bits": 160935,
+      "bits": 161039,
       "inputs": {
         "contracts/generated/opcodes/options/snapshot_protocol_opcodes.tolk": "28b1a987ff6ff13913397708cc17f07d1a75b452e3c2c82b59db1ea1f1c7bcfd",
         "contracts/options/automation_constants.tolk": "1836f9179d98b6ac6553142662be3a5cfcbd91184fc628912f94ae661586b4b9",
         "contracts/options/correlation_utils.tolk": "0f517e2648416399d01948fed35e7dc8eef43f6c5137d69fef71c7c1f825955a",
-        "contracts/options/snapshot_protocol.tolk": "366de91b2c99702e9b1e9b3a01858ea406b854ce5a02c2c808771ddf74ff33e8",
+        "contracts/options/snapshot_protocol.tolk": "402df8a924b1b6c891861eec6b0f5de5b075fff8a5b1f4a16466b421131365df",
         "contracts/shared/governance/activation_native_budget.tolk": "d93f032057f4631affe525208c57d2ca52c8d8cbeb76275b32487d7ca8eaf1f2",
         "contracts/shared/governance/activation_receipt.tolk": "119918822957403655c833a3e47279d56d2effac2708f3b237ffc6ff7efd35cf",
         "contracts/shared/math/volatility.tolk": "f4974f9dda0fe2d3fd7c9b371dc8c38dfff9f29fb2291132fbae5b425234147e",
@@ -851,7 +864,7 @@
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
         "contracts/volatility/pool_source.tolk": "165bcc13ef1da46ae0a211ec431fe0783094f934ddbee8474d3abb2cd8628748",
-        "contracts/volatility/vol_index.tolk": "ce3984fe1f2c53bc228136db1cedc941803faba9795fddcb92d7720e033d5d2a"
+        "contracts/volatility/vol_index.tolk": "50af2dff70485e7975760399974565355d20a28deee86de8ff5a0694c52f7de5"
       }
     },
     "ControlMesh": {
@@ -865,7 +878,7 @@
         "contracts/control/control_mesh.tolk": "a7d88617d80ad8f7b8e1e8784924172f825642cc549435851c876b04d1618bbc",
         "contracts/control/control_solvers.tolk": "da98c575633aec80a8ed109c081c61f45ebd9fa7fa3d8972ea5ae64208761f75",
         "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
-        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
+        "contracts/cover/native_budget.tolk": "3acc79cbcfb5469f28ba2412f8e34688299ab8bb9714e25729b65974b9c11d42",
         "contracts/generated/opcodes/control/control_mesh_opcodes.tolk": "fb0bbe30a43d6d77978f22229fce793945484c72c310a0148b82fab350613afa",
         "contracts/generated/opcodes/shared/control/control_receipt_opcodes.tolk": "81c810c057ed353ddb53ddc0d57b485b2ee348e6e8642caf18bd39b26c0ecbaa",
         "contracts/perps/native_budget.tolk": "07039f9d92150bda665b349224da0d7f1bbc4ecb0ab9661a893c4111b032a546",
@@ -879,8 +892,9 @@
         "contracts/shared/jetton/transfer_budget.tolk": "0cce4b186fbf7167130790b3cbe9f3023263990517e4ab28e675e9696fb58386",
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
         "contracts/t3/relative_peg_budget.tolk": "6160d88241f4078062850e7978e0ab27fe4c588f5985a397bdfb99c9d31257b0"
@@ -962,10 +976,11 @@
         "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/risk/counterparty.tolk": "406a6e92ee8edc99f4a49287de8c36ae4086f0325fe05311ce9e9c2e03a09ad2",
         "contracts/shared/risk/policy_lease.tolk": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
       }
@@ -1001,16 +1016,16 @@
     },
     "ParisianPolicyManager": {
       "source": "contracts/cover/policy_manager.tolk",
-      "codeHash": "42dd1ef227b23e9ebcee5c02cd2936d431c68ef85e9a3bfb19513ce7b27f90fb",
-      "bocBytes": 88515,
-      "cells": 1004,
-      "bits": 673686,
+      "codeHash": "544e522c6fc9060d1d5e7189746517a86fe583e536c1f5796600457262bbce18",
+      "bocBytes": 88625,
+      "cells": 1007,
+      "bits": 674435,
       "inputs": {
         "contracts/automation/heartbeat.tolk": "1275b73a5d428671aa624f2932353010351e7854e28e306035d42c6df313bff1",
         "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
         "contracts/cover/lifecycle.tolk": "defc9c323adf41b235f12665f2035506289d8467670f1e1f330046dfe32a7b85",
-        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
-        "contracts/cover/policy_manager.tolk": "33b283ab1967bd8acaf51d88488af70c37ba9c1591d0d3574b5261b8ed8eb147",
+        "contracts/cover/native_budget.tolk": "3acc79cbcfb5469f28ba2412f8e34688299ab8bb9714e25729b65974b9c11d42",
+        "contracts/cover/policy_manager.tolk": "27c145b1126b56b75bfb90088a0210b679282ea90c12ad4c4b120f43fe356288",
         "contracts/cover/range_oracle.tolk": "3ff106cd96a3a33c50032c9f8fcd464b9d7dd66a70b3723b9f8d25fe9e51865d",
         "contracts/cover/vault_health_codec.tolk": "f2123651b74e341a7a12807209b938638f02e15de50579c80c87ecfbe2f0c2b6",
         "contracts/cover/volatility_oracle.tolk": "67109a7610e5efd4ebd3bf624e4e34452cf33220764ef38f690d886860da03ea",
@@ -1045,7 +1060,7 @@
         "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
         "contracts/cover/cover_vault.tolk": "b535b36504dfc3aa20a7a4f59357e44dc169a2bd3cadc446c2d0b0a845ff0a00",
         "contracts/cover/lifecycle.tolk": "defc9c323adf41b235f12665f2035506289d8467670f1e1f330046dfe32a7b85",
-        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
+        "contracts/cover/native_budget.tolk": "3acc79cbcfb5469f28ba2412f8e34688299ab8bb9714e25729b65974b9c11d42",
         "contracts/cover/vault_health_codec.tolk": "f2123651b74e341a7a12807209b938638f02e15de50579c80c87ecfbe2f0c2b6",
         "contracts/generated/opcodes/cover/cover_vault_opcodes.tolk": "9c8b78b7416ed155af46119bac14becec63e484703e2c6b168a7b8cfe97f033a",
         "contracts/generated/opcodes/risk/risk_vault_opcodes.tolk": "e53a6f796ba810d33ea1135b759401a66415610ce72ac2790d0dc37771cff164",
@@ -1064,8 +1079,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94"
       }
@@ -1298,7 +1314,7 @@
         "contracts/control/risk_native_budget.tolk": "10e68c16ca2ff63a14fa7a6953cce7e8032556dc3c72942104e6425528109e67",
         "contracts/cover/cover_vault.tolk": "b535b36504dfc3aa20a7a4f59357e44dc169a2bd3cadc446c2d0b0a845ff0a00",
         "contracts/cover/lifecycle.tolk": "defc9c323adf41b235f12665f2035506289d8467670f1e1f330046dfe32a7b85",
-        "contracts/cover/native_budget.tolk": "1a294c4bdf03fa6a497e008714584f9816abca89f898091a43d9365caf87c30a",
+        "contracts/cover/native_budget.tolk": "3acc79cbcfb5469f28ba2412f8e34688299ab8bb9714e25729b65974b9c11d42",
         "contracts/cover/vault_health_codec.tolk": "f2123651b74e341a7a12807209b938638f02e15de50579c80c87ecfbe2f0c2b6",
         "contracts/generated/opcodes/cover/cover_vault_opcodes.tolk": "9c8b78b7416ed155af46119bac14becec63e484703e2c6b168a7b8cfe97f033a",
         "contracts/generated/opcodes/risk/risk_vault_opcodes.tolk": "e53a6f796ba810d33ea1135b759401a66415610ce72ac2790d0dc37771cff164",
@@ -1317,8 +1333,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
         "contracts/testing/cover_vault_state_harness.tolk": "5b20d25a67f16859d1996f357cf445c66c01ce83c5730daa4f4b5d9155025081"
@@ -1351,8 +1368,9 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
         "contracts/testing/dex_router_harness.tolk": "694a2d996fd0509f663ddb1b35bf008a87a15b94cfee7ad12937367d47dbb9b4"
@@ -1476,7 +1494,8 @@
         "contracts/shared/native/funding.tolk": "a4d9723eb64434ea0a65f2c613be5deb98f4834f25ec495871e132eafe91ef6f",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/testing/launchpad_referral_journal_harness.tolk": "29afb1567000407f1fc46b7d5ce1f660e7a108ef546e24f745775ffb3c77cff2"
       }
@@ -1674,10 +1693,11 @@
         "contracts/shared/oracle/twap.tolk": "4134105e92f5d7f492d14790fbf284f7b8c0bb62f1f86f324c2502677cafc8fd",
         "contracts/shared/referral/credit_outbox.tolk": "59201ab161dc1e608dc1428bff63f11fcd6e72fe5be84736d9d73343ed5eaf57",
         "contracts/shared/referral/credit_protocol.tolk": "ab3dcb6c8c0e374a478ddce386976e0de6b860f3f42b3c2db86ed05e184375ae",
-        "contracts/shared/referral/native_budget.tolk": "93d37a2418cf18de5fb58f0e001d9d001dd60fb1f0fd37441823085a8203893b",
+        "contracts/shared/referral/native_budget.tolk": "96c0aa03e431fca37d97e37963d28670c45bea0d66fc6d8448a2bd00277bd0c7",
         "contracts/shared/risk/counterparty.tolk": "406a6e92ee8edc99f4a49287de8c36ae4086f0325fe05311ce9e9c2e03a09ad2",
         "contracts/shared/risk/policy_lease.tolk": "b501b83324418a323903951c5c413db6262739e585394eff1939bad1a7fe1fe8",
         "contracts/shared/storage/registry.tolk": "339b705b337b5e2f16ae68cf0416b5b8639eccc540a00ab1138c85a9eba8550a",
+        "contracts/shared/treasury/record_budget.tolk": "624fc1763200ec5a5d1f17baf2be3facb321617d0297d86950f6caf96d056b4b",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/shared/utils/serialization.tolk": "59e9805fb59949dc471c223872367ca34beeacf8fe554bad484eea7f3bf8cd94",
         "contracts/testing/perps_order_plan_harness.tolk": "52effc198e7233a3da388f04f27dd188b3128f04bafd1a56817c30a43e4e48e2"
@@ -1755,7 +1775,7 @@
         "contracts/generated/opcodes/testing/t3_liquidity_pool_harness_opcodes.tolk": "519e8d70256fadb864433df588c69d6ef47457064a5b736e7f5f1581582a5f62",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
         "contracts/t3/liquidity_pool.tolk": "f9321c94315563bf730232d6dd5ab4f59556762de180d9fa16d78c5952947c53",
-        "contracts/t3/messages.tolk": "dd402d67668a63f10407922bd349bd5e8bd9ba678371abc90320a69a44a0ae3f",
+        "contracts/t3/messages.tolk": "e49cd0eb35f44a8318882db579148ab70a24b4f967361b56f82eded04d828c28",
         "contracts/testing/t3_liquidity_pool_harness.tolk": "864ed136a90362b2e309194e4b11d1d858087f7484c38aa1096a71a3b4772cf6"
       }
     },
@@ -1768,7 +1788,7 @@
       "inputs": {
         "contracts/generated/opcodes/t3/messages_opcodes.tolk": "b6d2af5e87f20e713852dbbe73b7a2a9f75568630357c205ce71c1ef87b1e39e",
         "contracts/shared/utils/error_codes.tolk": "9a14d36ad96442063209558a0e8e2e15c9414b6e34431b8adb8cb9b06c8675f2",
-        "contracts/t3/messages.tolk": "dd402d67668a63f10407922bd349bd5e8bd9ba678371abc90320a69a44a0ae3f",
+        "contracts/t3/messages.tolk": "e49cd0eb35f44a8318882db579148ab70a24b4f967361b56f82eded04d828c28",
         "contracts/testing/t3_messages_harness.tolk": "02207d8c8cedfaf6369e9aacf3abef686382f9c98d168451d34e348e53a10408"
       }
     },
