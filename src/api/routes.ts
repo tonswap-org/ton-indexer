@@ -32,6 +32,7 @@ import {
 } from './schemas';
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
+import { publicIndexerPath } from './publicMount';
 import { publicAdmissionError, publicErrorMessage, sendError } from './errors';
 import { isAdmissionMethod } from '../data/admission/protocol';
 import type { FreshReadCall } from '../data/freshRead';
@@ -390,6 +391,7 @@ export const registerRoutes = (
     return null;
   };
   const { serviceId, publicBaseUrl, freshReads } = resolveServiceMetadata(config, registryMetadata);
+  const indexer = currentNativeRuntime(config.network, registryMetadata)?.services.indexer;
   const serviceIdentity = {
     serviceId,
     ecosystem: 'ton',
@@ -413,7 +415,7 @@ export const registerRoutes = (
       ...(freshReads ? ['fresh-read'] : []),
       'market-candles'
     ],
-    endpoints: {
+    endpoints: Object.fromEntries(Object.entries({
       health: '/api/indexer/v1/health',
       openapi: '/api/indexer/v1/openapi.json',
       balance: '/api/indexer/v1/accounts/{addr}/balance',
@@ -425,7 +427,7 @@ export const registerRoutes = (
       runGetMethods: '/api/indexer/v1/runGetMethods',
       ...(freshReads ? { readFresh: '/api/indexer/v1/readFresh' } : {}),
       marketCandles: '/api/indexer/v1/markets/{market}/candles'
-    },
+    }).map(([name, route]) => [name, publicIndexerPath(indexer, route)])),
     release: {
       releaseId: registryMetadata?.releaseId ?? null,
       manifestHash: registryMetadata?.manifestHash ?? null
@@ -1022,7 +1024,7 @@ export const registerRoutes = (
 
   app.get('/api/indexer/v1/docs', async (_request, reply) => {
     const nonce = randomBytes(16).toString('base64');
-    const html = buildDocsHtml(nonce);
+    const html = buildDocsHtml(nonce, indexer);
     reply.header(
       'content-security-policy',
       [

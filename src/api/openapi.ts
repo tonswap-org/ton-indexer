@@ -1,10 +1,11 @@
 import type { RegistryMetadata } from '../config/releaseManifest';
 import { ledgerPaths, ledgerSchemas } from '../ledger/openapi';
-import { resolveServiceMetadata, type ServiceMetadataConfig } from './serviceMetadata';
+import { currentNativeRuntime, resolveServiceMetadata, type ServiceMetadataConfig } from './serviceMetadata';
+import { publicIndexerPath } from './publicMount';
 
 export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryMetadata) => {
   const { serviceId } = resolveServiceMetadata(config, metadata);
-  return {
+  const spec = {
     openapi: '3.1.0',
     info: {
       title: 'TONSWAP Indexer API',
@@ -1652,4 +1653,8 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
       },
     },
   };
+  const indexer = currentNativeRuntime(config.network, metadata)?.services.indexer;
+  spec.paths = Object.fromEntries(Object.entries(spec.paths).map(([route, operation]) =>
+    [publicIndexerPath(indexer, route), operation])) as typeof spec.paths;
+  return spec;
 };

@@ -29,6 +29,8 @@ type ServerOptions = {
   preflightCorsOrigins?: string[];
   preflightAllowMethods?: string;
   preflightAllowHeaders?: string;
+  mount?: string;
+  requests?: string[];
 };
 
 const releaseId = runtimeManifestFixture().releaseId;
@@ -120,8 +122,10 @@ const writeReleaseManifest = (
   contracts: Record<string, string>,
   markets: ReturnType<typeof releaseMarkets>,
   spots = markets,
+  indexer = 'https://ti.soramitsu.io/api/indexer',
 ) => {
   const manifest = runtimeManifestFixture({
+    services: { ...runtimeManifestFixture().services, indexer },
     contracts: Object.fromEntries(Object.entries(contracts).map(([role, address]) => [role, { address, codeHash: 'a'.repeat(64) }])),
     spotMarkets: spots.map(({ symbol, pool, binSpacing, feePips }) => ({ symbol, pool, binSpacing, feePips })),
     perpsMarkets: markets.map((market, i) => ({ marketId: i + 1, symbol: market.symbol, pool: market.pool })),
@@ -131,21 +135,22 @@ const writeReleaseManifest = (
   return { manifest, manifestPath };
 };
 
-const strictFixture = (root: string, comparisonOnly = false) => {
+const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://ti.soramitsu.io/api/indexer') => {
   const markets = releaseMarkets();
   const contracts = releaseContracts(markets);
   const { manifest, manifestPath } = writeReleaseManifest(
     root,
-    comparisonOnly ? 'paired-release-manifest.json' : 'release-manifest.json',
+    `${comparisonOnly ? 'paired-' : ''}${indexer.includes('indexer-r2') ? 'r2-' : ''}${indexer.endsWith('/') ? 'trailing-' : ''}release-manifest.json`,
     contracts,
     comparisonOnly ? markets.slice(0, 1) : markets,
     comparisonOnly ? markets.slice(0, 2) : markets,
+    indexer,
   );
   const parsed = readCanonicalReleaseManifest(manifestPath, 'testnet');
   const routes: Routes = {
     '/api/indexer/v1/health': {
       body: {
-        serviceId: 'ti.soramitsu.io',
+        serviceId: `${new URL(indexer).host}${new URL(indexer).pathname.replace(/\/$/, '')}`,
         ecosystem: 'ton',
         chainId: 'ton:testnet',
         network: 'testnet',
@@ -155,11 +160,11 @@ const strictFixture = (root: string, comparisonOnly = false) => {
     '/api/indexer/v1/service-info': {
       body: {
         schemaVersion: 1,
-        serviceId: 'ti.soramitsu.io',
+        serviceId: `${new URL(indexer).host}${new URL(indexer).pathname.replace(/\/$/, '')}`,
         ecosystem: 'ton',
         chainId: 'ton:testnet',
         network: 'testnet',
-        publicBaseUrl: 'https://ti.soramitsu.io',
+        publicBaseUrl: indexer,
         readOnly: true,
         endpoints: { openapi: '/api/indexer/v1/openapi.json' },
         release: {
@@ -248,7 +253,8 @@ const withServer = async (
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     const origin = request.headers.origin;
-    if (request.method === 'OPTIONS' && url.pathname === '/api/indexer/v1/runGetMethod') {
+    options.requests?.push(`${request.method} ${url.pathname}`);
+    if (request.method === 'OPTIONS' && url.pathname === `${options.mount ?? '/api/indexer'}/v1/runGetMethod`) {
       const preflightOrigins = options.preflightCorsOrigins ?? options.corsOrigins;
       if (typeof origin === 'string' && preflightOrigins?.includes(origin)) {
         response.setHeader('access-control-allow-origin', origin);
@@ -413,6 +419,52 @@ const main = async () => {
       (corrupted[comparisonPath].body as Record<string, unknown>)[field] = value;
       await assertSmokeRejects(corrupted, /history_complete must be true|mismatch/, paired.options, {corsOrigins: [expectedCorsOrigin]});
     }
+    // A release on a distinct public mount uses only that mount, including preflight
+    // and encoded market queries. These route expectations do not call the URL helper.
+    const r2 = strictFixture(root, false, 'https://test.tonswap.org/api/indexer-r2');
+    const mountR2Routes = (source: Routes): Routes => {
+      const routes = Object.fromEntries(Object.entries(cloneRoutes(source)).map(([path, route]) =>
+        [path.replace('/api/indexer/', '/api/indexer-r2/'), route]));
+      (routes['/api/indexer-r2/v1/service-info'].body as { endpoints: { openapi: string } }).endpoints.openapi =
+        '/api/indexer-r2/v1/openapi.json';
+      const spec = routes['/api/indexer-r2/v1/openapi.json'].body as { paths: Record<string, unknown> };
+      spec.paths = Object.fromEntries(Object.entries(spec.paths).map(([path, operation]) =>
+        [path.replace('/api/indexer/', '/api/indexer-r2/'), operation]));
+      return routes;
+    };
+    const r2Routes = mountR2Routes(r2.routes);
+    const requests: string[] = [];
+    await withServer(r2Routes, async baseUrl => {
+      await runProductionSmoke(baseUrl, r2.options);
+      await runProductionSmoke(`${baseUrl}/api/indexer-r2`, r2.options);
+      await runProductionSmoke(`${baseUrl}/api/indexer-r2/`, r2.options);
+      const before = requests.length;
+      await assert.rejects(() => runProductionSmoke(`${baseUrl}/api/indexer`, r2.options), /target path differs/);
+      assert.equal(requests.length, before, 'A wrong mount must fail before any request');
+      await assert.rejects(() => runProductionSmoke(baseUrl, { ...r2.options, expectedPublicBaseUrl: 'https://test.tonswap.org/api/indexer' }), /public URL differs/);
+      assert.equal(requests.length, before, 'A conflicting advertised URL must fail before any request');
+    }, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2', requests });
+    assert.ok(requests.includes('OPTIONS /api/indexer-r2/v1/runGetMethod'));
+    assert.ok(requests.some(request => request.startsWith('GET /api/indexer-r2/v1/markets/')));
+    assert.ok(requests.every(request => /^(GET|OPTIONS) \/api\/indexer-r2\/v1\//.test(request)));
+    assert.equal(requests.some(request => request.includes('/api/indexer-r2/api/indexer')), false);
+    await assertSmokeRejects(r2.routes, /HTTP 404|returned 404|failed.*404/i, r2.options, { corsOrigins: [expectedCorsOrigin] });
+    const staleDiscovery = cloneRoutes(r2Routes);
+    (staleDiscovery['/api/indexer-r2/v1/service-info'].body as { endpoints: { openapi: string } }).endpoints.openapi = '/api/indexer/v1/openapi.json';
+    await assertSmokeRejects(staleDiscovery, /openapi endpoint/, r2.options, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2' });
+    const staleSpec = cloneRoutes(r2Routes);
+    staleSpec['/api/indexer-r2/v1/openapi.json'].body = openApi();
+    await assertSmokeRejects(staleSpec, /missing.*indexer-r2|indexer-r2.*missing/i, r2.options, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2' });
+
+    const trailing = strictFixture(root, false, 'https://test.tonswap.org/api/indexer-r2/');
+    await withServer(mountR2Routes(trailing.routes), async baseUrl => {
+      await runProductionSmoke(baseUrl, trailing.options);
+      await runProductionSmoke(`${baseUrl}/api/indexer-r2/`, trailing.options);
+      await assert.rejects(() => runProductionSmoke(baseUrl, {
+        ...trailing.options, expectedPublicBaseUrl: 'https://test.tonswap.org/api/indexer-r2',
+      }), /public URL differs/, 'Metadata must retain the exact native string even though route joining removes its trailing slash');
+    }, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2' });
+
     const strict = strictFixture(root);
     await withServer(
       strict.routes,

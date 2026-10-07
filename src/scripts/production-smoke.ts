@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
+import { publicIndexerPath, publicIndexerUrl } from '../api/publicMount';
 import {
   readCanonicalReleaseManifest,
   type RegistrySpotMarketMetadata,
@@ -96,6 +97,7 @@ const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
 const DEFAULT_HOSTILE_CORS_ORIGIN = 'https://hostile.tonswap.invalid';
 const SHA256_RE = /^[0-9a-f]{64}$/;
 type StrictReleaseExpectation = {
+  indexer: string;
   releaseId: string;
   releaseManifestHash: string;
   contracts: Record<string, string>;
@@ -126,7 +128,8 @@ export function normalizeBaseUrl(value: string): URL {
   return url;
 }
 
-export function redactedBaseUrl(value: string): string {
+export function redactedBaseUrl(value: string | undefined): string {
+  if (value === undefined) return '<native manifest indexer>';
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol)) return '<invalid public base URL>';
@@ -141,11 +144,24 @@ export function redactedBaseUrl(value: string): string {
   }
 }
 
+export function productionSmokeBaseUrl(target: string | undefined, indexer?: string): URL {
+  const base = normalizeBaseUrl(target ?? indexer ?? DEFAULT_BASE_URL);
+  if (indexer === undefined) {
+    // The explicitly unbound transport-test seam has an origin/prefix, not a native manifest.
+    base.pathname = `${base.pathname.replace(/\/+$/, '')}/api/indexer`;
+    return base;
+  }
+  const mount = new URL(indexer).pathname.replace(/\/+$/, '');
+  const requested = base.pathname.replace(/\/+$/, '');
+  if (requested && requested !== mount) throw Error('Smoke target path differs from the native indexer mount');
+  base.pathname = mount || '/';
+  // Validate the complete mount using the same builder as discovery.
+  publicIndexerPath(indexer, '/api/indexer/v1/health');
+  return base;
+}
+
 function endpoint(baseUrl: URL, path: string, searchParams?: URLSearchParams): URL {
-  const url = new URL(baseUrl.toString());
-  url.pathname = `${baseUrl.pathname}${path}`.replace(/\/{2,}/g, '/');
-  if (searchParams) url.search = searchParams.toString();
-  return url;
+  return publicIndexerUrl(baseUrl.toString(), path, searchParams);
 }
 
 function bodyEvidence(value: string): string {
@@ -154,14 +170,8 @@ function bodyEvidence(value: string): string {
   return `${bytes} bytes, sha256=${digest}`;
 }
 
-function deploymentHint(path: string): string {
-  if (path === '/api/indexer/v1/service-info') {
-    return 'Production routing must serve the TON v1 wallet API; deploy the current ton-indexer image to ti.soramitsu.io and expose /api/indexer/v1/service-info.';
-  }
-  if (path === '/api/indexer/v1/openapi.json') {
-    return 'Production routing must serve the TON OpenAPI contract at /api/indexer/v1/openapi.json.';
-  }
-  return 'Production routing must serve the TON indexer contract at ti.soramitsu.io.';
+function deploymentHint(baseUrl: URL, path: string): string {
+  return `Production routing must serve the manifest-bound TON API at ${endpoint(baseUrl, path).toString()}.`;
 }
 
 async function fetchJsonResponse(
@@ -175,18 +185,18 @@ async function fetchJsonResponse(
   });
   const rawBody = await response.text();
   if (!response.ok) {
-    throw new Error(`${path} returned HTTP ${response.status}. Body evidence: ${bodyEvidence(rawBody)}. ${deploymentHint(path)}`);
+    throw new Error(`${path} returned HTTP ${response.status}. Body evidence: ${bodyEvidence(rawBody)}. ${deploymentHint(baseUrl, path)}`);
   }
 
   const contentType = response.headers.get('content-type') ?? '';
   if (!/application\/json/i.test(contentType)) {
-    throw new Error(`${path} did not return JSON. Content-Type: ${contentType || '<missing>'}. Body evidence: ${bodyEvidence(rawBody)}. ${deploymentHint(path)}`);
+    throw new Error(`${path} did not return JSON. Content-Type: ${contentType || '<missing>'}. Body evidence: ${bodyEvidence(rawBody)}. ${deploymentHint(baseUrl, path)}`);
   }
 
   try {
     return { body: JSON.parse(rawBody), headers: response.headers };
   } catch {
-    throw new Error(`${path} returned invalid JSON. Body evidence: ${bodyEvidence(rawBody)}. ${deploymentHint(path)}`);
+    throw new Error(`${path} returned invalid JSON. Body evidence: ${bodyEvidence(rawBody)}. ${deploymentHint(baseUrl, path)}`);
   }
 }
 
@@ -361,6 +371,7 @@ function resolveStrictReleaseExpectation(
   assert.ok(manifest.spotMarkets.length > 0, 'release manifest must contain configured spot markets');
 
   return {
+    indexer: manifest.runtime.services.indexer,
     releaseId,
     releaseManifestHash: exactReleaseManifestHash,
     contracts: manifest.contracts,
@@ -458,30 +469,35 @@ function assertCandleHistory(
 }
 
 export async function runProductionSmoke(
-  baseUrlInput = process.env.TON_INDEXER_BASE_URL || DEFAULT_BASE_URL,
+  baseUrlInput?: string,
   options: ProductionSmokeOptions = {}
 ) {
-  const baseUrl = normalizeBaseUrl(baseUrlInput);
   const expectedNetworkWasExplicit =
     options.expectedNetwork !== undefined ||
     optionalTrimmed(process.env.TON_INDEXER_EXPECTED_NETWORK) !== undefined;
   const expectedNetwork = options.expectedNetwork ?? expectedNetworkFromEnv();
-  const expectedServiceId =
-    options.expectedServiceId ?? process.env.TON_INDEXER_EXPECTED_SERVICE_ID ?? 'ti.soramitsu.io';
-  const expectedPublicBaseUrl = canonicalPublicBaseUrl(
-    options.expectedPublicBaseUrl ??
-      process.env.TON_INDEXER_EXPECTED_PUBLIC_BASE_URL ??
-      'https://ti.soramitsu.io'
-  );
   const strictRelease = resolveStrictReleaseExpectation(
     options,
     expectedNetwork,
     expectedNetworkWasExplicit
   );
+  const baseUrl = productionSmokeBaseUrl(baseUrlInput ?? process.env.TON_INDEXER_BASE_URL, strictRelease?.indexer);
+  const publicPath = (route: string) => publicIndexerPath(strictRelease?.indexer, route);
+  const nativeUrl = strictRelease ? new URL(strictRelease.indexer) : undefined;
+  const nativeServiceId = nativeUrl && `${nativeUrl.host}${nativeUrl.pathname.replace(/\/$/, '')}`;
+  const expectedServiceId = options.expectedServiceId ?? process.env.TON_INDEXER_EXPECTED_SERVICE_ID ?? nativeServiceId ?? 'ti.soramitsu.io';
+  const publicBaseOverride = options.expectedPublicBaseUrl ?? process.env.TON_INDEXER_EXPECTED_PUBLIC_BASE_URL;
+  const expectedPublicBaseUrl = strictRelease?.indexer ?? canonicalPublicBaseUrl(publicBaseOverride ?? 'https://ti.soramitsu.io');
+  if (strictRelease) {
+    assert.equal(expectedServiceId, nativeServiceId, 'Expected service identity differs from the native manifest');
+    if (publicBaseOverride !== undefined) {
+      assert.equal(publicBaseOverride, strictRelease.indexer, 'Expected public URL differs from the native manifest');
+    }
+  }
   const expectedChainId = `ton:${expectedNetwork}`;
   const health = await fetchJson(baseUrl, '/api/indexer/v1/health') as HealthInfo;
   if ('ok' in health) {
-    throw new Error('TI production routing points at a Solswap indexer contract: health contains ok. Route ti.soramitsu.io to the TON indexer deployment.');
+    throw new Error('TI production routing points at a Solswap indexer contract: health contains ok. Route the selected manifest mount to its TON indexer deployment.');
   }
   if (health.lastMasterSeqno === undefined) {
     throw new Error(`TI production routing does not expose the TON health contract: expected lastMasterSeqno, received keys ${objectKeys(health)}.`);
@@ -505,8 +521,8 @@ export async function runProductionSmoke(
   assert.equal(serviceInfo.readOnly, true, 'service-info readOnly must be true');
   assert.equal(
     serviceInfo.endpoints?.openapi,
-    '/api/indexer/v1/openapi.json',
-    'service-info openapi endpoint must be /api/indexer/v1/openapi.json',
+    publicPath('/api/indexer/v1/openapi.json'),
+    'service-info openapi endpoint must match the native indexer mount',
   );
   if (strictRelease) {
     assert.deepEqual(Object.keys(serviceInfo.release ?? {}).sort(), ['manifestHash', 'releaseId']);
@@ -558,16 +574,16 @@ export async function runProductionSmoke(
   assert.equal(spec.info?.title, 'TONSWAP Indexer API', 'OpenAPI title must be TONSWAP Indexer API');
   assert.equal(spec.info?.version, '1.0.0', 'OpenAPI info.version must be 1.0.0');
   assert.equal(spec.servers?.[0]?.url, '/', 'OpenAPI primary server URL must be /');
-  assertPath(spec, '/api/indexer/v1/service-info');
-  assertPath(spec, '/api/indexer/v1/contracts');
-  assertPath(spec, '/api/indexer/v1/accounts/{addr}/balance');
-  assertPath(spec, '/api/indexer/v1/accounts/{addr}/balances');
-  assertPath(spec, '/api/indexer/v1/accounts/{addr}/assets');
-  assertPath(spec, '/api/indexer/v1/accounts/{addr}/txs');
-  assertPath(spec, '/api/indexer/v1/accounts/{addr}/state');
-  assertPath(spec, '/api/indexer/v1/markets/{market}/candles');
-  assertPath(spec, '/api/indexer/v1/runGetMethod');
-  assertPath(spec, '/api/indexer/v1/runGetMethods');
+  assertPath(spec, publicPath('/api/indexer/v1/service-info'));
+  assertPath(spec, publicPath('/api/indexer/v1/contracts'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/balance'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/balances'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/assets'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/txs'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/state'));
+  assertPath(spec, publicPath('/api/indexer/v1/markets/{market}/candles'));
+  assertPath(spec, publicPath('/api/indexer/v1/runGetMethod'));
+  assertPath(spec, publicPath('/api/indexer/v1/runGetMethods'));
 
   if (strictRelease) {
     const allowedCors = await fetchJsonResponse(baseUrl, '/api/indexer/v1/service-info', {
@@ -689,7 +705,7 @@ export async function runProductionSmoke(
 }
 
 if (require.main === module) {
-  const baseUrlInput = process.argv[2] || process.env.TON_INDEXER_BASE_URL || DEFAULT_BASE_URL;
+  const baseUrlInput = process.argv[2] || process.env.TON_INDEXER_BASE_URL;
   const expectedNetwork = process.argv[3] as ProductionSmokeOptions['expectedNetwork'] | undefined;
   const extraArguments = process.argv.slice(4);
   if (extraArguments.length > 0) {

@@ -558,7 +558,7 @@ which the generic Linux image does not provide.
 ## Production Smoke
 ```bash
 npm run smoke:production
-TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production
+TON_INDEXER_BASE_URL=https://test.tonswap.org/api/indexer-r2 npm run smoke:production
 ```
 
 The smoke check verifies that the target host serves the TONSWAP API contract,
@@ -573,16 +573,32 @@ also requires the public service to expose the manifest's exact contract
 map, the three discovery/root equality pairs, and exactly two complete
 one-minute single-trade candles for each of its three canonical markets:
 ```bash
-TON_INDEXER_BASE_URL=http://127.0.0.1:8787 \
-TON_INDEXER_EXPECTED_NETWORK=localnet \
-TON_INDEXER_EXPECTED_SERVICE_ID=tonswap-local-indexer \
-TON_INDEXER_EXPECTED_PUBLIC_BASE_URL=http://127.0.0.1:8787 \
-TON_INDEXER_EXPECTED_RELEASE_ID=local-run-1 \
+TON_INDEXER_BASE_URL=https://test.tonswap.org/api/indexer-r2 \
+TON_INDEXER_EXPECTED_NETWORK=testnet \
+TON_INDEXER_EXPECTED_RELEASE_ID=<final-release-id> \
 TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH=<sha256> \
 TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH=/absolute/path/to/release-manifest.json \
-TON_INDEXER_EXPECTED_CORS_ORIGIN=http://127.0.0.1:5173 \
+TON_INDEXER_EXPECTED_CORS_ORIGIN=https://test.tonswap.org \
 npm run smoke:production
 ```
+
+The native manifest's `services.indexer` supplies the exact public mount and
+service identity. With no target override, smoke uses that manifest URL.
+`TON_INDEXER_BASE_URL` may be a transport origin or that origin
+plus the exact manifest mount; another nonempty path is rejected before requests.
+The transport origin can be an explicitly selected local proxy for an owned check.
+Optional expected service-ID/public-URL overrides must agree with the manifest.
+For example, `/api/indexer-r2` produces `/api/indexer-r2/v1/health`, once.
+
+The backend still registers `/api/indexer` routes. Its native discovery, OpenAPI
+path keys (with server `/`) and interactive docs advertise the manifest mount.
+A distinct public mount requires a reviewed reverse-proxy mapping to the backend
+routes that preserves methods, query values and streaming behavior. Keep any
+funded release's existing service and public mount independently available.
+These source changes do not provision a proxy or qualify either release.
+Run `npm run test:public-mount` for offline route/document behavior and
+`npx tsx src/scripts/production-smoke-adversarial-test.ts` for the loopback smoke
+regressions, including exact R1/R2 mounts and rejection of cross-release routes.
 
 The smoke sends simple and POST-preflight requests for both the allowed origin
 and a distinct hostile origin. Hostile responses must omit both CORS

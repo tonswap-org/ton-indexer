@@ -1,6 +1,8 @@
+import { publicIndexerPath } from './publicMount';
+
 const nonceAttribute = (nonce?: string) => (nonce ? ` nonce="${nonce}"` : '');
 
-export const buildDocsHtml = (nonce?: string) => {
+export const buildDocsHtml = (nonce?: string, indexer?: string) => {
   const parts = [
     '<!doctype html>',
     '<html>',
@@ -110,5 +112,7 @@ export const buildDocsHtml = (nonce?: string) => {
     '</html>',
   ];
 
-  return parts.join('\n');
+  const mount = publicIndexerPath(indexer, '/api/indexer/v1')
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return parts.join('\n').replaceAll('/api/indexer/v1', () => mount);
 };
