@@ -1,6 +1,4 @@
 import { decodeOriginalTransaction, assertOriginalTransactionPage } from './transactionEvidence';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import {
   Address,
   Cell,
@@ -16,8 +14,11 @@ import {
   parseTuple,
   serializeTuple,
 } from '@ton/core';
-import { LiteClient, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
-import { BoundedLiteEngine } from './boundedLiteEngine';
+import { LiteClient, type LiteEngine } from 'ton-lite-client';
+import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError } from './boundedLiteEngine';
+import { loadLiteserverPool, type LiteserverPeer } from './liteserverPool';
+import { HeadTracker } from './headTracker';
+import { readAccountAnchor, blockHeaderTime } from './accountAnchor';
 import { assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
   FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 import { errorDiagnostic, type Logger } from '../utils/logger';
@@ -27,7 +28,7 @@ import {
   AccountStateResponse,
   MasterchainInfo,
   RawTransaction,
-  TonDataSource,
+  ChainReadError, type ChainSource, type ChainHead, type ReadOptions,
   TransactionCursor,
 } from './dataSource';
 import {
@@ -41,106 +42,6 @@ import {
   parseCanonicalJettonRootData,
   readCanonicalJettonBalance
 } from './jettonAbi';
-
-type LiteServerConfig = {
-  ip: number;
-  port: number;
-  id: { key: string };
-};
-
-type GlobalConfig = {
-  liteservers?: LiteServerConfig[];
-};
-
-type LiteServer = {
-  host: string;
-  publicKey: Buffer;
-};
-
-const intToIP = (int: number) => {
-  const part1 = int & 255;
-  const part2 = (int >> 8) & 255;
-  const part3 = (int >> 16) & 255;
-  const part4 = (int >> 24) & 255;
-  return `${part4}.${part3}.${part2}.${part1}`;
-};
-
-const parseGlobalConfig = (data: GlobalConfig): LiteServer[] => {
-  const servers = data.liteservers ?? [];
-  return servers
-    .filter((entry) => entry?.ip && entry?.port && entry?.id?.key)
-    .map((entry) => ({
-      host: `tcp://${intToIP(entry.ip)}:${entry.port}`,
-      publicKey: Buffer.from(entry.id.key, 'base64'),
-    }));
-};
-
-const readConfigFromPath = (path: string): LiteServer[] => {
-  const raw = readFileSync(path, 'utf8');
-  return parseGlobalConfig(JSON.parse(raw));
-};
-
-const readConfigFromUrl = async (url: string): Promise<LiteServer[]> => {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  const data = (await res.json()) as GlobalConfig;
-  return parseGlobalConfig(data);
-};
-
-const parsePoolList = (pool: string): LiteServer[] => {
-  const items = pool.split(',').map((entry) => entry.trim()).filter(Boolean);
-  const servers: LiteServer[] = [];
-  for (const item of items) {
-    const [hostPart, portPart, keyPart] = item.split(':');
-    if (!hostPart || !portPart || !keyPart) continue;
-    const host = hostPart.match(/^\d+$/) ? intToIP(Number(hostPart)) : hostPart;
-    const port = Number(portPart);
-    if (!Number.isFinite(port)) continue;
-    servers.push({
-      host: `tcp://${host}:${port}`,
-      publicKey: Buffer.from(keyPart, 'base64'),
-    });
-  }
-  return servers;
-};
-
-const normalizePoolInput = (network: Network, pool?: string): string | undefined => {
-  if (!pool) return pool;
-  const trimmed = pool.trim();
-  if (
-    network === 'testnet' &&
-    /^https?:\/\/ton\.org\/global\.config\.json\/?$/i.test(trimmed)
-  ) {
-    return 'https://ton.org/testnet-global.config.json';
-  }
-  return trimmed;
-};
-
-const resolveLiteServers = async (network: Network, pool?: string): Promise<LiteServer[]> => {
-  const normalizedPool = normalizePoolInput(network, pool);
-  if (normalizedPool) {
-    if (normalizedPool.startsWith('http://') || normalizedPool.startsWith('https://')) {
-      return await readConfigFromUrl(normalizedPool);
-    }
-    const resolvedPath = resolve(process.cwd(), normalizedPool);
-    if (normalizedPool.endsWith('.json') || existsSync(resolvedPath)) {
-      return readConfigFromPath(normalizedPool.endsWith('.json') ? normalizedPool : resolvedPath);
-    }
-    const list = parsePoolList(normalizedPool);
-    if (list.length > 0) return list;
-  }
-
-  const defaultUrl =
-    network === 'mainnet'
-      ? 'https://ton.org/global.config.json'
-      : network === 'testnet'
-        ? 'https://ton.org/testnet-global.config.json'
-        : null;
-  if (!defaultUrl) {
-    throw new Error('LITESERVER_POOL_LOCALNET is required when TON_NETWORK=localnet');
-  }
-  return await readConfigFromUrl(defaultUrl);
-};
 
 const cellToBase64 = (cell: Cell | null | undefined): string | undefined => {
   if (!cell) return undefined;
@@ -346,69 +247,101 @@ const bigintToBuffer = (value: bigint, bytes = 32) => {
   return Buffer.concat([Buffer.alloc(bytes - buf.length, 0), buf]);
 };
 
-const MASTERCHAIN_INFO_TTL_MS = 1_000;
-type LiteMasterchainRef = Awaited<ReturnType<LiteClient['getMasterchainInfo']>>;
+export type ChainSourceObserver = { query?(peer: number, ok: boolean, ms: number): void; head?(head: ChainHead): void };
+type SourceOptions = { network: Network; peers: LiteserverPeer[]; logger: Logger; observer?: ChainSourceObserver;
+  engineFactory?: (peer: LiteserverPeer) => LiteEngine };
+type Flight = { controller: AbortController; promise: Promise<unknown>; users: number };
+const liteBlock = (head: ChainHead): LiteBlockId => ({ workchain: head.workchain, shard: head.shard, seqno: head.seqno,
+  rootHash: Buffer.from(head.rootHashHex, 'hex'), fileHash: Buffer.from(head.fileHashHex, 'hex') });
 
-export class LiteClientDataSource implements TonDataSource {
-  network: Network;
-  private client: LiteClient;
-  private masterchainRef: LiteMasterchainRef | null = null;
-  private masterchainRefExpiresAt = 0;
-  private masterchainRefPending: Promise<LiteMasterchainRef> | null = null;
+export function createLiteChainSource(options: SourceOptions): LiteClientDataSource { return new LiteClientDataSource(options); }
 
-  private constructor(network: Network, client: LiteClient, private readonly logger: Logger) {
-    this.network = network;
-    this.client = client;
+export class LiteClientDataSource implements ChainSource {
+  readonly network: Network;
+  private client!: LiteClient;
+  private engine?: BoundedLiteEngine;
+  private closed = false;
+  private readonly heads: HeadTracker;
+  private readonly flights = new Map<string, Flight>();
+  private readonly logger: Logger;
+  constructor(private readonly options: SourceOptions) {
+    if (!options.peers.length) throw new Error('No liteserver endpoints configured');
+    this.network = options.network;
+    this.logger = options.logger;
+    this.heads = new HeadTracker(this.network, options.observer?.head);
   }
-
   static async create(network: Network, pool: string | undefined, logger: Logger) {
-    const servers = await resolveLiteServers(network, pool);
-    if (servers.length === 0) {
-      throw new Error('No liteserver endpoints resolved');
-    }
-    const engines: LiteEngine[] = servers.map(
-      (server) =>
-        new LiteSingleEngine({
-          host: server.host,
-          publicKey: server.publicKey,
-        })
-    );
-    const engine = new BoundedLiteEngine(engines);
-    const client = new LiteClient({ engine });
-    return new LiteClientDataSource(network, client, logger);
+    return createLiteChainSource({ network, peers: loadLiteserverPool(pool), logger });
   }
-
-  private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> {
-    // Failover belongs to the wire-query engine. Retrying a compound client
-    // operation here multiplies latency and can repeat already completed reads.
-    return fn(this.client);
+  private ensure(): BoundedLiteEngine {
+    if (this.closed) throw new ChainReadError('upstream_unavailable');
+    if (!this.engine) {
+      const engines = this.options.peers.map(peer => this.options.engineFactory?.(peer)
+        ?? new AbortableLitePeer(`tcp://${peer.host}:${peer.port}`, peer.publicKey));
+      this.engine = new BoundedLiteEngine(engines, undefined, this.options.observer?.query);
+      this.client = new LiteClient({ engine: this.engine });
+    }
+    return this.engine;
   }
-
-  private async getMasterchainRef(force = false): Promise<LiteMasterchainRef> {
-    const now = Date.now();
-    if (!force && this.masterchainRef && this.masterchainRefExpiresAt > now) {
-      return this.masterchainRef;
+  private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> { this.ensure(); return fn(this.client); }
+  private async queryLite<T>(fn: () => Promise<T>): Promise<T> { this.ensure(); return fn(); }
+  private async scope<T>(options: { signal?: AbortSignal; at?: ChainHead }, run: (signal: AbortSignal) => Promise<T>, timeout = 5_000): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new ChainReadError('upstream_timeout')), timeout);
+    const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : [])]);
+    try {
+      if (signal.aborted) throw new ChainReadError('upstream_timeout');
+      return await this.ensure().withOptions({ signal, awaitSeqno: options.at?.seqno }, () => new Promise<T>((resolve, reject) => {
+        const abort = () => { cleanup(); reject(new ChainReadError('upstream_timeout')); };
+        const cleanup = () => signal.removeEventListener('abort', abort);
+        signal.addEventListener('abort', abort, { once: true });
+        Promise.resolve().then(() => run(signal)).then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+      }));
+    } catch (cause) {
+      if (cause instanceof ChainReadError) throw cause;
+      throw new ChainReadError(signal.aborted || (cause instanceof BoundedLiteQueryError && cause.timedOut)
+        ? 'upstream_timeout' : 'upstream_unavailable', { cause });
+    } finally { clearTimeout(timer); }
+  }
+  private shared<T>(key: string, signal: AbortSignal, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (signal.aborted) return Promise.reject(new ChainReadError('upstream_timeout'));
+    let flight = this.flights.get(key);
+    if (!flight) {
+      const controller = new AbortController();
+      const promise = Promise.resolve().then(() => run(controller.signal));
+      flight = { controller, promise, users: 0 }; this.flights.set(key, flight);
+      const current = flight;
+      const cleanup = () => { if (this.flights.get(key) === current) this.flights.delete(key); };
+      void promise.then(cleanup, cleanup);
     }
-    if (!force && this.masterchainRefPending) {
-      return this.masterchainRefPending;
-    }
-    const pending = this.call((client) => client.getMasterchainInfo())
-      .then((master) => {
-        this.masterchainRef = master;
-        this.masterchainRefExpiresAt = Date.now() + MASTERCHAIN_INFO_TTL_MS;
-        return master;
-      })
-      .finally(() => {
-        this.masterchainRefPending = null;
+    const current = flight; current.users++;
+    return new Promise<T>((resolve, reject) => {
+      let done = false;
+      const finish = (error?: unknown, value?: unknown) => {
+        if (done) return; done = true;
+        signal.removeEventListener('abort', abort);
+        if (--current.users === 0 && this.flights.get(key) === current) {
+          this.flights.delete(key); current.controller.abort(new ChainReadError('upstream_timeout'));
+        }
+        if (error) reject(error); else resolve(value as T);
+      };
+      const abort = () => finish(new ChainReadError('upstream_timeout'));
+      signal.addEventListener('abort', abort, { once: true });
+      current.promise.then(value => finish(undefined, value), error => finish(error));
+    });
+  }
+  async head(options: { signal?: AbortSignal } = {}): Promise<ChainHead> {
+    return this.scope(options, async signal => {
+      const cached = this.heads.fresh();
+      if (cached) return cached;
+      return this.shared('head', signal, async signal => {
+        await this.ensure().query(Functions.liteServer_getMasterchainInfoExt, { kind: 'liteServer.getMasterchainInfoExt', mode: 0 }, {
+          signal, validate: candidate => { this.heads.accept(candidate as Parameters<HeadTracker['accept']>[0]); },
+        });
+        return this.heads.current()!;
       });
-    this.masterchainRefPending = pending;
-    return pending;
+    });
   }
-
-  private async queryLite<T>(fn: () => Promise<T>): Promise<T> {
-    return this.call((_client) => fn());
-  }
-
   private async lookupMasterchainBlock(seqno: number) {
     return this.queryLite(() =>
       this.client.lookupBlockByID({
@@ -465,43 +398,49 @@ export class LiteClientDataSource implements TonDataSource {
   }
 
   async getMasterchainInfo(): Promise<MasterchainInfo> {
-    const master = await this.call((client) => client.getMasterchainInfoExt());
-    return {
-      seqno: master.last.seqno,
-      timestamp: Number.isSafeInteger(master.lastUtime) && master.lastUtime >= 0 ? master.lastUtime : undefined,
-    };
+    const head = await this.head(); return { seqno: head.seqno, timestamp: head.utime };
   }
-
-  async getAccountState(address: string): Promise<AccountStateResponse> {
-    const master = await this.getMasterchainRef();
-    return this.readAccountStateAtBlock(address, master.last);
-  }
-
-  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
-    const queriedAt = Date.now();
-    // Do not enter the datasource head cache or the LiteClient account loader.
-    const master = await this.call(client => client.getMasterchainInfoExt());
-    assertFreshNetwork(this.network, master.init);
-    const head = freshMasterchainBlock(master.last);
-    const results = await executeFreshCalls(calls, async call => {
-      const address = Address.parse(call.address).toRawString();
-      if (call.kind === 'account') return { kind: 'account', address,
-        state: await this.readAccountStateAtBlock(address, master.last, true) };
-      const result = await this.runGetMethodAtBlock(Address.parse(address), call.method, call.args, master.last, true);
-      if (!result) throw new FreshReadUnavailableError();
-      return { kind: 'getter', address, ...result };
+  async getAccountState(address: string, options: ReadOptions = {}): Promise<AccountStateResponse> {
+    return this.scope(options, async signal => {
+      const head = options.at ?? await this.head({ signal });
+      const normalized = Address.parse(address).toRawString();
+      return this.shared(`account:${head.rootHashHex}:${normalized}`, signal, signal =>
+        this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, () => this.readAccountStateAtBlock(normalized, liteBlock(head), head)));
     });
+  }
+  async read(calls: FreshReadCall[], options: ReadOptions = {}) {
+    return this.scope(options, async signal => {
+      const head = options.at ?? await this.head({ signal });
+      const results = await executeFreshCalls(calls, async call => {
+        if (signal.aborted) throw new ChainReadError('upstream_timeout');
+        const address = Address.parse(call.address).toRawString();
+        if (call.kind === 'account') return { kind: 'account', address, state: await this.getAccountState(address, { at: head, signal }) };
+        return { kind: 'getter', address, ...await this.runGetMethod(address, call.method, call.args, { at: head, signal }) };
+      });
+      return { head, results };
+    }, 18_000);
+  }
+  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
+    const queriedAt = Date.now(), { head, results } = await this.read(calls);
     const batch: FreshReadBatch = { network: this.network, readContext: { source: 'lite', head, queriedAt }, results };
     assertFreshReadBatch(batch, calls, this.network, queriedAt);
     return batch;
   }
-
-  async getAccountStateAtSeqno(address: string, seqno: number): Promise<AccountStateResponse> {
-    if (!Number.isSafeInteger(seqno) || seqno < 0) throw new Error('Invalid archival block');
-    return this.readAccountStateAtBlock(address, (await this.lookupMasterchainBlock(seqno)).id);
+  async getAccountStateAtSeqno(address: string, seqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
+    return this.scope(options, async signal => this.ensure().withOptions({ signal, awaitSeqno: seqno }, async () => {
+      if (!Number.isSafeInteger(seqno) || seqno < 1) throw new Error('Invalid archival block');
+      const header = await this.lookupMasterchainBlock(seqno);
+      const proof = Cell.fromBoc(header.headerProof);
+      if (proof.length !== 1 || proof[0].type !== CellType.MerkleProof) throw new Error('Invalid archival header proof');
+      const head = { ...freshMasterchainBlock(header.id), utime: blockHeaderTime(proof[0].refs[0], header.id) };
+      return this.ensure().withOptions({ signal, awaitSeqno: seqno }, () => this.readAccountStateAtBlock(address, header.id, head));
+    }));
   }
-
-  async getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number): Promise<AccountStateResponse> {
+  async getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
+    return this.scope(options, signal => this.ensure().withOptions({ signal, awaitSeqno: containingSeqno },
+      () => this.readAccountStateAtTransaction(address, cursor, containingSeqno, signal)), 30_000);
+  }
+  private async readAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, signal: AbortSignal): Promise<AccountStateResponse> {
     if (!Number.isSafeInteger(containingSeqno) || containingSeqno < 1 ||
         !/^[1-9][0-9]*$/.test(cursor.lt)) throw new Error('Invalid exact archival cursor.');
     const parsed = Address.parse(address);
@@ -537,6 +476,7 @@ export class LiteClientDataSource implements TonDataSource {
     const contexts = new Map<string, { block: Cell; config: Cell }>();
     const steps: HistoricalReplayStep[] = [];
     for (const item of selected.reverse()) {
+      if (signal.aborted) throw new ChainReadError('upstream_timeout');
       const key = item.blockId.rootHash.toString('hex');
       let context = contexts.get(key);
       if (!context) {
@@ -564,15 +504,18 @@ export class LiteClientDataSource implements TonDataSource {
       }
       steps.push({ transaction: item.transaction, ...context });
     }
-    return replayHistoricalAccount({ address: parsed, cursor, predecessor, steps });
+    const state = await replayHistoricalAccount({ address: parsed, cursor, predecessor, steps });
+    const final = selected.at(-1)!;
+    const genUtime = blockHeaderTime(steps.at(-1)!.block, final.blockId);
+    return Object.freeze({ ...state, anchor: { shardBlock: { workchain: final.blockId.workchain, shard: final.blockId.shard,
+      seqno: final.blockId.seqno, rootHashHex: final.blockId.rootHash.toString('hex'), fileHashHex: final.blockId.fileHash.toString('hex') }, genUtime } });
   }
 
-  private async readAccountStateAtBlock(address: string, block: LiteBlockId, uncached = false): Promise<AccountStateResponse> {
+  private async readAccountStateAtBlock(address: string, block: LiteBlockId, head: ChainHead): Promise<AccountStateResponse> {
     const parsed = Address.parse(address);
-    const state = await this.call((client) => uncached ? client.getAccountStateRaw(parsed, block) : client.getAccountState(parsed, block));
-    if (uncached) {
-      assertFreshBlock(state.block, freshMasterchainBlock(block));
-    }
+    const state = await this.call(client => client.getAccountStateRaw(parsed, block));
+    assertBlockId(state.block, block, 'Account masterchain block');
+    const anchor = await readAccountAnchor(state, head, shard => this.client.getBlockHeader(shard), address);
     if (state.state === undefined || typeof state.balance?.coins !== 'bigint' || state.balance.coins < 0n)
       throw new Error('Invalid current lite account state.');
     const lastTx = state.lastTx;
@@ -580,6 +523,7 @@ export class LiteClientDataSource implements TonDataSource {
       || typeof lastTx.hash !== 'bigint' || lastTx.hash < 0n || lastTx.hash >= (1n << 256n)
       || (lastTx.lt === 0n) !== (lastTx.hash === 0n))) throw new Error('Invalid current lite account transaction pointer.');
     const account = state.state ?? null;
+    if (account && !account.addr.equals(parsed)) throw new Error('Current lite account belongs to another address.');
     const storageState = account?.storage?.state;
     const storageType = storageState?.type;
     if (account && !['uninit', 'active', 'frozen'].includes(storageType ?? '')) throw new Error('Invalid current lite account storage state.');
@@ -593,6 +537,7 @@ export class LiteClientDataSource implements TonDataSource {
     const codeCell = activeState?.code ?? null;
     const dataCell = activeState?.data ?? null;
     return {
+      anchor,
       balance: state.balance.coins.toString(),
       lastTxLt: lastTx?.lt?.toString(),
       lastTxHash: lastTx ? bigintToBuffer(lastTx.hash).toString('base64') : undefined,
@@ -602,18 +547,18 @@ export class LiteClientDataSource implements TonDataSource {
     };
   }
 
-  async getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]> {
+  async getTransactions(address: string, limit: number, lt?: string, hash?: string, options: { signal?: AbortSignal } = {}): Promise<RawTransaction[]> {
+    return this.scope(options, signal => this.readTransactions(address, limit, lt, hash, signal));
+  }
+  private async readTransactions(address: string, limit: number, lt: string | undefined, hash: string | undefined, signal: AbortSignal): Promise<RawTransaction[]> {
     const parsed = Address.parse(address);
     let cursorLt = lt;
     let cursorHash = hash;
 
     if (!cursorLt || !cursorHash) {
-      const master = await this.getMasterchainRef();
-      const state = await this.call((client) => client.getAccountState(parsed, master.last));
-      const lastTx = state.lastTx;
-      if (!lastTx) return [];
-      cursorLt = lastTx.lt.toString();
-      cursorHash = bigintToBuffer(lastTx.hash).toString('base64');
+      const state = await this.getAccountState(address, { signal });
+      if (!state.lastTxLt || state.lastTxLt === '0') return [];
+      cursorLt = state.lastTxLt; cursorHash = state.lastTxHash!;
     }
 
     const txs = await this.call((client) =>
@@ -629,35 +574,32 @@ export class LiteClientDataSource implements TonDataSource {
     return assertOriginalTransactionPage(page, parsed, { lt: BigInt(cursorLt).toString(), hash: Buffer.from(cursorHash, 'base64').toString('base64') });
   }
 
-  async runGetMethod(
-    address: string,
-    method: string,
-    args: TupleItem[] = []
-  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
+  async runGetMethod(address: string, method: string, args: TupleItem[] = [], options: ReadOptions = {}): Promise<{ exitCode: number; stack: TupleItem[] }> {
     try {
-      const target = Address.parse(address);
-      const master = await this.getMasterchainRef();
-      return await this.runGetMethodAtBlock(target, method, args, master.last);
+      return await this.scope(options, async signal => {
+        const head = options.at ?? await this.head({ signal }), target = Address.parse(address);
+        const encoded = serializeTuple(args).toBoc({ idx: false }).toString('base64');
+        return this.shared(`getter:${head.rootHashHex}:${target.toRawString()}:${method}:${encoded}`, signal, signal =>
+          this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, () => this.runGetMethodAtBlock(target, method, args, liteBlock(head))));
+      });
     } catch (error) {
       this.logger.warn('liteserver getter unavailable', { address, method, error: errorDiagnostic(error) });
-      return null;
+      throw error;
     }
   }
-
   private async runGetMethodAtBlock(
     target: Address,
     method: string,
     args: TupleItem[],
-    block: LiteBlockId,
-    strict = false
-  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
+    block: LiteBlockId
+  ): Promise<{ exitCode: number; stack: TupleItem[] }> {
     const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
     const res = await this.call((client) => client.runMethod(target, method, params, block));
     assertBlockId(res.block, block, `Getter ${method} masterchain block`);
-    if (strict && (!Number.isSafeInteger(res.exitCode) || (res.result !== null && typeof res.result !== 'string')))
+    if (!Number.isSafeInteger(res.exitCode) || (res.result !== null && typeof res.result !== 'string'))
       throw new FreshReadUnavailableError();
     const exitCode = typeof res?.exitCode === 'number' ? res.exitCode : Number.NaN;
-    if (!Number.isFinite(exitCode)) return null;
+    if (!Number.isSafeInteger(exitCode)) throw new ChainReadError('upstream_unavailable');
     const stack =
       res?.result && typeof res.result === 'string'
         ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0])
@@ -692,7 +634,16 @@ export class LiteClientDataSource implements TonDataSource {
     }
   }
 
+  async sendMessage(boc: Buffer, options: { signal?: AbortSignal } = {}): Promise<void> {
+    await this.scope(options, async () => { await this.client.sendMessage(boc); });
+  }
+  health() {
+    const peers = this.engine?.health() ?? this.options.peers.map((_, index) => ({ index, ready: false, open: false, failures: 0, latencyMs: null }));
+    return { peersConfigured: peers.length, peersReady: peers.filter(peer => peer.ready && !peer.open).length, head: this.heads.current(), peers };
+  }
   async close(): Promise<void> {
-    // lite client has no explicit close
+    if (this.closed) return; this.closed = true;
+    for (const flight of this.flights.values()) flight.controller.abort(new ChainReadError('upstream_unavailable'));
+    this.flights.clear(); this.engine?.close();
   }
 }

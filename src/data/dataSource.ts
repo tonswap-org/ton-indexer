@@ -173,6 +173,7 @@ export const transactionPageReachesHistoryStart = (
 };
 
 export type AccountStateResponse = {
+  anchor?: AccountAnchor;
   balance: string;
   lastTxLt?: string;
   lastTxHash?: string;
@@ -202,6 +203,30 @@ export type TonBlockIdExt = {
   rootHashHex: string;
   fileHashHex: string;
 };
+
+export type ChainHead = TonBlockIdExt & { utime: number };
+export type AccountAnchor = { shardBlock: TonBlockIdExt; genUtime: number };
+export type ReadOptions = { signal?: AbortSignal; at?: ChainHead };
+export class ChainReadError extends Error {
+  constructor(readonly code: 'upstream_timeout' | 'upstream_unavailable', options?: ErrorOptions) {
+    super(code === 'upstream_timeout' ? 'Chain read deadline exceeded.' : 'Chain read unavailable.', options);
+    this.name = 'ChainReadError';
+  }
+}
+export interface ChainSource {
+  readonly network: Network;
+  head(options?: { signal?: AbortSignal }): Promise<ChainHead>;
+  read(calls: import('./freshRead').FreshReadCall[], options?: ReadOptions): Promise<{ head: ChainHead; results: import('./freshRead').FreshReadResult[] }>;
+  getAccountState(address: string, options?: ReadOptions): Promise<AccountStateResponse>;
+  runGetMethod(address: string, method: string, args?: TupleItem[], options?: ReadOptions): Promise<{ exitCode: number; stack: TupleItem[] }>;
+  getAccountStateAtSeqno(address: string, seqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
+  getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
+  getTransactions(address: string, limit: number, lt: string, hash: string, options?: { signal?: AbortSignal }): Promise<RawTransaction[]>;
+  sendMessage(boc: Buffer, options?: { signal?: AbortSignal }): Promise<void>;
+  health(): { peersConfigured: number; peersReady: number; head: ChainHead | null;
+    peers: Array<{ index: number; ready: boolean; open: boolean; failures: number; latencyMs: number | null }> };
+  close(): Promise<void>;
+}
 
 export interface TonDataSource {
   network: Network;

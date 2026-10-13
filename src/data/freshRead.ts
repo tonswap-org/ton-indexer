@@ -12,7 +12,7 @@ export type FreshReadResult =
   | { kind: 'getter'; address: string; exitCode: number; stack: TupleItem[] };
 export type FreshReadBatch = {
   network: Network;
-  readContext: { source: 'lite' | 'http4'; head: TonBlockIdExt; queriedAt: number };
+  readContext: { source: 'lite' | 'http4'; head: TonBlockIdExt & { utime?: number }; queriedAt: number };
   results: FreshReadResult[];
 };
 
@@ -48,7 +48,7 @@ export function assertFreshNetwork(network: Network, init: { workchain?: number;
 
 export function assertFreshBlock(actual: SourceBlock, expected: TonBlockIdExt): void {
   const normalized = freshMasterchainBlock(actual);
-  if (Object.keys(expected).some(key => normalized[key as keyof TonBlockIdExt] !== expected[key as keyof TonBlockIdExt]))
+  if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex'] as const).some(key => normalized[key as keyof TonBlockIdExt] !== expected[key as keyof TonBlockIdExt]))
     throw new FreshReadUnavailableError();
 }
 
