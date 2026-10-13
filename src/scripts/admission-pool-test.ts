@@ -19,6 +19,12 @@ const binaryPath=join(directory,'offline-fixture-worker'), hash=(p:string)=>crea
 writeFileSync(binaryPath,`#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path');
 const c=JSON.parse(fs.readFileSync(process.argv[2])),f=JSON.parse(fs.readFileSync(c.fixture));
 fs.writeFileSync(path.join(c.directory,String(process.pid)+'.pid'),'owned fixture');
+if(c.mode==='one-warm-one-failed'||c.mode==='one-warm-one-cold'||c.mode==='one-dead-one-warm'){
+  const claim=suffix=>{try{fs.closeSync(fs.openSync(c.attempts+suffix,'wx'));return true;}catch(e){if(e.code==='EEXIST')return false;throw e;}};
+  if(claim('.first'))c.mode=c.mode==='one-dead-one-warm'?'ready-then-failure':c.mode==='one-warm-one-failed'?'delayed-ready':'busy';
+  else if(claim('.second'))c.mode=c.mode==='one-dead-one-warm'?'delayed-ready':c.mode==='one-warm-one-failed'?'startup-failure':'cold';
+  else c.mode='busy';
+}
 if(c.mode==='recover'){const attempts=path.join(c.directory,'recovery-attempts');fs.appendFileSync(attempts,'x');if(fs.readFileSync(attempts).length<=4)c.mode='startup-failure';}
 if(c.mode==='recover-after-loss'||c.mode==='close-in-backoff'){
   fs.appendFileSync(c.attempts+'.pids',String(process.pid)+'\\n');
@@ -26,8 +32,9 @@ if(c.mode==='recover-after-loss'||c.mode==='close-in-backoff'){
   if(attempt<=2)c.mode='die-on-request';
   else if(c.mode==='close-in-backoff'||attempt<=6)c.mode='startup-failure';
 }
-if(c.mode==='startup-failure'){process.stdout.write(JSON.stringify({'@type':'error',message:'fixture failure'})+'\\n');setInterval(()=>{},1000);}
-else{process.stdout.write(JSON.stringify({'@type':'smc.verifiedAdmissionReady',block_id:f.response.block_id,master_utime:f.response.master_utime,shard_utime:f.response.shard_utime,code_hash:f.response.code_hash})+'\\n');let pending='';process.stdin.on('data',b=>{pending+=b;while(pending.includes('\\n')){let n=pending.indexOf('\\n');pending=pending.slice(n+1);fs.appendFileSync(c.requests,'x');if(c.mode==='die-on-request')process.exit(70);if(c.mode==='timeout')continue;setTimeout(()=>{if(c.mode==='malformed')process.stdout.write('invalid json\\n');else process.stdout.write(JSON.stringify(f.response)+'\\n');},c.mode==='busy'?150:0);}});}
+if(c.mode==='cold'){setInterval(()=>{},1000);}
+else if(c.mode==='startup-failure'){process.stdout.write(JSON.stringify({'@type':'error',message:'fixture failure'})+'\\n');setInterval(()=>{},1000);}
+else{const ready=()=>{process.stdout.write(JSON.stringify({'@type':'smc.verifiedAdmissionReady',block_id:f.response.block_id,master_utime:f.response.master_utime,shard_utime:f.response.shard_utime,code_hash:f.response.code_hash})+'\\n'+(c.mode==='ready-then-failure'?'invalid json\\n':''));let pending='';process.stdin.on('data',b=>{pending+=b;while(pending.includes('\\n')){let n=pending.indexOf('\\n');pending=pending.slice(n+1);fs.appendFileSync(c.requests,'x');if(c.mode==='die-on-request')process.exit(70);if(c.mode==='timeout')continue;setTimeout(()=>{if(c.mode==='malformed')process.stdout.write('invalid json\\n');else process.stdout.write(JSON.stringify(f.response)+'\\n');},c.mode==='busy'?150:0);}});};if(c.mode==='delayed-ready')setTimeout(ready,200);else ready();}
 `,{mode:0o700});
 let serial=0; const pools:NativeAdmissionPool[]=[];
 const make=(mode:string)=>{
@@ -43,14 +50,19 @@ async function waitUntil(predicate:()=>boolean,message:string,timeout=12_000){
   while(!predicate()&&performance.now()<deadline)await delay(25);
   assert(predicate(),message);
 }
+async function warmWorkers(pool:NativeAdmissionPool, expected=2){
+  await waitUntil(()=>[...(Reflect.get(pool,'workers') as Set<{warm:boolean}>)].filter(worker=>worker.warm).length===expected,
+    `Exactly ${expected} authenticated workers must be available`);
+}
 async function failBothWorkers(pool:NativeAdmissionPool){
+  await warmWorkers(pool);
   await Promise.all([0,1].map(()=>assert.rejects(pool.run('close_order_preflight',args),
     (e:any)=>e.code==='admission_worker_failure')));
   assert.equal(pool.ready,false,'A pool without an authenticated live worker is unavailable');
   await assert.rejects(pool.run('close_order_preflight',args),(e:any)=>e.code==='admission_unavailable');
 }
 async function recoverAfterWorkerLoss(){
-  const recovering=make('recover-after-loss');await recovering.pool.start();
+  const recovering=make('recover-after-loss');await recovering.pool.start();await warmWorkers(recovering.pool);
   assert.equal(recovering.pool.ready,true);assert.equal(count(recovering.attempts),2);
   await failBothWorkers(recovering.pool);
   await waitUntil(()=>count(recovering.attempts)>=6,'Four replacement workers must fail authentication');
@@ -75,8 +87,63 @@ async function closeDuringBackoff(){
   await assert.rejects(closing.pool.run('close_order_preflight',args),(e:any)=>e.code==='admission_unavailable');
   assert.equal(count(closing.requests),2,'Shutdown cannot replay either failed request');
 }
+async function partialStartup(){
+  for(const mode of ['one-warm-one-failed','one-dead-one-warm']){
+    const mixed=make(mode);
+    await mixed.pool.start();
+    assert.equal(mixed.pool.ready,true,'A failed sibling cannot discard authenticated startup capacity');
+    assert.equal((await mixed.pool.run('close_order_preflight',args)).execution.outcome,'accepted');
+    await warmWorkers(mixed.pool);
+    assert.equal((Reflect.get(mixed.pool,'workers') as Set<unknown>).size,2,'Replacement preserves the two-process bound');
+    assert.equal(count(mixed.requests),1,'Replacement cannot replay the successful request');
+    await mixed.pool.close();
+  }
+
+  const slow=make('one-warm-one-cold');
+  await slow.pool.start();
+  assert.equal((Reflect.get(slow.pool,'workers') as Set<unknown>).size,2,'The cold sibling remains owned');
+  await warmWorkers(slow.pool,1);
+  const first=slow.pool.run('close_order_preflight',args);
+  await assert.rejects(slow.pool.run('close_order_preflight',args),(e:any)=>e.code==='admission_busy');
+  await first;
+  assert.equal(count(slow.requests),1,'The cold sibling cannot execute admission work');
+  await slow.pool.close();
+  assert.equal(slow.pool.ready,false);
+}
+async function constructorFailureAndColdShutdown(){
+  const partial=make('busy');
+  const create=Reflect.get(partial.pool,'create').bind(partial.pool);let creates=0;
+  // Inject only the synchronous second-slot construction failure. The first
+  // and all replacement workers are real owned fixture child processes.
+  Reflect.set(partial.pool,'create',()=>{if(++creates===2)throw Error('fixture constructor failure');return create();});
+  await partial.pool.start();
+  assert.equal(partial.pool.ready,true,'A constructor failure cannot lose the already owned sibling');
+  assert.equal((await partial.pool.run('close_order_preflight',args)).execution.outcome,'accepted');
+  await warmWorkers(partial.pool);
+  assert.equal(creates,3);
+  assert.equal((Reflect.get(partial.pool,'workers') as Set<unknown>).size,2);
+  await partial.pool.close();
+
+  for(const failSecond of [false,true]){
+    const cold=make('cold').pool;
+    if(failSecond){
+      const createCold=Reflect.get(cold,'create').bind(cold);let slots=0;
+      Reflect.set(cold,'create',()=>{if(++slots===2)throw Error('fixture constructor failure');return createCold();});
+    }
+    const pending=cold.start();let settled=false;
+    const rejected=assert.rejects(pending,(e:any)=>e.code==='admission_unavailable').then(()=>{settled=true;});
+    await delay(100);
+    assert.equal(settled,false,'A cold startup waits for its owned authentication attempts');
+    assert.equal(cold.ready,false);
+    await cold.close();await rejected;
+    assert.equal((Reflect.get(cold,'workers') as Set<unknown>).size,0,'Shutdown reaps cold workers even after a sibling constructor failure');
+    assert.equal(cold.ready,false);
+  }
+}
 async function run(){
-  const {pool,config:ownedConfig}=make('busy');ownedConfig.binarySha256='0'.repeat(64);assert.equal(pool.ready,false);await pool.start();assert.equal(pool.ready,true);
+  await partialStartup();
+  await constructorFailureAndColdShutdown();
+  const {pool,config:ownedConfig}=make('busy');ownedConfig.binarySha256='0'.repeat(64);assert.equal(pool.ready,false);await pool.start();await warmWorkers(pool);assert.equal(pool.ready,true);
   const first=pool.run('close_order_preflight',args),second=pool.run('close_order_preflight',args);
   assert.equal(pool.ready,true,'Busy warm workers remain healthy');
   await assert.rejects(pool.run('close_order_preflight',args),(e:any)=>e.code==='admission_busy');
@@ -98,6 +165,6 @@ async function run(){
   const writable=make('busy');chmodSync(writable.config.configPath,0o666);await assert.rejects(writable.pool.start(),AdmissionError);
   await Promise.all(pools.map(p=>p.close()));
   for(const file of readdirSync(directory).filter(f=>f.endsWith('.pid')))assert.throws(()=>process.kill(Number(file.slice(0,-4)),0),'Every owned fixture process must have been reaped');
-  console.log('Native admission supervisor readiness, busy bound, no retry, malformed output, timeout, pin/ownership guards and owned cleanup PASS');
+  console.log('Native admission supervisor partial startup, cold/constructor-failure cleanup, readiness, busy bound, no retry, malformed output, timeout, pin/ownership guards and owned cleanup PASS');
 }
 void run().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{await Promise.all(pools.map(p=>p.close()));Date.now=originalNow;rmSync(directory,{recursive:true,force:true});});

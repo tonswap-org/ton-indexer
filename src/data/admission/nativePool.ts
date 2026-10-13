@@ -152,14 +152,32 @@ export class NativeAdmissionPool implements AdmissionExecutor {
   async start(): Promise<void> {
     if (this.started || this.closed) throw new AdmissionError('admission_unavailable');
     this.started = true;
+    const attempts: Promise<void>[] = [];
+    for (let slot = 0; slot < 2; slot++) {
+      try {
+        const worker = this.create();
+        attempts.push(worker.started.then(() => {
+          // A worker may authenticate and then fail while draining the same
+          // output chunk. Such an attempt cannot win the readiness race.
+          if (this.closed || !worker.warm) throw new AdmissionError('admission_unavailable');
+        }));
+      }
+      catch {
+        // Account for this slot without discarding a sibling that is still
+        // authenticating. Every successfully created process remains owned by
+        // the pool, including when another constructor fails synchronously.
+        this.replacements++;
+        attempts.push(Promise.reject(new AdmissionError('admission_unavailable')));
+      }
+    }
+    this.scheduleReplacement();
     try {
-      const first = this.create();
-      // A constructor failure must not leave an owned cold process or an
-      // unhandled readiness rejection behind.
-      void first.started.catch(() => {});
-      const second = this.create();
-      await Promise.all([first.started, second.started]);
-    } catch { this.scheduleReplacement(); throw new AdmissionError('admission_unavailable'); }
+      // Readiness has always required one authenticated live worker. A failed
+      // or slow cold sibling must not prevent that worker from serving. Both
+      // rejected attempts still fail closed; maintenance never replays work.
+      await Promise.any(attempts);
+      if (!this.ready) throw new AdmissionError('admission_unavailable');
+    } catch { throw new AdmissionError('admission_unavailable'); }
   }
   run(method: string, args: TupleItem[]): Promise<AdmissionResult> {
     try {
