@@ -159,6 +159,14 @@ failure leaves later calls running behind a completed HTTP response. Internal
 failure diagnostics retain bounded source causes without exposing request bodies
 or stacks. Run `npm run test:fresh-read` for these guarantees, including real HTTP
 disconnect and deterministic worker/deadline ownership regressions.
+The liteserver SDK account cache retains at most 64 pending/settled block keys,
+8 MiB of settled raw state/proof buffers and 65,536 decoded code/data cells.
+An oversized result still reaches its caller but is not retained. Eviction never
+changes a block identity, re-inserts a late result, or cancels another caller;
+fresh reads continue to bypass this account cache entirely. Run
+`npx tsx src/scripts/lite-account-cache-test.ts` for retention and real SDK
+DataLoader regressions. These limits bound cache retention, not active reads or
+the process's total heap.
 All HTTP account reads use the current SDK account shape: malformed or missing
 atomic balances and partial transaction cursors fail instead of becoming zero or
 empty history. Explicit null cursors and complete uint64-zero/hash-zero cursors

@@ -18,6 +18,7 @@ import {
 } from '@ton/core';
 import { LiteClient, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
 import { BoundedLiteEngine } from './boundedLiteEngine';
+import { createLiteClientCache } from './liteAccountCache';
 import { assertFreshReadActive, assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
   FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 import { errorDiagnostic, type Logger } from '../utils/logger';
@@ -374,7 +375,7 @@ export class LiteClientDataSource implements TonDataSource {
         })
     );
     const engine = new BoundedLiteEngine(engines);
-    const client = new LiteClient({ engine });
+    const client = new LiteClient({ engine, cacheMap: createLiteClientCache });
     return new LiteClientDataSource(network, client, logger);
   }
 
