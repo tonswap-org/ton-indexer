@@ -107,6 +107,14 @@ npm test
 npm run build
 ```
 
+Ledger wire checks reuse only immutable hash/opcode facts keyed by the exact
+original encoded body. The process-local LRU holds at most 1,024 entries and
+4 MiB of UTF-16 body strings; oversized bodies decode without retention. Cell
+graphs and token payloads remain fresh, and message metadata, causal identity,
+historical state and settlement checks are never cached. Run
+`npm run test:ledger:wire` for content changes, mutation isolation and eviction
+regressions, followed by `npm run test:ledger` for complete proof qualification.
+
 The regression suite covers transaction-chain continuity, reorg replacement,
 snapshot integrity, datasource fallbacks, classifier decoding, and public API
 validation/streaming behavior.

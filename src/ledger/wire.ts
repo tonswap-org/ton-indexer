@@ -1,6 +1,7 @@
 import { Address, Cell, Slice, beginCell } from '@ton/core';
 import type { RawMessage } from '../data/dataSource';
 import { decodeNativeFundingBody, decodeNativeFundingRefund } from './nativeFunding';
+import { WireBodySummaryCache } from './wireBodySummary';
 export const TRANSFER = 0x0f8a7ea5,
   INTERNAL = 0x178d4519,
   SETTLEMENT_INTERNAL = 0x4a534954,
@@ -30,6 +31,15 @@ export const TOKEN_CONTROL_OPS = new Set([
 ]);
 export const uint = (v: unknown): v is string =>
   typeof v === 'string' && /^(0|[1-9][0-9]*)$/.test(v);
+const bodySummaries = new WireBodySummaryCache();
+function bodySummary(message?: RawMessage) {
+  if (!message?.body) return null;
+  const summary = bodySummaries.get(message.body);
+  // Metadata is not part of the content certificate; authenticate it on every use.
+  if (!summary || (message.op !== undefined && summary.bits >= 32 &&
+      (summary.exotic || summary.opcode !== message.op))) return null;
+  return summary;
+}
 export function bodyCell(message?: RawMessage): Cell | null {
   try {
     if (!message?.body) return null;
@@ -48,10 +58,10 @@ export function bodyCell(message?: RawMessage): Cell | null {
   }
 }
 export function opcode(message?: RawMessage) {
-  const cell = bodyCell(message);
-  return cell && cell.bits.length >= 32
-    ? cell.beginParse().preloadUint(32)
-    : null;
+  const summary = bodySummary(message);
+  // Preserve the existing exotic-cell parse boundary; these are not business bodies.
+  if (summary?.exotic && summary.bits >= 32) return bodyCell(message)!.beginParse().preloadUint(32);
+  return summary?.opcode ?? null;
 }
 /** Business decoding is separate from bodyCell/messageKey, which bind the complete physical wire. */
 export function businessBodyCell(message?: RawMessage): Cell | null {
@@ -61,8 +71,7 @@ export function businessBodyCell(message?: RawMessage): Cell | null {
   } catch { return null; }
 }
 export function businessOpcode(message?: RawMessage): number | null {
-  const cell = businessBodyCell(message);
-  return cell && cell.bits.length >= 32 ? cell.beginParse().preloadUint(32) : null;
+  return bodySummary(message)?.businessOpcode ?? null;
 }
 export function nativeFundingRefund(message?: RawMessage) {
   try { const cell = bodyCell(message); return cell ? decodeNativeFundingRefund(cell) : null; }
@@ -93,6 +102,8 @@ export type TokenWire = {
 /** Current TONSWAP cell-ref ABI and standard TEP-74 are distinct wire formats.
  * Accept a format only when it consumes the complete envelope; ambiguous parses fail closed. */
 export function tokenWire(message?: RawMessage): TokenWire | null {
+  const op = businessOpcode(message);
+  if (op === null || ![TRANSFER, INTERNAL, SETTLEMENT_INTERNAL, NOTIFY, BURN_NOTIFY].includes(op)) return null;
   const cell = businessBodyCell(message);
   if (!cell) return null;
   const parse = (canonical: boolean): TokenWire | null => {
@@ -294,16 +305,16 @@ export function withdrawalReceipt(message?: RawMessage) {
 }
 /** Account-owned created_lt plus exact body and endpoint identity disambiguate replayed requests. */
 export function messageKey(message?: RawMessage): string | null {
-  const cell = bodyCell(message);
+  const summary = bodySummary(message);
   if (
-    !cell ||
+    !summary ||
     !message?.source ||
     !message.destination ||
     !uint(message.createdLt)
   )
     return null;
   try {
-    return `${Address.parse(message.source).toRawString()}:${Address.parse(message.destination).toRawString()}:${message.createdLt}:${cell.hash().toString('hex')}`;
+    return `${Address.parse(message.source).toRawString()}:${Address.parse(message.destination).toRawString()}:${message.createdLt}:${summary.hash}`;
   } catch {
     return null;
   }
@@ -317,7 +328,7 @@ export function dlmmLiquidityNotificationCommitment(message?: RawMessage): strin
   try {
     return beginCell().storeUint(0x444c5246, 32)
       .storeAddress(Address.parse(message.destination!)).storeAddress(Address.parse(message.source!))
-      .storeUint(BigInt(message.createdLt), 64).storeUint(BigInt('0x' + bodyCell(message)!.hash().toString('hex')), 256)
+      .storeUint(BigInt(message.createdLt), 64).storeUint(BigInt('0x' + bodySummary(message)!.hash), 256)
       .endCell().hash().toString('hex');
   } catch { return null; }
 }
