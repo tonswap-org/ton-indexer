@@ -86,6 +86,8 @@ type StableFileIdentity = {
   ctimeMs: number;
 };
 
+type StableParentIdentity = Pick<Stats, 'dev' | 'ino' | 'mode' | 'uid' | 'gid'>;
+
 export type ReleaseManifestReadTestHooks = {
   /** Deterministic adversarial-test seam; production callers must not provide hooks. */
   afterOpen?: () => void;
@@ -112,6 +114,13 @@ const sameFileIdentity = (left: StableFileIdentity, right: StableFileIdentity): 
   left.mtimeMs === right.mtimeMs &&
   left.ctimeMs === right.ctimeMs;
 
+const sameParentIdentity = (left: StableParentIdentity, right: StableParentIdentity): boolean =>
+  left.dev === right.dev &&
+  left.ino === right.ino &&
+  left.mode === right.mode &&
+  left.uid === right.uid &&
+  left.gid === right.gid;
+
 const assertSafeManifestFile = (stat: Stats, label: string): StableFileIdentity => {
   const permissions = stat.mode & 0o7777;
   if (
@@ -130,7 +139,7 @@ const assertSafeManifestFile = (stat: Stats, label: string): StableFileIdentity 
   return fileIdentity(stat);
 };
 
-const assertSafeManifestParent = (path: string, label: string): StableFileIdentity => {
+const assertSafeManifestParent = (path: string, label: string): StableParentIdentity => {
   const stat = lstatSync(path);
   if (
     stat.isSymbolicLink() ||
@@ -142,7 +151,9 @@ const assertSafeManifestParent = (path: string, label: string): StableFileIdenti
       `${label} must be a canonical non-symlink directory that is not group/other-writable.`
     );
   }
-  return fileIdentity(stat);
+  // Sibling snapshot writes change directory content metadata, not the
+  // authenticated path, permissions or ownership of this parent.
+  return { dev: stat.dev, ino: stat.ino, mode: stat.mode, uid: stat.uid, gid: stat.gid };
 };
 
 const readStableReleaseManifest = (
@@ -188,7 +199,7 @@ const readStableReleaseManifest = (
   const parentAfter = assertSafeManifestParent(parent, 'Release manifest parent after read');
   if (
     !sameFileIdentity(pathBefore, pathAfter) ||
-    !sameFileIdentity(parentBefore, parentAfter) ||
+    !sameParentIdentity(parentBefore, parentAfter) ||
     realpathSync(path) !== path
   ) {
     throw new Error('Release manifest path or parent changed during its stable read.');
