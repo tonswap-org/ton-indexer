@@ -18,7 +18,7 @@ export class DlmmMarketService {
   private bindings: Map<string, DlmmMarketBinding>;
   private graph: DlmmMarketGraphBuilder;
   constructor(private ledger: LedgerService, private source: ChainSource, readonly store: PostgresMarketStore,
-    bindings: DlmmMarketBinding[], private logger: Logger, maxAccounts = 256) {
+    bindings: DlmmMarketBinding[], private logger: Logger, maxAccounts = 256, private readStore: PostgresMarketStore = store) {
     this.bindings = new Map(bindings.map(binding => [binding.pool, binding]));
     this.graph = new DlmmMarketGraphBuilder(ledger, source, maxAccounts);
   }
@@ -54,7 +54,7 @@ export class DlmmMarketService {
   async page(pool: string, query: MarketQuery, candidates = false) {
     if (!this.bindings.has(pool)) throw new Error('market_binding_unconfigured');
     if (!query.cursor && !query.generation) this.requestSync(pool);
-    const page = candidates ? await this.store.candidatesPage(this.ledger.network, pool, query) : await this.store.page(this.ledger.network, pool, query);
+    const page = candidates ? await this.readStore.candidatesPage(this.ledger.network, pool, query) : await this.readStore.page(this.ledger.network, pool, query);
     return { ...page, refresh: this.errors.has(pool) ? 'unavailable' : this.activePool === pool || this.pending.has(pool) ? 'running' : 'idle' };
   }
 }

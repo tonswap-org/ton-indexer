@@ -54,6 +54,7 @@ async function main() {
   });
   peer.ready = false;
   let listened = false, dbReady = false, databaseAttempts = 0, admissionStarted = false, admissionClosed = false;
+  const poolSizes: number[] = [];
   let fetchCalls = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { fetchCalls++; throw new Error('External discovery forbidden'); };
@@ -64,7 +65,8 @@ async function main() {
     worker = await startWorker(manifest, { config, logger,
       onReady() { listened = true; assert.equal(databaseAttempts, 0); assert.equal(admissionStarted, false); assert.equal(fetchCalls, 0); },
       engineFactory() { assert(listened, 'chain socket creation occurs after listen'); return peer; },
-      ledger: { catalog, poolFactory: async () => {
+      ledger: { catalog, poolFactory: async (_url, _hash, options) => {
+        poolSizes.push(options!.size!);
         assert(listened); databaseAttempts++;
         if (!dbReady) throw new Error('Database connection refused');
         return pool;
@@ -87,6 +89,9 @@ async function main() {
       payload: { address: base.tokens[0].root, method: 'current_value', stack: [] } });
     assert.equal(getter.statusCode, 200); assert.equal(getter.json().exit_code, 0);
     await until(() => worker!.ledger.status() === 'ready'); assert(worker.ledger.ledger());
+    assert.deepEqual(poolSizes.slice(-2), [config.ledgerWorkers * 5 + 4, 10]);
+    assert.equal((worker.ledger.ledger() as any).options.walletTemplateCodeHash, manifest.runtime.templates.JettonWallet);
+    assert.deepEqual((worker.ledger.ledger() as any).options.dependencyPools, manifest.runtime.spotMarkets.map(market => market.pool));
     await worker.close(); assert(admissionClosed);
 
     const bad = await database(manifest.runtime.manifestHash);

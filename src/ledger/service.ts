@@ -1,10 +1,13 @@
+import { LedgerScheduler, type LedgerPriority } from './scheduler';
+import type { RuntimeMetrics } from '../runtimeMetrics';
+import type { RefreshDependency } from './cycle';
 import { PerpsRangeService } from './perpsRange';
 import { randomUUID } from 'node:crypto';
 import type { AccountStateResponse, ChainSource } from '../data/dataSource';
 import type { Network } from '../models';
 import type { OpcodeSets } from '../utils/opcodes';
 import type { Logger } from '../utils/logger';
-import { PostgresLedgerStore, projectionFingerprint, validProjectionScope, type OwnerCheckRecord } from './store';
+import { PostgresLedgerStore, ledgerCycleIo, projectionFingerprint, validProjectionScope, type OwnerCheckRecord } from './store';
 import { canonicalLedgerAddress, canonicalLedgerHash } from './normalize';
 import type { LedgerQuery, LedgerDiscoveryQuery, LedgerEvent } from './types';
 import { LedgerGraphBuilder } from './graph';
@@ -17,7 +20,7 @@ import { decidePublication, countConfirmedRegressions, encodeBindings, decodeBin
 export type OwnerCycleResult = {
   status: 'published' | 'kept' | 'quiet'; generation: string | null; retry: boolean;
   pendingAccounts: string[]; confirmedRegressions: number; errorCode?: string;
-  timings: { headMs: number; chainMs: number; graphMs: number; projectMs: number; publishMs: number; totalMs: number };
+  timings: { sourceMs: number; databaseMs: number; headMs: number; chainMs: number; graphMs: number; projectMs: number; publishMs: number; totalMs: number };
 };
 function pointer(state: AccountStateResponse): { headLt: string | null; headHash: string | null } {
   if (state.accountState === 'uninitialized' && ((!state.lastTxLt && !state.lastTxHash) ||
@@ -33,8 +36,13 @@ const samePointer = (a: { headLt: string | null; headHash: string | null }, b: {
 /** Persists and validates account chains without consulting MemoryStore or its retention cap. */
 export class LedgerService {
   private ranges?: PerpsRangeService;
-  private pending = new Set<string>();
-  private running = new Map<string, Promise<unknown>>();
+  private scheduler: LedgerScheduler;
+  private scheduled = new Map<string, number>();
+  private admissions = new Map<string, { priority: LedgerPriority; work: Promise<boolean> }>();
+  private sweepWork?: Promise<void>;
+  private started = false;
+  private metricsTimer?: NodeJS.Timeout;
+  readonly refreshDependency: RefreshDependency;
   private timer?: NodeJS.Timeout;
   private stopped = false;
   private identities?: WalletIdentityStore;
@@ -65,112 +73,107 @@ export class LedgerService {
       maxWatchedAccounts?: number;
       maxPagesPerSync?: number;
       maxRelatedAccounts?: number;
+      router?: string;
+      dependencyPools?: string[];
+      readStore?: PostgresLedgerStore;
+      metrics?: RuntimeMetrics;
     } = {},
-  ) {}
+  ) {
+    const target = this.source;
+    this.source = new Proxy(target, { get: (object, key) => {
+      const value = Reflect.get(object, key);
+      if (typeof value !== 'function') return value;
+      return async (...args: unknown[]) => {
+        const context = ledgerCycleIo.getStore(), started = performance.now();
+        try { return await value.apply(object, args); }
+        finally { if (context) context.sourceMs += performance.now() - started; }
+      };
+    } });
+    this.refreshDependency = async (account, cycle) => {
+      this.identities ??= new WalletIdentityStore({ network, store, source: this.source,
+        walletTemplateCodeHash: options.walletTemplateCodeHash ?? null, tokens: options.tokens });
+      return createRefreshDependency({ network, store, source: this.source, opcodes, logger,
+        maxPagesPerAccount: options.maxPagesPerSync ?? 20, metrics: options.metrics,
+        resolveIdentity: wallet => this.identities!.resolve(wallet, cycle) })(account, cycle);
+    };
+    this.scheduler = new LedgerScheduler({ workers: concurrency, now: Date.now, run: async key => {
+      const revision = this.scheduled.get(key);
+      let retry = true;
+      try {
+        if (key.startsWith('dependency:')) {
+          const result = await this.refreshDependency(key.slice(11), { boundary: await this.source.head() });
+          retry = !result.atBoundary;
+        } else {
+          const result = await this.runOwnerCycle(key); retry = result.retry;
+          for (const [phase, value] of Object.entries(result.timings))
+            options.metrics?.observe('ledger_cycle_phase_ms', value, { phase: phase.replace(/Ms$/, '') });
+          options.metrics?.count('ledger_confirmed_regressions_total', result.confirmedRegressions);
+          if (result.status === 'published' && result.generation && options.metrics) {
+            try { for (const latency of await store.firstPublicationLatencies(result.generation))
+              options.metrics.observe('ledger_first_publication_ms', Math.max(0, latency)); }
+            catch { logger.warn('ledger publication metrics unavailable'); }
+          }
+        }
+        return { retry };
+      } finally {
+        if (!retry && this.scheduled.get(key) === revision) this.scheduled.delete(key);
+        this.recordSchedulerMetrics();
+      }
+    } });
+  }
 
+  private recordSchedulerMetrics() {
+    this.options.metrics?.gauge('ledger_scheduler_depth', this.scheduler.depth());
+    this.options.metrics?.gauge('ledger_foreground_oldest_ms', this.scheduler.oldestForegroundAgeMs());
+  }
+  private enqueue(account: string, priority: LedgerPriority) {
+    if (this.stopped) return;
+    this.scheduled.set(account, (this.scheduled.get(account) ?? 0) + 1);
+    this.scheduler.request(account, priority); this.recordSchedulerMetrics();
+  }
   start() {
-    this.stopped = false;
+    if (this.started || this.stopped) return;
+    this.started = true;
     this.ranges ??= new PerpsRangeService(this.network, this.store, this.source, this.opcodes, this.options);
-    void this.ranges.start(() => this.logger.warn("perps range resume unavailable"))
-      .catch(() => this.logger.warn("perps range resume unavailable"));
-    this.timer = setInterval(
-      () =>
-        void this.resume().catch(() =>
-          this.logger.warn("ledger resume unavailable"),
-        ),
-      30_000,
-    );
-    this.timer.unref();
-    void this.resume().catch(() =>
-      this.logger.warn("ledger resume unavailable"),
-    );
+    void this.ranges.start(() => this.logger.warn('perps range resume unavailable'))
+      .catch(() => this.logger.warn('perps range resume unavailable'));
+    const singletons = [this.options.t3Hub, this.options.t3Root, this.options.perpsEngine, this.options.optionFactory,
+      this.options.optionVault, this.options.router, ...(this.options.dependencyPools ?? []), ...(this.options.marketBindings ?? []).map(binding => binding.pool)];
+    for (const account of new Set(singletons.filter((value): value is string => Boolean(value))))
+      this.enqueue(`dependency:${canonicalLedgerAddress(account)}`, 'background');
+    const sweep = () => {
+      if (this.sweepWork) return;
+      this.sweepWork = this.sweep().catch(() => this.logger.warn('ledger sweep unavailable')).finally(() => { this.sweepWork = undefined; });
+    };
+    this.timer = setInterval(sweep, 30_000); this.timer.unref(); sweep();
+    this.metricsTimer = setInterval(() => this.recordSchedulerMetrics(), 1_000); this.metricsTimer.unref();
   }
 
   async stop() {
     this.stopped = true;
-    if (this.timer) clearInterval(this.timer);
-    this.pending.clear();
-    await this.ranges?.stop();
-    await Promise.allSettled(this.running.values());
+    clearInterval(this.timer); clearInterval(this.metricsTimer);
+    await this.sweepWork;
+    await this.ranges?.stop(); await this.scheduler.stop();
+    this.scheduled.clear(); this.recordSchedulerMetrics();
   }
 
-  private async resume() {
-    const rows = (
-      await this.store.pool.query(
-        `SELECT a.account FROM ledger_watch_accounts w JOIN ledger_accounts a USING(network,account) WHERE a.network=$1
-      ORDER BY a.attempted_at ASC NULLS FIRST LIMIT 100`,
-        [this.network],
-      )
-    ).rows;
-    for (const row of rows)
-      if (!this.running.has(row.account)) this.pending.add(row.account);
-    this.drain();
+  private async sweep() {
+    for (const account of await this.store.activeWatches(this.network)) this.enqueue(account, 'background');
   }
 
-  async requestSync(address: string) {
+  async requestSync(address: string, priority: LedgerPriority = 'foreground') {
     const account = canonicalLedgerAddress(address);
-    let admitted = false;
-    await this.store.withAccountLock(
-      this.network,
-      "watch-admission",
-      async () => {
-        const existing =
-          (
-            await this.store.pool.query(
-              "SELECT 1 FROM ledger_watch_accounts WHERE network=$1 AND account=$2",
-              [this.network, account],
-            )
-          ).rows.length > 0;
-        const count = Number(
-          (
-            await this.store.pool.query(
-              "SELECT count(*)::text AS count FROM ledger_watch_accounts WHERE network=$1",
-              [this.network],
-            )
-          ).rows[0].count,
-        );
-        if (!existing && count >= (this.options.maxWatchedAccounts ?? 1000))
-          return;
-        await this.store.pool.query(
-          "INSERT INTO ledger_accounts(network,account) VALUES($1,$2) ON CONFLICT DO NOTHING",
-          [this.network, account],
-        );
-        await this.store.pool.query(
-          "INSERT INTO ledger_watch_accounts(network,account) VALUES($1,$2) ON CONFLICT DO NOTHING",
-          [this.network, account],
-        );
-        admitted = true;
-      },
-    );
-    if (!admitted) return false;
-    const state = await this.store.account(this.network, account);
-    // Freshness is independent of whether the account cache still exists.
-    if (
-      state?.synced_at &&
-      Date.now() - new Date(state.synced_at).getTime() < 15_000 &&
-      !state.error_code
-    )
-      return true;
-    if (!this.running.has(account)) this.pending.add(account);
-    this.drain();
-    return true;
-  }
-
-  private drain() {
-    if (this.stopped) return;
-    while (this.running.size < this.concurrency && this.pending.size) {
-      const account = this.pending.values().next().value as string;
-      this.pending.delete(account);
-      const work = this.runOwnerCycle(account)
-        .catch(() =>
-          this.logger.warn("ledger synchronization failed", { account }),
-        )
-        .finally(() => {
-          this.running.delete(account);
-          this.drain();
-        });
-      this.running.set(account, work);
-    }
+    let entry = this.admissions.get(account);
+    if (!entry) {
+      const created = { priority, work: Promise.resolve(false) };
+      created.work = (async () => {
+        const admitted = await (this.options.readStore ?? this.store).admitWatch(this.network, account, this.options.maxWatchedAccounts ?? 1000);
+        if (admitted) this.enqueue(account, created.priority);
+        return admitted;
+      })().finally(() => this.admissions.delete(account));
+      this.admissions.set(account, created); entry = created;
+    } else if (priority === 'foreground') entry.priority = 'foreground';
+    return entry.work;
   }
 
   async page(address: string, query: LedgerQuery = {}) {
@@ -181,33 +184,40 @@ export class LedgerService {
     }
     // Cursor requests keep reading the same immutable run and never restart it.
     const admitted = query.cursor ? true : await this.requestSync(account);
-    const page = await this.store.page(this.network, account, query);
+    const page = await (this.options.readStore ?? this.store).page(this.network, account, query);
     if (!admitted) {
       page.coverage.historyComplete = false;
       page.coverage.decodingComplete = false;
       page.coverage.issues.push("watch_capacity_reached");
     }
-    if (this.pending.has(account) || this.running.has(account))
+    if (this.scheduled.has(account))
       page.coverage.syncing = true;
     return page;
   }
 
   async discoveries(address: string, query: LedgerDiscoveryQuery) {
     const account = canonicalLedgerAddress(address);
-    const admitted = query.cursor ? true : await this.requestSync(account);
-    const page = await this.store.discoveries(this.network, account, query);
+    const admitted = query.cursor ? true : await this.requestSync(account, 'background');
+    const page = await (this.options.readStore ?? this.store).discoveries(this.network, account, query);
     if (!admitted) {
       page.coverage.historyComplete = false;
       page.coverage.issues.push('watch_capacity_reached');
     }
-    if (this.pending.has(account) || this.running.has(account)) page.coverage.syncing = true;
+    if (this.scheduled.has(account)) page.coverage.syncing = true;
     return page;
   }
 
   /** One pinned owner check. Scheduling belongs to the worker, not this method. */
   async runOwnerCycle(address: string): Promise<OwnerCycleResult> {
+    const io = { sourceMs: 0, databaseMs: 0 };
+    return ledgerCycleIo.run(io, async () => {
+      const result = await this.checkOwnerCycle(address);
+      Object.assign(result.timings, io); return result;
+    });
+  }
+  private async checkOwnerCycle(address: string): Promise<OwnerCycleResult> {
     const account = canonicalLedgerAddress(address), started = performance.now();
-    const timings: OwnerCycleResult['timings'] = { headMs: 0, chainMs: 0, graphMs: 0, projectMs: 0, publishMs: 0, totalMs: 0 };
+    const timings: OwnerCycleResult['timings'] = { sourceMs: 0, databaseMs: 0, headMs: 0, chainMs: 0, graphMs: 0, projectMs: 0, publishMs: 0, totalMs: 0 };
     let result: OwnerCycleResult = { status: 'kept', generation: null, retry: true, pendingAccounts: [account], confirmedRegressions: 0, timings, errorCode: 'lock_busy' };
     // All quiet-check inputs are reloaded AFTER taking the owner lock. An earlier
     // observer cannot clear a pending dependency or overwrite a newer checkpoint.
@@ -254,7 +264,7 @@ export class LedgerService {
         this.identities ??= new WalletIdentityStore({ network: this.network, store: this.store, source: this.source,
           walletTemplateCodeHash: this.options.walletTemplateCodeHash ?? null, tokens: this.options.tokens });
         const deps: ChainSyncDeps = { network: this.network, store: this.store, source: this.source, opcodes: this.opcodes,
-          logger: this.logger, maxPagesPerAccount: this.options.maxPagesPerSync ?? 20,
+          logger: this.logger, metrics: this.options.metrics, maxPagesPerAccount: this.options.maxPagesPerSync ?? 20,
           resolveIdentity: wallet => this.identities!.resolve(wallet, cycle!) };
         phase = performance.now();
         ownerHead ??= pointer(await this.source.getAccountState(account, { at: cycle.boundary }));

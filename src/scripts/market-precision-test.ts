@@ -1,3 +1,4 @@
+import { storedRefresh } from './support/ledgerGraphFixture';
 import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -74,7 +75,7 @@ async function graphAndStorage(){
   // labels here model only the archive adapter, not a real network block proof.
   for(const b of f.boundaries)for(const value of [b.before,b.after]){const state={...value,accountState:value.accountState==='uninit'?'uninitialized':value.accountState};await pool.query('INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING',['localnet',b.account,state.lastTxLt,canonicalLedgerHash(state.lastTxHash),JSON.stringify({seqno:50,state})]);}
   const reads:Array<[string,number]>=[];const source=fixtureChainSource({network:'localnet',getAccountStateAtSeqno:async(root:string,seqno:number)=>{assert([binding.tokenT,binding.tokenX].includes(root));assert([49,50].includes(seqno));reads.push([root,seqno]);return structuredClone(rootState(root));}});
-  const ledger={network:'localnet',store,syncAccount:async()=>true} as unknown as LedgerService;
+  const ledger={network:'localnet',store,refreshDependency: storedRefresh(store, 'localnet')} as unknown as LedgerService;
   const graph=await new DlmmMarketGraphBuilder(ledger,source).build(binding);const result=projectDlmmMarket(binding,graph.nodes,graph.dependencies);assert.equal(result.observations.length,5);assert.equal(result.historyComplete,true);assert.deepEqual(result.observations.map(o=>[o.assetPrecision.input.decimals,o.assetPrecision.output.decimals]),[[6,9],[9,6],[6,9],[6,9],[6,9]]);assert.equal(reads.length,4,'each root/block query is shared across all observations');
   validateMarketProjection(result);
   for(const mutate of [

@@ -26,7 +26,7 @@ async function until(check: () => Promise<boolean>) {
 /** Native runs use only a new isolated schema on an explicitly selected loopback
  * server. PGlite covers durable state; native PostgreSQL covers session locks. */
 async function main() {
-  const connectionString = process.env.LEDGER_PERPS_RETRY_TEST_DATABASE_URL;
+  const connectionString = process.env.INDEXER_TEST_DATABASE_URL;
   if (connectionString && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(connectionString).hostname))
     throw Error('Perps recovery integration requires isolated loopback PostgreSQL.');
   const schema = 'perps_recovery_' + randomUUID().replace(/-/g, '');
@@ -42,8 +42,10 @@ async function main() {
   const options = { perpsEngine: `0:${'2'.repeat(64)}`, t3Root: `0:${'3'.repeat(64)}`, perpsEngineCodeHash: '4'.repeat(64) };
   const now = Math.floor(Date.now() / 1000), bounds = { scope: 'perps' as const, fromUtime: now - 60, toUtime: now };
   const owner = (index: number) => `0:${BigInt(index).toString(16).padStart(64, '0')}`;
-  let head = now - 1, reads = 0, inFlight = 0, peak = 0;
-  const source = fixtureChainSource({ head: async () => {
+  let head = now - 1, reads = 0, inFlight = 0, peak = 0, rangeReads = 0;
+  const source = fixtureChainSource({ physicalCurrentReads: true,
+    getAccountState: async () => ({accountState: 'uninitialized', balance: '0'}),
+    getAccountStateAtSeqno: async () => {rangeReads++; throw new Error('history_source_unavailable');}, head: async () => {
     reads++; peak = Math.max(peak, ++inFlight);
     await nextTurn(); inFlight--;
     return { seqno: 100, utime: head };
@@ -77,8 +79,10 @@ async function main() {
     ledger = new LedgerService('localnet', store, source, opcodes, logger, 2, options);
     ledger.start(); // No owner polls or explicit collector calls after restart.
     await until(async () => await activeCount() === 0);
-    assert.equal(reads, 256, 'all 128 original requests resumed, including the crashed running row');
-    assert(peak > 0 && peak <= 2, 'startup and timer share the two-worker bound');
+    await until(async () => !(ledger as any).scheduled.size);
+    assert.equal(rangeReads, 128, 'all 128 original requests resumed, including the crashed running row');
+    assert.equal(reads, 258, '128 head waits, 128 range retries and two singleton prewarms');
+    assert(peak > 0 && peak <= 3, 'two range workers and one background singleton worker bound startup work');
     assert.deepEqual(warnings, []);
     const outcomes = (await sql.query('SELECT status,error_code,count(*)::int AS count FROM ledger_perps_ranges GROUP BY status,error_code')).rows;
     assert.deepEqual(outcomes, [{ status: 'failed', error_code: 'history_source_unavailable', count: 128 }]);

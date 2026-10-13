@@ -11,7 +11,7 @@ import { loadOpcodes } from '../utils/opcodes';
 /** The optional native run uses an isolated schema on an explicitly selected
  * loopback database, proving independent-connection admission and worker locks. */
 async function main() {
-  const connectionString = process.env.LEDGER_PERPS_RETRY_TEST_DATABASE_URL;
+  const connectionString = process.env.INDEXER_TEST_DATABASE_URL;
   if (connectionString && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(connectionString).hostname))
     throw Error('Perps retry integration requires an isolated loopback PostgreSQL instance.');
   const schema = 'perps_retry_' + randomUUID().replace(/-/g, '');

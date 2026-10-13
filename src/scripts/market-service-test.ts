@@ -1,3 +1,4 @@
+import { storedRefresh } from './support/ledgerGraphFixture';
 import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -41,11 +42,13 @@ async function main() {
     await pool.query('INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING',
       ['localnet', boundary.account, state.lastTxLt, canonicalLedgerHash(state.lastTxHash), JSON.stringify({ seqno: 0, state })]);
   }
-  const ledger = { network: 'localnet', store: ledgerStore, syncAccount: async (account: string, project: boolean) => { assert.equal(project, false); calls.push(account); return true; } } as unknown as LedgerService;
+  let stale = false;
+  const ledger = { network: 'localnet', store: ledgerStore, refreshDependency: async (account: string, cycle: import('../ledger/cycle').OwnerCycle) => { calls.push(account); const result = await storedRefresh(ledgerStore, 'localnet')(account, cycle); return stale && account === binding.pool ? { ...result, atBoundary: false, errorCode: 'source_unavailable' } : result; } } as unknown as LedgerService;
   const source = fixtureChainSource({}), logger: Logger = { warn: () => {}, info: () => {}, error: () => {}, debug: () => {} };
   const graph = await new DlmmMarketGraphBuilder(ledger, source).build(binding);
   assert.deepEqual(graph.issues, []); assert.ok(graph.nodes.length > 0); assert.ok(graph.dependencies.every(value => value.historyComplete));
   assert.ok(calls.includes(binding.pool)); assert.ok(!calls.includes(f.accounts.tokenT), 'discovery does not recursively traverse unrelated root history');
+  for (const dependency of graph.dependencies) assert.deepEqual(Object.keys(dependency).sort(), ['account','checkedThrough','generation','headHash','headLt','historyComplete'].sort());
   const service = new DlmmMarketService(ledger, source, marketStore, [binding], logger); await service.stop(); await service.sync(binding.pool);
   const stored = await marketStore.page('localnet', binding.pool); assert.equal(stored.coverage?.totalObservations, 5); assert.equal(stored.coverage?.historyComplete, true);
   const generation = stored.coverage!.generation;
@@ -67,6 +70,21 @@ async function main() {
   assert.equal((await app.inject(`/api/indexer/v1/markets/${encodeURIComponent(f.accounts.payer)}/observations`)).statusCode, 404);
   const unavailable = fastify(); registerMarketLedgerRoutes(unavailable); assert.equal((await unavailable.inject(`${url}/observations`)).statusCode, 503); await unavailable.close();
   const limited = await new DlmmMarketGraphBuilder(ledger, source, 1).build(binding); assert.ok(limited.issues.includes('market_related_account_limit'));
+  stale = true;
+  const behind = await new DlmmMarketGraphBuilder(ledger, source).build(binding);
+  assert(behind.issues.includes('market_chain_refresh_unavailable'));
+  assert.equal(behind.dependencies.find(row => row.account === binding.pool)?.historyComplete, false);
+  assert.equal((await ledgerStore.physicalAccount('localnet', binding.pool)).complete, true, 'retained genesis-linked storage is independent from current boundary');
+  await service.sync(binding.pool);
+  const incomplete = await marketStore.page('localnet', binding.pool);
+  assert.equal(incomplete.coverage!.historyComplete, false);
+  assert(incomplete.coverage!.issues.includes('market_chain_refresh_unavailable'));
+  assert.equal(incomplete.observations.length, 5, 'failed refresh preserves positive historical evidence');
+  assert.equal((await marketStore.page('localnet', binding.pool, { generation })).coverage!.historyComplete, true, 'published prior generations remain immutable');
+  for (const suffix of ['/invalid/observations', `/${encodeURIComponent(binding.pool)}/observations?from_utime=2&to_utime=1`, `/${encodeURIComponent(binding.pool)}/observations?cursor=bad`]) {
+    const response = await app.inject('/api/indexer/v1/markets' + suffix);
+    assert.equal(typeof response.json().error, 'string'); assert.equal(typeof response.json().code, 'string');
+  }
   await app.close(); await pool.end();
   console.log('Historical market durable graph, service, configuration and API tests passed');
 }

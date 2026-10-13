@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { decodeBindings } from './publication';
 import { discoveryPage, publishDiscoveries } from './discovery';
 import { createHash } from "node:crypto";
@@ -24,6 +25,22 @@ export interface LedgerSqlPool extends LedgerSqlClient {
   connect(): Promise<LedgerSqlClient>;
   end(): Promise<void>;
 }
+/** Instrument only the current owner cycle; concurrent cycles remain separate. */
+export const ledgerCycleIo = new AsyncLocalStorage<{ sourceMs: number; databaseMs: number }>();
+const timedPools = new WeakMap<LedgerSqlPool, LedgerSqlPool>();
+function timedPool(pool: LedgerSqlPool): LedgerSqlPool {
+  const existing = timedPools.get(pool); if (existing) return existing;
+  const query = (client: LedgerSqlClient) => async (sql: string, params?: any[]) => {
+    const context = ledgerCycleIo.getStore(), started = performance.now();
+    try { return await client.query(sql, params); }
+    finally { if (context) context.databaseMs += performance.now() - started; }
+  };
+  const result: LedgerSqlPool = { query: query(pool), end: () => pool.end(), connect: async () => {
+    const client = await pool.connect(); return { query: query(client), release: () => client.release?.() };
+  } };
+  timedPools.set(pool, result); timedPools.set(result, result); return result;
+}
+
 type Cursor = {
   generation: string;
   network: Network;
@@ -116,7 +133,43 @@ export type OwnerCheckRecord = {
 export class LedgerCursorError extends Error {}
 
 export class PostgresLedgerStore {
-  constructor(readonly pool: LedgerSqlPool) {}
+  readonly pool: LedgerSqlPool;
+  constructor(pool: LedgerSqlPool) { this.pool = timedPool(pool); }
+
+  /** Brief admission transaction: contention waits, capacity alone returns false. */
+  async admitWatch(network: Network, account: string, maximum: number) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const schema = (await client.query('SELECT current_schema() AS schema')).rows[0]?.schema;
+      if (typeof schema !== 'string' || !schema) throw new Error('ledger_schema_unavailable');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`ledger:${schema}:${network}:watch-admission`]);
+      const existing = (await client.query('SELECT 1 FROM ledger_watch_accounts WHERE network=$1 AND account=$2', [network, account])).rows.length > 0;
+      if (!existing) {
+        const count = Number((await client.query('SELECT count(*)::text AS count FROM ledger_watch_accounts WHERE network=$1', [network])).rows[0].count);
+        if (count >= maximum) { await client.query('COMMIT'); return false; }
+        await client.query('INSERT INTO ledger_accounts(network,account) VALUES($1,$2) ON CONFLICT DO NOTHING', [network, account]);
+      }
+      await client.query(`INSERT INTO ledger_watch_accounts(network,account,requested_at) VALUES($1,$2,clock_timestamp())
+        ON CONFLICT(network,account) DO UPDATE SET requested_at=EXCLUDED.requested_at`, [network, account]);
+      await client.query('COMMIT'); return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release?.(); }
+  }
+
+  async activeWatches(network: Network) {
+    return (await this.pool.query(`SELECT w.account FROM ledger_watch_accounts w
+      LEFT JOIN ledger_owner_checks c USING(network,account)
+      WHERE w.network=$1 AND (w.requested_at >= now() - interval '15 minutes' OR c.unresolved=true)
+      ORDER BY w.requested_at DESC,w.account`, [network])).rows.map(row => row.account as string);
+  }
+
+  async firstPublicationLatencies(generation: string) {
+    return (await this.pool.query(`SELECT EXTRACT(EPOCH FROM (d.discovered_at-to_timestamp((d.event->>'utime')::double precision)))*1000 AS latency
+      FROM ledger_discovery_events d WHERE d.generation=$1 AND NOT EXISTS (
+        SELECT 1 FROM ledger_discovery_events older WHERE older.network=d.network AND older.account=d.account
+          AND older.event_id=d.event_id AND older.revision<d.revision)`, [generation])).rows.map(row => Number(row.latency));
+  }
 
   async initialize() {
     const client = await this.pool.connect();

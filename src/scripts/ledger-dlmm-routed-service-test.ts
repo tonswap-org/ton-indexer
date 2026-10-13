@@ -40,7 +40,7 @@ async function main() {
             const state = { ...value, accountState: value.accountState === 'uninit' ? 'uninitialized' : value.accountState };
             await pool.query('INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING', ['localnet', b.account, state.lastTxLt, canonicalLedgerHash(state.lastTxHash), JSON.stringify({ seqno: 0, state })]);
         }
-    const ledger = { network: 'localnet', store, syncAccount: async (account: string, project: boolean) => { assert.equal(project, false); calls.add(account); } } as unknown as LedgerService;
+    const ledger = { network: 'localnet', store, refreshDependency: async (account: string, cycle: import('../ledger/cycle').OwnerCycle) => { calls.add(account); return storedRefresh(store, 'localnet')(account, cycle); } } as unknown as LedgerService;
     const graph = await new DlmmMarketGraphBuilder(ledger, fixtureChainSource({ physicalCurrentReads: true,})).build(binding);
     assert.deepEqual(graph.issues, []);
     assert.ok(calls.has(binding.router!));

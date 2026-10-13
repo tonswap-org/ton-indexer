@@ -16,14 +16,14 @@ export function registerMarketLedgerRoutes(app: FastifyInstance, service?: DlmmM
     reply.header('Cache-Control', 'no-store');
     if (!service) return reply.code(503).send({ code: 'historical_market_unavailable', error: 'Durable historical market storage is not configured.' });
     let pool: string; try { pool = canonicalLedgerAddress((request.params as { pool: string }).pool); }
-    catch { return reply.code(400).send({ code: 'invalid_address' }); }
+    catch { return reply.code(400).send({ code: 'invalid_address', error: 'The pool address is invalid.' }); }
     if (!service.configured(pool)) return reply.code(404).send({ code: 'market_binding_unconfigured', error: 'This pool has no qualified historical market binding.' });
     const query = request.query as { from_utime?: number; to_utime?: number; limit?: number; cursor?: string; generation?: string };
-    if (query.from_utime !== undefined && query.to_utime !== undefined && query.from_utime >= query.to_utime) return reply.code(400).send({ code: 'invalid_range' });
+    if (query.from_utime !== undefined && query.to_utime !== undefined && query.from_utime >= query.to_utime) return reply.code(400).send({ code: 'invalid_range', error: 'The historical market range is invalid.' });
     try {
       return await service.page(pool, { from: query.from_utime, to: query.to_utime, limit: query.limit, cursor: query.cursor, generation: query.generation }, list === 'candidates');
     } catch (error) {
-      if (error instanceof MarketCursorError) return reply.code(400).send({ code: 'invalid_market_cursor' });
+      if (error instanceof MarketCursorError) return reply.code(400).send({ code: 'invalid_market_cursor', error: 'The historical market cursor is invalid.' });
       return reply.code(503).send({ code: 'historical_market_unavailable', error: 'Historical market evidence is temporarily unavailable.' });
     }
   });

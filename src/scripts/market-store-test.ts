@@ -183,9 +183,16 @@ async function main() {
   const rawQuery=async(sql:string,params?:unknown[])=>!params && sql.includes(';')?{rows:(await db.exec(sql)).at(-1)?.rows??[]}:db.query(sql,params);
   const embedded:LedgerSqlPool={query:async(sql,params)=>{const unlock=await acquire();try{return await rawQuery(sql,params);}finally{unlock();}},connect:async()=>{const unlock=await acquire();return {query:rawQuery,release:unlock} as LedgerSqlClient;},end:()=>db.close()};
   try {await suite(embedded,'PGlite serialized PostgreSQL session');}finally{await embedded.end();}
-  if(process.env.MARKET_STORE_TEST_SOCKET) {
-    const native=new Pool({host:process.env.MARKET_STORE_TEST_SOCKET,port:Number(process.env.MARKET_STORE_TEST_PORT??5432),database:'postgres',user:process.env.MARKET_STORE_TEST_USER,max:8});
-    try {await suite(native as unknown as LedgerSqlPool,'Native PostgreSQL independent connections');}finally{await native.end();}
+  const connectionString = process.env.INDEXER_TEST_DATABASE_URL;
+  if(connectionString) {
+    if (!['127.0.0.1','localhost','[::1]'].includes(new URL(connectionString).hostname)) throw new Error('Market native tests require loopback PostgreSQL');
+    const schema = 'market_store_' + randomUUID().replace(/-/g, '');
+    const admin = new Pool({connectionString, max:1});
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(connectionString); url.searchParams.set('options', `-c search_path=${schema}`);
+    const native=new Pool({connectionString:url.toString(),max:8});
+    try {await suite(native as unknown as LedgerSqlPool,'Native PostgreSQL independent connections');}
+    finally {await native.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();}
   } else console.log('Native PostgreSQL concurrency not requested; embedded transaction cases do not claim independent connection locking.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
