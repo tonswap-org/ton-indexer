@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { Cell, type Slice } from '@ton/core';
+import { Cell } from '@ton/core';
 import type { Network } from '../models';
 import type { ChainSource, RawTransaction, AccountStateResponse } from '../data/dataSource';
 import { transactionPageIsLinkedInclusiveSegment, transactionPageReachesHistoryStart } from '../data/dataSource';
@@ -10,9 +10,9 @@ import type { LedgerAsset, LedgerEvent, LedgerPage, LedgerQuery, LedgerRangeCove
 import { projectOwnerLedger, type LedgerChain } from './project';
 import { readPerpsState } from './perpsState';
 import { qualifyPerpsRangeWallet } from './perpsRangeWallet';
-import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress } from './perpsWire';
+import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress, discoverPerpsPeers, PERPS_PROTOCOL_PEER_LIMIT } from './perpsWire';
 import { findTransactionState, type LedgerStateSnapshot } from './archive';
-import { businessBodyCell, tokenWire, TRANSFER } from './wire';
+import type { Logger } from '../utils/logger';
 
 type Bounds = { fromUtime: number; toUtime: number };
 type Options = { t3Root?: string; perpsEngine?: string; perpsEngineCodeHash?: string };
@@ -24,57 +24,6 @@ const digest = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).di
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const WORKERS = 2, QUEUE_CAPACITY = 64, ACTIVE_CAPACITY = 128;
 const RECOVERY_INTERVAL_MS = 5_000, ACTIVE_LIFETIME_SECONDS = 15 * 60;
-const PROTOCOL_PEER_LIMIT = 32;
-/** Discovery is limited to complete current requests emitted by the qualified
- * engine. It grants no settlement authority: the projector still checks each
- * original edge against its exact historical engine state and receipt. */
-export function discoverPerpsRangePeers(transactions: RawTransaction[], engine: string, engineWallet: string) {
-  const peers = new Set<string>(), custodyOwners = new Set<string>();
-  const end = (s: Slice) => { if (s.remainingBits || s.remainingRefs) throw Error('Trailing request'); };
-  const add = (destination: string, custody: boolean) => {
-    peers.add(destination); if (custody) custodyOwners.add(destination);
-  };
-  for (const tx of transactions) {
-    if (!tx.success || tx.status && tx.status !== 'success') continue;
-    for (const message of tx.outMessages) {
-      try {
-        if (message.bounced || !message.source || !message.destination || canonicalLedgerAddress(message.source) !== engine) continue;
-        const destination = canonicalLedgerAddress(message.destination), body = businessBodyCell(message);
-        if (!body) continue;
-        const s = body.beginParse(), op = s.loadUint(32);
-        if (op === 0x52564c54) { // RVLT: actual reservation request
-          if (!s.loadUintBig(64)) continue;
-          s.loadUint(16); s.loadUintBig(256); s.loadCoins(); s.loadCoins(); s.loadCoins(); end(s);
-          add(destination, true);
-        } else if (op === 0x52565053) { // RVPS: atomic reservation replacement and payout
-          if (!s.loadUintBig(64)) continue;
-          s.loadUint(16); s.loadUintBig(256); s.loadUintBig(64); s.loadUintBig(256); s.loadCoins();
-          const target = s.loadRef().beginParse(); end(s);
-          target.loadCoins(); target.loadCoins(); target.loadCoins(); target.loadAddress(); target.loadRef(); end(target);
-          add(destination, true);
-        } else if (op === 0x52505251) { // RPRQ: policy request and exact callback
-          if (!s.loadUint(32) || !s.loadUintBig(64)) continue; end(s); add(destination, false);
-        } else if (op === 0x43524544) { // CRED: registry credit and acknowledgement
-          if (!s.loadUintBig(64) || !s.loadUint(32)) continue;
-          s.loadAddress(); s.loadCoins(); s.loadMaybeAddress(); end(s); add(destination, false);
-        } else if (op === TRANSFER && destination === engineWallet) {
-          const transfer = tokenWire(message);
-          if (!transfer?.owner || transfer.op !== TRANSFER) continue;
-          const f = transfer.forward.beginParse(), tag = f.loadUint(32);
-          if (tag === 0x5246464c) { // RFFL: physical protocol fee custody
-            if (!f.loadUintBig(64) || !f.loadUintBig(256)) continue;
-            if (f.loadCoins() > BigInt(transfer.amountRaw)) continue; end(f);
-          } else if (tag === 0x52564450) { // RVDP: physical collected trader-loss deposit
-            f.loadUint(16); if (f.loadCoins().toString() !== transfer.amountRaw) continue; f.loadRef(); end(f);
-          } else continue;
-          add(canonicalLedgerAddress(transfer.owner), true);
-        }
-      } catch { /* Malformed output cannot widen the captured graph. */ }
-    }
-    if (peers.size > PROTOCOL_PEER_LIMIT) throw Error('perps_range_protocol_account_limit');
-  }
-  return { peers, custodyOwners };
-}
 export function ledgerFailureCode(error: unknown): string {
   if (error && typeof error === 'object' && 'code' in error && /^[0-9A-Z]{5}$/.test(String(error.code)))
     return 'ledger_storage_unavailable';
@@ -128,7 +77,7 @@ export class PerpsRangeService {
   private recovery?: Promise<void>;
   private readonly binding: string;
   constructor(private network: Network, private store: PostgresLedgerStore, private source: ChainSource,
-    private opcodes: OpcodeSets, private options: Options) {
+    private opcodes: OpcodeSets, private options: Options, private logger?: Logger) {
     this.binding = digest({ network, engine: options.perpsEngine, root: options.t3Root, code: options.perpsEngineCodeHash, decoder: 'perps-range-v3' });
   }
   /** Resume durable work at startup and without any client continuing to poll. */
@@ -228,7 +177,7 @@ export class PerpsRangeService {
     if (range.complete && (!snapshot || snapshot.schema !== 'perps-range-v3' || !validProjectionScope(snapshot.projection.projectionScope, account) ||
       !Array.isArray(snapshot.oraclePools) || snapshot.oraclePools.length > 128 ||
       new Set(snapshot.oraclePools).size !== snapshot.oraclePools.length ||
-      !Array.isArray(snapshot.protocolPeers) || snapshot.protocolPeers.length > PROTOCOL_PEER_LIMIT * 2 ||
+      !Array.isArray(snapshot.protocolPeers) || snapshot.protocolPeers.length > PERPS_PROTOCOL_PEER_LIMIT * 2 ||
       new Set([...snapshot.oraclePools, ...snapshot.protocolPeers]).size !== snapshot.oraclePools.length + snapshot.protocolPeers.length ||
       snapshot.chains.length !== 4 + snapshot.oraclePools.length + snapshot.protocolPeers.length || new Set(snapshot.chains.map(c => c.account)).size !== snapshot.chains.length ||
       [...snapshot.oraclePools, ...snapshot.protocolPeers].some(peer => !snapshot.chains.some(chain => chain.account === peer && chain.role === 'counterparty')) ||
@@ -310,7 +259,7 @@ export class PerpsRangeService {
           oraclePools.add(canonicalLedgerAddress(message.destination));
         }
         if (oraclePools.size > 128) throw Error('perps_range_oracle_account_limit');
-        const { peers, custodyOwners } = discoverPerpsRangePeers(chains.get(engine)?.transactions ?? [], engine, engineWallet);
+        const { peers, custodyOwners } = discoverPerpsPeers(chains.get(engine)?.transactions ?? [], engine, engineWallet);
         const custody = new Map<string, string>();
         for (const custodyOwner of custodyOwners) {
           const wallet = perpsWalletAddress(parsed.walletCode, parsed.root, custodyOwner);
@@ -370,6 +319,7 @@ export class PerpsRangeService {
         const incomplete = projection.events.some(event => event.settlement?.status === 'incomplete');
         await this.store.pool.query("UPDATE ledger_perps_ranges SET status='complete',snapshot=$2::jsonb,published_at=now(),retry_after=CASE WHEN $3 THEN now()+backoff_seconds*interval '1 second' ELSE NULL END WHERE generation=$1 AND status='running'", [generation, JSON.stringify(snapshot), incomplete]);
       } catch (error) {
+        this.logger?.warn('ledger perps range collection failed', { code: ledgerFailureCode(error), generation });
         await this.store.pool.query("UPDATE ledger_perps_ranges SET status='failed',error_code=$2,retry_after=now()+backoff_seconds*interval '1 second' WHERE generation=$1 AND status IN ('pending','running')", [generation, ledgerFailureCode(error)]);
         throw error;
       }

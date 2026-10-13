@@ -1,4 +1,5 @@
-import { jettonWalletOrNull } from '../data/jettonWalletCompat';
+import type { OwnerCycle, RefreshDependency } from './cycle';
+import type { WalletIdentityStore } from './identities';
 import type { DlmmMarketBinding } from "./marketTypes";
 import { readDlmmRouterState } from "./dlmmRouterState";
 import { readDlmmMarketState } from "./dlmmState";
@@ -10,7 +11,7 @@ import { readFixedSaleState } from "./launchpadState";
 import { readBondingSaleState } from "./launchpadBondingState";
 import { readAuctionSaleState } from "./launchpadAuctionState";
 import { readPerpsState } from "./perpsState";
-import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress } from "./perpsWire";
+import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress, discoverPerpsPeers } from "./perpsWire";
 import { type LedgerT3Hub, type LedgerT3Refund } from "./t3";
 import { receiverAddress, t3State, burnRequest, depositNote, mintStart, refundPayloadHash, MINT_INTERNAL } from "./t3Wire";
 import { optionBuyForward, type LedgerOptionFactory } from "./options";
@@ -66,8 +67,8 @@ export class LedgerGraphBuilder {
     private store: PostgresLedgerStore,
     private roots: string[],
     private registry: string | undefined,
-    private resolveJetton: (wallet: string) => Promise<LedgerAsset | null>,
-    private crawl: (account: string) => Promise<unknown>,
+    private identities: WalletIdentityStore,
+    private refresh: RefreshDependency,
     private maxAccounts = 256,
     private optionFactory?: string,
     private t3Hub?: string,
@@ -81,7 +82,7 @@ export class LedgerGraphBuilder {
     private launchpadControllers: string[] = [],
     private configuredMarketBindings: DlmmMarketBinding[] = [],
   ) {}
-  async build(owner: string, generation: string, ownerCheckedAt?: string) {
+  async build(owner: string, generation: string, cycle: OwnerCycle) {
     const chains = new Map<string, LedgerChain>(),
       wallets = new Map<string, LedgerAsset>(),
       pools = new Map<string, LedgerPool>(),
@@ -90,66 +91,56 @@ export class LedgerGraphBuilder {
       perpsEngines = new Map<string, LedgerPerpsEngine>(),
       t3Hubs = new Map<string, LedgerT3Hub>(),
       issues = new Set<string>();
-    const load = async (
-      account: string,
-      role: LedgerRelatedAccount["role"],
-      knownGeneration?: string,
-    ) => {
+    const options = { at: cycle.boundary, signal: cycle.signal };
+    const source = {
+      getAccountState: (account: string) => this.source.getAccountState(account, options),
+      runGetMethod: (account: string, method: string, args: Parameters<ChainSource['runGetMethod']>[2] = []) =>
+        this.source.runGetMethod(account, method, args, options),
+    };
+    const bindings: Record<string, boolean> = {}, pendingAccounts = new Set<string>();
+    const loading = new Map<string, Promise<void>>();
+    let buildFailure: unknown;
+    let active = 0;
+    const waiters: Array<() => void> = [];
+    const limited = async <T>(work: () => Promise<T>): Promise<T> => {
+      if (active >= 4) await new Promise<void>(resolve => waiters.push(resolve));
+      else active++;
+      try { return await work(); }
+      finally { const next = waiters.shift(); if (next) next(); else active--; }
+    };
+    const load = async (account: string, role: LedgerRelatedAccount["role"], knownGeneration?: string) => {
       if (chains.has(account)) {
         if (role === "owned_jetton_wallet") chains.get(account)!.role = role;
-        return;
+        await loading.get(account); return;
       }
-      if (chains.size >= this.maxAccounts) {
-        issues.add("related_account_limit_reached");
-        return;
-      }
-      // Insert before awaiting, so cycles and repeated addresses cannot trigger recursion.
-      const chain: LedgerChain = {
-        account,
-        generation: null,
-        historyComplete: false,
-        role,
-        transactions: [],
-      };
+      if (chains.size >= this.maxAccounts) { issues.add("related_account_limit_reached"); pendingAccounts.add(account); return; }
+      const chain: LedgerChain = { account, generation: null, historyComplete: false, atBoundary: false, role, transactions: [] };
       chains.set(account, chain);
-      try {
-        const crawled = knownGeneration ? true : await this.crawl(account);
-        const state = await this.store.account(this.network, account);
-        chain.generation =
-          knownGeneration ??
-          state?.current_generation ??
-          state?.latest_generation ??
-          null;
-        const run = chain.generation
-          ? (
-              await this.store.pool.query(
-                "SELECT complete,head_observed_at,verified_through FROM ledger_runs WHERE generation=$1",
-                [chain.generation],
-              )
-            ).rows[0]
-          : null;
-        // The owner's run is still open while its projection is built, but its physical chain was verified.
-        chain.historyComplete =
-          Boolean(knownGeneration || run?.complete) &&
-          !state?.error_code &&
-          (Boolean(knownGeneration) || (crawled === true && !state?.syncing));
-        chain.checkedAt = knownGeneration
-          ? (ownerCheckedAt ??
-            (run?.head_observed_at
-              ? new Date(run.head_observed_at).toISOString()
-              : null))
-          : state?.checked_at
-            ? new Date(state.checked_at).toISOString()
-            : null;
-        if (!chain.historyComplete)
-          issues.add("related_account_history_incomplete");
-        if (chain.generation)
-          chain.transactions = (
-            await this.store.rawHistory(chain.generation)
-          ).map((item) => item.raw);
-      } catch {
-        issues.add("related_account_history_incomplete");
-      }
+      const work = limited(async () => {
+        if (knownGeneration) {
+          const run = (await this.store.pool.query(
+            "SELECT source_complete,complete,head_lt::text,head_hash,head_observed_at FROM ledger_runs WHERE generation=$1",
+            [knownGeneration])).rows[0];
+          chain.generation = knownGeneration;
+          chain.historyComplete = run?.source_complete === true || run?.complete === true;
+          chain.atBoundary = chain.historyComplete;
+          chain.headLt = run?.head_lt ?? null; chain.headHash = run?.head_hash ?? null;
+          chain.checkedAt = run?.head_observed_at ? new Date(run.head_observed_at).toISOString() : null;
+        } else {
+          const refreshed = await this.refresh(account, cycle);
+          chain.generation = refreshed.generation; chain.historyComplete = refreshed.complete;
+          chain.atBoundary = refreshed.atBoundary; chain.headLt = refreshed.head?.lt ?? null; chain.headHash = refreshed.head?.hash ?? null;
+          chain.checkedAt = refreshed.atBoundary ? new Date().toISOString() : null;
+        }
+        if (!chain.atBoundary) { pendingAccounts.add(account); issues.add("related_account_refresh_pending"); }
+        if (!chain.historyComplete) issues.add("related_account_history_incomplete");
+        // Refresh failure is separate from the durable chain. A storage failure
+        // aborts this build; it can never masquerade as an empty physical chain.
+        if (chain.generation) chain.transactions = (await this.store.rawHistory(chain.generation)).map(item => item.raw);
+      });
+      loading.set(account, work);
+      try { await work; }
+      catch (error) { buildFailure ??= error; throw error; }
     };
     const wallet = async (
       value: string,
@@ -157,7 +148,7 @@ export class LedgerGraphBuilder {
     ) => {
       const canonical = addr(value);
       if (!canonical) return null;
-      const identity = await this.resolveJetton(canonical);
+      const identity = await this.identities.resolve(canonical, cycle);
       if (!identity) return null;
       wallets.set(canonical, identity);
       await load(
@@ -166,53 +157,25 @@ export class LedgerGraphBuilder {
       );
       return identity;
     };
-    const ownerWallet = async (root: string) => {
-      const balance = await jettonWalletOrNull(this.source, owner, root)
-        .catch(() => null);
-      if (balance) {
-        if (!(await wallet(balance.wallet, "owned_jetton_wallet")))
-          issues.add("configured_wallet_discovery_unresolved");
-        return;
+    const discoverWallet = async (root: string, party: string, role: LedgerRelatedAccount["role"], issue: string) => {
+      const key = `wallet:${party}:${root}`;
+      bindings[key] = false;
+      const result = await this.identities.reader.wallet(root, party, options);
+      if (result.status === 'not_deployed') { bindings[key] = true; await load(result.wallet, role); return result; }
+      if (result.status === 'ok') {
+        if (!await wallet(result.wallet, role)) issues.add(issue);
+        else bindings[key] = true;
+        return result;
       }
-      // A canonical root can identify a wallet that has never been deployed.
-      // Absence is certified only by an explicit uninitialized, history-free state.
-      try {
-        const result = await this.source.runGetMethod(
-          root,
-          "get_wallet_address",
-          [
-            {
-              type: "slice",
-              cell: beginCell().storeAddress(Address.parse(owner)).endCell(),
-            },
-          ],
-        );
-        const derived =
-          result?.exitCode === 0 && result.stack.length === 1
-            ? stackAddress(result.stack[0])
-            : null;
-        const state = derived
-          ? await this.source.getAccountState(derived)
-          : null;
-        if (
-          derived &&
-          state?.accountState === "uninitialized" &&
-          (!state.lastTxLt || state.lastTxLt === "0")
-        ) {
-          await load(derived, "owned_jetton_wallet");
-          return;
-        }
-      } catch {
-        /* Provider or identity failures remain explicit discovery gaps. */
-      }
-      issues.add("configured_wallet_discovery_unresolved");
+      issues.add(issue);
+      // Stored qualification remains usable evidence through getter outages.
+      const prior = await this.identities.known(party, root, cycle);
+      if (prior?.wallet) { bindings[key] = true; wallets.set(prior.wallet, prior); await load(prior.wallet, role); }
+      return result;
     };
+    const ownerWallet = (root: string) => discoverWallet(root, owner, 'owned_jetton_wallet', 'configured_wallet_discovery_unresolved');
     await load(owner, "owner", generation);
-    for (const root of new Set([
-      ...this.roots,
-      ...(this.t3Root ? [this.t3Root] : []),
-    ]))
-      await ownerWallet(root);
+    await Promise.all([...new Set([...this.roots, ...(this.t3Root ? [this.t3Root] : [])])].sort().map(ownerWallet));
     const marketBindings = new Map(this.configuredMarketBindings
       .filter(binding => binding.network === this.network)
       .map(binding => [binding.pool, binding]));
@@ -324,10 +287,11 @@ export class LedgerGraphBuilder {
     if (launchpadCandidates.size > this.maxAccounts)
       issues.add("launchpad_discovery_limit_reached");
     for (const sale of [...launchpadCandidates].slice(0, this.maxAccounts)) {
+      bindings[`launchpad:${sale}`] = false;
       if (knownLaunchpadControllers.has(sale)) await load(sale, "counterparty");
       if (!this.launchpadCodeHashes) continue;
       try {
-        const current = await this.source.getAccountState(sale);
+        const current = await source.getAccountState(sale);
         const saleCodeHash = current?.codeBoc ? Cell.fromBase64(current.codeBoc).hash().toString("hex") : null;
         const models = (["fixed", "bonding", "auction"] as const).filter(model =>
           saleCodeHash === this.launchpadCodeHashes![`${model}CodeHash`]);
@@ -351,6 +315,7 @@ export class LedgerGraphBuilder {
         if (identity?.owner !== sale || identity.master !== routing.tokenRoot)
           throw new Error("Launchpad payment wallet identity mismatch");
         await ownerWallet(routing.tokenRoot);
+        bindings[`launchpad:${sale}`] = true;
         launchpadSales.set(sale, {
           model,
           address: sale, factory: state.registry.factory,
@@ -362,7 +327,12 @@ export class LedgerGraphBuilder {
       }
     }
     await inspectOwned();
-    if (configuredOptionFactory && this.optionCodeHashes) {
+    const references = (target: string | null) => Boolean(target && [...chains.values()].some(chain =>
+      (chain.role === 'owner' || chain.role === 'owned_jetton_wallet') && chain.transactions.some(tx =>
+        [tx.inMessage, ...tx.outMessages].some(message => addr(message?.source) === target || addr(message?.destination) === target ||
+          tokenWire(message)?.owner === target))));
+    const optionsRelevant = references(configuredOptionFactory) || references(addr(this.optionVault)) || optionIds.size > 0;
+    if (configuredOptionFactory && this.optionCodeHashes && optionsRelevant) {
       await load(configuredOptionFactory, "counterparty");
       if (this.optionVault)
         await load(canonicalLedgerAddress(this.optionVault), "counterparty");
@@ -384,7 +354,7 @@ export class LedgerGraphBuilder {
       }
       // Latest positions are discovery hints only; retirement/refund attribution uses archive boundaries.
       try {
-        const state = await this.source.getAccountState(
+        const state = await source.getAccountState(
           configuredOptionFactory,
         );
         if (state.dataBoc)
@@ -398,23 +368,22 @@ export class LedgerGraphBuilder {
       }
     }
     for (const candidate of candidates) {
+      bindings[`pool:${candidate}`] = false;
       const binding = routedBindings.get(candidate);
       // A configured deployment supplies discovery identity; historical code,
       // custody, and settlement boundaries still decide qualification.
       const pool = binding ? { address: binding.pool, tokenT: binding.tokenT,
         tokenX: binding.tokenX, codeHash: binding.poolCodeHash }
-        : await this.loadPool(candidate).catch(() => null);
+        : await this.loadPool(candidate, cycle).catch(() => null);
       if (!pool) {
         issues.add("protocol_pool_identity_unresolved");
         continue;
       }
       pools.set(candidate, pool);
+      bindings[`pool:${candidate}`] = true;
       await load(candidate, "pool");
       for (const root of [pool.tokenT, pool.tokenX]) {
-        const balance = await jettonWalletOrNull(this.source, candidate, root)
-          .catch(() => null);
-        if (balance) await wallet(balance.wallet, "counterparty");
-        else issues.add("pool_wallet_identity_unresolved");
+        const balance = await discoverWallet(root, candidate, "counterparty", "pool_wallet_identity_unresolved");
         await ownerWallet(root);
         // A requested recipient identifies a discovery target, never ownership
         // or proof of payout. Historical code and message receipts qualify it.
@@ -428,21 +397,22 @@ export class LedgerGraphBuilder {
           // positive dispatches for this root; historical settlement proof still
           // decides whether a requested collection executed and fully paid.
           const dispatched = (chains.get(candidate)?.transactions ?? []).some(tx => tx.success && tx.outMessages.some(message => {
-            if (message.bounced || addr(message.source) !== candidate || addr(message.destination) !== addr(balance?.wallet)) return false;
+            if (message.bounced || addr(message.source) !== candidate || addr(message.destination) !== addr(balance.wallet ?? undefined)) return false;
             const transfer = tokenWire(message);
             return transfer?.op === TRANSFER && transfer.owner === recipient && BigInt(transfer.amountRaw) > 0n;
           }));
           if (!dispatched) continue;
-          const delivered = await jettonWalletOrNull(this.source, recipient, root).catch(() => null);
-          const identity = delivered ? await wallet(delivered.wallet, "counterparty") : null;
+          const delivered = await discoverWallet(root, recipient, "counterparty", "dlmm_recipient_wallet_unresolved");
+          const identity = delivered.status === 'ok' ? wallets.get(delivered.wallet) : null;
           if (!identity || identity.owner !== recipient || identity.master !== root) issues.add("dlmm_recipient_wallet_unresolved");
         }
       }
     }
     await inspectOwned();
-    if (configuredOptionFactory && (optionIds.size || this.optionCodeHashes)) {
+    if (configuredOptionFactory && optionsRelevant) {
+      bindings[`options:${configuredOptionFactory}`] = false;
       try {
-        const config = await this.source.runGetMethod(
+        const config = await source.runGetMethod(
           configuredOptionFactory,
           "factory_config",
         );
@@ -452,7 +422,7 @@ export class LedgerGraphBuilder {
             : null;
         if (!collateralRoot || !config)
           throw new Error("Option factory identity");
-        const factoryState = await this.source.getAccountState(
+        const factoryState = await source.getAccountState(
           configuredOptionFactory,
         );
         if (factoryState.accountState !== "active" || !factoryState.codeBoc)
@@ -483,7 +453,7 @@ export class LedgerGraphBuilder {
               q.outperformanceCodeHash
           )
             throw Error("Qualified option code/config mismatch");
-          const vaultState = await this.source.getAccountState(vaultAddress);
+          const vaultState = await source.getAccountState(vaultAddress);
           if (
             vaultState.accountState !== "active" ||
             !vaultState.codeBoc ||
@@ -503,9 +473,8 @@ export class LedgerGraphBuilder {
                 parties.add(payout.recipient);
             }
           for (const party of parties) {
-            const balance = await jettonWalletOrNull(this.source, party, collateralRoot)
-              .catch(() => null);
-            if (!balance) {
+            const balance = await discoverWallet(collateralRoot, party, party === owner ? "owned_jetton_wallet" : "counterparty", "option_custody_wallet_identity_unresolved");
+            if (balance.status !== 'ok') {
               issues.add("option_custody_wallet_identity_unresolved");
               continue;
             }
@@ -513,7 +482,7 @@ export class LedgerGraphBuilder {
               balance.wallet,
               party === owner ? "owned_jetton_wallet" : "counterparty",
             );
-            const state = await this.source.getAccountState(balance.wallet);
+            const state = await source.getAccountState(balance.wallet);
             if (
               !identity ||
               identity.master !== collateralRoot ||
@@ -533,7 +502,7 @@ export class LedgerGraphBuilder {
         } else issues.add("option_qualified_code_unavailable");
         await load(configuredOptionFactory, "counterparty");
         for (const seriesId of optionIds) {
-          const info = await this.source.runGetMethod(
+          const info = await source.runGetMethod(
             configuredOptionFactory,
             "series_info",
             [{ type: "int", value: BigInt(seriesId) }],
@@ -557,7 +526,7 @@ export class LedgerGraphBuilder {
             expected.type !== "cell"
           )
             continue;
-          const state = await this.source.getAccountState(seriesAddress);
+          const state = await source.getAccountState(seriesAddress);
           if (
             state.accountState !== "active" ||
             !state.codeBoc ||
@@ -568,6 +537,7 @@ export class LedgerGraphBuilder {
           await load(seriesAddress, "counterparty");
         }
         optionFactories.set(configuredOptionFactory, factory);
+        bindings[`options:${configuredOptionFactory}`] = !issues.has("option_custody_wallet_identity_unresolved");
       } catch {
         issues.add("option_factory_identity_unresolved");
       }
@@ -585,12 +555,13 @@ export class LedgerGraphBuilder {
               addr(message?.destination) === t3Address,
           )),
       );
+      if (relevant) bindings[`t3:${t3Address}`] = false;
       try {
-        const routes = await this.source.runGetMethod(
+        const routes = await source.runGetMethod(
             t3Address,
             "vault_routes",
           ),
-          vaultResult = await this.source.runGetMethod(
+          vaultResult = await source.runGetMethod(
             t3Address,
             "vault_addresses",
           );
@@ -618,11 +589,12 @@ export class LedgerGraphBuilder {
             t3Address,
             owner,
           ),
-          receiverState = await this.source.getAccountState(receiver).catch(() => null);
+          receiverState = await source.getAccountState(receiver).catch(() => null);
         relevant ||= receiverState?.accountState === "active";
         if (relevant) {
-          const hubState = await this.source.getAccountState(t3Address),
-            emitter = await this.source.runGetMethod(t3Root, "root_emitter");
+          bindings[`t3:${t3Address}`] = false;
+          const hubState = await source.getAccountState(t3Address),
+            emitter = await source.runGetMethod(t3Root, "root_emitter");
           if (
             hubState.accountState !== "active" ||
             !hubState.codeBoc ||
@@ -644,7 +616,7 @@ export class LedgerGraphBuilder {
           };
           const binding=this.t3RedemptionBinding;
           if(binding){
-            const rootState=await this.source.getAccountState(t3Root);
+            const rootState=await source.getAccountState(t3Root);
             if(binding.network!==this.network||binding.hub!==t3Address||binding.root!==t3Root||binding.hubCodeHash!==hub.codeHash||!rootState.codeBoc||Cell.fromBase64(rootState.codeBoc).hash().toString('hex')!==binding.rootCodeHash||routes.stack[1].cell.hash().toString('hex')!==binding.receiverCodeHash||routes.stack[2].cell.hash().toString('hex')!==binding.walletCodeHash||binding.reserveRoutes.some((r,i)=>r.root!==hub.reserveRoots[i]||r.vault!==hub.vaults[i]||r.discovery!==r.root))issues.add('t3_recovery_binding_mismatch');
             else hub.redemptionBinding=binding;
           }
@@ -656,10 +628,11 @@ export class LedgerGraphBuilder {
               throw Error("T3 vault identity");
             await ownerWallet(hub.reserveRoots[i]);
           }
+          bindings[`t3-receiver:${receiver}`] = Boolean(receiverState);
           if (!receiverState) issues.add("t3_receiver_state_unavailable");
           if (receiverState?.accountState === "active") {
             try {
-              const identity = await this.source.runGetMethod(
+              const identity = await source.runGetMethod(
                 receiver,
                 "receiver_identity",
               );
@@ -679,50 +652,18 @@ export class LedgerGraphBuilder {
               hub.receiver = receiver;
               await load(receiver, "controlled_contract");
               for (const root of hub.reserveRoots) {
-                const b = await jettonWalletOrNull(this.source, receiver, root)
-                  .catch(() => null);
-                if (b) {
-                  const a = await wallet(b.wallet, "owned_jetton_wallet");
-                  if (a?.owner !== receiver || a.master !== root)
-                    throw Error("T3 receiver wallet identity");
-                  wallets.set(a.wallet!, {
-                    ...a,
-                    controller: owner,
-                    custody: "t3_receiver",
-                  });
-                } else {
-                  const derived = await this.source.runGetMethod(
-                    root,
-                    "get_wallet_address",
-                    [
-                      {
-                        type: "slice",
-                        cell: beginCell()
-                          .storeAddress(Address.parse(receiver))
-                          .endCell(),
-                      },
-                    ],
-                  );
-                  const address =
-                    derived?.exitCode === 0 && derived.stack.length === 1
-                      ? stackAddress(derived.stack[0])
-                      : null;
-                  const state = address
-                    ? await this.source.getAccountState(address)
-                    : null;
-                  if (
-                    !address ||
-                    state?.accountState !== "uninitialized" ||
-                    (state.lastTxLt && state.lastTxLt !== "0")
-                  )
-                    issues.add("t3_receiver_wallet_discovery_unresolved");
-                  else await load(address, "owned_jetton_wallet");
-                }
+                const b = await discoverWallet(root, receiver, "owned_jetton_wallet", "t3_receiver_wallet_discovery_unresolved");
+                if (b.status === 'ok') {
+                  const a = wallets.get(b.wallet);
+                  if (a?.owner !== receiver || a.master !== root) throw Error("T3 receiver wallet identity");
+                  wallets.set(a.wallet!, { ...a, controller: owner, custody: "t3_receiver" });
+                } else if (b.status === 'unavailable') bindings[`t3-receiver:${receiver}`] = false;
               }
             } catch {
               // Receiver custody is a redemption proof. A missing or invalid
               // receiver identity must not discard the independently qualified
               // hub/root and thereby hide a delivered mint from the ledger.
+              bindings[`t3-receiver:${receiver}`] = false;
               issues.add("t3_receiver_identity_or_custody_unresolved");
             }
           }
@@ -740,7 +681,7 @@ export class LedgerGraphBuilder {
                 )
                   continue;
                 const observedAt = new Date().toISOString(),
-                  result = await this.source.runGetMethod(
+                  result = await source.runGetMethod(
                     t3Address,
                     "redemption_identity",
                     [
@@ -812,7 +753,7 @@ export class LedgerGraphBuilder {
               addr(message.destination) === t3Root && mintStart(message));
             const observedAt = new Date().toISOString();
             const read = async (method: string, args: any[]) => {
-              const result = await this.source.runGetMethod(t3Address, method, args).catch(() => null);
+              const result = await source.runGetMethod(t3Address, method, args).catch(() => null);
               return result?.exitCode === 0 ? result.stack : null;
             };
             const ownerArg = { type: "slice" as const,
@@ -874,6 +815,7 @@ export class LedgerGraphBuilder {
             hub.refunds!.set(tx.lt, refund);
           }
           t3Hubs.set(t3Address, hub);
+          bindings[`t3:${t3Address}`] = true;
           await inspectOwned();
         }
       } catch {
@@ -888,11 +830,11 @@ export class LedgerGraphBuilder {
           [this.network, account, lt, canonicalHash],
         )
       ).rows[0];
-      if (existing) return existing.snapshot as LedgerStateSnapshot;
+      if (existing && existing.snapshot.seqno <= cycle.boundary.seqno) return existing.snapshot as LedgerStateSnapshot;
       const snapshot = await findTransactionState(this.source, account, {
         lt,
         hash: canonicalHash,
-      });
+      }, cycle.boundary.seqno, { signal: cycle.signal });
       if (snapshot)
         await this.store.pool.query(
           `INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING`,
@@ -900,14 +842,15 @@ export class LedgerGraphBuilder {
         );
       return snapshot;
     };
-    if (this.perpsEngine) {
+    if (this.perpsEngine && references(addr(this.perpsEngine))) {
+      bindings[`perps:${this.perpsEngine}`] = false;
       const engineAddress = addr(this.perpsEngine);
       if (!engineAddress || !this.t3Root || !this.perpsEngineCodeHash) {
         issues.add("perps_engine_code_binding_unconfigured");
       } else {
         try {
           await load(engineAddress, "counterparty");
-          const current = await this.source.getAccountState(engineAddress);
+          const current = await source.getAccountState(engineAddress);
           if (
             !current.codeBoc ||
             !current.dataBoc ||
@@ -935,7 +878,7 @@ export class LedgerGraphBuilder {
               address,
               expectedOwner === owner ? "owned_jetton_wallet" : "counterparty",
             );
-            const account = await this.source.getAccountState(address);
+            const account = await source.getAccountState(address);
             if (
               identity?.master !== state.root ||
               identity.owner !== expectedOwner ||
@@ -960,11 +903,21 @@ export class LedgerGraphBuilder {
           for (const transaction of chains.get(engineAddress)?.transactions ?? []) {
             for (const message of transaction.outMessages) {
               const request = perpsOracleMessage(message), destination = addr(message.destination);
-              if (request?.opcode === PERPS_ORACLE_PULL && addr(message.source) === engineAddress && destination)
+              if (request?.opcode === PERPS_ORACLE_PULL && request.owner === owner && addr(message.source) === engineAddress && destination)
                 oraclePools.add(destination);
             }
           }
-          for (const pool of oraclePools) await load(pool, 'counterparty');
+          await Promise.all([...oraclePools].sort().map(pool => load(pool, 'counterparty')));
+          let discovered: ReturnType<typeof discoverPerpsPeers> | undefined;
+          try { discovered = discoverPerpsPeers(chains.get(engineAddress)?.transactions ?? [], engineAddress, engineWallet); }
+          catch { issues.add('perps_range_protocol_account_limit'); }
+          if (discovered) {
+            await Promise.all([...discovered.peers].sort().map(peer => load(peer, 'counterparty')));
+            await Promise.all([...discovered.custodyOwners].sort().map(async party => {
+              await discoverWallet(state.root, party, 'counterparty', 'perps_engine_or_custody_identity_unverified');
+            }));
+          }
+          bindings[`perps:${this.perpsEngine}`] = !issues.has('perps_engine_or_custody_identity_unverified');
         } catch {
           issues.add("perps_engine_or_custody_identity_unverified");
         }
@@ -1012,13 +965,16 @@ export class LedgerGraphBuilder {
         await wallet(account, "counterparty");
       }
     }
+    // Product discovery catches transport/qualification failures locally. A
+    // failed durable history read must still abort the whole projection.
+    if (buildFailure) throw buildFailure;
     const checkedTimes = [...chains.values()]
       .map((chain) => chain.checkedAt)
       .filter((value): value is string => Boolean(value))
       .sort();
     return {
-      chains,
-      wallets,
+      chains: new Map([...chains].sort(([a], [b]) => a.localeCompare(b))),
+      wallets: new Map([...wallets].sort(([a], [b]) => a.localeCompare(b))),
       pools,
       marketBindings,
       optionFactories,
@@ -1033,17 +989,26 @@ export class LedgerGraphBuilder {
       stateAt,
       issues: [...issues],
       checkedAt: checkedTimes[0] ?? null,
+      boundary: cycle.boundary,
+      pendingAccounts: [...pendingAccounts].sort(),
+      bindings,
     };
   }
-  private async loadPool(address: string): Promise<LedgerPool | null> {
+  private async loadPool(address: string, cycle: OwnerCycle): Promise<LedgerPool | null> {
+    const options = { at: cycle.boundary, signal: cycle.signal };
+    const source = {
+      getAccountState: (account: string) => this.source.getAccountState(account, options),
+      runGetMethod: (account: string, method: string, args: Parameters<ChainSource['runGetMethod']>[2] = []) =>
+        this.source.runGetMethod(account, method, args, options),
+    };
     if (!this.registry) return null;
-    const state = await this.source.runGetMethod(address, "pool_state");
+    const state = await source.runGetMethod(address, "pool_state");
     if (!state || state.exitCode !== 0 || state.stack.length !== 13)
       return null;
     const tokenT = stackAddress(state.stack[0]),
       tokenX = stackAddress(state.stack[1]);
     if (!tokenT || !tokenX || tokenT === tokenX) return null;
-    const registered = await this.source.runGetMethod(
+    const registered = await source.runGetMethod(
       this.registry,
       "pool_for",
       [
@@ -1066,7 +1031,7 @@ export class LedgerGraphBuilder {
       stackAddress(registered.stack[1]) !== address
     )
       return null;
-    const account = await this.source.getAccountState(address);
+    const account = await source.getAccountState(address);
     if (account.accountState !== "active" || !account.codeBoc) return null;
     return {
       address,

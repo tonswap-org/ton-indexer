@@ -1,3 +1,5 @@
+import type { WalletIdentityStore } from "../ledger/identities";
+import { fixtureHead } from "./support/chainFixture";
 import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -72,8 +74,6 @@ async function inspect(failRoutes: boolean, current = true, receiverFailure: 'un
         codeBoc: fixture.hubState.code_boc, dataBoc: current ? currentState.toBoc().toString("base64") : fixture.hubState.data_boc };
       return { accountState: 'uninitialized', balance: '0' };
     },
-    walletBalance: async (owner: string, master: string) => owner === fixture.owner && master === fixture.root
-      ? { wallet: fixture.wallet, balance: '1099388353090' } : null,
     runGetMethod: async (address: string, method: string) => {
       if (address === receiver && method === 'receiver_identity' && receiverFailure === 'getter')
         throw new Error('Unrelated receiver getter unavailable');
@@ -85,9 +85,18 @@ async function inspect(failRoutes: boolean, current = true, receiverFailure: 'un
       return null;
     },
   });
+  const identityStore = {
+    resolve: async (wallet: string) => identities.get(wallet) ?? null,
+    known: async () => null,
+    reader: { wallet: async (root: string, owner: string) => {
+      const asset = [...identities.values()].find(asset => asset.owner === owner && asset.master === root);
+      return asset?.wallet ? { status: 'ok', root, wallet: asset.wallet, balanceRaw: '0', lastTxLt: '1', lastTxHash: original.hash }
+        : { status: 'unavailable', root, wallet: null, reason: 'upstream' };
+    } },
+  } as unknown as WalletIdentityStore;
   const graph = await new LedgerGraphBuilder('testnet', source, store, [], undefined,
-    async wallet => identities.get(wallet) ?? null, async () => true, 256, undefined, fixture.hub, fixture.root)
-    .build(fixture.owner, fixture.owner, '2026-09-13T00:00:00.000Z');
+    identityStore, async account => ({ account, generation: account, head: null, complete: true, atBoundary: true, errorCode: null }), 256, undefined, fixture.hub, fixture.root)
+    .build(fixture.owner, fixture.owner, { boundary: fixtureHead(1000) });
   return { graph, reads };
 }
 

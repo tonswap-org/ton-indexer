@@ -1,3 +1,4 @@
+import { discoverPerpsPeers } from "../ledger/perpsWire";
 import { fixtureChainSource } from './support/chainFixture';
 import { Address, beginCell } from '@ton/core';
 import { PGlite } from '@electric-sql/pglite';
@@ -6,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import assert from 'node:assert/strict';
 import { findTransactionState } from '../ledger/archive';
-import { capturePerpsRangeChain, discoverPerpsRangePeers, ledgerFailureCode } from '../ledger/perpsRange';
+import { capturePerpsRangeChain, ledgerFailureCode } from '../ledger/perpsRange';
 import type {RawTransaction} from '../data/dataSource';
 const hash = (n: number) => Buffer.from(n.toString(16).padStart(64, '0'), 'hex').toString('base64');
 const tx = (n: number, utime: number): RawTransaction => ({ lt: String(n), hash: hash(n), prevTransactionLt: String(n - 1),
@@ -19,19 +20,19 @@ async function main() {
   const rvlt = beginCell().storeUint(0x52564c54, 32).storeUint(1, 64).storeUint(1, 16).storeUint(5, 256)
     .storeCoins(5).storeCoins(10).storeCoins(0).endCell();
   const outgoing = (destination: string, body = rvlt, source = engine) => ({ source, destination, body: body.toBoc().toString('base64') });
-  const valid = discoverPerpsRangePeers([{ ...tx(1, 150), outMessages: [outgoing(peer(10))] }], engine, engineWallet);
+  const valid = discoverPerpsPeers([{ ...tx(1, 150), outMessages: [outgoing(peer(10))] }], engine, engineWallet);
   assert.deepEqual([...valid.peers], [peer(10)]);
   assert.deepEqual([...valid.custodyOwners], [peer(10)]);
   for (const invalid of [
     outgoing(peer(10), beginCell().storeSlice(rvlt.beginParse()).storeUint(0, 1).endCell()),
     outgoing(peer(10), rvlt, peer(11)),
     { ...outgoing(peer(10)), bounced: true },
-  ]) assert.equal(discoverPerpsRangePeers([{ ...tx(1, 150), outMessages: [invalid] }], engine, engineWallet).peers.size, 0);
-  assert.equal(discoverPerpsRangePeers([{ ...tx(1, 150), success: false, outMessages: [outgoing(peer(10))] }], engine, engineWallet).peers.size, 0);
-  assert.throws(() => discoverPerpsRangePeers([{ ...tx(1, 150), outMessages: Array.from({ length: 33 }, (_, i) => outgoing(peer(i + 10))) }], engine, engineWallet), /protocol_account_limit/);
+  ]) assert.equal(discoverPerpsPeers([{ ...tx(1, 150), outMessages: [invalid] }], engine, engineWallet).peers.size, 0);
+  assert.equal(discoverPerpsPeers([{ ...tx(1, 150), success: false, outMessages: [outgoing(peer(10))] }], engine, engineWallet).peers.size, 0);
+  assert.throws(() => discoverPerpsPeers([{ ...tx(1, 150), outMessages: Array.from({ length: 33 }, (_, i) => outgoing(peer(i + 10))) }], engine, engineWallet), /protocol_account_limit/);
   const policy = beginCell().storeUint(0x52505251, 32).storeUint(1, 32).storeUint(7, 64).endCell();
   const credit = beginCell().storeUint(0x43524544, 32).storeUint(1, 64).storeUint(2, 32).storeAddress(Address.parse(peer(20))).storeCoins(5).storeAddress(null).endCell();
-  const services = discoverPerpsRangePeers([{ ...tx(1, 150), outMessages: [outgoing(peer(12), policy), outgoing(peer(13), credit)] }], engine, engineWallet);
+  const services = discoverPerpsPeers([{ ...tx(1, 150), outMessages: [outgoing(peer(12), policy), outgoing(peer(13), credit)] }], engine, engineWallet);
   assert.deepEqual([...services.peers], [peer(12), peer(13)]);
   assert.equal(services.custodyOwners.size, 0, 'Policy and referral accounting are not token custody');
   console.log('PASS current typed peer discovery rejects malformed/forged outputs and enforces a finite account bound');
