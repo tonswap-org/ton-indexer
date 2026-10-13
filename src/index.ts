@@ -58,7 +58,7 @@ const start = async (manifest: LoadedManifest) => {
       throw new Error('The registered PerpsEngine requires a qualified testnet admission runtime and exact artifact pins.');
     }
     admissionRuntime = new NativeAdmissionPool({ ...config.perpsAdmissionArtifacts, engine: registry.PerpsEngine,
-      codeHash: bindings.perpsEngineCodeHash });
+      codeHash: bindings.perpsEngineCodeHash }, logger);
     process.once('SIGTERM', stopAdmissionDuringStartup);
     process.once('SIGINT', stopAdmissionDuringStartup);
     logger.info('authenticating perps admission runtime before service readiness');

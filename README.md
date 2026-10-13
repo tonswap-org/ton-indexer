@@ -1718,6 +1718,19 @@ The pool owns at most two persistent worker processes. HTTP readiness starts as 
 
 After worker loss, the pool keeps authenticating replacements with exponential backoff capped at 60 seconds; repeated startup failures do not permanently exhaust recovery. When no authenticated worker remains, admission stays unavailable until a replacement authenticates. Failed requests are never replayed. Shutdown cancels pending replacement attempts and reaps owned workers. Run `npm run test:admission` for the supervisor lifecycle and API regressions.
 
+Each owned worker emits one private operator record when its process closes. It
+retains the original failure origin and phase, exact close code/signal, parent
+kill intent, readiness/timing and request/output counters. Only the last 4 KiB
+of stderr are retained and rendered as bounded printable ASCII; stdout contains
+proofs and payloads and supplies counters only. Expected shutdown and 128-job
+retirement use informational records; failures use warnings. Diagnostic sink
+errors cannot interfere with rejection, process reaping or replacement. Public
+admission error codes and messages remain fixed. The existing lifetime 1 MiB
+stderr termination guard is unchanged and separate from diagnostic retention;
+authentication, deadlines, resource limits and one-attempt execution are unchanged.
+The admission suite covers original failure preservation, exact exit status,
+stderr boundaries, same-chunk protocol failures and throwing diagnostic sinks.
+
 Perps economic qualification uses only the current isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Run `npx tsx src/scripts/ledger-perps-test.ts`, `npx tsx src/scripts/perps-counterparty-economics-test.ts`, `npx tsx src/scripts/perps-risk-admission-test.ts`, and `npx tsx src/scripts/perps-oracle-state-test.ts`, followed by the complete `npm run test:ledger`.
 
 The current engine extras also retain future market risk-policy commitments as
