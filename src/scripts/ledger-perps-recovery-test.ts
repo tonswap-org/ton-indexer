@@ -14,6 +14,7 @@ import type { Logger } from '../utils/logger';
 async function settle(service: PerpsRangeService) {
   while ((service as any).running.size) await Promise.allSettled((service as any).running.values());
   assert.equal((service as any).pending.size, 0);
+  assert.equal((service as any).foreground.size, 0);
 }
 async function until(check: () => Promise<boolean>) {
   const deadline = Date.now() + 12_000;
@@ -83,7 +84,8 @@ async function main() {
     assert.equal(rangeReads, 128, 'all 128 original requests resumed, including the crashed running row');
     assert.equal(reads, 258, '128 head waits, 128 range retries and two singleton prewarms');
     assert(peak > 0 && peak <= 3, 'two range workers and one background singleton worker bound startup work');
-    assert.deepEqual(warnings, []);
+    assert.equal(warnings.filter(message => message === 'ledger perps range collection failed').length, 128);
+    assert(warnings.every(message => message === 'ledger perps range collection failed'), 'expected collection failures are logged without extra resume errors');
     const outcomes = (await sql.query('SELECT status,error_code,count(*)::int AS count FROM ledger_perps_ranges GROUP BY status,error_code')).rows;
     assert.deepEqual(outcomes, [{ status: 'failed', error_code: 'history_source_unavailable', count: 128 }]);
     const admitted = await ledger.page(owner(129), bounds);

@@ -123,6 +123,107 @@ async function main() {
       await assert.rejects(firstWorker, /held provider outage/);
       console.log('PASS native PostgreSQL independent-connection worker lock prevents duplicate source collection');
     }
+    // Scheduler/admission tests below use this isolated database only. The
+    // successful collector is a queue-control stub returning an empty snapshot;
+    // real settlement qualification remains in the unchanged range/wallet tests.
+    await sql.query('DELETE FROM ledger_perps_ranges');
+    const settle = async (value: PerpsRangeService) => {
+      while ((value as any).running.size) await Promise.allSettled((value as any).running.values());
+      assert.equal((value as any).pending.size + (value as any).foreground.size, 0);
+    };
+    const live = async () => { const value = await service(); (value as any).stopped = false; return value; };
+    const latest = async (account: string) => (await sql.query('SELECT * FROM ledger_perps_ranges WHERE account=$1 ORDER BY generation_order DESC LIMIT 1', [account])).rows[0];
+    const due = async (generation: string) => sql.query("UPDATE ledger_perps_ranges SET retry_after=now()-interval '1 second' WHERE generation=$1", [generation]);
+    const sweep = await service();
+    const failedPage = await sweep.page(cursorOwner, bounds), failedGeneration = failedPage.coverage.generation!;
+    await assert.rejects(sweep.collect(failedGeneration), /temporary provider outage/);
+    await due(failedGeneration);
+    const failedBefore = (await sql.query('SELECT * FROM ledger_perps_ranges WHERE generation=$1', [failedGeneration])).rows[0];
+    const successSnapshot = {...snapshot, projection: {...snapshot.projection, events: []}};
+    sweep.collect = async generation => {
+      await sql.query("UPDATE ledger_perps_ranges SET status='complete',snapshot=$2::jsonb,published_at=now(),retry_after=NULL WHERE generation=$1 AND status='pending'", [generation, JSON.stringify(successSnapshot)]);
+      return true;
+    };
+    (sweep as any).stopped = false;
+    await sweep.resume(); await settle(sweep);
+    const successor = await latest(cursorOwner);
+    assert.notEqual(successor.generation, failedGeneration); assert.equal(successor.status, 'complete'); assert.equal(successor.backoff_seconds, 10);
+    assert.deepEqual((await sql.query('SELECT * FROM ledger_perps_ranges WHERE generation=$1', [failedGeneration])).rows[0], failedBefore);
+    const completeBefore = structuredClone(successor);
+    await sweep.resume(); await settle(sweep);
+    assert.deepEqual(await latest(cursorOwner), completeBefore, 'complete snapshots without retry_after are final and immutable');
+    const publishedIncomplete = randomUUID();
+    await sql.query(`INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status,snapshot,published_at,retry_after)
+      VALUES($1,'localnet',$2,100,200,$3,'complete',$4::jsonb,now(),now()-interval '1 second')`, [publishedIncomplete,cursorOwner,binding,JSON.stringify(snapshot)]);
+    const cursor = Buffer.from(JSON.stringify({generation:publishedIncomplete,offset:0,binding,account:cursorOwner,from:100,to:200})).toString('base64url');
+    const cursorBefore = await sweep.page(cursorOwner,{...bounds,cursor,limit:1});
+    const publishedBefore = (await sql.query('SELECT * FROM ledger_perps_ranges WHERE generation=$1',[publishedIncomplete])).rows[0];
+    await sweep.resume();await settle(sweep);
+    assert.notEqual((await latest(cursorOwner)).generation,publishedIncomplete,'a due published incomplete snapshot also admits a successor');
+    assert.deepEqual((await sql.query('SELECT * FROM ledger_perps_ranges WHERE generation=$1',[publishedIncomplete])).rows[0],publishedBefore);
+    assert.deepEqual(await sweep.page(cursorOwner,{...bounds,cursor,limit:1}),cursorBefore,'sweep retries retain byte-identical published cursor responses');
+    await sweep.stop();
+    console.log('PASS a due failed range is replaced and collected by the sweep without another page request; retained failed and complete rows do not change');
+
+    await sql.query('DELETE FROM ledger_perps_ranges');
+    const capped = await service();
+    const initial = await capped.page(owner, bounds); await assert.rejects(capped.collect(initial.coverage.generation!), /temporary provider outage/);
+    (capped as any).stopped = false;
+    for (const backoff of [10,20,40,80,160,300]) {
+      const previous = await latest(owner); await due(previous.generation);
+      const retained = (await sql.query('SELECT * FROM ledger_perps_ranges WHERE generation=$1', [previous.generation])).rows[0];
+      await capped.resume(); await settle(capped);
+      const next = await latest(owner); assert.notEqual(next.generation, previous.generation); assert.equal(next.backoff_seconds, backoff); assert.equal(next.status,'failed');
+      assert.deepEqual((await sql.query('SELECT * FROM ledger_perps_ranges WHERE generation=$1', [previous.generation])).rows[0], retained);
+    }
+    const sixth = await latest(owner); await due(sixth.generation);
+    await capped.resume(); await settle(capped); assert.equal((await latest(owner)).generation, sixth.generation, 'six automatic failures stop at the capped backoff');
+    const polled = await capped.page(owner,bounds); await settle(capped);
+    assert.notEqual(polled.coverage.generation,sixth.generation); assert.equal((await latest(owner)).backoff_seconds,300,'a client may still retry after the automatic cap');
+    await capped.stop();
+    console.log('PASS exactly six sweep-admitted retries, immutable superseded rows, and a client retry after the automatic cap');
+
+    await sql.query('DELETE FROM ledger_perps_ranges');
+    const batch = await live(); const collected: string[]=[];
+    batch.collect = async generation => {collected.push(generation); await sql.query("UPDATE ledger_perps_ranges SET status='failed',retry_after=NULL,error_code='scheduler_fixture' WHERE generation=$1",[generation]);return true;};
+    for(let index=0;index<16;index++)await sql.query(`INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status,retry_after)
+      VALUES($1,'localnet',$2,100,200,$3,'failed',now()-interval '1 second')`,[randomUUID(),`auto-${index}`,binding]);
+    await batch.resume();await settle(batch);assert.equal(collected.length,8,'one sweep admits at most eight due keys');
+    assert.equal((await sql.query("SELECT count(*)::int AS count FROM ledger_perps_ranges WHERE error_code='scheduler_fixture'")).rows[0].count,8);
+    await batch.stop();
+    await sql.query('DELETE FROM ledger_perps_ranges');
+    const full = await live();
+    full.collect = async () => {throw new Error('future jobs cannot be collected');};
+    for(let index=0;index<128;index++)await sql.query(`INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status,retry_after)
+      VALUES($1,'localnet',$2,100,200,$3,'pending',now()+interval '1 hour')`,[randomUUID(),`full-${index}`,binding]);
+    await sql.query(`INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status,retry_after)
+      VALUES($1,'localnet','overflow',100,200,$2,'failed',now()-interval '1 second')`,[randomUUID(),binding]);
+    await full.resume();await settle(full);
+    assert.equal((await sql.query("SELECT count(*)::int AS count FROM ledger_perps_ranges WHERE status IN ('pending','running')")).rows[0].count,128);
+    assert.equal((await sql.query("SELECT count(*)::int AS count FROM ledger_perps_ranges WHERE account='overflow'")).rows[0].count,1);
+    await full.stop();
+    console.log('PASS sweep eight-key limit and shared128-job admission bound');
+
+    await sql.query('DELETE FROM ledger_perps_ranges');
+    const priority = await service(), queued: string[]=[], releases:Array<()=>void>=[];
+    const pages=[];for(let index=0;index<4;index++)pages.push(await priority.page(`queue-${index}`,bounds));
+    priority.collect = async generation => {queued.push(generation);await new Promise<void>(resolve=>releases.push(resolve));return true;};
+    (priority as any).stopped=false;
+    (priority as any).schedule(pages[0].coverage.generation);(priority as any).schedule(pages[1].coverage.generation);
+    (priority as any).schedule(pages[2].coverage.generation);
+    await priority.page('queue-3',bounds);
+    assert.equal(queued.length,2);
+    releases.shift()!();await new Promise(resolve=>setTimeout(resolve,0));
+    assert.equal(queued[2],pages[3].coverage.generation,'a client generation precedes queued background retries');
+    assert.equal((priority as any).pending.size + (priority as any).foreground.size,1);
+    const stopping=priority.stop();for(const release of releases.splice(0))release();await stopping;
+    console.log('PASS foreground range collection precedes waiting background work');
+
+    const exhausted: LedgerSqlPool={query:async()=>{throw Error('worker pool exhausted');},connect:async()=>{throw Error('worker pool exhausted');},end:async()=>{}};
+    const isolated=new PerpsRangeService('localnet',new PostgresLedgerStore(exhausted),source,loadOpcodes(),{...options,readStore:store});
+    await isolated.stop();services.push(isolated);
+    assert((await isolated.page('isolated-reader',bounds)).coverage.generation,'range page/admission use read pool while worker pool is exhausted');
+    console.log('PASS bounded-range API read/admission pool isolation');
   } finally {
     await Promise.all(services.map(value => value.stop()));
     await sql.end();

@@ -134,7 +134,7 @@ export class LedgerService {
   start() {
     if (this.started || this.stopped) return;
     this.started = true;
-    this.ranges ??= new PerpsRangeService(this.network, this.store, this.source, this.opcodes, this.options);
+    this.ranges ??= new PerpsRangeService(this.network, this.store, this.source, this.opcodes, this.options, this.logger);
     void this.ranges.start(() => this.logger.warn('perps range resume unavailable'))
       .catch(() => this.logger.warn('perps range resume unavailable'));
     const singletons = [this.options.t3Hub, this.options.t3Root, this.options.perpsEngine, this.options.optionFactory,
@@ -179,7 +179,7 @@ export class LedgerService {
   async page(address: string, query: LedgerQuery = {}) {
     const account = canonicalLedgerAddress(address);
     if (query.scope === "perps") {
-      this.ranges ??= new PerpsRangeService(this.network, this.store, this.source, this.opcodes, this.options);
+      this.ranges ??= new PerpsRangeService(this.network, this.store, this.source, this.opcodes, this.options, this.logger);
       return this.ranges.page(account, query);
     }
     // Cursor requests keep reading the same immutable run and never restart it.

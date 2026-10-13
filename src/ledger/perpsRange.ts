@@ -15,7 +15,7 @@ import { findTransactionState, type LedgerStateSnapshot } from './archive';
 import type { Logger } from '../utils/logger';
 
 type Bounds = { fromUtime: number; toUtime: number };
-type Options = { t3Root?: string; perpsEngine?: string; perpsEngineCodeHash?: string };
+type Options = { readStore?: PostgresLedgerStore; t3Root?: string; perpsEngine?: string; perpsEngineCodeHash?: string };
 type RangeSnapshot = { schema: 'perps-range-v3'; masterSeqno: number; masterTimestamp: number;
   observedAt: string; projection: Awaited<ReturnType<typeof projectOwnerLedger>>;
   oraclePools: string[]; protocolPeers: string[];
@@ -72,6 +72,7 @@ export async function capturePerpsRangeChain(source: ChainSource, account: strin
 export class PerpsRangeService {
   private running = new Map<string, Promise<unknown>>();
   private pending = new Set<string>();
+  private foreground = new Set<string>();
   private stopped = false;
   private timer?: NodeJS.Timeout;
   private recovery?: Promise<void>;
@@ -92,7 +93,7 @@ export class PerpsRangeService {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    this.pending.clear();
+    this.pending.clear(); this.foreground.clear();
     await this.recovery?.catch(() => undefined);
     await Promise.allSettled(this.running.values());
   }
@@ -102,7 +103,7 @@ export class PerpsRangeService {
     if (this.stopped) return;
     if (this.recovery) return this.recovery;
     const work = (async () => {
-      const capacity = QUEUE_CAPACITY - this.pending.size;
+      const capacity = QUEUE_CAPACITY - this.pending.size - this.foreground.size;
       if (!capacity) return;
       const rows = (await this.store.pool.query(
         `SELECT generation FROM ledger_perps_ranges WHERE network=$1 AND status IN ('pending','running')
@@ -110,24 +111,78 @@ export class PerpsRangeService {
          AND ((binding=$3 AND (retry_after IS NULL OR retry_after <= now()))
            OR created_at <= now()-$4*interval '1 second')
          ORDER BY created_at,generation_order LIMIT $5`,
-        [this.network, [...this.running.keys(), ...this.pending], this.binding, ACTIVE_LIFETIME_SECONDS, capacity])).rows;
+        [this.network, [...this.running.keys(), ...this.pending, ...this.foreground], this.binding, ACTIVE_LIFETIME_SECONDS, capacity])).rows;
       for (const row of rows) this.schedule(row.generation);
+      if (this.stopped) return;
+      // Supersede only the latest immutable failed/incomplete generation for
+      // each exact key. Six automatic retries stop at the 300-second cap.
+      const due = (await this.store.pool.query(`SELECT r.account,r.from_utime,r.to_utime FROM ledger_perps_ranges r
+        WHERE r.network=$1 AND r.binding=$2 AND r.status IN ('failed','complete')
+          AND r.retry_after <= now() AND r.backoff_seconds < 300
+          AND NOT EXISTS (SELECT 1 FROM ledger_perps_ranges newer WHERE newer.network=r.network
+            AND newer.account=r.account AND newer.binding=r.binding AND newer.from_utime=r.from_utime
+            AND newer.to_utime=r.to_utime AND newer.generation_order>r.generation_order)
+        ORDER BY r.retry_after,r.generation_order LIMIT 8`, [this.network, this.binding])).rows;
+      for (const key of due) {
+        if (this.stopped || this.pending.size + this.foreground.size >= QUEUE_CAPACITY) break;
+        try {
+          const row = await this.admit(key.account, Number(key.from_utime), Number(key.to_utime), true);
+          if (row && ['pending','running'].includes(row.status) && (!row.retry_after || row.retry_due === true)) this.schedule(row.generation);
+        } catch (error) {
+          if (error instanceof Error && error.message === 'perps_range_admission_capacity') break;
+          throw error;
+        }
+      }
     })();
     this.recovery = work;
     try { await work; } finally { if (this.recovery === work) this.recovery = undefined; }
   }
-  private schedule(generation: string) {
-    if (this.stopped) return;
-    if (!this.running.has(generation) && this.pending.size < QUEUE_CAPACITY) this.pending.add(generation);
+  private schedule(generation: string, priority: 'foreground' | 'background' = 'background') {
+    if (this.stopped || this.running.has(generation)) return;
+    if (priority === 'foreground') {
+      this.pending.delete(generation);
+      if (!this.foreground.has(generation) && this.pending.size + this.foreground.size >= QUEUE_CAPACITY) {
+        // Displaced background work remains durable and is picked up next sweep.
+        const oldest = this.pending.values().next().value;
+        if (oldest) this.pending.delete(oldest); else return;
+      }
+      this.foreground.add(generation);
+    } else if (!this.foreground.has(generation) && this.pending.size + this.foreground.size < QUEUE_CAPACITY) this.pending.add(generation);
     this.drain();
   }
   private drain() {
-    while (!this.stopped && this.running.size < WORKERS && this.pending.size) {
-      const generation = this.pending.values().next().value!;
-      this.pending.delete(generation);
+    while (!this.stopped && this.running.size < WORKERS && (this.foreground.size || this.pending.size)) {
+      const queue = this.foreground.size ? this.foreground : this.pending;
+      const generation = queue.values().next().value!; queue.delete(generation);
       const work = this.collect(generation).catch(() => undefined).finally(() => { this.running.delete(generation); this.drain(); });
       this.running.set(generation, work);
     }
+  }
+  private async latest(account: string, from: number, to: number, store = this.store) {
+    return (await store.pool.query(`SELECT *,retry_after <= now() AS retry_due FROM ledger_perps_ranges
+      WHERE network=$1 AND account=$2 AND binding=$3 AND from_utime=$4 AND to_utime=$5
+      ORDER BY generation_order DESC LIMIT 1`, [this.network, account, this.binding, from, to])).rows[0];
+  }
+  private async admit(account: string, from: number, to: number, automatic = false) {
+    const store = automatic ? this.store : this.options.readStore ?? this.store;
+    let row = await this.latest(account, from, to, store);
+    const needsGeneration = (value: typeof row) => (!value && !automatic) ||
+      (value && ['failed','complete'].includes(value.status) && value.retry_due === true && (!automatic || value.backoff_seconds < 300));
+    if (!needsGeneration(row)) return row;
+    // Admission and the active-capacity check share the existing cross-process
+    // lock. A contender may retain the earlier immutable answer until next poll.
+    const admitted = await store.withAccountLock(this.network, 'perps-range-admission', async () => {
+      row = await this.latest(account, from, to, store);
+      if (!needsGeneration(row)) return;
+      const count = (await store.pool.query("SELECT count(*)::int AS count FROM ledger_perps_ranges WHERE network=$1 AND status IN ('pending','running')", [this.network])).rows[0].count;
+      if (count >= ACTIVE_CAPACITY) throw Error('perps_range_admission_capacity');
+      const backoff = row ? Math.min(300, row.backoff_seconds * 2) : 5;
+      const inserted = (await store.pool.query(`INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status,backoff_seconds)
+        VALUES($1,$2,$3,$4,$5,$6,'pending',$7) ON CONFLICT DO NOTHING RETURNING *`,
+        [randomUUID(), this.network, account, from, to, this.binding, backoff])).rows[0];
+      row = inserted ?? await this.latest(account, from, to, store);
+    });
+    return admitted ? row : this.latest(account, from, to, store);
   }
   async page(account: string, query: LedgerQuery): Promise<LedgerPage> {
     const from = query.fromUtime, to = query.toUtime;
@@ -142,35 +197,12 @@ export class PerpsRangeService {
           cursor.from !== from || cursor.to !== to || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0) throw Error();
       } catch { throw new LedgerCursorError('Invalid perps range cursor or changed bounds'); }
     }
-    const latest = async () => (await this.store.pool.query(
-      `SELECT *,retry_after <= now() AS retry_due FROM ledger_perps_ranges
-       WHERE network=$1 AND account=$2 AND binding=$3 AND from_utime=$4 AND to_utime=$5
-       ORDER BY generation_order DESC LIMIT 1`, [this.network, account, this.binding, from, to])).rows[0];
-    let row = cursor ? (await this.store.pool.query(
+    const row = cursor ? (await (this.options.readStore ?? this.store).pool.query(
       `SELECT * FROM ledger_perps_ranges WHERE generation=$1 AND network=$2 AND account=$3 AND binding=$4 AND from_utime=$5 AND to_utime=$6`,
-      [cursor.generation, this.network, account, this.binding, from, to])).rows[0] : await latest();
+      [cursor.generation, this.network, account, this.binding, from, to])).rows[0] : await this.admit(account, from!, to!);
     if (cursor && !row) throw new LedgerCursorError('Perps range cursor snapshot not found');
-    const needsGeneration = (value: typeof row) => !value ||
-      (['failed', 'complete'].includes(value.status) && value.retry_due === true);
-    if (!cursor && needsGeneration(row)) {
-      // Admission is serialized across processes, and the partial unique index
-      // also prevents duplicate active generations for identical requested bounds.
-      const admitted = await this.store.withAccountLock(this.network, 'perps-range-admission', async () => {
-        row = await latest();
-        if (!needsGeneration(row)) return;
-        const count = (await this.store.pool.query("SELECT count(*)::int AS count FROM ledger_perps_ranges WHERE network=$1 AND status IN ('pending','running')", [this.network])).rows[0].count;
-        if (count >= ACTIVE_CAPACITY) throw Error('perps_range_admission_capacity');
-        const backoff = row ? Math.min(300, row.backoff_seconds * 2) : 5;
-        const inserted = (await this.store.pool.query(
-          `INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status,backoff_seconds)
-           VALUES($1,$2,$3,$4,$5,$6,'pending',$7) ON CONFLICT DO NOTHING RETURNING *`,
-          [randomUUID(), this.network, account, from, to, this.binding, backoff])).rows[0];
-        row = inserted ?? await latest();
-      });
-      if (!admitted) row = await latest();
-      if (!row) throw Error('perps_range_admission_busy');
-    }
-    if (!cursor && ['pending', 'running'].includes(row.status) && (!row.retry_after || row.retry_due === true)) this.schedule(row.generation);
+    if (!row) throw Error('perps_range_admission_busy');
+    if (!cursor && ['pending', 'running'].includes(row.status) && (!row.retry_after || row.retry_due === true)) this.schedule(row.generation, 'foreground');
     const range: LedgerRangeCoverage = { scope: 'perps', fromUtime: from!, toUtime: to!, status: row.status, complete: row.status === 'complete',
       retryAfter: row.retry_after ? new Date(row.retry_after).toISOString() : null };
     const snapshot = row.snapshot as RangeSnapshot | null;
