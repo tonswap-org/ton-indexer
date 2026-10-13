@@ -188,14 +188,6 @@ const tupleItemBool = (item?: TupleItem): boolean => {
   return value !== null && value !== 0n;
 };
 
-const tupleItemCell = (item?: TupleItem): Cell | null => {
-  if (!item || item.type === 'null') return null;
-  if (item.type === 'cell' || item.type === 'slice' || item.type === 'builder') {
-    return item.cell as Cell;
-  }
-  return null;
-};
-
 const tupleItemAddress = (item?: TupleItem): string | null => {
   if (!item || item.type === 'null') return null;
   if (item.type !== 'cell' && item.type !== 'slice' && item.type !== 'builder') return null;
