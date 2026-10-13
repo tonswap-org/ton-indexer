@@ -3,6 +3,10 @@ import helmet from '@fastify/helmet';
 import { MemoryStore } from '../store/memoryStore';
 import { IndexerService } from '../indexerService';
 import { registerRoutes } from '../api/routes';
+import { installErrorHandlers } from '../api/errors';
+import { createJettonWalletReader } from '../data/jettonWallet';
+import { BalanceService } from '../balances/balanceService';
+import { BalanceStreamHub } from '../balances/balanceStream';
 import { setCorsHeaders } from '../api/cors';
 import { BackfillWorker } from '../workers/backfillWorker';
 import { BlockFollower } from '../workers/blockFollower';
@@ -28,17 +32,15 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
     } catch (error) { logger.warn('snapshot load failed', { error: (error as Error).message }); }
   }
   const metricsCollector = new MetricsCollector();
-  const service = new IndexerService(config, store, source, opcodes, bindings.jettonRoots, metricsCollector, poolTracker);
+  const service = new IndexerService(config, store, source, opcodes, bindings.jettonRoots, metricsCollector, poolTracker, { ledgerStatus: () => ledger.status(), diskState: () => disk.state() });
   if (deps.admission) service.setAdmissionExecutor(deps.admission);
-  if (config.databaseUrl) service.setSwapLedgerReader((owner, query) => {
-    const reader = ledger.ledger();
-    if (!reader) return Promise.reject(new Error('Ledger unavailable'));
-    return reader.page(owner, query);
-  });
+  const balances = new BalanceService({ reader: createJettonWalletReader({ source, walletTemplateCodeHash: bindings.walletTemplateCodeHash }), roots: bindings.jettonRoots, network: config.network });
+  const streams = new BalanceStreamHub({ service: balances, heads: deps.heads });
   const backfillWorker = new BackfillWorker(config, store, source, opcodes, logger, metricsCollector, poolTracker);
-  const blockFollower = new BlockFollower(config, store, source, opcodes, logger, service, poolTracker);
+  const blockFollower = new BlockFollower(config, store, source, opcodes, logger, service, poolTracker, deps.heads);
   service.setBackfillEnqueue(address => backfillWorker.enqueue(address));
-  const app = fastify({ logger: false, trustProxy: config.trustProxy });
+  const app = fastify({ logger: false });
+  installErrorHandlers(app);
   void app.register(helmet, { contentSecurityPolicy: false, crossOriginEmbedderPolicy: false });
   if (config.corsEnabled) app.addHook('onRequest', async (request, reply) => {
     setCorsHeaders(request as any, reply, config);
@@ -46,7 +48,7 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
   });
   const metrics = new MetricsService(config, store, backfillWorker, service, metricsCollector, deps.metrics);
   registerRoutes(app, config, service, metrics, new SnapshotService(config, store),
-    new DebugService(config, store, backfillWorker, poolTracker), new RateLimiter(config), registry, { ...manifest });
+    new DebugService(config, store, backfillWorker, poolTracker), new RateLimiter(config), registry, { ...manifest }, { source, balances, streams, metrics: deps.metrics });
   ledger.registerRoutes(app);
   app.addHook('onRequest', async request => { (request as any).startTime = process.hrtime.bigint(); });
   app.addHook('onResponse', async request => {
@@ -54,7 +56,7 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
     if (start) metricsCollector.recordRequest(Number(process.hrtime.bigint() - start) / 1_000_000);
   });
   let started = false, closed = false;
-  let autosave: NodeJS.Timeout | undefined, unsubscribe: (() => void) | undefined;
+  let autosave: NodeJS.Timeout | undefined;
   let save: Promise<void> | undefined;
   const snapshot = (): Promise<void> => {
     if (save) return save;
@@ -70,7 +72,6 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
     listen: () => app.listen({ port: config.port, host: config.host }),
     start() {
       if (started || closed) return; started = true;
-      unsubscribe = deps.heads.subscribe(head => service.setMasterchainInfo(head.seqno, head.utime));
       backfillWorker.start(); blockFollower.start();
       if (config.snapshotAutosaveEnabled && config.snapshotPath) {
         autosave = setInterval(() => { void snapshot(); }, Math.max(5_000, config.snapshotAutosaveIntervalMs)); autosave.unref();
@@ -78,7 +79,7 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
     },
     async close() {
       if (closed) return; closed = true;
-      clearInterval(autosave); unsubscribe?.(); backfillWorker.stop(); blockFollower.stop();
+      clearInterval(autosave); streams.close(); backfillWorker.stop(); blockFollower.stop();
       await app.close(); await save;
       if (config.snapshotOnExit) await snapshot();
     },

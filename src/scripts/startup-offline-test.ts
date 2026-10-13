@@ -81,6 +81,11 @@ async function main() {
     assert.equal(health.statusCode, 503); assert.deepEqual(health.json().admission, { configured: true, ready: false });
     const unavailable = await worker.api.app.inject(`/api/indexer/v1/accounts/${base.tokens[0].root}/ledger`);
     assert.equal(unavailable.statusCode, 503); assert.equal(unavailable.json().code, 'ledger_unavailable');
+    assert(Number(unavailable.headers['retry-after']) >= 1);
+    const offlineGetter = await worker.api.app.inject({ method: 'POST', url: '/api/indexer/v1/runGetMethod', payload: { address: base.tokens[0].root, method: 'current_value', stack: [] } });
+    assert.equal(offlineGetter.statusCode, 503); assert.equal(offlineGetter.json().code, 'upstream_unavailable'); assert(Number(offlineGetter.headers['retry-after']) >= 1);
+    const offlineBalance = await worker.api.app.inject(`/api/indexer/v1/accounts/${base.tokens[0].root}/balances`);
+    assert.equal(offlineBalance.statusCode, 503); assert.equal(offlineBalance.json().code, 'upstream_unavailable'); assert(Number(offlineBalance.headers['retry-after']) >= 1);
     await delay(5_050);
     assert(worker.api.app.server.listening, 'upstream failures do not terminate the listener');
     assert.equal(fetchCalls, 0); assert.equal(worker.ledger.ledger(), undefined);

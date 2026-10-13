@@ -5,9 +5,12 @@ import { setTimeout as delay, setImmediate as nextTurn } from 'node:timers/promi
 import fastify from 'fastify';
 import { registerRoutes } from '../api/routes';
 import { createIndexerShutdown } from '../shutdown';
+import { BalanceStreamHub } from '../balances/balanceStream';
+import type { BalanceSnapshot } from '../balances/balanceService';
+import { fixtureHead } from './support/chainFixture';
 
 const addresses = [`0:${'1'.repeat(64)}`, `0:${'2'.repeat(64)}`];
-const balances = (address: string) => ({ address, ton_raw: '0', ton: '0', assets: [], confirmed: true, updated_at: 1, network: 'testnet' });
+const balances = (address: string): BalanceSnapshot => ({ address, head_seqno: 1, head_utime: fixtureHead().utime, assets: [{kind:'native',symbol:'GRAM',decimals:9,status:'ok',balance_raw:'0'}], complete: true, network: 'testnet' });
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -20,13 +23,17 @@ const bounded = async <T>(promise: Promise<T>, ms = 2500): Promise<T> => {
 };
 const listen = async (service: any) => {
   const app = fastify({ logger: false });
-  registerRoutes(app, { network: 'testnet' }, service);
+  const hub = new BalanceStreamHub({ service, heads: { current: () => fixtureHead(), subscribe: () => () => {} } });
+  registerRoutes(app, { network: 'testnet' }, {} as any, undefined, undefined, undefined, undefined, undefined, undefined, {
+    streams: { subscribe(owners, sink) { const stop = hub.subscribe(owners, sink); return () => { stop(); service.unsubscribed?.(); }; } },
+  });
+  app.addHook('onClose', async () => { hub.close(); });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address();
   assert.ok(address && typeof address !== 'string');
   return { app, port: address.port };
 };
-const openStream = (port: number, alias = 'stream', multiple = false) => new Promise<{ response: IncomingMessage; ended: Promise<void>; text: () => string }>((resolve, reject) => {
+const openStream = (port: number, alias = 'stream/balances', multiple = false) => new Promise<{ response: IncomingMessage; ended: Promise<void>; text: () => string }>((resolve, reject) => {
   const query = multiple ? `addresses=${encodeURIComponent(addresses.join(','))}` : `address=${encodeURIComponent(addresses[0])}`;
   const request = get({ host: '127.0.0.1', port, path: `/api/indexer/v1/${alias}?${query}` }, (response) => {
     if (response.statusCode !== 200) { response.destroy(); reject(new Error(`unexpected status ${response.statusCode}`)); return; }
@@ -37,11 +44,11 @@ const openStream = (port: number, alias = 'stream', multiple = false) => new Pro
   });
   request.once('error', reject);
 });
-const simpleService = () => ({ getBalances: async (address: string) => balances(address), getBalancesSignature: () => 'stable', subscribeBalanceChanges: () => () => undefined });
+const simpleService = () => ({ read: async (address: string) => balances(address) });
 
 const testOpenStreams = async () => {
   let unsubscribed = 0;
-  const { app, port } = await listen({ ...simpleService(), subscribeBalanceChanges: () => () => { unsubscribed++; } });
+  const { app, port } = await listen({ ...simpleService(), unsubscribed: () => { unsubscribed++; } });
   const streams = await Promise.all([openStream(port), openStream(port, 'stream/balances')]);
   try {
     assert.ok(streams.every((stream) => stream.text().includes('subscribed')));
@@ -53,25 +60,20 @@ const testOpenStreams = async () => {
   } finally { streams.forEach((stream) => stream.response.destroy()); await app.close(); }
 };
 const testPendingPoll = async () => {
-  const pending = deferred<ReturnType<typeof balances>>();
-  const queried: string[] = [];
-  let signatures = 0;
+  const pending = deferred<ReturnType<typeof balances>>(), queried: string[] = [], signals: AbortSignal[] = [];
   let unsubscribed = 0;
   const { app, port } = await listen({
-    getBalances: async (address: string) => { queried.push(address); return pending.promise; },
-    getBalancesSignature: () => { signatures++; return 'stable'; },
-    subscribeBalanceChanges: () => () => { unsubscribed++; },
+    read: async (address: string, options: {signal: AbortSignal}) => { queried.push(address); signals.push(options.signal); return pending.promise; },
+    unsubscribed: () => { unsubscribed++; },
   });
-  const stream = await openStream(port, 'stream', true);
+  const stream = await openStream(port, 'stream/balances', true);
   try {
-    assert.deepEqual(queried, [addresses[0]]);
+    assert.deepEqual(queried, addresses);
     await bounded(Promise.all([app.close(), stream.ended]));
-    pending.resolve(balances(addresses[0]));
-    await nextTurn();
-    assert.deepEqual(queried, [addresses[0]], 'closed stream must not query the next address');
-    assert.equal(signatures, 0, 'late result must not be processed');
-    assert.equal(unsubscribed, 1);
-    assert.ok(!stream.text().includes('balances_snapshot'));
+    assert(signals.every(signal => signal.aborted), 'closing the last subscribers cancels shared owner work');
+    pending.resolve(balances(addresses[0])); await nextTurn();
+    assert.deepEqual(queried, addresses, 'closed stream starts no further work');
+    assert.equal(unsubscribed, 1); assert.ok(!stream.text().includes('balances_snapshot'), 'late results never publish');
   } finally { pending.resolve(balances(addresses[0])); stream.response.destroy(); await app.close(); }
 };
 const childMain = async (mode: string) => {
@@ -139,8 +141,8 @@ const testLateCleanup = async () => {
 const main = async () => {
   if (process.argv[2] === '--shutdown-child') return childMain(process.argv[3]);
   const cases: [string, () => Promise<void>][] = [
-    ['open SSE aliases drain before HTTP close', testOpenStreams],
-    ['pending balance poll cannot continue after close', testPendingPoll],
+    ['open shared balance streams drain before HTTP close', testOpenStreams],
+    ['pending shared balance reads cannot publish after close', testPendingPoll],
     ['real SIGTERM with open SSE exits cleanly once', () => testSignalProcess('graceful')],
     ['real stuck cleanup exits nonzero within deadline', () => testSignalProcess('hung')],
     ['real cleanup rejection exits nonzero once', () => testSignalProcess('failed')],

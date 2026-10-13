@@ -55,14 +55,11 @@ const cloneRoutes = (routes: Routes): Routes => JSON.parse(JSON.stringify(routes
 const openApiPaths = () => ({
   '/api/indexer/v1/service-info': {},
   '/api/indexer/v1/contracts': {},
-  '/api/indexer/v1/accounts/{addr}/balance': {},
   '/api/indexer/v1/accounts/{addr}/balances': {},
-  '/api/indexer/v1/accounts/{addr}/assets': {},
   '/api/indexer/v1/accounts/{addr}/txs': {},
   '/api/indexer/v1/accounts/{addr}/state': {},
   '/api/indexer/v1/markets/{market}/candles': {},
   '/api/indexer/v1/runGetMethod': {},
-  '/api/indexer/v1/runGetMethods': {},
 });
 
 const openApi = () => ({
@@ -72,16 +69,21 @@ const openApi = () => ({
   paths: openApiPaths(),
 });
 
+const balanceBody = (account: string, network: string, tokens: Array<{root:string;symbol:string;decimals:number}> = []) => ({
+  address: account, network, head_seqno: 123, head_utime: 1700000000, complete: true,
+  assets: [{kind:'native',symbol:'GRAM',status:'ok',balance_raw:'1000000000',decimals:9},
+    ...tokens.map(token => ({kind:'jetton',...token,wallet:address(900),status:'not_deployed',balance_raw:'0'}))],
+});
+
 const basicRoutes = (): Routes => ({
+  [`/api/indexer/v1/accounts/${address(1)}/balances`]: {body:balanceBody(address(1),'mainnet')},
   '/api/indexer/v1/health': {
     body: {
       serviceId: 'ti.soramitsu.io',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
       network: 'mainnet',
-      lastMasterSeqno: 123,
-      indexerLagSec: 0,
-      liteserverPoolStatus: 'ok',
+      chain: {peersConfigured: 2, peersReady: 2, headSeqno: 123, headAgeSec: 1}, ledger: 'ready', disk: 'ok',
     },
   },
   '/api/indexer/v1/service-info': {
@@ -154,7 +156,7 @@ const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://
         ecosystem: 'ton',
         chainId: 'ton:testnet',
         network: 'testnet',
-        lastMasterSeqno: 123,
+        chain: {peersConfigured: 2, peersReady: 2, headSeqno: 123, headAgeSec: 1}, ledger: 'ready', disk: 'ok',
       },
     },
     '/api/indexer/v1/service-info': {
@@ -183,6 +185,7 @@ const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://
     },
     '/api/indexer/v1/openapi.json': { body: openApi() },
   };
+  routes[`/api/indexer/v1/accounts/${parsed.contracts.T3Root}/balances`] = {body:balanceBody(parsed.contracts.T3Root!, 'testnet', parsed.runtime.tokens)};
   for (const [index, market] of parsed.spotMarkets.entries()) {
     const routePath = `/api/indexer/v1/markets/${encodeURIComponent(market.marketKey)}/candles`;
     routes[routePath] = {
@@ -274,7 +277,7 @@ const withServer = async (
     if (!route) {
       response.statusCode = 404;
       response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ error: 'not_found' }));
+      response.end(JSON.stringify({ error: 'not found', code: 'not_found' }));
       return;
     }
 
@@ -399,12 +402,23 @@ const main = async () => {
       body.chainId = 'ton:testnet';
     }
     (testnet['/api/indexer/v1/contracts'].body as Record<string, unknown>).network = 'testnet';
+    (testnet[`/api/indexer/v1/accounts/${address(1)}/balances`].body as any).network = 'testnet';
     await withServer(testnet, async (baseUrl) => {
       await runProductionSmoke(baseUrl, {
         expectedNetwork: 'testnet',
         allowUnboundRelease: true,
       });
     });
+
+    const wrongBalances = basicRoutes();
+    (wrongBalances[`/api/indexer/v1/accounts/${address(1)}/balances`].body as any).ton_raw = '1000000000';
+    await assertSmokeRejects(wrongBalances, /deep-equal/);
+    const wrongCompleteness = basicRoutes();
+    (wrongCompleteness[`/api/indexer/v1/accounts/${address(1)}/balances`].body as any).complete = false;
+    await assertSmokeRejects(wrongCompleteness, /strictly equal/);
+    const wrongError = basicRoutes();
+    wrongError['/api/indexer/v1/smoke-unknown-route'] = {status:404,body:{statusCode:404,error:'not found',code:'not_found'}};
+    await assertSmokeRejects(wrongError, /deep-equal/);
 
     const paired = strictFixture(root, true);
     assert.equal(paired.manifest.perpsMarkets.length, 1);
@@ -689,10 +703,10 @@ const main = async () => {
     const spec = missingOpenApiPath['/api/indexer/v1/openapi.json'].body as {
       paths: Record<string, unknown>;
     };
-    delete spec.paths['/api/indexer/v1/runGetMethods'];
+    delete spec.paths['/api/indexer/v1/accounts/{addr}/balances'];
     await assertSmokeRejects(
       missingOpenApiPath,
-      /OpenAPI is missing \/api\/indexer\/v1\/runGetMethods/
+      /OpenAPI is missing .*balances/
     );
 
     const wrongTitle = basicRoutes();

@@ -6,15 +6,6 @@ export const addressParamsSchema = {
   required: ['addr'],
 };
 
-export const jettonTransferPayloadParamsSchema = {
-  type: 'object',
-  properties: {
-    jetton: { type: 'string' },
-    owner: { type: 'string' },
-  },
-  required: ['jetton', 'owner'],
-};
-
 export const txQuerySchema = {
   type: 'object',
   propertyNames: { enum: ['page', 'cursor_lt', 'cursor_hash'] },
@@ -22,20 +13,6 @@ export const txQuerySchema = {
     page: { type: 'integer', minimum: 1 },
     cursor_lt: { type: 'string', pattern: '^\\d+$' },
     cursor_hash: { type: 'string' },
-  },
-};
-
-export const swapQuerySchema = {
-  type: 'object',
-  properties: {
-    limit: { type: 'integer', minimum: 1, maximum: 500 },
-    from_utime: { type: 'integer', minimum: 1 },
-    to_utime: { type: 'integer', minimum: 1 },
-    pay_token: { type: 'string', minLength: 1, maxLength: 32 },
-    receive_token: { type: 'string', minLength: 1, maxLength: 32 },
-    execution_type: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
-    status: { type: 'string', enum: ['success', 'failed', 'pending'] },
-    include_reverse: { type: 'string', enum: ['1', '0', 'true', 'false', 'yes', 'no'] },
   },
 };
 
@@ -70,14 +47,6 @@ export const debugQuerySchema = {
   },
 };
 
-export const perpsSnapshotQuerySchema = {
-  type: 'object',
-  properties: {
-    market_ids: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 1407 },
-    max_markets: { type: 'integer', minimum: 1, maximum: 128 },
-  },
-};
-
 export const volIndexSnapshotQuerySchema = {
   type: 'object',
   properties: {
@@ -101,15 +70,6 @@ export const farmsSnapshotQuerySchema = {
   properties: {
     owner: { type: 'string' },
     start_id: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' },
-    limit: { type: 'integer', minimum: 1, maximum: 64 },
-  },
-};
-
-export const optionsSnapshotQuerySchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    after_id: { type: 'string', pattern: '^(0|[1-9][0-9]{0,19})$' },
     limit: { type: 'integer', minimum: 1, maximum: 64 },
   },
 };

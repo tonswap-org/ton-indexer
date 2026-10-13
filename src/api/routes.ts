@@ -1,58 +1,46 @@
 import { Address, Cell } from '@ton/core';
-import { getHttpEndpoints } from '@orbs-network/ton-access';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import {
   IndexerService,
-  InitialHistoryReadTimeoutError,
   MarketCandleInterval
 } from '../indexerService';
 import type { RegistryMetadata } from '../config/releaseManifest';
 import type { Network } from '../config';
-import { matchesPublicRpcNetwork } from './rpcNetwork';
+import { PUBLIC_RPC_ZERO_STATES } from './rpcNetwork';
 import { MetricsService } from '../metrics';
 import { SnapshotService } from '../snapshotService';
 import { DebugService } from '../debugService';
-import { RateLimiter } from './rateLimit';
+import { RateLimiter, rateLimitKey } from './rateLimit';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from './validation';
 import {
   addressParamsSchema,
   coverSnapshotQuerySchema,
   debugQuerySchema,
   farmsSnapshotQuerySchema,
-  jettonTransferPayloadParamsSchema,
   governanceSnapshotQuerySchema,
   marketCandleParamsSchema,
   marketCandleQuerySchema,
-  optionsSnapshotQuerySchema,
-  perpsSnapshotQuerySchema,
   volIndexSnapshotQuerySchema,
-  swapQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
 import { publicIndexerPath } from './publicMount';
-import { publicAdmissionError, publicErrorMessage, sendError } from './errors';
+import { installErrorHandlers, publicAdmissionError, sendError, sendFailure } from './errors';
+import { requestDeadline, ROUTE_DEADLINE_MS } from './deadline';
+import { ChainReadError, type ChainSource, type TonBlockIdExt } from '../data/dataSource';
+import type { BalanceService } from '../balances/balanceService';
+import type { BalanceStreamHub } from '../balances/balanceStream';
+import type { RuntimeMetrics } from '../runtimeMetrics';
 import { isAdmissionMethod } from '../data/admission/protocol';
 import type { FreshReadCall } from '../data/freshRead';
 import { currentNativeRuntime, resolveServiceMetadata } from './serviceMetadata';
 
-const BALANCE_STREAM_POLL_MS = 1_500;
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
 const BALANCE_STREAM_MAX_ADDRESSES = 8;
 const GET_METHOD_MAX_STACK_ITEMS = 16;
-const GET_METHOD_MAX_BATCH_CALLS = 64;
-const GET_METHOD_BATCH_CONCURRENCY = 10;
-const GET_METHOD_CALL_TIMEOUT_MS = 6_000;
 const FRESH_READ_MAX_CALLS = 32;
-const FRESH_READ_TIMEOUT_MS = 18_000;
-const RPC_PROXY_DEFAULT_TIMEOUT_MS = 30_000;
-const RPC_PROXY_DEFAULT_RETRY_ATTEMPTS = 4;
-const RPC_PROXY_DEFAULT_RETRY_DELAY_MS = 600;
-const RPC_PROXY_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-const TON_RPC_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'estimateFee', 'getMasterchainInfo']);
-const TON_RPC_WRITE_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'estimateFee']);
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; error: string; code?: number };
@@ -62,13 +50,8 @@ type RoutesConfig = {
   serviceId?: string;
   publicBaseUrl?: string;
   pageSize?: number;
-  rpcProxyEndpoint?: string;
-  rpcProxyEndpoints?: string[];
   enableWriteRpc?: boolean;
-  rpcProxyApiKey?: string;
-  rpcProxyTimeoutMs?: number;
-  rpcProxyRetryAttempts?: number;
-  rpcProxyRetryDelayMs?: number;
+  edgeKey?: string;
   adminToken?: string;
 };
 
@@ -169,7 +152,7 @@ const parseStackArgs = (stack: unknown): { ok: boolean; args?: any[]; error?: st
   return { ok: true, args };
 };
 
-const parseStreamAddresses = (query: { address?: unknown; wallet?: unknown; addresses?: unknown }) => {
+const parseStreamAddresses = (query: { address?: unknown; addresses?: unknown }) => {
   const rawAddresses = query.addresses;
   const fromCsv = typeof rawAddresses === 'string'
     ? rawAddresses
@@ -177,7 +160,7 @@ const parseStreamAddresses = (query: { address?: unknown; wallet?: unknown; addr
         .map((value) => value.trim())
         .filter((value) => value.length > 0)
     : [];
-  const candidates = [query.address, query.wallet, ...fromCsv]
+  const candidates = [query.address, ...fromCsv]
     .map((value) => (typeof value === 'string' ? value.trim() : undefined))
     .filter((value): value is string => Boolean(value));
   const normalized: string[] = [];
@@ -194,12 +177,6 @@ const parseStreamAddresses = (query: { address?: unknown; wallet?: unknown; addr
     }
   }
   return normalized.slice(0, BALANCE_STREAM_MAX_ADDRESSES);
-};
-
-const parseBooleanQuery = (value?: string) => {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 };
 
 const parsePositiveIntQuery = (value?: string | number) => {
@@ -249,68 +226,6 @@ const readString = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const normalizeRpcEndpoint = (value: string) => value.trim().replace(/\/+$/, '');
-
-const rankRpcEndpoint = (endpoint: string) => {
-  const normalized = endpoint.toLowerCase();
-  if (normalized.includes('toncenter')) return 2;
-  if (normalized.includes('tonapi')) return 1;
-  return 0;
-};
-
-const uniqueRpcEndpoints = (endpoints: string[]) => {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const endpoint of endpoints) {
-    const normalized = normalizeRpcEndpoint(endpoint);
-    if (!normalized) continue;
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  out.sort((left, right) => rankRpcEndpoint(left) - rankRpcEndpoint(right));
-  return out;
-};
-
-const mapConcurrent = async <T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> => {
-  const results = new Array<R>(items.length);
-  if (items.length === 0) return results;
-
-  const safeConcurrency = Math.max(1, Math.trunc(concurrency));
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(items.length, safeConcurrency) }, () =>
-    (async () => {
-      while (true) {
-        const current = nextIndex;
-        nextIndex += 1;
-        if (current >= items.length) return;
-        results[current] = await fn(items[current], current);
-      }
-    })()
-  );
-  await Promise.all(workers);
-  return results;
-};
-
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
-  const ms = Math.max(1, Math.trunc(timeoutMs));
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('timeout')), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-};
-
 const classifyRateLimitBucket = (url: string) => {
   const path = url.split('?')[0] || '';
   if (path === '/jsonRPC' || path === '/api/v2/jsonRPC' || path.startsWith('/api/indexer/v1/runGetMethod')
@@ -347,8 +262,10 @@ export const registerRoutes = (
   debug?: DebugService,
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
-  registryMetadata?: RegistryMetadata
+  registryMetadata?: RegistryMetadata,
+  runtime: { source?: ChainSource; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics } = {}
 ) => {
+  installErrorHandlers(app);
   const network = config.network;
   if (network !== 'mainnet' && network !== 'testnet' && network !== 'localnet') {
     throw new Error('Routes require an explicit mainnet, testnet, or localnet network.');
@@ -405,26 +322,20 @@ export const registerRoutes = (
     publicBaseUrl,
     readOnly: !config.enableWriteRpc,
     capabilities: [
-      'account-balance',
       'account-balances',
-      'account-assets',
       'account-transactions',
       'account-state',
       'run-get-method',
-      'run-get-methods',
       ...(freshReads ? ['fresh-read'] : []),
       'market-candles'
     ],
     endpoints: Object.fromEntries(Object.entries({
       health: '/api/indexer/v1/health',
       openapi: '/api/indexer/v1/openapi.json',
-      balance: '/api/indexer/v1/accounts/{addr}/balance',
       balances: '/api/indexer/v1/accounts/{addr}/balances',
-      assets: '/api/indexer/v1/accounts/{addr}/assets',
       transactions: '/api/indexer/v1/accounts/{addr}/txs',
       state: '/api/indexer/v1/accounts/{addr}/state',
       runGetMethod: '/api/indexer/v1/runGetMethod',
-      runGetMethods: '/api/indexer/v1/runGetMethods',
       ...(freshReads ? { readFresh: '/api/indexer/v1/readFresh' } : {}),
       marketCandles: '/api/indexer/v1/markets/{market}/candles'
     }).map(([name, route]) => [name, publicIndexerPath(indexer, route)])),
@@ -434,30 +345,31 @@ export const registerRoutes = (
     }
   };
 
-  if (rateLimiter?.isEnabled()) {
-    app.addHook('onRequest', async (request, reply) => {
+  app.addHook('onRequest', async (request, reply) => {
       if (request.method === 'OPTIONS') return;
       const url = request.url ?? '';
-      const ip = request.ip || 'unknown';
+      const visitor = rateLimitKey(request.raw, config.edgeKey);
+      runtime.metrics?.count('http_requests_total', 1, { identity: visitor.identity });
+      if (!rateLimiter?.isEnabled()) return;
       const bucket = classifyRateLimitBucket(url);
-      const result = rateLimiter.check(ip, bucket);
+      const result = rateLimiter.check(visitor.key, bucket);
       reply.header('x-ratelimit-bucket', bucket);
       reply.header('x-ratelimit-limit', result.limit);
       reply.header('x-ratelimit-remaining', result.remaining);
       reply.header('x-ratelimit-reset', result.resetAt);
       if (!result.allowed) {
-        return sendError(reply, 429, 'rate_limited', 'rate limit exceeded');
+        return sendError(reply, 429, 'rate_limited', 'rate limit exceeded', { retryAfterSeconds: result.retryAfterSeconds });
       }
-    });
-  }
+  });
 
   app.get('/', async () => ({ status: 'ok' }));
 
   app.get('/api/indexer/v1/health', async (_request, reply) => {
     const admission = service.getAdmissionStatus();
-    if (admission.configured && !admission.ready) reply.status(503);
+    const health = service.getHealth();
+    if (!health.chain.peersReady || health.disk === 'critical' || admission.configured && !admission.ready) reply.status(503);
     return {
-      ...service.getHealth(),
+      ...health,
       ...serviceIdentity,
       admission
     };
@@ -478,9 +390,10 @@ export const registerRoutes = (
     reply: FastifyReply,
     payload: ToncenterRpcCompatResponse<T>,
     id?: number | string | null,
-    status = 200
+    status = payload.ok ? 200 : payload.code ?? 500
   ) => {
     reply.code(status);
+    if (!payload.ok) { reply.header('cache-control', 'no-store'); if ([429, 503, 504].includes(status)) reply.header('retry-after', status === 503 ? 2 : 1); }
     return reply.send({
       id: id ?? 1,
       jsonrpc: '2.0',
@@ -488,271 +401,9 @@ export const registerRoutes = (
     });
   };
 
-  const resolveNativeBalanceRaw = async (address: string, state: unknown) => {
-    const stateBalanceRaw = readString((state as { balance_raw?: unknown } | null)?.balance_raw);
-    if (stateBalanceRaw) return stateBalanceRaw;
-    const balances = await service.getBalances(address);
-    return balances.ton_raw ?? '0';
-  };
-
-  type ToncenterCompatState = {
-    account_state?: unknown;
-    last_tx_lt?: unknown;
-    last_tx_hash?: unknown;
-    last_confirmed_seqno?: unknown;
-    last_seen_utime?: unknown;
-    code_boc?: unknown;
-    data_boc?: unknown;
-    balance_raw?: unknown;
-  };
-
-  const getToncenterCompatState = async (address: string): Promise<ToncenterCompatState> => {
-    const nativeStateReader = (service as IndexerService & { getNativeState?: (addr: string) => Promise<unknown> })
-      .getNativeState;
-    const state = nativeStateReader ? await nativeStateReader.call(service, address) : await service.getState(address);
-    return (state ?? {}) as ToncenterCompatState;
-  };
-
-  let discoveredRpcProxyEndpoints: string[] | null = null;
-  let rpcEndpointDiscoveryPromise: Promise<string[]> | null = null;
-
-  const resolveRpcProxyEndpoints = async (): Promise<string[]> => {
-    const configured = uniqueRpcEndpoints([
-      ...(Array.isArray(config.rpcProxyEndpoints) ? config.rpcProxyEndpoints : []),
-      ...(config.rpcProxyEndpoint ? [config.rpcProxyEndpoint] : [])
-    ]);
-    if (configured.length > 0) return configured;
-
-    if (discoveredRpcProxyEndpoints) return discoveredRpcProxyEndpoints;
-    if (rpcEndpointDiscoveryPromise) return rpcEndpointDiscoveryPromise;
-
-    if (network === 'localnet') {
-      discoveredRpcProxyEndpoints = [];
-      return discoveredRpcProxyEndpoints;
-    }
-    rpcEndpointDiscoveryPromise = getHttpEndpoints({ network })
-      .then((endpoints) => uniqueRpcEndpoints(endpoints ?? []))
-      .catch(() => [])
-      .then((endpoints) => {
-        discoveredRpcProxyEndpoints = endpoints;
-        return endpoints;
-      })
-      .finally(() => {
-        rpcEndpointDiscoveryPromise = null;
-      });
-    return rpcEndpointDiscoveryPromise;
-  };
-
-  const normalizeRpcProxyPayload = (payload: unknown): ToncenterRpcCompatResponse<unknown> => {
-    const record = asRecord(payload);
-    if (!record) {
-      return { ok: false, code: 502, error: 'Invalid upstream RPC payload.' };
-    }
-
-    if (typeof record.ok === 'boolean') {
-      if (record.ok) {
-        return { ok: true, result: record.result };
-      }
-      const errorCode =
-        typeof record.code === 'number' && Number.isFinite(record.code) ? Math.trunc(record.code) : 500;
-      return { ok: false, code: errorCode, error: 'Upstream RPC returned an error.' };
-    }
-
-    if ('result' in record) {
-      return { ok: true, result: record.result };
-    }
-
-    const rpcError = asRecord(record.error);
-    if (rpcError) {
-      const errorCode =
-        typeof rpcError.code === 'number' && Number.isFinite(rpcError.code) ? Math.trunc(rpcError.code) : 500;
-      return { ok: false, code: errorCode, error: 'Upstream RPC error.' };
-    }
-
-    return { ok: false, code: 502, error: 'Unsupported upstream RPC payload.' };
-  };
-
-  const isRetryableRpcFailure = (result: ToncenterRpcCompatResponse<unknown>) => {
-    if (result.ok) return false;
-    const status = typeof result.code === 'number' ? result.code : null;
-    if (status !== null && RPC_PROXY_RETRYABLE_STATUS_CODES.has(status)) return true;
-    const message = String(result.error || '').toLowerCase();
-    return (
-      message.includes('timeout') ||
-      message.includes('timed out') ||
-      message.includes('service unavailable') ||
-      message.includes('bad gateway') ||
-      message.includes('connection reset') ||
-      message.includes('econnreset') ||
-      message.includes('eai_again')
-    );
-  };
-
-  const normalizeSendBocCompat = (
-    method: string,
-    result: ToncenterRpcCompatResponse<unknown>
-  ): ToncenterRpcCompatResponse<unknown> => {
-    if (
-      result.ok &&
-      method === 'sendBoc' &&
-      (!asRecord(result.result) || readString(asRecord(result.result)?.['@type']) !== 'ok')
-    ) {
-      // Some JSON-RPC providers return hash/string for sendBoc.
-      // TonClient expects toncenter's {"@type":"ok"} shape.
-      return { ok: true, result: { '@type': 'ok' } };
-    }
-    return result;
-  };
-
-  const callRpcEndpoint = async (
-    endpoint: string,
-    method: string,
-    params: Record<string, unknown>,
-    id?: number | string | null
-  ): Promise<ToncenterRpcCompatResponse<unknown>> => {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json'
-    };
-    const apiKey = config.rpcProxyApiKey?.trim();
-    if (apiKey) headers['x-api-key'] = apiKey;
-
-    const timeoutMs =
-      typeof config.rpcProxyTimeoutMs === 'number' &&
-      Number.isFinite(config.rpcProxyTimeoutMs) &&
-      config.rpcProxyTimeoutMs > 0
-        ? Math.trunc(config.rpcProxyTimeoutMs)
-        : RPC_PROXY_DEFAULT_TIMEOUT_MS;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          id: id ?? 1,
-          jsonrpc: '2.0',
-          method,
-          params
-        }),
-        signal: controller.signal
-      });
-
-      const text = await response.text();
-      let payload: unknown = null;
-      if (text.trim()) {
-        try {
-          payload = JSON.parse(text);
-        } catch (_error) {
-          if (!response.ok) {
-            return { ok: false, code: response.status, error: `Upstream RPC HTTP ${response.status}.` };
-          }
-          return { ok: false, code: 502, error: 'Invalid upstream RPC JSON payload.' };
-        }
-      }
-
-      if (!response.ok) {
-        const normalized = normalizeRpcProxyPayload(payload);
-        if (!normalized.ok) {
-          return {
-            ok: false,
-            code: normalized.code ?? response.status,
-            error: normalized.error
-          };
-        }
-        return {
-          ok: false,
-          code: response.status,
-          error: `Upstream RPC HTTP ${response.status}.`
-        };
-      }
-
-      return normalizeSendBocCompat(method, normalizeRpcProxyPayload(payload));
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return { ok: false, code: 504, error: 'Upstream RPC timed out.' };
-      }
-      return {
-        ok: false,
-        code: 502,
-        error: 'Upstream RPC request failed.'
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
-  const proxyTonRpcMethod = async (
-    method: string,
-    params: Record<string, unknown>,
-    id?: number | string | null
-  ): Promise<ToncenterRpcCompatResponse<unknown> | null> => {
-    if (!TON_RPC_PROXY_METHODS.has(method)) return null;
-    if (TON_RPC_WRITE_PROXY_METHODS.has(method) && !config.enableWriteRpc) {
-      return { ok: false, code: 403, error: `method disabled: ${method}` };
-    }
-
-    const endpoints = await resolveRpcProxyEndpoints();
-    if (endpoints.length === 0) return null;
-
-    const retryAttempts =
-      typeof config.rpcProxyRetryAttempts === 'number' &&
-      Number.isFinite(config.rpcProxyRetryAttempts) &&
-      config.rpcProxyRetryAttempts > 0
-        ? Math.trunc(config.rpcProxyRetryAttempts)
-        : RPC_PROXY_DEFAULT_RETRY_ATTEMPTS;
-    const retryDelayMs =
-      typeof config.rpcProxyRetryDelayMs === 'number' &&
-      Number.isFinite(config.rpcProxyRetryDelayMs) &&
-      config.rpcProxyRetryDelayMs >= 0
-        ? Math.trunc(config.rpcProxyRetryDelayMs)
-        : RPC_PROXY_DEFAULT_RETRY_DELAY_MS;
-
-    let lastError: ToncenterRpcCompatResponse<unknown> = {
-      ok: false,
-      code: 502,
-      error: 'Upstream RPC unavailable.'
-    };
-    const rejectedEndpoints = new Set<string>();
-
-    for (let attempt = 0; attempt < retryAttempts; attempt += 1) {
-      for (const endpoint of endpoints) {
-        if (rejectedEndpoints.has(endpoint)) continue;
-        if (network !== 'localnet') {
-          // Validate the actual selected upstream on every request. Discovery and
-          // configured URLs are both routing hints, and may change their backend.
-          const identity = await callRpcEndpoint(
-            endpoint, 'getMasterchainInfo', method === 'getMasterchainInfo' ? params : {}, id
-          );
-          if (!identity.ok) {
-            lastError = identity;
-            if (!isRetryableRpcFailure(identity)) return identity;
-            continue;
-          }
-          if (!matchesPublicRpcNetwork(identity.result, network)) {
-            lastError = { ok: false, code: 502, error: `Upstream RPC network identity does not match ${network}.` };
-            rejectedEndpoints.add(endpoint);
-            app.log.warn({ network, method }, 'Rejected RPC upstream with missing or mismatched network identity');
-            continue;
-          }
-          if (method === 'getMasterchainInfo') return identity;
-        }
-        const result = await callRpcEndpoint(endpoint, method, params, id);
-        if (result.ok) return result;
-        lastError = result;
-        if (!isRetryableRpcFailure(result)) {
-          return result;
-        }
-      }
-      if (rejectedEndpoints.size === endpoints.length) break;
-      if (attempt < retryAttempts - 1 && retryDelayMs > 0) {
-        // Linear backoff to keep submit latency bounded but robust to short provider outages.
-        // eslint-disable-next-line no-await-in-loop
-        await sleep(retryDelayMs * (attempt + 1));
-      }
-    }
-    return lastError;
-  };
+  const blockId = (block: TonBlockIdExt) => ({ '@type': 'ton.blockIdExt', workchain: block.workchain,
+    shard: block.shard, seqno: block.seqno, root_hash: Buffer.from(block.rootHashHex, 'hex').toString('base64'),
+    file_hash: Buffer.from(block.fileHashHex, 'hex').toString('base64') });
 
   const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
     const body = asRecord(request.body);
@@ -768,6 +419,7 @@ export const registerRoutes = (
       return sendToncenterCompat(reply, { ok: false, code: 400, error: 'missing method' }, id);
     }
 
+    const signal = requestDeadline(request, ROUTE_DEADLINE_MS.rpc);
     try {
       if (method === 'runGetMethod') {
         const address = readString(params.address);
@@ -782,79 +434,20 @@ export const registerRoutes = (
         if (!argsResult.ok) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: argsResult.error ?? 'invalid stack' }, id);
         }
-        const result = await withTimeout(
-          service.runGetMethod(address, getter, argsResult.args ?? []),
-          GET_METHOD_CALL_TIMEOUT_MS
-        );
+        const result = await service.runGetMethod(address, getter, argsResult.args ?? [], { signal });
         return sendToncenterCompat(reply, { ok: true, result }, id);
       }
 
-      if (method === 'getAddressBalance') {
+      if (method === 'getAddressBalance' || method === 'getAddressInformation') {
         const address = readString(params.address);
-        if (!address || !isValidAddress(address)) {
-          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
-        }
-        const state = await getToncenterCompatState(address);
-        const balanceRaw = await resolveNativeBalanceRaw(address, state);
-        return sendToncenterCompat(reply, { ok: true, result: balanceRaw }, id);
-      }
-
-      if (method === 'getAddressInformation') {
-        const address = readString(params.address);
-        if (!address || !isValidAddress(address)) {
-          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
-        }
-        const state = await getToncenterCompatState(address);
-        const balanceRaw = await resolveNativeBalanceRaw(address, state);
-        const normalizedState =
-          state.account_state === 'active' ||
-          state.account_state === 'uninitialized' ||
-          state.account_state === 'frozen'
-            ? state.account_state
-            : 'uninitialized';
-        const zeroHashB64 = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-        const lastTxLt =
-          typeof state.last_tx_lt === 'string' && state.last_tx_lt.trim() ? state.last_tx_lt.trim() : '0';
-        const lastTxHash =
-          typeof state.last_tx_hash === 'string' && state.last_tx_hash.trim()
-            ? state.last_tx_hash.trim()
-            : zeroHashB64;
-        const lastSeqno =
-          typeof state.last_confirmed_seqno === 'number' && Number.isFinite(state.last_confirmed_seqno)
-            ? Math.max(0, Math.trunc(state.last_confirmed_seqno))
-            : 0;
-        const syncUtime =
-          typeof state.last_seen_utime === 'number' && Number.isFinite(state.last_seen_utime)
-            ? Math.max(0, Math.trunc(state.last_seen_utime))
-            : Math.floor(Date.now() / 1000);
-        return sendToncenterCompat(
-          reply,
-          {
-            ok: true,
-            result: {
-              state: normalizedState,
-              balance: balanceRaw,
-              code: typeof state.code_boc === 'string' ? state.code_boc : '',
-              data: typeof state.data_boc === 'string' ? state.data_boc : '',
-              extra_currencies: [],
-              last_transaction_id: {
-                '@type': 'internal.transactionId',
-                lt: lastTxLt,
-                hash: lastTxHash
-              },
-              block_id: {
-                '@type': 'ton.blockIdExt',
-                workchain: -1,
-                shard: '-9223372036854775808',
-                seqno: lastSeqno,
-                root_hash: zeroHashB64,
-                file_hash: zeroHashB64
-              },
-              sync_utime: syncUtime
-            }
-          },
-          id
-        );
+        if (!address || !isValidAddress(address)) return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
+        const { state, head, anchor } = await service.getAccountAnchor(address, { signal });
+        if (method === 'getAddressBalance') return sendToncenterCompat(reply, { ok: true, result: state.balance }, id);
+        return sendToncenterCompat(reply, { ok: true, result: {
+          state: state.accountState, balance: state.balance, code: state.codeBoc ?? '', data: state.dataBoc ?? '', extra_currencies: [],
+          last_transaction_id: { '@type': 'internal.transactionId', lt: state.lastTxLt ?? '0',
+            hash: state.lastTxHash && /^[a-f0-9]{64}$/i.test(state.lastTxHash) ? Buffer.from(state.lastTxHash, 'hex').toString('base64') : state.lastTxHash ?? Buffer.alloc(32).toString('base64') }, block_id: blockId(head), sync_utime: anchor.genUtime
+        } }, id);
       }
 
       if (method === 'getTransactions') {
@@ -877,24 +470,32 @@ export const registerRoutes = (
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid cursor' }, id);
         }
 
-        const txs = await service.getTransactionEvidence(address, limit, lt ?? undefined, hash ?? undefined);
+        const txs = await service.getTransactionEvidence(address, limit, lt ?? undefined, hash ?? undefined, { signal });
         return sendToncenterCompat(reply, { ok: true, result: txs }, id);
       }
 
-      const proxied = await proxyTonRpcMethod(method, params, id);
-      if (proxied) {
-        return sendToncenterCompat(reply, proxied, id);
+      if (method === 'getMasterchainInfo') {
+        if (!runtime.source) throw new ChainReadError('upstream_unavailable');
+        const head = await runtime.source.head({ signal });
+        return sendToncenterCompat(reply, { ok: true, result: { last: blockId(head),
+          ...(network === 'localnet' ? {} : { init: PUBLIC_RPC_ZERO_STATES[network] }) } }, id);
+      }
+      if ((method === 'sendBoc' || method === 'sendBocReturnHash') && config.enableWriteRpc) {
+        const bytes = typeof params.boc === 'string' ? decodeCanonicalBase64(params.boc) : null;
+        let cell: Cell | undefined;
+        try { if (bytes) { const cells = Cell.fromBoc(bytes); if (cells.length === 1) cell = cells[0]; } } catch { /* Invalid input is a client error. */ }
+        if (!bytes || !cell) return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid message BOC' }, id);
+        if (!runtime.source) throw new ChainReadError('upstream_unavailable');
+        await runtime.source.sendMessage(bytes, { signal });
+        return sendToncenterCompat(reply, { ok: true, result: method === 'sendBocReturnHash' ? { '@type': 'raw.extMessageInfo', hash: cell.hash().toString('hex') } : { '@type': 'ok' } }, id);
       }
 
       return sendToncenterCompat(reply, { ok: false, code: 404, error: `unsupported method: ${method}` }, id);
     } catch (error) {
       const admission = publicAdmissionError(error);
       if (admission) return sendToncenterCompat(reply, { ok: false, code: admission.status, error: admission.code }, id, admission.status);
-      return sendToncenterCompat(
-        reply,
-        { ok: false, code: 500, error: publicErrorMessage(error, 'JSON-RPC request failed') },
-        id
-      );
+      const status = error instanceof ChainReadError ? error.code === 'upstream_timeout' ? 504 : 503 : 500;
+      return sendToncenterCompat(reply, { ok: false, code: status, error: status === 500 ? 'JSON-RPC request failed' : error instanceof ChainReadError ? error.code : 'upstream_unavailable' }, id, status);
     }
   };
 
@@ -929,12 +530,12 @@ export const registerRoutes = (
     // registry metadata or a configured URL cannot establish release identity.
     const manifest = currentNativeRuntime(network, registryMetadata);
     if (!manifest)
-      return sendError(reply, 503, 'fresh_read_unavailable', 'Fresh chain read unavailable.');
+      return sendError(reply, 503, 'upstream_unavailable', 'Fresh chain read unavailable.');
     try {
-      const response = await withTimeout(service.readFresh(calls), FRESH_READ_TIMEOUT_MS);
+      const response = await service.readFresh(calls, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.fresh) });
       return { ...response, release: { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash } };
-    } catch {
-      return sendError(reply, 503, 'fresh_read_unavailable', 'Fresh chain read unavailable.');
+    } catch (error) {
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Fresh chain read unavailable.' });
     }
   });
 
@@ -953,69 +554,12 @@ export const registerRoutes = (
       return sendError(reply, 400, 'invalid_stack', argsResult.error ?? 'invalid stack');
     }
     try {
-      return await withTimeout(
-        service.runGetMethod(address, method, argsResult.args ?? []),
-        GET_METHOD_CALL_TIMEOUT_MS
-      );
+      return await service.runGetMethod(address, method, argsResult.args ?? [], { signal: requestDeadline(request, ROUTE_DEADLINE_MS.getter) });
     } catch (error) {
       const admission = publicAdmissionError(error);
       if (admission) return sendError(reply, admission.status, admission.code, admission.message);
-      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'get method call failed'));
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'get method call failed' });
     }
-  });
-
-  app.post('/api/indexer/v1/runGetMethods', async (request, reply) => {
-    const body = asRecord(request.body);
-    const calls = body?.calls;
-    if (!Array.isArray(calls)) {
-      return sendError(reply, 400, 'bad_request', 'calls must be an array');
-    }
-    if (calls.length > GET_METHOD_MAX_BATCH_CALLS) {
-      return sendError(reply, 400, 'bad_request', 'calls too large');
-    }
-
-    type BatchResult =
-      | { ok: true; stack: ToncenterStackEntry[]; exit_code: number; gas_used: number | null }
-      | { ok: false; code: string; error: string };
-
-    const results = await mapConcurrent(calls, GET_METHOD_BATCH_CONCURRENCY, async (candidate) => {
-      const call = asRecord(candidate);
-      if (!call) {
-        return { ok: false, code: 'bad_request', error: 'call must be an object' } satisfies BatchResult;
-      }
-      const address = readString(call.address);
-      const method = readString(call.method);
-      if (!address || !isValidAddress(address)) {
-        return { ok: false, code: 'invalid_address', error: 'invalid address' } satisfies BatchResult;
-      }
-      if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method)) {
-        return { ok: false, code: 'invalid_method', error: 'invalid method' } satisfies BatchResult;
-      }
-      const argsResult = parseStackArgs(call.stack);
-      if (!argsResult.ok) {
-        return {
-          ok: false,
-          code: 'invalid_stack',
-          error: argsResult.error ?? 'invalid stack'
-        } satisfies BatchResult;
-      }
-      try {
-        const response = await withTimeout(
-          service.runGetMethod(address, method, argsResult.args ?? []),
-          GET_METHOD_CALL_TIMEOUT_MS
-        );
-        return { ok: true, ...response } satisfies BatchResult;
-      } catch (error) {
-        const admission = publicAdmissionError(error);
-        if (admission) return { ok: false, code: admission.code, error: admission.message } satisfies BatchResult;
-        if (error instanceof Error && error.message === 'timeout') {
-          return { ok: false, code: 'timeout', error: 'get method timed out' } satisfies BatchResult;
-        }
-        return { ok: false, code: 'bad_request', error: 'get method call failed' } satisfies BatchResult;
-      }
-    });
-
-    return { results };
   });
 
   app.get('/api/indexer/v1/openapi.json', async () => {
@@ -1061,22 +605,6 @@ export const registerRoutes = (
   });
 
   app.get(
-    '/api/indexer/v1/accounts/:addr/balance',
-    { schema: { params: addressParamsSchema } },
-    async (request, reply) => {
-      const addr = (request.params as { addr: string }).addr;
-      if (!isValidAddress(addr)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid address');
-      }
-      try {
-        return await service.getBalance(addr);
-      } catch (error) {
-        return sendError(reply, 503, 'balance_unavailable', 'balance source is temporarily unavailable');
-      }
-    }
-  );
-
-  app.get(
     '/api/indexer/v1/accounts/:addr/balances',
     { schema: { params: addressParamsSchema } },
     async (request, reply) => {
@@ -1085,72 +613,10 @@ export const registerRoutes = (
         return sendError(reply, 400, 'invalid_address', 'invalid address');
       }
       try {
-        return await service.getBalances(addr);
+        if (!runtime.balances) throw new ChainReadError('upstream_unavailable');
+        return await runtime.balances.read(addr, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.balances) });
       } catch (error) {
-        return sendError(reply, 503, 'balance_unavailable', 'balance source is temporarily unavailable');
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/accounts/:addr/assets',
-    { schema: { params: addressParamsSchema } },
-    async (request, reply) => {
-      const addr = (request.params as { addr: string }).addr;
-      if (!isValidAddress(addr)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid address');
-      }
-      try {
-        return await service.getBalances(addr);
-      } catch (error) {
-        return sendError(reply, 503, 'balance_unavailable', 'balance source is temporarily unavailable');
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/jettons/:jetton/transfer/:owner/payload',
-    { schema: { params: jettonTransferPayloadParamsSchema } },
-    async (request, reply) => {
-      const { jetton, owner } = request.params as { jetton: string; owner: string };
-      if (!isValidAddress(jetton)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid jetton address');
-      }
-      if (!isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-      try {
-        return await service.getJettonTransferPayload(jetton, owner);
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'payload request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/perps/:engine/snapshot',
-    { schema: { params: { type: 'object', properties: { engine: { type: 'string' } }, required: ['engine'] }, querystring: perpsSnapshotQuerySchema } },
-    async (request, reply) => {
-      const engine = (request.params as { engine: string }).engine;
-      if (!isValidAddress(engine)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid engine address');
-      }
-
-      const query = request.query as { market_ids?: string; max_markets?: string | number };
-      const marketIds = query.market_ids?.split(',').map(Number);
-      const maxMarketsParsed =
-        typeof query.max_markets === 'number'
-          ? (Number.isInteger(query.max_markets) && query.max_markets > 0 ? query.max_markets : null)
-          : parsePositiveInt(query.max_markets);
-      const maxMarkets = maxMarketsParsed ? Math.min(128, maxMarketsParsed) : undefined;
-
-      try {
-        return await service.getPerpsSnapshot(engine, {
-          marketIds,
-          maxMarkets
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'perps snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Balance source is temporarily unavailable.' });
       }
     }
   );
@@ -1175,14 +641,15 @@ export const registerRoutes = (
         return sendError(reply, 400, 'invalid_address', 'invalid pool address');
       }
       const routeIds = query.route_ids?.split(',').map((value) => Number(value));
+      if (routeIds?.some(id => !Number.isSafeInteger(id) || id < 0 || id > 0xffffffff)) return sendError(reply, 400, 'bad_request', 'Invalid route ID.');
 
       try {
         return await service.getVolIndexSnapshot(volIndex, {
           sourcePool: pool,
           routeIds
-        });
+        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'vol-index snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'vol-index snapshot request failed' });
       }
     }
   );
@@ -1211,6 +678,7 @@ export const registerRoutes = (
       if (owner && !isValidAddress(owner)) {
         return sendError(reply, 400, 'invalid_address', 'invalid owner address');
       }
+      if (query.start_id !== undefined && (!/^\d+$/.test(query.start_id) || BigInt(query.start_id) >= (1n << 64n))) return sendError(reply, 400, 'bad_request', 'Invalid proposal start ID.');
       const maxScanParsed =
         typeof query.max_scan === 'number'
           ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
@@ -1229,9 +697,9 @@ export const registerRoutes = (
           startId: query.start_id,
           maxScan,
           maxConsecutiveMisses
-        });
+        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'governance snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'governance snapshot request failed' });
       }
     }
   );
@@ -1250,35 +718,9 @@ export const registerRoutes = (
         return sendError(reply, 400, 'bad_request', 'campaign start ID exceeds uint64');
       }
       try {
-        return await service.getFarmSnapshot(pool, { owner: query.owner, startId: query.start_id, limit: query.limit });
+        return await service.getFarmSnapshot(pool, { owner: query.owner, startId: query.start_id, limit: query.limit }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'native DLMM farming snapshot unavailable'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/options/:factory/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { factory: { type: 'string' } }, required: ['factory'] },
-        querystring: optionsSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const factory = (request.params as { factory: string }).factory;
-      if (!isValidAddress(factory)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid options factory address');
-      }
-
-      const query = request.query as { after_id?: string; limit?: number };
-      if (query.after_id !== undefined && BigInt(query.after_id) >= (1n << 64n)) {
-        return sendError(reply, 400, 'bad_request', 'Options catalog cursor exceeds uint64.');
-      }
-      try {
-        return await service.getOptionsSnapshot(factory, { afterId: query.after_id, limit: query.limit });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'options snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'native DLMM farming snapshot unavailable' });
       }
     }
   );
@@ -1309,92 +751,9 @@ export const registerRoutes = (
           afterSlot: query.after_slot,
           limit: query.limit,
           revision: query.revision
-        });
+        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'cover snapshot request failed'));
-      }
-    }
-  );
-
-  app.post(
-    '/api/indexer/v1/defi/snapshot',
-    {
-      schema: {
-        body: {
-          type: 'object',
-          properties: {
-            owner: { type: ['string', 'null'] },
-            include: { type: 'object', additionalProperties: true },
-            options: { type: 'object', additionalProperties: true },
-            contracts: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
-            modules: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  key: { type: 'string' },
-                  address: { type: 'string' },
-                  enabledGetter: { type: ['string', 'null'] },
-                  governanceGetter: { type: ['string', 'null'] }
-                },
-                required: ['key', 'address']
-              }
-            }
-          },
-          required: ['contracts']
-        }
-      }
-    },
-    async (request, reply) => {
-      const body = request.body as any;
-      const owner = typeof body?.owner === 'string' ? body.owner.trim() : null;
-      if (owner && !isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-      const contracts = body?.contracts ?? null;
-      if (!contracts || typeof contracts !== 'object') {
-        return sendError(reply, 400, 'bad_request', 'contracts object is required');
-      }
-      const contractKeys = [
-        'activationGate',
-        'dlmmRegistry',
-        't3Hub',
-        'controlMesh',
-        'riskController',
-        'riskVault',
-        'feeRouter',
-        'buybackExecutor',
-        'automationRegistry',
-        'anchorGuard',
-        'voting',
-        'coverManager'
-      ] as const;
-      for (const key of contractKeys) {
-        const value = contracts[key];
-        if (typeof value === 'string' && value.trim() && !isValidAddress(value.trim())) {
-          return sendError(reply, 400, 'invalid_address', `invalid contract address for ${key}`);
-        }
-      }
-      const modules = Array.isArray(body?.modules) ? body.modules : [];
-      if (modules.length > 64) {
-        return sendError(reply, 400, 'bad_request', 'too many modules');
-      }
-      for (const entry of modules) {
-        const address = typeof entry?.address === 'string' ? entry.address.trim() : '';
-        if (!address || !isValidAddress(address)) {
-          return sendError(reply, 400, 'invalid_address', 'invalid module address');
-        }
-      }
-      try {
-        return await service.getDefiSnapshot({
-          owner,
-          include: typeof body?.include === 'object' && body.include ? body.include : undefined,
-          options: typeof body?.options === 'object' && body.options ? body.options : undefined,
-          contracts,
-          modules
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'DeFi snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'cover snapshot request failed' });
       }
     }
   );
@@ -1448,9 +807,9 @@ export const registerRoutes = (
           dlmmRegistry: registry,
           dlmmFactory: factory,
           tokens
-        });
+        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'DLMM pools snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'DLMM pools snapshot request failed' });
       }
     }
   );
@@ -1463,6 +822,7 @@ export const registerRoutes = (
       return sendError(reply, 400, 'invalid_address', 'at least one valid address is required');
     }
 
+    if (!runtime.streams) return sendError(reply, 503, 'upstream_unavailable', 'Balance stream unavailable.');
     const inheritedHeaders = reply.getHeaders();
     reply.hijack();
     for (const [name, value] of Object.entries(inheritedHeaders)) {
@@ -1479,82 +839,10 @@ export const registerRoutes = (
 
     let closed = false;
     let seq = 0;
-    let inFlight = false;
-    const signatures = new Map<string, string>();
-
-    const writeEvent = (payload: unknown, eventName?: string) => {
-      if (closed) return;
-      if (eventName) {
-        reply.raw.write(`event: ${eventName}\n`);
-      }
-      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+    const writeEvent = (payload: unknown) => {
+      if (!closed) reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
-
-    const pollSnapshots = async (targets: string[]) => {
-      if (closed || inFlight) return;
-      inFlight = true;
-      try {
-        for (const address of targets) {
-          if (closed) return;
-          const balances = await service.getBalances(address);
-          if (closed) return;
-          const signature = service.getBalancesSignature(balances);
-          const previous = signatures.get(address);
-          const changed = previous !== undefined && previous !== signature;
-          signatures.set(address, signature);
-
-          const jettons = balances.assets
-            .filter((asset) => asset.kind === 'jetton' && typeof asset.address === 'string' && asset.address.length > 0)
-            .map((asset) => asset.address as string);
-          const ts = Date.now();
-
-          if (changed) {
-            writeEvent({
-              type: 'balances_changed',
-              address,
-              seq: ++seq,
-              ts,
-              hints: {
-                ton: true,
-                jettons: jettons.length > 0 ? jettons : null,
-              },
-            });
-          }
-
-          if (previous === undefined || changed) {
-            writeEvent({
-              type: 'balances_snapshot',
-              address,
-              seq: ++seq,
-              ts,
-              balances,
-            });
-          }
-        }
-      } catch (error) {
-        writeEvent(
-          {
-            type: 'error',
-            address: null,
-            seq: ++seq,
-            ts: Date.now(),
-            message: publicErrorMessage(error, 'stream update failed'),
-          },
-          'error'
-        );
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const unsubscribe = service.subscribeBalanceChanges(addresses, (event) => {
-      if (closed) return;
-      void pollSnapshots([event.address]);
-    });
-
-    const pollTimer = setInterval(() => {
-      void pollSnapshots(addresses);
-    }, BALANCE_STREAM_POLL_MS);
+    let unsubscribe = () => {};
 
     const keepAliveTimer = setInterval(() => {
       if (closed) return;
@@ -1565,7 +853,6 @@ export const registerRoutes = (
       if (closed) return;
       closed = true;
       activeBalanceStreams.delete(closeStream);
-      clearInterval(pollTimer);
       clearInterval(keepAliveTimer);
       unsubscribe();
       try {
@@ -1584,12 +871,11 @@ export const registerRoutes = (
       seq: ++seq,
       ts: Date.now(),
     });
-    void pollSnapshots(addresses);
+    unsubscribe = runtime.streams!.subscribe(addresses, writeEvent);
     return reply;
   };
 
   app.get('/api/indexer/v1/stream/balances', handleBalanceStream);
-  app.get('/api/indexer/v1/stream', handleBalanceStream);
 
   app.get(
     '/api/indexer/v1/accounts/:addr/txs',
@@ -1617,75 +903,11 @@ export const registerRoutes = (
           }
         }
         if (cursorLt !== undefined && cursorHash !== undefined) {
-          return await service.getTransactionsByCursor(addr, cursorLt, cursorHash);
+          return await service.getTransactionsByCursor(addr, cursorLt, cursorHash, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
         }
-        return await service.getTransactions(addr, page);
+        return await service.getTransactions(addr, page, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
       } catch (error) {
-        if (error instanceof InitialHistoryReadTimeoutError) {
-          return sendError(
-            reply,
-            503,
-            'history_source_timeout',
-            'transaction history source timed out'
-          );
-        }
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'transaction request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/accounts/:addr/swaps',
-    { schema: { params: addressParamsSchema, querystring: swapQuerySchema } },
-    async (request, reply) => {
-      const addr = (request.params as { addr: string }).addr;
-      if (!isValidAddress(addr)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid address');
-      }
-      const query = request.query as {
-        limit?: number | string;
-        from_utime?: number | string;
-        to_utime?: number | string;
-        pay_token?: string;
-        receive_token?: string;
-        execution_type?: 'market' | 'limit' | 'twap' | 'unknown';
-        status?: 'success' | 'failed' | 'pending';
-        include_reverse?: string;
-      };
-      const limitRaw = query.limit;
-      const limitFromString = typeof limitRaw === 'string' ? parsePositiveInt(limitRaw) : null;
-      const limit =
-        typeof limitRaw === 'number' && Number.isFinite(limitRaw)
-          ? Math.max(1, Math.min(500, Math.trunc(limitRaw)))
-          : limitFromString !== null
-            ? Math.max(1, Math.min(500, limitFromString))
-            : 100;
-      const hasFromUtime = query.from_utime !== undefined;
-      const hasToUtime = query.to_utime !== undefined;
-      const fromUtime = parsePositiveIntQuery(query.from_utime);
-      const toUtime = parsePositiveIntQuery(query.to_utime);
-      if (hasFromUtime && fromUtime === null) {
-        return sendError(reply, 400, 'bad_request', 'from_utime must be a positive integer');
-      }
-      if (hasToUtime && toUtime === null) {
-        return sendError(reply, 400, 'bad_request', 'to_utime must be a positive integer');
-      }
-      if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
-        return sendError(reply, 400, 'bad_request', 'from_utime must be less than or equal to to_utime');
-      }
-      try {
-        return await service.getSwapExecutions(addr, {
-          limit,
-          fromUtime: fromUtime ?? undefined,
-          toUtime: toUtime ?? undefined,
-          payToken: query.pay_token,
-          receiveToken: query.receive_token,
-          executionType: query.execution_type,
-          status: query.status,
-          includeReverse: parseBooleanQuery(query.include_reverse),
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'swaps request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'transaction request failed' });
       }
     }
   );
@@ -1785,7 +1007,7 @@ export const registerRoutes = (
           fromUtime: fromUtime ?? undefined,
           toUtime: toUtime ?? undefined,
           limit,
-          }
+          }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) }
         );
         return {...history,
           token_root: canonicalMarket?.tokenRoot ?? null,
@@ -1795,7 +1017,7 @@ export const registerRoutes = (
           quote_decimals: canonicalMarket?.quoteDecimals ?? quoteDecimals ?? null,
         };
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'candles request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'candles request failed' });
       }
     }
   );
@@ -1809,9 +1031,9 @@ export const registerRoutes = (
         return sendError(reply, 400, 'invalid_address', 'invalid address');
       }
       try {
-        return await service.getState(addr);
+        return await service.getState(addr, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'state request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'state request failed' });
       }
     }
   );
@@ -1821,9 +1043,9 @@ export const registerRoutes = (
     const denied = requireAdmin(request, reply, 'snapshot_disabled', 'snapshot disabled');
     if (denied) return denied;
     try {
-      return { ok: true, ...(snapshots.save() as object) };
+      return { ok: true, ...(await snapshots.save()) };
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'snapshot save failed'));
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'snapshot save failed' });
     }
   });
 
@@ -1834,7 +1056,7 @@ export const registerRoutes = (
     try {
       return { ok: true, ...(snapshots.load() as object) };
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'snapshot load failed'));
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'snapshot load failed' });
     }
   });
 

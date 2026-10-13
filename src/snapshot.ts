@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, renameSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { writeFile, rename, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { StoreSnapshot } from './store/memoryStore';
@@ -19,18 +19,6 @@ export const loadSnapshotFile = (path: string): StoreSnapshot | null => {
     return parsed;
   } catch {
     return null;
-  }
-};
-
-export const saveSnapshotFile = (path: string, snapshot: StoreSnapshot): void => {
-  const target = resolve(path);
-  if (pendingWrites.has(target)) throw new Error('Snapshot write already in progress');
-  const tmpPath = `${target}.tmp`;
-  try {
-    writeFileSync(tmpPath, `${JSON.stringify(snapshot)}\n`);
-    renameSync(tmpPath, target);
-  } finally {
-    rmSync(tmpPath, { force: true });
   }
 };
 

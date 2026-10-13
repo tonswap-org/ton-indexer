@@ -124,7 +124,7 @@ async function routeCases() {
   try {
     const response = await wrong.inject({ method: 'POST', url: '/api/indexer/v1/readFresh', payload: body });
     assert.equal(response.statusCode, 503);
-    assert.equal(response.json().code, 'fresh_read_unavailable');
+    assert.equal(response.json().code, 'upstream_unavailable');
   } finally { await wrong.close(); }
 }
 

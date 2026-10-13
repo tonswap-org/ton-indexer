@@ -48,21 +48,20 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
         ...ledgerSchemas,
         ErrorResponse: {
           type: 'object',
-          properties: { error: { type: 'string' }, code: { type: 'string' } },
+          additionalProperties: false, properties: { error: { type: 'string' }, code: { type: 'string' } },
           required: ['error', 'code'],
         },
+        TonBlockId: { type: 'object', required: ['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex'], properties: {
+          workchain: {type:'integer'}, shard: {type:'string'}, seqno: {type:'integer',minimum:0},
+          rootHashHex: {type:'string',pattern:'^[a-f0-9]{64}$'}, fileHashHex: {type:'string',pattern:'^[a-f0-9]{64}$'} } },
         HealthStatus: {
-          type: 'object',
-          properties: {
-            serviceId: { type: 'string', enum: [serviceId] },
-            ecosystem: { type: 'string', enum: ['ton'] },
-            chainId: { type: 'string' },
-            network: { type: 'string' },
-            lastMasterSeqno: { type: ['integer', 'null'] },
-            indexerLagSec: { type: ['number', 'null'] },
-            liteserverPoolStatus: { type: ['string', 'null'] },
-          },
-          required: ['serviceId', 'ecosystem', 'chainId', 'network'],
+          type: 'object', properties: {
+            serviceId: {type:'string',enum:[serviceId]}, ecosystem: {type:'string',enum:['ton']}, chainId: {type:'string'}, network: {type:'string'},
+            chain: {type:'object',required:['peersConfigured','peersReady','headSeqno','headAgeSec'],properties:{
+              peersConfigured:{type:'integer',minimum:0},peersReady:{type:'integer',minimum:0},headSeqno:{type:['integer','null']},headAgeSec:{type:['number','null']} }},
+            ledger: {type:'string',enum:['disabled','connecting','ready','unavailable']},disk:{type:'string',enum:['ok','low','critical']},
+            admission: {type:'object',required:['configured','ready'],properties:{configured:{type:'boolean'},ready:{type:'boolean'}}}
+          }, required:['serviceId','ecosystem','chainId','network','chain','ledger','disk','admission']
         },
         ContractsResponse: {
           type: 'object',
@@ -127,18 +126,18 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             release: { type: 'object', required: ['releaseId', 'manifestHash'], properties: {
               releaseId: { type: 'string' }, manifestHash: { type: 'string', pattern: '^[a-f0-9]{64}$' } } },
             readContext: { type: 'object', required: ['source', 'head', 'queriedAt'], properties: {
-              source: { type: 'string', enum: ['lite', 'http4'] },
+              source: { type: 'string', enum: ['lite'] },
               queriedAt: { type: 'integer', description: 'Uncached masterchain query start in epoch milliseconds; not block creation time.' },
-              head: { type: 'object', required: ['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex'], properties: {
-                workchain: { const: -1 }, shard: { const: '-9223372036854775808' }, seqno: { type: 'integer', minimum: 0 },
+              head: { type: 'object', required: ['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex', 'utime'], properties: {
+                utime: {type:'integer',minimum:1}, workchain: { const: -1 }, shard: { const: '-9223372036854775808' }, seqno: { type: 'integer', minimum: 0 },
                 rootHashHex: { type: 'string', pattern: '^[a-f0-9]{64}$' }, fileHashHex: { type: 'string', pattern: '^[a-f0-9]{64}$' } } }
             } },
             results: { type: 'array', items: { oneOf: [
-              { type: 'object', required: ['kind', 'address', 'balance_raw', 'account_state', 'code_boc', 'data_boc', 'last_tx_lt', 'last_tx_hash'],
+              { type: 'object', required: ['kind', 'address', 'balance_raw', 'account_state', 'code_boc', 'data_boc', 'last_tx_lt', 'last_tx_hash', 'shard_block', 'shard_utime'],
                 properties: { kind: { const: 'account' }, address: { type: 'string' }, balance_raw: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
                   account_state: { type: 'string', enum: ['active', 'uninitialized', 'frozen'] },
                   code_boc: { type: ['string', 'null'] }, data_boc: { type: ['string', 'null'] },
-                  last_tx_lt: { type: ['string', 'null'] }, last_tx_hash: { type: ['string', 'null'] } } },
+                  last_tx_lt: { type: ['string', 'null'] }, last_tx_hash: { type: ['string', 'null'] }, shard_block: {oneOf:[{$ref:'#/components/schemas/TonBlockId'},{type:'null'}]}, shard_utime: {type:['integer','null'],minimum:1} } },
               { type: 'object', required: ['kind', 'address', 'stack', 'exit_code', 'gas_used'], properties: {
                 kind: { const: 'getter' }, address: { type: 'string' }, stack: { type: 'array', items: { type: 'array', items: {} } },
                 exit_code: { type: 'integer' }, gas_used: { type: 'null' } } }
@@ -162,78 +161,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             stack: { type: 'array', items: { type: 'array', items: {} } },
           },
           required: ['exit_code', 'gas_used', 'stack'],
-        },
-        RunGetMethodsRequest: {
-          type: 'object',
-          properties: {
-            calls: { type: 'array', items: { $ref: '#/components/schemas/RunGetMethodRequest' } },
-          },
-          required: ['calls'],
-        },
-        RunGetMethodBatchSuccess: {
-          type: 'object',
-          properties: {
-            ok: { type: 'boolean', enum: [true] },
-            exit_code: { type: 'integer' },
-            gas_used: { type: ['integer', 'null'], description: 'Measured TVM gas for verified admission; null when the source does not report gas.' },
-            stack: { type: 'array', items: { type: 'array', items: {} } },
-          },
-          required: ['ok', 'exit_code', 'gas_used', 'stack'],
-        },
-        RunGetMethodBatchError: {
-          type: 'object',
-          properties: {
-            ok: { type: 'boolean', enum: [false] },
-            code: { type: 'string' },
-            error: { type: 'string' },
-          },
-          required: ['ok', 'code', 'error'],
-        },
-        RunGetMethodBatchResult: {
-          oneOf: [
-            { $ref: '#/components/schemas/RunGetMethodBatchSuccess' },
-            { $ref: '#/components/schemas/RunGetMethodBatchError' },
-          ],
-        },
-        RunGetMethodsResponse: {
-          type: 'object',
-          properties: {
-            results: { type: 'array', items: { $ref: '#/components/schemas/RunGetMethodBatchResult' } },
-          },
-          required: ['results'],
-        },
-        DefiSnapshotRequest: {
-          type: 'object',
-          properties: {
-            owner: { type: ['string', 'null'] },
-            include: { type: 'object', additionalProperties: true },
-            options: { type: 'object', additionalProperties: true },
-            contracts: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
-            modules: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  key: { type: 'string' },
-                  address: { type: 'string' },
-                  enabledGetter: { type: ['string', 'null'] },
-                  governanceGetter: { type: ['string', 'null'] },
-                },
-                required: ['key', 'address'],
-              },
-            },
-          },
-          required: ['contracts'],
-        },
-        DefiSnapshotResponse: {
-          type: 'object',
-          properties: {
-            owner: { type: ['string', 'null'] },
-            network: { type: 'string' },
-            updated_at: { type: 'integer' },
-            sections: { type: 'object', additionalProperties: true },
-          },
-          required: ['network', 'updated_at', 'sections'],
         },
         DlmmPoolsSnapshotRequest: {
           type: 'object',
@@ -280,107 +207,23 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
           required: ['t3Root', 'pools', 'network', 'updated_at'],
         },
-        BalanceResponse: {
-          type: 'object',
-          properties: {
-            ton: {
-              type: 'object',
-              properties: {
-                balance: { type: 'string' },
-                last_tx_lt: { type: 'string' },
-                last_tx_hash: { type: 'string' },
-              },
-              required: ['balance'],
-            },
-            jettons: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  master: { type: 'string' },
-                  wallet: { type: 'string' },
-                  balance: { type: 'string' },
-                  decimals: {
-                    type: 'integer',
-                    minimum: 0,
-                    description: 'Decimal precision. Omitted when it cannot be read or inferred safely.',
-                  },
-                  symbol: { type: 'string' },
-                },
-                required: ['master', 'wallet', 'balance'],
-              },
-            },
-            confirmed: {
-              type: 'boolean',
-              description: 'True only when every configured jetton balance was read and canonically verified.',
-            },
-            updated_at: {
-              type: 'integer',
-              description: 'Unix timestamp of the TON account-state observation represented by this response.',
-            },
-            network: { type: 'string' },
-          },
-          required: ['ton', 'jettons', 'confirmed', 'updated_at', 'network'],
-        },
         AssetBalanceResponse: {
-          type: 'object',
-          properties: {
-            kind: { type: 'string', enum: ['native', 'jetton'] },
-            symbol: { type: ['string', 'null'] },
-            address: { type: ['string', 'null'] },
-            wallet: { type: ['string', 'null'] },
-            balance_raw: { type: 'string' },
-            balance: {
-              type: 'string',
-              description: 'Formatted amount. Omitted for a jetton when its decimal precision is unknown.',
-            },
-            decimals: {
-              type: 'integer',
-              minimum: 0,
-              description: 'Decimal precision. Omitted for a jetton when it cannot be read or inferred safely.',
-            },
-          },
-          required: ['kind', 'balance_raw'],
-          dependentRequired: {
-            balance: ['decimals'],
-            decimals: ['balance'],
-          },
-          allOf: [
-            {
-              if: {
-                properties: { kind: { const: 'native' } },
-                required: ['kind'],
-              },
-              then: { required: ['balance', 'decimals'] },
-            },
-          ],
+          oneOf: [
+            {type:'object',additionalProperties:false,required:['kind','symbol','status','balance_raw','decimals'],properties:{
+              kind:{const:'native'},symbol:{const:'GRAM'},status:{const:'ok'},balance_raw:{type:'string',pattern:'^(0|[1-9][0-9]*)$'},decimals:{const:9}}},
+            {type:'object',additionalProperties:false,required:['kind','symbol','root','wallet','status','balance_raw','decimals'],properties:{
+              kind:{const:'jetton'},symbol:{type:'string'},root:{type:'string'},wallet:{type:['string','null']},status:{enum:['ok','not_deployed']},
+              balance_raw:{type:'string',pattern:'^(0|[1-9][0-9]*)$'},decimals:{type:'integer',minimum:0,maximum:255}}},
+            {type:'object',additionalProperties:false,required:['kind','symbol','root','wallet','status','balance_raw','decimals','reason'],properties:{
+              kind:{const:'jetton'},symbol:{type:'string'},root:{type:'string'},wallet:{type:['string','null']},status:{const:'unavailable'},balance_raw:{type:'null'},
+              decimals:{type:'integer',minimum:0,maximum:255},reason:{enum:['timeout','upstream','code_mismatch','root_unqualified']}}}
+          ]
         },
         BalancesResponse: {
-          type: 'object',
-          properties: {
-            address: { type: 'string' },
-            ton_raw: { type: 'string' },
-            ton: { type: 'string' },
-            assets: { type: 'array', items: { $ref: '#/components/schemas/AssetBalanceResponse' } },
-            confirmed: {
-              type: 'boolean',
-              description: 'True only when every configured jetton balance was read and canonically verified.',
-            },
-            updated_at: {
-              type: 'integer',
-              description: 'Unix timestamp of the TON account-state observation represented by this response.',
-            },
-            network: { type: 'string' },
-          },
-          required: ['address', 'ton_raw', 'ton', 'assets', 'confirmed', 'updated_at', 'network'],
-        },
-        JettonTransferPayloadResponse: {
-          type: 'object',
-          properties: {
-            custom_payload: { type: ['string', 'null'] },
-            state_init: { type: ['string', 'null'] },
-          },
-          required: ['custom_payload', 'state_init'],
+          type:'object',additionalProperties:false,required:['address','network','head_seqno','head_utime','complete','assets'],properties:{
+            address:{type:'string'},network:{type:'string'},head_seqno:{type:'integer',minimum:0},head_utime:{type:'integer',minimum:1},
+            complete:{type:'boolean',description:'Every release token has a verified amount; unavailable rows remain explicit.'},
+            assets:{type:'array',items:{$ref:'#/components/schemas/AssetBalanceResponse'}}}
         },
         TxEntry: {
           type: 'object',
@@ -455,130 +298,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
           required: ['page', 'page_size', 'total_txs', 'total_pages_min', 'history_complete', 'txs', 'network'],
         },
-        SwapExecutionEntry: {
-          type: 'object',
-          properties: {
-            txId: { type: 'string' },
-            lt: { type: 'string' },
-            hash: { type: 'string' },
-            utime: { type: 'integer' },
-            status: { type: 'string', enum: ['success', 'failed', 'pending'] },
-            reason: { type: 'string' },
-            payToken: { type: 'string' },
-            receiveToken: { type: 'string' },
-            requestedPayAmount: { type: 'string', description: 'Original requested input debit, not verified spending.' },
-            payAmount: { type: 'string', description: 'Verified consumed input after the unused-input return; absent without qualified settlement.' },
-            returnedPayAmount: { type: 'string', description: 'Verified unused input returned to the original payer.' },
-            receiveAmount: { type: 'string' },
-            receiveAmountSource: { type: 'string', enum: ['actual'] },
-            minimumReceiveAmount: { type: 'string', description: 'Requested minimum output; never an actual receipt.' },
-            receipt: {
-              type: 'object',
-              properties: { ledgerEventId: { type: 'string' }, generation: { type: 'string' }, assetId: { type: 'string' } },
-              required: ['ledgerEventId', 'generation', 'assetId'],
-              description: 'Exact qualified owner-ledger receipt supplying receiveAmount.',
-            },
-            queryId: { type: 'string' },
-            executionType: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
-            twapSlice: { type: 'integer' },
-            twapTotal: { type: 'integer' },
-            querySequence: { type: 'integer' },
-            queryNonce: { type: 'integer' },
-            twapRunId: { type: 'string' },
-          },
-          required: ['txId', 'lt', 'hash', 'utime', 'status', 'executionType'],
-        },
-        SwapSummaryStatusCounts: {
-          type: 'object',
-          properties: {
-            success: { type: 'integer' },
-            failed: { type: 'integer' },
-            pending: { type: 'integer' },
-          },
-          required: ['success', 'failed', 'pending'],
-        },
-        SwapSummaryExecutionTypeCounts: {
-          type: 'object',
-          properties: {
-            market: { type: 'integer' },
-            limit: { type: 'integer' },
-            twap: { type: 'integer' },
-            unknown: { type: 'integer' },
-          },
-          required: ['market', 'limit', 'twap', 'unknown'],
-        },
-        SwapsSummary: {
-          type: 'object',
-          properties: {
-            status_counts: { $ref: '#/components/schemas/SwapSummaryStatusCounts' },
-            execution_type_counts: { $ref: '#/components/schemas/SwapSummaryExecutionTypeCounts' },
-            twap_run_count: { type: 'integer' },
-            pending_limit_count: { type: 'integer' },
-          },
-          required: ['status_counts', 'execution_type_counts', 'twap_run_count', 'pending_limit_count'],
-        },
-        PendingLimitOrderEntry: {
-          type: 'object',
-          properties: {
-            txId: { type: 'string' },
-            lt: { type: 'string' },
-            hash: { type: 'string' },
-            utime: { type: 'integer' },
-            status: { type: 'string', enum: ['success', 'failed', 'pending'] },
-            payToken: { type: 'string' },
-            receiveToken: { type: 'string' },
-            payAmount: { type: 'string' },
-            receiveAmount: { type: 'string' },
-            minimumReceiveAmount: { type: 'string' },
-            queryId: { type: 'string' },
-            querySequence: { type: 'integer' },
-            queryNonce: { type: 'integer' },
-          },
-          required: ['txId', 'lt', 'hash', 'utime', 'status'],
-        },
-        TwapRunSummaryEntry: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            payToken: { type: 'string' },
-            receiveToken: { type: 'string' },
-            totalSlices: { type: 'integer' },
-            confirmedSlices: { type: 'integer' },
-            pendingSlices: { type: 'integer' },
-            failedSlices: { type: 'integer' },
-            firstUtime: { type: 'integer' },
-            lastUtime: { type: 'integer' },
-            status: { type: 'string', enum: ['running', 'completed', 'partial', 'failed'] },
-          },
-          required: ['id', 'confirmedSlices', 'pendingSlices', 'failedSlices', 'firstUtime', 'lastUtime', 'status'],
-        },
-        SwapsResponse: {
-          type: 'object',
-          properties: {
-            address: { type: 'string' },
-            total_swaps: { type: 'integer' },
-            returned_swaps: { type: 'integer' },
-            history_complete: { type: 'boolean' },
-            synced_at: { type: 'integer' },
-            network: { type: 'string' },
-            swaps: { type: 'array', items: { $ref: '#/components/schemas/SwapExecutionEntry' } },
-            summary: { $ref: '#/components/schemas/SwapsSummary' },
-            twap_runs: { type: 'array', items: { $ref: '#/components/schemas/TwapRunSummaryEntry' } },
-            pending_limits: { type: 'array', items: { $ref: '#/components/schemas/PendingLimitOrderEntry' } },
-          },
-          required: [
-            'address',
-            'total_swaps',
-            'returned_swaps',
-            'history_complete',
-            'synced_at',
-            'network',
-            'swaps',
-            'summary',
-            'twap_runs',
-            'pending_limits',
-          ],
-        },
         MarketCandle: {
           type: 'object',
           properties: {
@@ -641,6 +360,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           type: 'object',
           properties: {
             address: { type: 'string' },
+            balance_raw: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
             last_tx_lt: { type: ['string', 'null'] },
             last_tx_hash: { type: ['string', 'null'] },
             last_seen_utime: { type: ['integer', 'null'] },
@@ -649,105 +369,10 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             code_boc: { type: ['string', 'null'] },
             data_boc: { type: ['string', 'null'] },
             network: { type: 'string' },
+            shard_block: { $ref: '#/components/schemas/TonBlockId' },
+            shard_utime: { type: 'integer', minimum: 1 },
           },
-          required: ['address', 'network'],
-        },
-        PerpsStatusResponse: {
-          type: 'object',
-          properties: {
-            governance: { type: ['string', 'null'] },
-            enabled: { type: 'boolean' },
-            feeBps: {
-              type: ['string', 'null'],
-              description:
-                'Base T3 trade fee in basis points from the canonical 33-field engine_config getter; null when that getter cannot be decoded exactly or the value is outside 0..10000.',
-            },
-          },
-          required: ['enabled', 'feeBps'],
-        },
-        PerpsAutomationResponse: {
-          type: 'object',
-          properties: {
-            fundingCursor: { type: ['string', 'null'] },
-            lastFundingTimestamp: { type: ['string', 'null'] },
-            lastFundingProcessed: { type: ['string', 'null'] },
-            lastFundingRemaining: { type: ['string', 'null'] },
-            liquidationCursor: { type: ['string', 'null'] },
-            lastLiquidationTimestamp: { type: ['string', 'null'] },
-            lastLiquidationProcessed: { type: ['string', 'null'] },
-            lastLiquidationRemaining: { type: ['string', 'null'] },
-            maxMarketId: { type: ['string', 'null'] },
-            liquidationNonce: { type: ['string', 'null'] },
-            liquidationBacklog: { type: ['string', 'null'] },
-            controlAuthority: { type: ['string', 'null'] },
-            controlSequence: { type: ['string', 'null'] },
-            controlTimestamp: { type: ['string', 'null'] },
-            controlRequestHash: { type: ['string', 'null'] },
-          },
-        },
-        PerpsMarketStateResponse: {
-          type: 'object',
-          properties: {
-            exists: { type: 'boolean' },
-            pool: { type: ['string', 'null'] },
-            depthUnit: { type: ['string', 'null'] },
-            impactAlpha: { type: ['string', 'null'] },
-            impactBeta: { type: ['string', 'null'] },
-            baseLeverageBps: { type: ['string', 'null'] },
-            maxLeverageBps: { type: ['string', 'null'] },
-            maintenanceBps: { type: ['string', 'null'] },
-            oiCap: { type: ['string', 'null'] },
-            fundingCapBps: { type: ['string', 'null'] },
-            fundingIndex: { type: ['string', 'null'] },
-            lastFundingTs: { type: ['string', 'null'] },
-            oiLong: { type: ['string', 'null'] },
-            oiShort: { type: ['string', 'null'] },
-            longBase: { type: ['string', 'null'] },
-            shortBase: { type: ['string', 'null'] },
-            halted: { type: 'boolean' },
-            oracleMark: { type: ['string', 'null'] },
-            oracleMarkTs: { type: ['string', 'null'] },
-            liquidationSlice: { type: ['string', 'null'] },
-            liquidationCooldown: { type: ['string', 'null'] },
-            liquidationPendingBase: { type: ['string', 'null'] },
-            liquidationLastTs: { type: ['string', 'null'] },
-            adlDeficit: { type: ['string', 'null'] },
-            liquidityWeightBps: { type: ['string', 'null'] },
-            utilizationWeightBps: { type: ['string', 'null'] },
-            lastDynamicWeightBps: { type: ['string', 'null'] },
-            rebalanceClampBps: { type: ['string', 'null'] },
-            lastClampUpdateTs: { type: ['string', 'null'] },
-            auctionActive: { type: 'boolean' },
-            auctionOutstandingBase: { type: ['string', 'null'] },
-            auctionMinPrice: { type: ['string', 'null'] },
-            auctionMaxPrice: { type: ['string', 'null'] },
-            auctionExpiryTs: { type: ['string', 'null'] },
-            auctionClearingPrice: { type: ['string', 'null'] },
-            controlWeightBps: { type: ['string', 'null'] },
-            controlFeeDeltaBps: { type: ['string', 'null'] },
-            lastFundingPayloadHash: { type: ['string', 'null'] },
-            lastFundingPoolHash: { type: ['string', 'null'] },
-          },
-          required: ['exists', 'halted', 'auctionActive'],
-        },
-        PerpsSnapshotResponse: {
-          type: 'object',
-          properties: {
-            engine: { type: 'string' },
-            status: { oneOf: [{ $ref: '#/components/schemas/PerpsStatusResponse' }, { type: 'null' }] },
-            automation: {
-              oneOf: [{ $ref: '#/components/schemas/PerpsAutomationResponse' }, { type: 'null' }],
-            },
-            market_ids: { type: 'array', items: { type: 'integer' } },
-            markets: {
-              type: 'object',
-              additionalProperties: { $ref: '#/components/schemas/PerpsMarketStateResponse' },
-            },
-            source: { type: 'string' },
-            network: { type: 'string' },
-            updated_at: { type: 'integer' },
-          },
-          required: ['engine', 'market_ids', 'markets', 'source', 'network', 'updated_at'],
+          required: ['address', 'network', 'balance_raw', 'shard_block', 'shard_utime'],
         },
         VolIndexConfigResponse: {
           type: 'object',
@@ -884,58 +509,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             source: { type: 'string' }, network: { type: 'string' }, updated_at: { type: 'integer' },
           },
           required: ['pool', 'owner', 'config', 'start_id', 'next_start_id', 'campaigns', 'source', 'network', 'updated_at'],
-        },
-        OptionFactoryStatusResponse: {
-          type: 'object',
-          properties: {
-            governance: { type: ['string', 'null'] },
-            enabled: { type: 'boolean' },
-          },
-          required: ['enabled'],
-        },
-        OptionSeriesSnapshotRecordResponse: {
-          type: 'object',
-          properties: {
-            seriesId: { type: 'string' },
-            templateId: { type: ['string', 'null'] },
-            optionKind: { type: ['string', 'null'] },
-            optionAddress: { type: ['string', 'null'] },
-            expiry: { type: ['string', 'null'] },
-            maxNotional: { type: ['string', 'null'] },
-            premiumBps: { type: ['string', 'null'] },
-            collateralMultiplierBps: { type: ['string', 'null'] },
-            openNotional: { type: ['string', 'null'] },
-            status: { type: ['string', 'null'] },
-            settlementTimestamp: { type: ['string', 'null'] },
-            underlyingPool: { type: ['string', 'null'] },
-            quotePool: { type: ['string', 'null'] },
-            collateralLocked: { type: ['string', 'null'] },
-            correlationScaleBps: { type: ['string', 'null'] },
-            correlationBps: { type: ['string', 'null'] },
-            correlationDispersionBps: { type: ['string', 'null'] },
-            correlationTimestamp: { type: ['string', 'null'] },
-            isActive: { type: 'boolean' },
-            remainingNotional: { type: ['string', 'null'] },
-          },
-          required: ['seriesId', 'isActive'],
-        },
-        OptionsSnapshotResponse: {
-          type: 'object',
-          properties: {
-            factory: { type: 'string' },
-            status: {
-              oneOf: [{ $ref: '#/components/schemas/OptionFactoryStatusResponse' }, { type: 'null' }],
-            },
-            series_count: { type: 'integer' },
-            scanned: { type: 'integer' },
-            next_after_id: { type: ['string', 'null'] },
-            page_complete: { const: true },
-            series: { type: 'array', items: { $ref: '#/components/schemas/OptionSeriesSnapshotRecordResponse' } },
-            source: { type: 'string' },
-            network: { type: 'string' },
-            updated_at: { type: 'integer' },
-          },
-          required: ['factory', 'series_count', 'scanned', 'next_after_id', 'page_complete', 'series', 'source', 'network', 'updated_at'],
         },
         CoverStateResponse: {
           type: 'object',
@@ -1123,48 +696,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
         },
       },
-      '/api/indexer/v1/runGetMethods': {
-        post: {
-          summary: 'Run get methods batch',
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/RunGetMethodsRequest' } },
-            },
-          },
-          responses: {
-            200: {
-              description: 'Run get methods batch response',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/RunGetMethodsResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/defi/snapshot': {
-        post: {
-          summary: 'DeFi snapshot',
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/DefiSnapshotRequest' } },
-            },
-          },
-          responses: {
-            200: {
-              description: 'DeFi snapshot response',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/DefiSnapshotResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
       '/api/indexer/v1/dlmm/pools/snapshot': {
         post: {
           summary: 'DLMM pools snapshot',
@@ -1209,29 +740,9 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
         },
       },
-      '/api/indexer/v1/accounts/{addr}/balance': {
-        get: {
-          summary: 'Account balance',
-          parameters: [{ $ref: '#/components/parameters/addr' }],
-          responses: {
-            200: {
-              description: 'Balance response',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/BalanceResponse' } } },
-            },
-            503: {
-              description: 'Balance source temporarily unavailable; retry the read.',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
       '/api/indexer/v1/accounts/{addr}/balances': {
         get: {
-          summary: 'Account balances (formatted)',
+          summary: 'Current atomic balances with explicit availability and release precision',
           parameters: [{ $ref: '#/components/parameters/addr' }],
           responses: {
             200: {
@@ -1241,47 +752,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             503: {
               description: 'Balance source temporarily unavailable; retry the read.',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/accounts/{addr}/assets': {
-        get: {
-          summary: 'Account assets (alias of balances)',
-          parameters: [{ $ref: '#/components/parameters/addr' }],
-          responses: {
-            200: {
-              description: 'Balances response',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/BalancesResponse' } } },
-            },
-            503: {
-              description: 'Balance source temporarily unavailable; retry the read.',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload': {
-        get: {
-          summary: 'Jetton transfer payload',
-          parameters: [
-            { $ref: '#/components/parameters/jetton' },
-            { $ref: '#/components/parameters/owner' },
-          ],
-          responses: {
-            200: {
-              description: 'Jetton transfer payload response',
-              content: {
-                'application/json': { schema: { $ref: '#/components/schemas/JettonTransferPayloadResponse' } },
-              },
             },
             400: {
               description: 'Bad request',
@@ -1314,36 +784,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             },
             503: {
               description: 'Initial transaction history source timed out',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/accounts/{addr}/swaps': {
-        get: {
-          summary: 'Account swap executions',
-          parameters: [
-            { $ref: '#/components/parameters/addr' },
-            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } },
-            { name: 'from_utime', in: 'query', schema: { type: 'integer', minimum: 1 } },
-            { name: 'to_utime', in: 'query', schema: { type: 'integer', minimum: 1 } },
-            { name: 'pay_token', in: 'query', schema: { type: 'string' } },
-            { name: 'receive_token', in: 'query', schema: { type: 'string' } },
-            {
-              name: 'execution_type',
-              in: 'query',
-              schema: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
-            },
-            { name: 'status', in: 'query', schema: { type: 'string', enum: ['success', 'failed', 'pending'] } },
-            { name: 'include_reverse', in: 'query', schema: { type: 'string', enum: ['1', '0', 'true', 'false', 'yes', 'no'] } },
-          ],
-          responses: {
-            200: {
-              description: 'Swap executions response',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/SwapsResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
           },
@@ -1395,26 +835,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             200: {
               description: 'State response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/StateResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/perps/{engine}/snapshot': {
-        get: {
-          summary: 'Perps engine snapshot, including canonical engine_config base fee',
-          parameters: [
-            { name: 'engine', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'market_ids', in: 'query', description: 'Comma-separated positive uint32 market IDs; the unique count must fit max_markets.', schema: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 1407 } },
-            { name: 'max_markets', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 128 } },
-          ],
-          responses: {
-            200: {
-              description: 'Perps snapshot response',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/PerpsSnapshotResponse' } } },
             },
             400: {
               description: 'Bad request',
@@ -1484,28 +904,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
         },
       },
-      '/api/indexer/v1/options/{factory}/snapshot': {
-        get: {
-          summary: 'Options factory snapshot',
-          parameters: [
-            { name: 'factory', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'after_id', in: 'query', schema: { type: 'string', pattern: '^(0|[1-9][0-9]{0,19})$' } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
-          ],
-          responses: {
-            200: {
-              description: 'Options snapshot response',
-              content: {
-                'application/json': { schema: { $ref: '#/components/schemas/OptionsSnapshotResponse' } },
-              },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
       '/api/indexer/v1/cover/{manager}/snapshot': {
         get: {
           summary: 'Cover manager snapshot',
@@ -1535,31 +933,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           summary: 'Balance stream (SSE)',
           parameters: [
             { name: 'address', in: 'query', schema: { type: 'string' } },
-            { name: 'wallet', in: 'query', schema: { type: 'string' } },
-            { name: 'addresses', in: 'query', schema: { type: 'string' } },
-          ],
-          responses: {
-            200: {
-              description: 'SSE event stream',
-              content: {
-                'text/event-stream': {
-                  schema: { type: 'string' },
-                },
-              },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/stream': {
-        get: {
-          summary: 'Balance stream alias (SSE)',
-          parameters: [
-            { name: 'address', in: 'query', schema: { type: 'string' } },
-            { name: 'wallet', in: 'query', schema: { type: 'string' } },
             { name: 'addresses', in: 'query', schema: { type: 'string' } },
           ],
           responses: {
@@ -1653,6 +1026,16 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
       },
     },
   };
+  // Every overload/unavailable/deadline response exposes the same flat retry contract.
+  for (const path of Object.values(spec.paths)) for (const operation of Object.values(path)) {
+    if (!operation || typeof operation !== 'object' || !('responses' in operation)) continue;
+    const responses = operation.responses as Record<string, unknown>;
+    for (const [status, description] of [[429, 'Rate limit exceeded'], [503, 'Read unavailable'], [504, 'Read deadline exceeded']] as const) {
+      if (status === 503 && path === spec.paths['/api/indexer/v1/health']) {
+        responses[status] = {description:'Runtime dependency unavailable',headers:{'Retry-After':{schema:{type:'integer',minimum:1}}},content:{'application/json':{schema:{$ref:'#/components/schemas/HealthStatus'}}}};
+      } else responses[status] = {description,headers:{'Retry-After':{schema:{type:'integer',minimum:1}}},content:{'application/json':{schema:{$ref:'#/components/schemas/ErrorResponse'}}}};
+    }
+  }
   const indexer = currentNativeRuntime(config.network, metadata)?.services.indexer;
   spec.paths = Object.fromEntries(Object.entries(spec.paths).map(([route, operation]) =>
     [publicIndexerPath(indexer, route), operation])) as typeof spec.paths;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { Address } from '@ton/core';
 import { isAbsolute } from 'node:path';
 import { publicIndexerPath, publicIndexerUrl } from '../api/publicMount';
 import {
@@ -35,7 +36,9 @@ type ServiceInfo = {
 };
 
 type HealthInfo = {
-  lastMasterSeqno?: unknown;
+  chain?: {peersConfigured?: unknown; peersReady?: unknown; headSeqno?: unknown; headAgeSec?: unknown};
+  ledger?: unknown;
+  disk?: unknown;
   ok?: unknown;
   serviceId?: unknown;
   ecosystem?: unknown;
@@ -102,6 +105,7 @@ type StrictReleaseExpectation = {
   releaseManifestHash: string;
   contracts: Record<string, string>;
   markets: RegistrySpotMarketMetadata[];
+  tokens: Array<{root: string; symbol: string; decimals: number}>;
   expectedCorsOrigin: string;
   hostileCorsOrigin: string;
 };
@@ -376,6 +380,7 @@ function resolveStrictReleaseExpectation(
     releaseManifestHash: exactReleaseManifestHash,
     contracts: manifest.contracts,
     markets: manifest.spotMarkets,
+    tokens: manifest.runtime.tokens,
     expectedCorsOrigin: exactExpectedCorsOrigin,
     hostileCorsOrigin: exactHostileCorsOrigin,
   };
@@ -499,9 +504,16 @@ export async function runProductionSmoke(
   if ('ok' in health) {
     throw new Error('TI production routing points at a Solswap indexer contract: health contains ok. Route the selected manifest mount to its TON indexer deployment.');
   }
-  if (health.lastMasterSeqno === undefined) {
-    throw new Error(`TI production routing does not expose the TON health contract: expected lastMasterSeqno, received keys ${objectKeys(health)}.`);
+  if (!health.chain || typeof health.chain !== 'object') {
+    throw new Error(`TI production routing does not expose the TON health contract: expected chain, received keys ${objectKeys(health)}.`);
   }
+  assert.ok(Number.isInteger(health.chain.peersConfigured) && Number(health.chain.peersConfigured) > 0, 'health chain must configure peers');
+  assert.ok(Number.isInteger(health.chain.peersReady) && Number(health.chain.peersReady) > 0, 'health chain must have ready peers');
+  assert.ok(Number.isInteger(health.chain.headSeqno) && Number(health.chain.headSeqno) > 0, 'health chain must expose the observed head');
+  assert.ok(typeof health.chain.headAgeSec === 'number' && health.chain.headAgeSec >= 0, 'health chain must expose head age');
+  assert.ok(['disabled','connecting','ready','unavailable'].includes(String(health.ledger)), 'health ledger state is required');
+  assert.ok(['ok','low','critical'].includes(String(health.disk)), 'health disk state is required');
+  assert.equal('liteserverPoolStatus' in health, false, 'health must not expose the retired pool status');
   assert.equal(health.serviceId, expectedServiceId, `health serviceId must be ${expectedServiceId}`);
   assert.equal(health.ecosystem, 'ton', 'health ecosystem must be ton');
   assert.equal(health.chainId, expectedChainId, `health chainId must be ${expectedChainId}`);
@@ -569,6 +581,39 @@ export async function runProductionSmoke(
     );
   }
 
+  const account = Address.parse(String((contracts.contracts as Record<string,string>).T3Root ?? Object.values(contracts.contracts as Record<string,string>)[0])).toRawString();
+  const balances = await fetchJson(baseUrl, `/api/indexer/v1/accounts/${account}/balances`) as Record<string, any>;
+  assert.deepEqual(Object.keys(balances).sort(), ['address','assets','complete','head_seqno','head_utime','network']);
+  assert.equal(balances.address, account); assert.equal(balances.network, expectedNetwork);
+  assert.ok(Number.isInteger(balances.head_seqno) && balances.head_seqno > 0, 'balances must expose a chain head');
+  assert.ok(Number.isInteger(balances.head_utime) && balances.head_utime > 0, 'balances must expose chain time');
+  assert.equal(typeof balances.complete, 'boolean'); assert.ok(Array.isArray(balances.assets));
+  const native = balances.assets.filter((row: any) => row.kind === 'native');
+  assert.equal(native.length, 1); assert.equal(native[0].symbol,'GRAM'); assert.equal(native[0].status,'ok'); assert.equal(native[0].decimals,9);
+  assert.deepEqual(Object.keys(native[0]).sort(), ['balance_raw','decimals','kind','status','symbol']);
+  const jettons = balances.assets.filter((row: any) => row.kind === 'jetton');
+  assert.equal(native.length + jettons.length, balances.assets.length);
+  if (strictRelease) assert.deepEqual(jettons.map((row: any) => [row.root,row.symbol,row.decimals]).sort(),
+    strictRelease.tokens.map(row => [row.root,row.symbol,row.decimals]).sort(), 'balances must include every manifest token with explicit precision');
+  for (const row of balances.assets) {
+    assert.ok(Number.isInteger(row.decimals) && row.decimals >= 0 && row.decimals <= 255);
+    if (row.kind === 'jetton') {
+      assert.equal(Address.parse(row.root).toRawString(),row.root);
+      assert.ok(row.wallet === null || Address.parse(row.wallet).toRawString() === row.wallet);
+      assert.ok(['ok','not_deployed','unavailable'].includes(row.status));
+      assert.deepEqual(Object.keys(row).sort(), (row.status === 'unavailable'
+        ? ['balance_raw','decimals','kind','reason','root','status','symbol','wallet']
+        : ['balance_raw','decimals','kind','root','status','symbol','wallet']));
+    }
+    if (row.status === 'unavailable') { assert.equal(row.balance_raw,null); assert.ok(['timeout','upstream','code_mismatch','root_unqualified'].includes(row.reason)); }
+    else { assert.match(row.balance_raw,/^(0|[1-9][0-9]*)$/); if (row.status === 'not_deployed') assert.equal(row.balance_raw,'0'); }
+  }
+  assert.equal(balances.complete, balances.assets.every((row: any) => row.status !== 'unavailable'));
+  const unknown = await fetch(endpoint(baseUrl,'/api/indexer/v1/smoke-unknown-route'), {redirect:'error'});
+  assert.equal(unknown.status,404); const missing = await unknown.json() as Record<string,unknown>;
+  assert.deepEqual(Object.keys(missing).sort(),['code','error']); assert.equal(missing.code,'not_found');
+  assert.equal(typeof missing.error,'string'); assert.equal(String(missing.error).includes('smoke-unknown-route'),false);
+
   const spec = await fetchJson(baseUrl, '/api/indexer/v1/openapi.json') as OpenApiSpec;
   assert.equal(spec.openapi, '3.1.0', 'OpenAPI version must be 3.1.0');
   assert.equal(spec.info?.title, 'TONSWAP Indexer API', 'OpenAPI title must be TONSWAP Indexer API');
@@ -576,14 +621,11 @@ export async function runProductionSmoke(
   assert.equal(spec.servers?.[0]?.url, '/', 'OpenAPI primary server URL must be /');
   assertPath(spec, publicPath('/api/indexer/v1/service-info'));
   assertPath(spec, publicPath('/api/indexer/v1/contracts'));
-  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/balance'));
   assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/balances'));
-  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/assets'));
   assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/txs'));
   assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/state'));
   assertPath(spec, publicPath('/api/indexer/v1/markets/{market}/candles'));
   assertPath(spec, publicPath('/api/indexer/v1/runGetMethod'));
-  assertPath(spec, publicPath('/api/indexer/v1/runGetMethods'));
 
   if (strictRelease) {
     const allowedCors = await fetchJsonResponse(baseUrl, '/api/indexer/v1/service-info', {

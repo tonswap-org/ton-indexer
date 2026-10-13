@@ -16,7 +16,7 @@ async function main() {
     {
       getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
-        return { lastMasterSeqno: 123 };
+        return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 123, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
       }
     } as IndexerService
   );
@@ -28,7 +28,7 @@ async function main() {
   assert.equal(health.ecosystem, 'ton');
   assert.equal(health.chainId, 'ton:mainnet');
   assert.equal(health.network, 'mainnet');
-  assert.equal(health.lastMasterSeqno, 123);
+  assert.equal(health.chain.headSeqno, 123);
 
   const response = await app.inject({ method: 'GET', url: '/api/indexer/v1/service-info' });
   assert.equal(response.statusCode, 200);
@@ -61,7 +61,7 @@ async function main() {
     {
       getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
-        return { lastMasterSeqno: 7 };
+        return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 7, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
       }
     } as IndexerService,
     undefined,
@@ -97,7 +97,7 @@ async function main() {
     tonRpc: 'https://testnet.toncenter.com/api/v2/jsonRPC', platform: 'https://test.tonswap.org/api/platform',
   } });
   const metadata = { runtime, releaseId: runtime.releaseId, manifestHash: runtime.manifestHash, registryHash: '' };
-  const service = { getAdmissionStatus() { return { configured: false, ready: false }; }, getHealth() { return { lastMasterSeqno: 42 }; } } as IndexerService;
+  const service = { getAdmissionStatus() { return { configured: false, ready: false }; }, getHealth() { return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 42, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' }; } } as IndexerService;
   const nativeApp = Fastify();
   registerRoutes(nativeApp, { network: 'testnet', serviceId: 'misconfigured-service', publicBaseUrl: 'https://misconfigured.invalid' },
     service, undefined, undefined, undefined, undefined, {}, metadata);

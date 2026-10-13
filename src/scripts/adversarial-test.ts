@@ -1,4 +1,5 @@
 import { fixtureChainSource, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
+import { runGetterFreshnessTests } from './getter-freshness-cases';
 import { runTransactionEvidenceTests } from './transaction-evidence-test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,7 +10,8 @@ import { beginCell } from '@ton/core';
 import fastify from 'fastify';
 import { loadConfig } from '../config';
 import { registerRoutes } from '../api/routes';
-import { PUBLIC_RPC_ZERO_STATES } from '../api/rpcNetwork';
+import { ChainReadError } from '../data/dataSource';
+import { fakeChainSource } from './support/fakeChainSource';
 import { setCorsHeaders } from '../api/cors';
 import { RateLimiter } from '../api/rateLimit';
 import { MemoryStore } from '../store/memoryStore';
@@ -146,7 +148,7 @@ const testRateLimitIgnoresUntrustedForwardedFor = async () => {
   const service = {
     getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
-      return { lastMasterSeqno: 1 };
+      return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
   };
   registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
@@ -168,10 +170,10 @@ const testRateLimitIgnoresUntrustedForwardedFor = async () => {
   await app.close();
 };
 
-const testRateLimitUsesForwardedForOnlyWithTrustedProxy = async () => {
+const testRateLimitUsesAuthenticatedEdgeOnly = async () => {
   const config = {
     ...loadConfig(),
-    trustProxy: true,
+    edgeKey: 'adversarial-edge-key',
     rateLimitEnabled: true,
     rateLimitWindowMs: 60_000,
     rateLimitMax: 1,
@@ -184,11 +186,11 @@ const testRateLimitUsesForwardedForOnlyWithTrustedProxy = async () => {
       default: { windowMs: 60_000, max: 1 },
     },
   };
-  const app = fastify({ logger: false, trustProxy: true });
+  const app = fastify({ logger: false });
   const service = {
     getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
-      return { lastMasterSeqno: 1 };
+      return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
   };
   registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
@@ -197,14 +199,14 @@ const testRateLimitUsesForwardedForOnlyWithTrustedProxy = async () => {
   const first = await app.inject({
     method: 'GET',
     url: '/api/indexer/v1/health',
-    headers: { 'x-forwarded-for': '203.0.113.20' },
+    headers: { 'x-tonswap-client-ip': '203.0.113.20', 'x-tonswap-edge-key': config.edgeKey },
   });
   assert.equal(first.statusCode, 200);
 
   const second = await app.inject({
     method: 'GET',
     url: '/api/indexer/v1/health',
-    headers: { 'x-forwarded-for': '203.0.113.21' },
+    headers: { 'x-tonswap-client-ip': '203.0.113.21', 'x-tonswap-edge-key': config.edgeKey },
   });
   assert.equal(second.statusCode, 200);
   await app.close();
@@ -228,7 +230,7 @@ const testRateLimitBucketsAreIsolated = async () => {
   const service = {
     getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
-      return { lastMasterSeqno: 1 };
+      return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
     async getTransactions() {
       return {
@@ -319,7 +321,7 @@ const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
     url: `/api/indexer/v1/accounts/${validAddress}/txs?cursor_lt=bad&cursor_hash=${encodeURIComponent(validHash)}`,
   });
   assert.equal(invalid.statusCode, 400);
-  assert.equal(invalid.json().code, 'FST_ERR_VALIDATION');
+  assert.equal(invalid.json().code, 'bad_request');
 
   const invalidHash = await app.inject({
     method: 'GET',
@@ -338,17 +340,9 @@ const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
   await app.close();
 };
 
-const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async () => {
+const testRestAddressRoutesRejectInvalidPathsBeforeServiceCall = async () => {
   let calls = 0;
   const service = {
-    async getBalance() {
-      calls += 1;
-      return {};
-    },
-    async getBalances() {
-      calls += 1;
-      return {};
-    },
     async getTransactions() {
       calls += 1;
       return {};
@@ -357,21 +351,12 @@ const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async
       calls += 1;
       return {};
     },
-    async getJettonTransferPayload() {
-      calls += 1;
-      return {};
-    },
   };
   const app = fastify({ logger: false });
   registerRoutes(app, { ...loadConfig() }, service as any);
   await app.ready();
 
-  const invalidBalance = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/accounts/not-an-address/balance',
-  });
-  assert.equal(invalidBalance.statusCode, 400);
-  assert.equal(invalidBalance.json().code, 'invalid_address');
+
 
   const invalidBalances = await app.inject({
     method: 'GET',
@@ -380,12 +365,7 @@ const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async
   assert.equal(invalidBalances.statusCode, 400);
   assert.equal(invalidBalances.json().code, 'invalid_address');
 
-  const invalidAssets = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/accounts/not-an-address/assets',
-  });
-  assert.equal(invalidAssets.statusCode, 400);
-  assert.equal(invalidAssets.json().code, 'invalid_address');
+
 
   const invalidTxs = await app.inject({
     method: 'GET',
@@ -401,46 +381,37 @@ const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async
   assert.equal(invalidState.statusCode, 400);
   assert.equal(invalidState.json().code, 'invalid_address');
 
-  const invalidJetton = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/jettons/not-an-address/transfer/${validAddress}/payload`,
-  });
-  assert.equal(invalidJetton.statusCode, 400);
-  assert.equal(invalidJetton.json().code, 'invalid_address');
 
-  const invalidOwner = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/jettons/${validAddress}/transfer/not-an-address/payload`,
-  });
-  assert.equal(invalidOwner.statusCode, 400);
-  assert.equal(invalidOwner.json().code, 'invalid_address');
+
+
+
   assert.equal(calls, 0);
   await app.close();
 };
 
 const testStreamRejectsMissingOrInvalidAddresses = async () => {
   let subscribed = false;
-  const service = {
-    subscribeBalanceChanges() {
+  const streams = {
+    subscribe() {
       subscribed = true;
       return () => undefined;
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, {} as any, undefined, undefined, undefined, undefined, undefined, undefined, {streams});
   await app.ready();
 
   const missing = await app.inject({ method: 'GET', url: '/api/indexer/v1/stream/balances' });
   assert.equal(missing.statusCode, 400);
   assert.equal(missing.json().code, 'invalid_address');
 
-  const invalid = await app.inject({ method: 'GET', url: '/api/indexer/v1/stream?addresses=bad,also-bad' });
+  const invalid = await app.inject({ method: 'GET', url: '/api/indexer/v1/stream/balances?addresses=bad,also-bad' });
   assert.equal(invalid.statusCode, 400);
   assert.equal(invalid.json().code, 'invalid_address');
 
   for (const url of [
-    '/api/indexer/v1/stream?addresses=bad&addresses=also-bad',
-    '/api/indexer/v1/stream?address=bad&address=also-bad',
+    '/api/indexer/v1/stream/balances?addresses=bad&addresses=also-bad',
+    '/api/indexer/v1/stream/balances?address=bad&address=also-bad',
   ]) {
     const duplicate = await app.inject({ method: 'GET', url });
     assert.equal(duplicate.statusCode, 400);
@@ -466,30 +437,11 @@ const testStreamPreservesCorsAndRateLimitHeadersAfterHijack = async () => {
       default: { windowMs: 60_000, max: 5 },
     },
   });
-  const service = {
-    async getBalances(address: string) {
-      return {
-        address,
-        ton_raw: '0',
-        ton: '0',
-        assets: [],
-        confirmed: true,
-        updated_at: 1,
-        network: 'testnet',
-      };
-    },
-    getBalancesSignature() {
-      return 'stable';
-    },
-    subscribeBalanceChanges() {
-      return () => undefined;
-    },
-  };
   const app = fastify({ logger: false });
   app.addHook('onRequest', async (request, reply) => {
     setCorsHeaders(request as any, reply, config);
   });
-  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
+  registerRoutes(app, config, {} as any, undefined, undefined, undefined, new RateLimiter(config), undefined, undefined, { streams: { subscribe() { return () => undefined; } } });
 
   try {
     await app.listen({ host: '127.0.0.1', port: 0 });
@@ -500,7 +452,7 @@ const testStreamPreservesCorsAndRateLimitHeadersAfterHijack = async () => {
         {
           host: '127.0.0.1',
           port: address.port,
-          path: `/api/indexer/v1/stream?address=${encodeURIComponent(validAddress)}`,
+          path: `/api/indexer/v1/stream/balances?address=${encodeURIComponent(validAddress)}`,
           headers: { origin: 'https://app.example' },
         },
         (response) => {
@@ -542,7 +494,7 @@ const testJsonRpcRejectsMalformedTransactionCursors = async () => {
       params: { address: validAddress, lt: '1' },
     },
   });
-  assert.equal(missingHash.statusCode, 200);
+  assert.equal(missingHash.statusCode, 400);
   assert.equal(missingHash.json().ok, false);
   assert.equal(missingHash.json().code, 400);
 
@@ -556,7 +508,7 @@ const testJsonRpcRejectsMalformedTransactionCursors = async () => {
       params: { address: validAddress, lt: '1', hash: 'not-a-hash' },
     },
   });
-  assert.equal(invalidHash.statusCode, 200);
+  assert.equal(invalidHash.statusCode, 400);
   assert.equal(invalidHash.json().ok, false);
   assert.equal(invalidHash.json().code, 400);
   await app.close();
@@ -584,7 +536,7 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
     url: '/jsonRPC',
     payload: { id: 'missing', jsonrpc: '2.0', params: {} },
   });
-  assert.equal(missingMethod.statusCode, 200);
+  assert.equal(missingMethod.statusCode, 400);
   assert.equal(missingMethod.json().ok, false);
   assert.equal(missingMethod.json().code, 400);
   assert.equal(missingMethod.json().error, 'missing method');
@@ -599,7 +551,7 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
       params: { address: 'not-an-address', limit: 5 },
     },
   });
-  assert.equal(invalidAddress.statusCode, 200);
+  assert.equal(invalidAddress.statusCode, 400);
   assert.equal(invalidAddress.json().ok, false);
   assert.equal(invalidAddress.json().code, 400);
 
@@ -613,7 +565,7 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
       params: [],
     },
   });
-  assert.equal(nonObjectParams.statusCode, 200);
+  assert.equal(nonObjectParams.statusCode, 400);
   assert.equal(nonObjectParams.json().ok, false);
   assert.equal(nonObjectParams.json().code, 400);
   assert.equal(calls, 0);
@@ -623,10 +575,6 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
 const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async () => {
   let calls = 0;
   const service = {
-    async getBalances() {
-      calls += 1;
-      return { ton_raw: '0' };
-    },
     async getState() {
       calls += 1;
       return {};
@@ -646,7 +594,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
     url: '/jsonRPC',
     payload: { id: 'balance', jsonrpc: '2.0', method: 'getAddressBalance', params: { address: 'bad' } },
   });
-  assert.equal(invalidBalance.statusCode, 200);
+  assert.equal(invalidBalance.statusCode, 400);
   assert.equal(invalidBalance.json().ok, false);
   assert.equal(invalidBalance.json().code, 400);
 
@@ -655,7 +603,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
     url: '/jsonRPC',
     payload: { id: 'info', jsonrpc: '2.0', method: 'getAddressInformation', params: { address: 'bad' } },
   });
-  assert.equal(invalidInformation.statusCode, 200);
+  assert.equal(invalidInformation.statusCode, 400);
   assert.equal(invalidInformation.json().ok, false);
   assert.equal(invalidInformation.json().code, 400);
 
@@ -669,7 +617,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
       params: { address: 'bad', method: 'seqno' },
     },
   });
-  assert.equal(invalidGetterAddress.statusCode, 200);
+  assert.equal(invalidGetterAddress.statusCode, 400);
   assert.equal(invalidGetterAddress.json().ok, false);
   assert.equal(invalidGetterAddress.json().code, 400);
 
@@ -683,7 +631,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
       params: { address: validAddress, method: 'bad-method!' },
     },
   });
-  assert.equal(invalidGetterName.statusCode, 200);
+  assert.equal(invalidGetterName.statusCode, 400);
   assert.equal(invalidGetterName.json().ok, false);
   assert.equal(invalidGetterName.json().code, 400);
 
@@ -697,7 +645,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
       params: { address: validAddress, method: 'seqno', stack: [['int', 'not-an-int']] },
     },
   });
-  assert.equal(invalidStack.statusCode, 200);
+  assert.equal(invalidStack.statusCode, 400);
   assert.equal(invalidStack.json().ok, false);
   assert.equal(invalidStack.json().code, 400);
   assert.equal(calls, 0);
@@ -721,7 +669,7 @@ const testGetterRoutesRejectMalformedJsonShapesBeforeServiceCall = async () => {
     url: '/jsonRPC',
     payload: { id: 'invalid-method-shape', jsonrpc: '2.0', method: 7, params: {} },
   });
-  assert.equal(invalidRpcMethod.statusCode, 200);
+  assert.equal(invalidRpcMethod.statusCode, 400);
   assert.equal(invalidRpcMethod.json().ok, false);
   assert.equal(invalidRpcMethod.json().code, 400);
 
@@ -751,78 +699,17 @@ const testGetterRoutesRejectMalformedJsonShapesBeforeServiceCall = async () => {
     assert.equal(invalidInteger.json().code, 'invalid_stack');
   }
 
-  const malformedBatch = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: {
-      calls: [
-        null,
-        { address: 7, method: 'seqno' },
-        { address: validAddress, method: 7 },
-      ],
-    },
-  });
-  assert.equal(malformedBatch.statusCode, 200);
-  assert.deepEqual(
-    malformedBatch.json().results.map((entry: { code: string }) => entry.code),
-    ['bad_request', 'invalid_address', 'invalid_method']
-  );
   assert.equal(calls, 0);
   await app.close();
 };
 
-const testJsonRpcAddressInformationNormalizesMissingStateFields = async () => {
-  let stateCalls = 0;
-  let balanceCalls = 0;
-  const service = {
-    async getState(address: string) {
-      stateCalls += 1;
-      assert.equal(address, validAddress);
-      return {
-        account_state: 'unexpected',
-        code_boc: 123,
-        data_boc: null,
-        last_tx_lt: ' ',
-        last_tx_hash: '',
-        last_confirmed_seqno: -10,
-        last_seen_utime: Number.NaN,
-      };
-    },
-    async getBalances(address: string) {
-      balanceCalls += 1;
-      assert.equal(address, validAddress);
-      return { ton_raw: '123' };
-    },
-  };
-  const config = testConfig();
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
-
-  const response = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 'info-normalize',
-      jsonrpc: '2.0',
-      method: 'getAddressInformation',
-      params: { address: validAddress },
-    },
-  });
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.result.state, 'uninitialized');
-  assert.equal(body.result.balance, '123');
-  assert.equal(body.result.code, '');
-  assert.equal(body.result.data, '');
-  assert.equal(body.result.last_transaction_id.lt, '0');
-  assert.equal(body.result.last_transaction_id.hash, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
-  assert.equal(body.result.block_id.seqno, 0);
-  assert.equal(typeof body.result.sync_utime, 'number');
-  assert.equal(stateCalls, 1);
-  assert.equal(balanceCalls, 1);
-  await app.close();
+const testJsonRpcAddressInformationRejectsUnavailableAnchor = async () => {
+  let calls = 0;
+  const app = fastify();
+  registerTestRoutes(app, testConfig(), { async getAccountAnchor() { calls++; throw new ChainReadError('upstream_unavailable'); } });
+  const response = await app.inject({method:'POST',url:'/jsonRPC',payload:{id:'missing-anchor',jsonrpc:'2.0',method:'getAddressInformation',params:{address:validAddress}}});
+  assert.equal(response.statusCode,503); assert.equal(response.json().ok,false); assert.equal(response.json().result,undefined);
+  assert.equal(response.headers['retry-after'],'2'); assert.equal(calls,1); await app.close();
 };
 
 const testJsonRpcRejectsUnsupportedAndDisabledWriteMethods = async () => {
@@ -840,55 +727,22 @@ const testJsonRpcRejectsUnsupportedAndDisabledWriteMethods = async () => {
     url: '/jsonRPC',
     payload: { id: 'write', jsonrpc: '2.0', method: 'sendBoc', params: { boc: 'bad' } },
   });
-  assert.equal(disabledWrite.statusCode, 200);
+  assert.equal(disabledWrite.statusCode, 404);
   assert.equal(disabledWrite.json().ok, false);
-  assert.equal(disabledWrite.json().code, 403);
-  assert.match(disabledWrite.json().error, /method disabled/);
+  assert.equal(disabledWrite.json().code, 404);
+  assert.match(disabledWrite.json().error, /unsupported method/);
 
   const unsupported = await app.inject({
     method: 'POST',
     url: '/jsonRPC',
     payload: { id: 'unknown', jsonrpc: '2.0', method: 'unknownMethod', params: {} },
   });
-  assert.equal(unsupported.statusCode, 200);
+  assert.equal(unsupported.statusCode, 404);
   assert.equal(unsupported.json().ok, false);
   assert.equal(unsupported.json().code, 404);
   await app.close();
 };
 
-const testJsonRpcProxySurfacesInvalidUpstreamJson = async () => {
-  const originalFetch = globalThis.fetch;
-  let calls = 0;
-  (globalThis as any).fetch = async () => {
-    calls += 1;
-    return new Response('not-json', { status: 200 });
-  };
-  const app = fastify({ logger: false });
-  try {
-    const config = testConfig({
-      rpcProxyEndpoint: 'https://example.invalid/jsonRPC',
-      rpcProxyEndpoints: ['https://example.invalid/jsonRPC'],
-      rpcProxyRetryAttempts: 1,
-      rpcProxyRetryDelayMs: 0,
-    });
-    registerTestRoutes(app, config, {} as any);
-    await app.ready();
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/jsonRPC',
-      payload: { id: 'proxy-json', jsonrpc: '2.0', method: 'getMasterchainInfo', params: {} },
-    });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().ok, false);
-    assert.equal(response.json().code, 502);
-    assert.match(response.json().error, /Invalid upstream RPC JSON/);
-    assert.equal(calls, 1);
-  } finally {
-    globalThis.fetch = originalFetch;
-    await app.close();
-  }
-};
 
 const testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints = async () => {
   const originalFetch = globalThis.fetch;
@@ -913,9 +767,9 @@ const testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints = async () => {
       url: '/jsonRPC',
       payload: { id: 'local-no-discovery', jsonrpc: '2.0', method: 'getMasterchainInfo', params: {} },
     });
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 503);
     assert.equal(response.json().ok, false);
-    assert.equal(response.json().code, 404);
+    assert.equal(response.json().code, 503);
     assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;
@@ -953,7 +807,7 @@ const testRunGetMethodRejectsMalformedStackBeforeServiceCall = async () => {
     ],
   ] as const) {
     const response = await app.inject({ method: 'POST', url, payload });
-    assert.equal(response.statusCode, url === '/jsonRPC' ? 200 : 400);
+    assert.equal(response.statusCode, 400);
     assert.equal(response.json().code, url === '/jsonRPC' ? 400 : 'invalid_stack');
   }
   assert.equal(calls, 0);
@@ -991,63 +845,6 @@ const testRunGetMethodRejectsOversizedStackBeforeServiceCall = async () => {
 
 
 
-const testDefiSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
-  let calls = 0;
-  const service = {
-    async getDefiSnapshot() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
-
-  const missingContracts = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: {},
-  });
-  assert.equal(missingContracts.statusCode, 400);
-  assert.equal(missingContracts.json().code, 'FST_ERR_VALIDATION');
-
-  const invalidOwner = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: { owner: 'bad-owner', contracts: {} },
-  });
-  assert.equal(invalidOwner.statusCode, 400);
-  assert.equal(invalidOwner.json().code, 'invalid_address');
-
-  const invalidContract = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: { contracts: { feeRouter: 'bad-contract' } },
-  });
-  assert.equal(invalidContract.statusCode, 400);
-  assert.equal(invalidContract.json().code, 'invalid_address');
-
-  const tooManyModules = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: {
-      contracts: {},
-      modules: Array.from({ length: 65 }, (_value, index) => ({ key: `m${index}`, address: validAddress })),
-    },
-  });
-  assert.equal(tooManyModules.statusCode, 400);
-  assert.equal(tooManyModules.json().code, 'bad_request');
-
-  const invalidModule = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: { contracts: {}, modules: [{ key: 'bad', address: 'bad-address' }] },
-  });
-  assert.equal(invalidModule.statusCode, 400);
-  assert.equal(invalidModule.json().code, 'invalid_address');
-  assert.equal(calls, 0);
-  await app.close();
-};
 
 const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
   let calls = 0;
@@ -1099,10 +896,6 @@ const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
 const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () => {
   let calls = 0;
   const service = {
-    async getPerpsSnapshot() {
-      calls += 1;
-      return {};
-    },
     async getVolIndexSnapshot() {
       calls += 1;
       return {};
@@ -1115,10 +908,6 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
       calls += 1;
       return {};
     },
-    async getOptionsSnapshot() {
-      calls += 1;
-      return {};
-    },
     async getCoverSnapshot() {
       calls += 1;
       return {};
@@ -1128,12 +917,7 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
   registerRoutes(app, { ...loadConfig() }, service as any);
   await app.ready();
 
-  const invalidPerpsEngine = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/perps/not-an-address/snapshot',
-  });
-  assert.equal(invalidPerpsEngine.statusCode, 400);
-  assert.equal(invalidPerpsEngine.json().code, 'invalid_address');
+
 
   const invalidVolIndexPool = await app.inject({
     method: 'GET',
@@ -1156,12 +940,7 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
   assert.equal(invalidFarmPool.statusCode, 400);
   assert.equal(invalidFarmPool.json().code, 'invalid_address');
 
-  const invalidOptionsFactory = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/options/not-an-address/snapshot',
-  });
-  assert.equal(invalidOptionsFactory.statusCode, 400);
-  assert.equal(invalidOptionsFactory.json().code, 'invalid_address');
+
 
   const invalidCoverOwner = await app.inject({
     method: 'GET',
@@ -1192,8 +971,8 @@ const testSnapshotEndpointsSurfaceLoadErrors = async () => {
     url: '/api/indexer/v1/snapshot/load',
     headers: { 'x-indexer-admin-token': 'snapshot-secret' },
   });
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.json().code, 'bad_request');
+  assert.equal(response.statusCode, 500);
+  assert.equal(response.json().code, 'internal_error');
   assert.equal(response.json().error, 'snapshot load failed');
   await app.close();
 };
@@ -1267,95 +1046,7 @@ const testMutableOperationalRoutesRequireAdminToken = async () => {
   await app.close();
 };
 
-const testJsonRpcBatchGetMethodRejectsOversizedAndMalformedCalls = async () => {
-  const app = fastify({ logger: false });
-  const service = {
-    async runGetMethod() {
-      throw new Error('invalid calls should not execute');
-    },
-  };
-  const config = testConfig();
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
 
-  const oversized = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: { calls: Array.from({ length: 65 }, () => ({ address: validAddress, method: 'seqno' })) },
-  });
-  assert.equal(oversized.statusCode, 400);
-  assert.equal(oversized.json().code, 'bad_request');
-
-  const malformed = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: {
-      calls: [
-        { address: 'bad-address', method: 'seqno' },
-        { address: validAddress, method: 'bad-method!' },
-        { address: validAddress, method: 'seqno', stack: [['unsupported', 'x']] },
-      ],
-    },
-  });
-  assert.equal(malformed.statusCode, 200);
-  assert.deepEqual(
-    malformed.json().results.map((entry: { code: string }) => entry.code),
-    ['invalid_address', 'invalid_method', 'invalid_stack']
-  );
-  await app.close();
-};
-
-const testJsonRpcBatchGetMethodRejectsMissingCallsAndIsolatesFailures = async () => {
-  let serviceCalls = 0;
-  const app = fastify({ logger: false });
-  const service = {
-    async runGetMethod(address: string, method: string) {
-      serviceCalls += 1;
-      assert.equal(address, validAddress);
-      assert.equal(method, 'seqno');
-      return { stack: [['num', '7']], exit_code: 0, gas_used: 12 };
-    },
-  };
-  const config = testConfig();
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
-
-  const missing = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: {},
-  });
-  assert.equal(missing.statusCode, 400);
-  assert.equal(missing.json().code, 'bad_request');
-
-  const nonArray = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: { calls: null },
-  });
-  assert.equal(nonArray.statusCode, 400);
-  assert.equal(nonArray.json().code, 'bad_request');
-
-  const mixed = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: {
-      calls: [
-        { address: validAddress, method: 'seqno' },
-        { address: validAddress, method: 'bad-method!' },
-        { address: 'bad-address', method: 'seqno' },
-      ],
-    },
-  });
-  assert.equal(mixed.statusCode, 200);
-  assert.deepEqual(
-    mixed.json().results.map((entry: { ok: boolean; code?: string }) => (entry.ok ? 'ok' : entry.code)),
-    ['ok', 'invalid_method', 'invalid_address']
-  );
-  assert.equal(mixed.json().results[0].gas_used, 12);
-  assert.equal(serviceCalls, 1);
-  await app.close();
-};
 
 const testDebugEndpointReturnsDisabledWithoutService = async () => {
   const config = testConfig();
@@ -1409,40 +1100,14 @@ const testOperationalRoutesRequireAdminAndPublicReadsStayOpen = async () => {
 };
 
 const testWriteRpcRelayIsPublicWhenExplicitlyEnabled = async () => {
-  const originalFetch = globalThis.fetch;
   let calls = 0;
-  (globalThis as any).fetch = async (_url: unknown, init: RequestInit) => {
-    calls += 1;
-    const method = JSON.parse(String(init.body)).method;
-    const result = method === 'getMasterchainInfo' ? { init: PUBLIC_RPC_ZERO_STATES.testnet } : 'hash';
-    return new Response(JSON.stringify({ ok: true, result }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  };
-  const app = fastify({ logger: false });
-  try {
-    const config = testConfig({
-      network: 'testnet',
-      enableWriteRpc: true,
-      rpcProxyEndpoint: 'https://example.invalid/jsonRPC',
-      rpcProxyEndpoints: ['https://example.invalid/jsonRPC'],
-    });
-    registerTestRoutes(app, config, {} as any);
-    await app.ready();
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/jsonRPC',
-      payload: { id: 'write', jsonrpc: '2.0', method: 'sendBoc', params: { boc: 'te6ccgEBAQEAAgAAAA==' } },
-    });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().ok, true);
-    assert.equal(calls, 2);
-  } finally {
-    globalThis.fetch = originalFetch;
-    await app.close();
-  }
+  const boc = beginCell().endCell().toBoc();
+  const source = fakeChainSource({ async sendMessage(message) { calls++; assert.deepEqual(message,boc); } });
+  const app = fastify();
+  registerRoutes(app, testConfig({enableWriteRpc:true}), {} as any, undefined, undefined, undefined, undefined, undefined, undefined, {source});
+  const response = await app.inject({method:'POST',url:'/jsonRPC',payload:{id:'write',jsonrpc:'2.0',method:'sendBoc',params:{boc:boc.toString('base64')}}});
+  assert.equal(response.statusCode,200); assert.equal(response.json().ok,true); assert.equal(calls,1);
+  await app.close();
 };
 
 const testCorsExactOriginAllowlistAndWildcardFallback = () => {
@@ -1723,34 +1388,6 @@ const testMemoryStoreMaxAddressEvictionAdjustsTotal = () => {
   assert.equal(store.getTotalTxs(), 3);
 };
 
-const testAccountSwapQueryRejectsInvalidTimeWindow = async () => {
-  let calls = 0;
-  const service = {
-    async getSwapExecutions() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
-
-  const invalidNumber = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/accounts/${validAddress}/swaps?from_utime=0`,
-  });
-  assert.equal(invalidNumber.statusCode, 400);
-  assert.equal(invalidNumber.json().code, 'FST_ERR_VALIDATION');
-
-  const inverted = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/accounts/${validAddress}/swaps?from_utime=20&to_utime=10`,
-  });
-  assert.equal(inverted.statusCode, 400);
-  assert.equal(inverted.json().code, 'bad_request');
-  assert.equal(calls, 0);
-  await app.close();
-};
 
 const testBlockFollowerCatchesUpAcrossMultipleBatches = async () => {
   const config = {
@@ -1976,7 +1613,7 @@ const testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill = async (
   assert.deepEqual(queued, [validAddress]);
 };
 
-const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = async () => {
+const testInitialHistoryFailuresAreTypedAndBounded = async () => {
   const baseConfig = {
     ...loadConfig(),
     initialHistoryTimeoutMs: 20,
@@ -1991,16 +1628,13 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
     makeSource({
       async getAccountState() { return { balance: '0', lastTxLt: '1', lastTxHash: linkedHistoryHash(1) }; },
       async getTransactions() {
-        throw new Error('finite lite read failure');
+        throw new ChainReadError('upstream_unavailable');
       },
     }),
     loadOpcodes(),
     []
   );
-  const fallback = await finiteFailureService.getTransactions(validAddress, 1);
-  assert.equal(fallback.history_complete, false);
-  assert.equal(fallback.total_txs, 0);
-  assert.deepEqual(fallback.txs, []);
+  await assert.rejects(finiteFailureService.getTransactions(validAddress, 1), (error: unknown) => error instanceof ChainReadError && error.code === 'upstream_unavailable');
 
   for (const dataSource of ['http', 'lite'] as const) {
     const config = { ...baseConfig, dataSource };
@@ -2027,8 +1661,8 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
       url: `/api/indexer/v1/accounts/${validAddress}/txs?page=1`,
     });
     const elapsedMs = Date.now() - startedAt;
-    assert.equal(response.statusCode, 503);
-    assert.equal(response.json().code, 'history_source_timeout');
+    assert.equal(response.statusCode, 504);
+    assert.equal(response.json().code, 'upstream_timeout');
     assert.ok(elapsedMs >= config.initialHistoryTimeoutMs);
     assert.ok(elapsedMs < 1_000, `hanging ${dataSource} history read escaped its owned bound (${elapsedMs}ms)`);
     assert.equal(hangingStore.get(validAddress)?.stats.historyComplete, false);
@@ -2055,7 +1689,7 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
   );
   await assert.rejects(
     () => lateFailureService.getTransactions(validAddress, 1),
-    /Initial transaction history source timed out/
+    (error: unknown) => error instanceof ChainReadError && error.code === 'upstream_timeout'
   );
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(rejectedAfterTimeout, true);
@@ -2449,30 +2083,27 @@ const testBlockFollowerSkipsFetchWhenLatestTransactionIsUnchanged = async () => 
 
 const run = async () => {
   await testRateLimitIgnoresUntrustedForwardedFor();
-  await testRateLimitUsesForwardedForOnlyWithTrustedProxy();
+  await testRateLimitUsesAuthenticatedEdgeOnly();
   await testRateLimitBucketsAreIsolated();
   testRateLimiterResetsExpiredWindowsAndDisabledLimiterAllowsAll();
   await testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall();
-  await testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall();
+  await testRestAddressRoutesRejectInvalidPathsBeforeServiceCall();
   await testStreamRejectsMissingOrInvalidAddresses();
   await testStreamPreservesCorsAndRateLimitHeadersAfterHijack();
   await runTransactionEvidenceTests();
+  await runGetterFreshnessTests();
   await testJsonRpcRejectsMalformedTransactionCursors();
   await testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCall();
   await testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall();
   await testGetterRoutesRejectMalformedJsonShapesBeforeServiceCall();
-  await testJsonRpcAddressInformationNormalizesMissingStateFields();
+  await testJsonRpcAddressInformationRejectsUnavailableAnchor();
   await testJsonRpcRejectsUnsupportedAndDisabledWriteMethods();
-  await testJsonRpcProxySurfacesInvalidUpstreamJson();
   await testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints();
   await testRunGetMethodRejectsMalformedStackBeforeServiceCall();
   await testRunGetMethodRejectsOversizedStackBeforeServiceCall();
-  await testDefiSnapshotRejectsInvalidInputsBeforeServiceCall();
   await testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall();
   await testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall();
   await testSnapshotEndpointsSurfaceLoadErrors();
-  await testJsonRpcBatchGetMethodRejectsOversizedAndMalformedCalls();
-  await testJsonRpcBatchGetMethodRejectsMissingCallsAndIsolatesFailures();
   await testDebugEndpointReturnsDisabledWithoutService();
   await testMutableOperationalRoutesRequireAdminToken();
   await testOperationalRoutesRequireAdminAndPublicReadsStayOpen();
@@ -2490,13 +2121,12 @@ const run = async () => {
   testMemoryStoreImportNormalizesStatsAndSortOrder();
   testMemoryStoreGlobalLimitEvictsColdAddresses();
   testMemoryStoreMaxAddressEvictionAdjustsTotal();
-  await testAccountSwapQueryRejectsInvalidTimeWindow();
   await testBlockFollowerCatchesUpAcrossMultipleBatches();
   await testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest();
   await testBlockFollowerRejectsReorderedCatchupSegment();
   await testBlockFollowerProvesFirstTransactionHistory();
   await testBlockFollowerMarksIncompleteBeforeCatchupFailure();
-  await testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback();
+  await testInitialHistoryFailuresAreTypedAndBounded();
   await testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill();
   await testInitialTransactionsEmptyPageMarksHistoryComplete();
   await testInitialTransactionsEmptyPageWithHeadStaysIncomplete();

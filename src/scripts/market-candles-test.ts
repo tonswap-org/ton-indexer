@@ -209,12 +209,6 @@ async function main() {
   });
   assert.deepEqual(lastOnly.candles.map((candle) => candle.ts), [180]);
 
-  const swaps = await service.getSwapExecutions(marketAddress, { status: 'success' });
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '3')?.receiveAmountSource, undefined, 'Decoded action is not a ledger receipt');
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.receiveAmountSource, undefined);
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.receiveAmount, undefined);
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.minimumReceiveAmount, '100');
-
   const app = Fastify();
   registerRoutes(app, config, service);
   const route = await app.inject({

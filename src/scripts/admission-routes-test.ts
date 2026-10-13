@@ -5,6 +5,10 @@ import { loadConfig } from '../config';
 import { AdmissionError, AdmissionErrorCode } from '../data/admission/protocol';
 import { beginCell, TupleItem } from '@ton/core';
 import { IndexerService } from '../indexerService';
+import { MemoryStore } from '../store/memoryStore';
+import { loadOpcodes } from '../utils/opcodes';
+import { fakeChainSource } from './support/fakeChainSource';
+import { fixtureHead } from './support/chainFixture';
 
 async function testCurrentGetterWire() {
   const address = '0:' + '1'.repeat(64), cell = beginCell().storeUint(93, 8).endCell();
@@ -13,15 +17,14 @@ async function testCurrentGetterWire() {
     {type:'cell',cell}, {type:'slice',cell}, {type:'builder',cell}, {type:'int',value:-9n}];
   const sourceStack: TupleItem[] = [{type:'tuple',items}];
   // Only the datasource is a fixture. The actual service serializer and route run.
-  const service: any = Object.create(IndexerService.prototype);
-  service.getMethodSourceInFlight = new Map();
   let sourceCalls = 0;
-  service.source = {runGetMethod: async (target: string, method: string, args: TupleItem[]) => {
+  const config = loadConfig();
+  const service = new IndexerService(config, new MemoryStore(config), fakeChainSource({ head: async () => fixtureHead(), runGetMethod: async (target, method, args) => {
     assert.equal(target,address);assert.equal(method,'fixture_types');assert.deepEqual(args,[]);sourceCalls++;
     return {exitCode:0,stack:sourceStack};
-  }};
+  }}), loadOpcodes(), []);
   const execution = {fixtureOnly:true};
-  service.admissionExecutor = {engine:address,ready:true,run:async () => ({exitCode:0,gasUsed:731,stack:[{type:'int',value:-1n}],execution})};
+  service.setAdmissionExecutor({engine:address,ready:true,run:async () => ({exitCode:0,gasUsed:731,stack:[{type:'int',value:-1n}],execution})} as any);
   const app=Fastify({logger:false});registerRoutes(app,loadConfig(),service);
   try {
     const reply=await app.inject({method:'POST',url:'/jsonRPC',payload:{id:'1',jsonrpc:'2.0',method:'runGetMethod',params:{address,method:'fixture_types',stack:[]}}});
@@ -47,7 +50,7 @@ async function run() {
   await testCurrentGetterWire();
   const app = Fastify({logger:false});
   let failure: unknown;
-  const service = { getAdmissionStatus: () => ({configured:true,ready:false}), getHealth: () => ({}),
+  const service = { getAdmissionStatus: () => ({configured:true,ready:false}), getHealth: () => ({ chain: {peersConfigured:1,peersReady:1,headSeqno:1,headAgeSec:0},ledger:'disabled',disk:'ok' }),
     runGetMethod: async () => {throw failure;} };
   registerRoutes(app, loadConfig(), service as any);
   const call = {address:'0:0816eb1798823310dffa9888ea1ff7f9168fdedbbc5b6f1f003720a6dcd169b1',method:'close_order_preflight',stack:[]};
@@ -66,17 +69,15 @@ async function run() {
         const rpc=await app.inject({method:'POST',url,payload:{id:71,jsonrpc:'2.0',method:'runGetMethod',params:call}});
         assert.equal(rpc.statusCode,status);assert.deepEqual(rpc.json(),{id:71,jsonrpc:'2.0',ok:false,code:status,error:code});
       }
-      const batch=await app.inject({method:'POST',url:'/api/indexer/v1/runGetMethods',payload:{calls:[call]}});
-      assert.equal(batch.statusCode,200);assert.deepEqual(batch.json(),{results:[{ok:false,code,error:code}]});
     }
     failure=new Error('private worker proof bytes and host paths');
     const concealed=await app.inject({method:'POST',url:'/api/indexer/v1/runGetMethod',payload:call});
-    assert.equal(concealed.statusCode,400);assert.deepEqual(concealed.json(),{code:'bad_request',error:'get method call failed'});
+    assert.equal(concealed.statusCode,500);assert.deepEqual(concealed.json(),{code:'internal_error',error:'get method call failed'});
     // Message strings alone cannot impersonate a typed admission failure.
     failure=new Error('admission_busy');
     const untyped=await app.inject({method:'POST',url:'/api/indexer/v1/runGetMethod',payload:call});
-    assert.equal(untyped.statusCode,400);assert.equal(untyped.json().code,'bad_request');
-    console.log('Admission route safe typed codes/status, all getter endpoints, batch preservation and error concealment PASS');
+    assert.equal(untyped.statusCode,500);assert.equal(untyped.json().code,'internal_error');
+    console.log('Admission route safe typed codes/status, both getter endpoints and error concealment PASS');
   } finally { await app.close(); }
 }
 void run().catch(error=>{console.error(error);process.exitCode=1;});

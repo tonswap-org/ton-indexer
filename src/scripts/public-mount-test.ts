@@ -79,7 +79,7 @@ async function main() {
   assert.ok(refCount > 20, 'Exercise the actual API and ledger component references');
   const docs = buildDocsHtml('mount-test-nonce', r2);
   assert.ok(docs.includes('href="/api/indexer-r2/v1/openapi.json"'));
-  assert.ok(docs.includes('value="/api/indexer-r2/v1/options/{factory}/snapshot"'));
+  assert.ok(docs.includes('value="/api/indexer-r2/v1/cover/{manager}/snapshot"'));
   assert.ok(docs.includes('<script nonce="mount-test-nonce">'));
   assert.equal(docs.includes('/api/indexer/v1'), false);
 
@@ -93,7 +93,7 @@ async function main() {
       assert.equal(info.publicBaseUrl, indexer);
       assert.equal(info.serviceId, `test.tonswap.org${mount}`);
       assert.equal(info.endpoints.openapi, `${mount}/v1/openapi.json`);
-      assert.equal(info.endpoints.balance, `${mount}/v1/accounts/{addr}/balance`);
+      assert.equal(info.endpoints.balances, `${mount}/v1/accounts/{addr}/balances`);
       assert.equal(info.endpoints.readFresh, `${mount}/v1/readFresh`);
       assert.equal(info.endpoints.marketCandles, `${mount}/v1/markets/{market}/candles`);
       assert.ok(Object.values(info.endpoints).every(path => typeof path === 'string' && path.startsWith(`${mount}/v1/`)));
@@ -101,7 +101,7 @@ async function main() {
       assert.equal(specResponse.statusCode, 200);
       const spec = specResponse.json();
       assert.ok(spec.paths[info.endpoints.readFresh]);
-      assert.ok(spec.paths[info.endpoints.balance]);
+      assert.ok(spec.paths[info.endpoints.balances]);
       const docsResponse = await app.inject({ method: 'GET', url: '/api/indexer/v1/docs' });
       assert.equal(docsResponse.statusCode, 200);
       assert.ok(docsResponse.body.includes(`href="${mount}/v1/openapi.json"`));

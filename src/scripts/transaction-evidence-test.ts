@@ -86,7 +86,7 @@ export async function runTransactionEvidenceTests() {
       await assert.rejects(readOriginalTransactionEvidence({ ...makeSource(), async getAccountState() { return state; } }, owner.address.toRawString(), 1), /anchor/);
     }
     for (const limit of [0, 51, 1.5]) await assert.rejects(readOriginalTransactionEvidence(makeSource(), owner.address.toRawString(), limit, cursor), /limit/);
-    await assert.rejects(readOriginalTransactionEvidence(makeSource(), owner.address.toRawString(), 1, cursor, Date.now() - 1), /deadline/);
+    await assert.rejects(readOriginalTransactionEvidence(makeSource(), owner.address.toRawString(), 1, cursor, { signal: AbortSignal.abort(new Error('deadline exceeded')) }), /deadline/);
   });
   await test('an account with no transaction history returns an empty result without source scanning', async () => {
     const source = { ...makeSource(async () => { throw Error('must not scan'); }), async getAccountState() { return { balance: '0', accountState: 'uninitialized' as const }; } };

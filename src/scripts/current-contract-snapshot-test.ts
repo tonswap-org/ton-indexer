@@ -170,39 +170,6 @@ async function main() {
   }
   await app.close();
 
-  const defi = await current.getDefiSnapshot({
-    include: { activation: false, dlmmRegistry: false, reserveBalances: false, systemHealth: true,
-      systemHealthDetailed: false, modules: false, governance: false, cover: false },
-    contracts: { controlMesh, riskController },
-  });
-  const health = defi.sections.systemHealth;
-  assert(health?.ok);
-  assert.equal(health.data.riskControllerState?.configuredGrossBudget, '7000');
-  assert.equal(health.data.riskControllerState?.committedGrossBudget, '9000');
-  assert.equal(health.data.riskControllerState?.controlMesh, controlMesh);
-  assert.equal(health.data.controlState?.perpsMarket3WeightMillibps, '25');
-  assert.equal(health.data.controlState?.perpsMarket4FundingCapBps, '30');
-  assert.equal(health.data.controlState?.insuranceBtcCover, '2000000000');
-
-  const api = Fastify();
-  registerRoutes(api, config, current);
-  const response = await api.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: {
-      include: { activation: false, dlmmRegistry: false, reserveBalances: false, systemHealth: true,
-        systemHealthDetailed: false, modules: false, governance: false, cover: false },
-      contracts: { controlMesh, riskController },
-    },
-  });
-  assert.equal(response.statusCode, 200);
-  const apiHealth = response.json().sections.systemHealth;
-  assert.equal(apiHealth.data.riskControllerState.configuredGrossBudget, '7000');
-  assert.equal(apiHealth.data.riskControllerState.committedGrossBudget, '9000');
-  assert.equal(apiHealth.data.controlState.perpsMarket4FundingCapBps, '30');
-  assert.equal(apiHealth.data.controlState.insuranceBtcCover, '2000000000');
-  await api.close();
-
   const unsupported = service(true);
   await assert.rejects(unsupported.getCoverSnapshot(manager), /unavailable or malformed/, 'An incompatible policy ABI must not look like an empty portfolio');
   const retiredVol = await unsupported.getVolIndexSnapshot(volIndex, { sourcePool: pool, routeIds: [7] });
@@ -210,7 +177,7 @@ async function main() {
   assert.deepEqual(retiredVol.route_ids, [], 'retired route with marketId slot must be rejected');
   assert.deepEqual(retiredVol.routes, {});
 
-  console.log('Current RiskController, four-market ControlMesh, uint64 Cover and VolIndex getter/API layouts map exactly; retired shifted tuples are rejected');
+  console.log('Current uint64 Cover and VolIndex getter/API layouts map exactly; retired shifted tuples are rejected');
 }
 
 void main();

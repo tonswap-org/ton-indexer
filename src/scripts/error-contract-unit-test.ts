@@ -9,7 +9,7 @@ import { requestDeadline, ROUTE_DEADLINE_MS } from '../api/deadline';
 
 async function main() {
   const app = fastify(); installErrorHandlers(app);
-  const fallback = { code: 'fresh_read_unavailable' as const, message: 'Fresh chain read unavailable.' };
+  const fallback = { code: 'upstream_unavailable' as const, message: 'Fresh chain read unavailable.' };
   app.get('/timeout', (_request, reply) => sendFailure(reply, new ChainReadError('upstream_timeout', { cause: new Error('private upstream bytes') }), fallback));
   app.get('/unavailable', (_request, reply) => sendFailure(reply, new ChainReadError('upstream_unavailable'), fallback));
   app.get('/unknown', (_request, reply) => sendFailure(reply, new Error('private backend path /api/indexer/secret'), fallback));
