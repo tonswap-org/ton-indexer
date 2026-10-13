@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { LiteClientDataSource } from '../data/liteClientSource';
-import { TonClient4DataSource } from '../data/tonClient4Source';
+import { loadLiteserverPool } from '../data/liteserverPool';
 import { createLogger } from '../utils/logger';
 
 const envKeys = [
@@ -13,6 +13,7 @@ const envKeys = [
   'INDEXER_MAX_RELATED_ACCOUNTS',
   'INDEXER_SERVICE_ID',
   'INDEXER_PUBLIC_BASE_URL',
+  'INDEXER_EDGE_KEY', 'INDEXER_LEDGER_WORKERS', 'INDEXER_DISK_SOFT_FLOOR_BYTES', 'INDEXER_DISK_HARD_FLOOR_BYTES',
 ] as const;
 const before = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
@@ -54,14 +55,20 @@ async function main() {
 
     await assert.rejects(
       () => LiteClientDataSource.create('localnet', undefined, createLogger('silent')),
-      /LITESERVER_POOL_LOCALNET is required/
+      /LITESERVER_POOL_LOCALNET/
     );
-    if (TonClient4DataSource.isAvailable()) {
-      await assert.rejects(
-        () => TonClient4DataSource.create('localnet'),
-        /TON_HTTP_ENDPOINT is required/
-      );
-    }
+    process.env.TON_NETWORK = 'localnet';
+    delete process.env.LITESERVER_POOL_LOCALNET;
+    assert.equal(loadConfig().liteserverPool, undefined, 'pure config parsing does not require a pool');
+    assert.throws(() => loadLiteserverPool('https://ton.org/global.config.json'), /LITESERVER_POOL/);
+    assert.equal(loadConfig().ledgerWorkers, 3);
+    assert(loadConfig().corsExposeHeaders.includes('retry-after'));
+    process.env.INDEXER_EDGE_KEY = 'short'; assert.throws(() => loadConfig(), /at least 32/);
+    process.env.INDEXER_EDGE_KEY = 'k'.repeat(32); assert.equal(loadConfig().edgeKey, 'k'.repeat(32));
+    process.env.INDEXER_LEDGER_WORKERS = '9'; assert.throws(() => loadConfig(), /INDEXER_LEDGER_WORKERS/);
+    delete process.env.INDEXER_LEDGER_WORKERS;
+    process.env.INDEXER_DISK_SOFT_FLOOR_BYTES = '100'; process.env.INDEXER_DISK_HARD_FLOOR_BYTES = '101';
+    assert.throws(() => loadConfig(), /must not exceed/);
 
     process.stdout.write('localnet config ok\n');
   } finally {

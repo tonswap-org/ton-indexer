@@ -131,24 +131,27 @@ export class NativeAdmissionPool implements AdmissionExecutor {
       this.workers.delete(worker);
       this.scheduleReplacement();
     });
-    this.workers.add(worker); return worker;
+    this.workers.add(worker);
+    void worker.started.then(() => { this.replacements = 0; }, () => { this.replacements++; this.scheduleReplacement(); });
+    return worker;
   }
   private scheduleReplacement(): void {
-      if (!this.closed && this.started && this.workers.size < 2 && !this.replacementTimer && this.replacements < 3) {
+      if (!this.closed && this.started && this.workers.size < 2 && !this.replacementTimer) {
         // Bounded restart backoff is readiness maintenance. A failed request is
         // already rejected and is never retained or replayed by a replacement.
         this.replacementTimer = setTimeout(() => {
           this.replacementTimer = undefined;
-          while (!this.closed && this.workers.size < 2 && this.replacements < 3) {
-            this.replacements++;
-            try { void this.create().started.then(() => { this.replacements = 0; }, () => {}); }
-            catch { this.scheduleReplacement(); break; }
+          while (!this.closed && this.workers.size < 2) {
+            try { this.create(); }
+            catch { this.replacements++; this.scheduleReplacement(); break; }
           }
-        }, 1000 * 2 ** this.replacements);
+        }, Math.min(60_000, 1_000 * 2 ** Math.min(Math.max(0, this.replacements - 1), 6)));
+        this.replacementTimer.unref();
       }
   }
   async start(): Promise<void> {
     if (this.started || this.closed) throw new AdmissionError('admission_unavailable');
+    this.started = true;
     try {
       const first = this.create();
       // A constructor failure must not leave an owned cold process or an
@@ -156,14 +159,13 @@ export class NativeAdmissionPool implements AdmissionExecutor {
       void first.started.catch(() => {});
       const second = this.create();
       await Promise.all([first.started, second.started]);
-      this.started = true;
-    } catch { await this.close(); throw new AdmissionError('admission_unavailable'); }
+    } catch { this.scheduleReplacement(); throw new AdmissionError('admission_unavailable'); }
   }
   run(method: string, args: TupleItem[]): Promise<AdmissionResult> {
     try {
       const request = makeAdmissionRequest(this.config, method, args);
       const worker = [...this.workers].find(value => value.ready);
-      if (!worker) throw new AdmissionError(this.workers.size ? 'admission_busy' : 'admission_unavailable');
+      if (!worker) throw new AdmissionError(this.ready ? 'admission_busy' : 'admission_unavailable');
       return worker.run(request);
     } catch (error) { return Promise.reject(error instanceof AdmissionError ? error : new AdmissionError('admission_invalid_request')); }
   }

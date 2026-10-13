@@ -1,5 +1,6 @@
 import {parseAdmissionArtifacts, type AdmissionArtifactConfig} from './admission';
 import { readDatabaseUrl } from './database';
+import { dirname, resolve } from 'node:path';
 
 export type Network = 'mainnet' | 'testnet' | 'localnet';
 export type IndexerMode = 'dev' | 'production';
@@ -67,6 +68,11 @@ export type Config = {
   releaseManifestSource?: string;
   serviceId?: string;
   publicBaseUrl?: string;
+  edgeKey?: string;
+  ledgerWorkers: number;
+  diskGuardPath: string;
+  diskSoftFloorBytes: number;
+  diskHardFloorBytes: number;
 };
 
 const numberFromEnv = (
@@ -159,6 +165,11 @@ const dataSourceFromEnv = (): 'http' | 'lite' => {
 export const loadConfig = (): Config => {
   const mode = modeFromEnv();
   const network = networkFromEnv();
+  const edgeKey = stringFromEnv('INDEXER_EDGE_KEY');
+  if (edgeKey !== undefined && edgeKey.length < 32) throw new Error('INDEXER_EDGE_KEY must have at least 32 characters');
+  const diskSoftFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_SOFT_FLOOR_BYTES', 2 * 1024 ** 3, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  const diskHardFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_HARD_FLOOR_BYTES', 512 * 1024 ** 2, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  if (diskHardFloorBytes > diskSoftFloorBytes) throw new Error('INDEXER_DISK_HARD_FLOOR_BYTES must not exceed INDEXER_DISK_SOFT_FLOOR_BYTES');
 
   const configuredProxyEndpoints = listFromEnv([
     'INDEXER_WRITE_RPC_ENDPOINTS',
@@ -242,7 +253,7 @@ export const loadConfig = (): Config => {
     corsAllowHeaders: stringFromEnv('CORS_ALLOW_HEADERS', 'content-type,accept')!,
     corsExposeHeaders: stringFromEnv(
       'CORS_EXPOSE_HEADERS',
-      'x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset'
+      'x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset,retry-after'
     )!,
     corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600, { min: 0, integer: true }),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
@@ -309,5 +320,10 @@ export const loadConfig = (): Config => {
     releaseManifestSource: stringFromEnv('INDEXER_RELEASE_MANIFEST'),
     serviceId: stringFromEnv('INDEXER_SERVICE_ID'),
     publicBaseUrl: stringFromEnv('INDEXER_PUBLIC_BASE_URL'),
+    edgeKey,
+    ledgerWorkers: strictBoundedIntegerFromEnv('INDEXER_LEDGER_WORKERS', 3, { min: 2, max: 8 }),
+    diskGuardPath: stringFromEnv('INDEXER_DISK_GUARD_PATH', dirname(resolve(stringFromEnv('SNAPSHOT_PATH', './snapshot.json')!)))!,
+    diskSoftFloorBytes,
+    diskHardFloorBytes,
   };
 };

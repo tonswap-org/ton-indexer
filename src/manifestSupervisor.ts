@@ -1,4 +1,4 @@
-import type { LoadedManifest } from './config/manifestSource';
+import { ManifestTransportError, type LoadedManifest } from './config/manifestSource';
 
 export const MANIFEST_POLL_INTERVAL_MS = 5_000;
 export type ManifestWorker = {
@@ -60,7 +60,7 @@ export function createManifestSupervisor(options: {
           void next.stop().catch(report);
         });
       } catch (error) {
-        await stopWorker();
+        if (!(error instanceof ManifestTransportError)) await stopWorker();
         if (!stopped) { report(error); if (initial) throw error; }
       }
     })().finally(() => { inFlight = undefined; });
