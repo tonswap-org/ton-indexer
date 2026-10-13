@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { loadSnapshotFile, saveSnapshotFile, writeSnapshotFile } from '../snapshot';
 import { MemoryStore } from '../store/memoryStore';
 import { loadConfig } from '../config';
 import { StoreSnapshot } from '../store/memoryStore';
@@ -41,4 +45,35 @@ assert.ok(page);
 assert.equal(page?.txs.length, 1);
 assert.equal(page?.txs[0]?.lt, '2');
 
-console.log('snapshot ok');
+async function fileChecks() {
+  const fileSnapshot = JSON.parse(JSON.stringify(snapshot)) as StoreSnapshot;
+  const directory = mkdtempSync(join(tmpdir(), 'indexer-snapshot-test-'));
+  try {
+    const path = join(directory, 'snapshot.json');
+    saveSnapshotFile(path, fileSnapshot);
+    assert.deepEqual(loadSnapshotFile(path), fileSnapshot);
+    assert.equal(readFileSync(path, 'utf8'), `${JSON.stringify(snapshot)}\n`, 'compact JSON');
+    writeFileSync(`${path}.tmp`, 'interrupted write');
+    assert.deepEqual(loadSnapshotFile(path), fileSnapshot);
+    assert.equal(readdirSync(directory).some(name => name.endsWith('.tmp')), false, 'load removes stale temporary data');
+
+    const pending = writeSnapshotFile(path, fileSnapshot);
+    assert.ok(pending instanceof Promise);
+    assert.throws(() => saveSnapshotFile(path, fileSnapshot), /already in progress/);
+    await pending;
+    const later = { ...fileSnapshot, createdAt: fileSnapshot.createdAt + 1 };
+    await Promise.all([writeSnapshotFile(path, fileSnapshot), writeSnapshotFile(path, later)]);
+    assert.deepEqual(loadSnapshotFile(path), later, 'concurrent saves are serialized');
+    assert.equal(readdirSync(directory).some(name => name.endsWith('.tmp')), false);
+
+    const blocked = join(directory, 'target-is-a-directory');
+    mkdirSync(blocked);
+    for (let i = 0; i < 3; i += 1) assert.throws(() => saveSnapshotFile(blocked, snapshot));
+    for (let i = 0; i < 3; i += 1) await assert.rejects(writeSnapshotFile(blocked, snapshot));
+    assert.equal(readdirSync(directory).some(name => name.endsWith('.tmp')), false, 'failed sync and async saves leak no files');
+    await writeSnapshotFile(path, later);
+    assert.deepEqual(loadSnapshotFile(path), later, 'a failed writer cannot poison later saves');
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+  console.log('snapshot ok: compact atomic saves, promise writes, serialization and failure cleanup');
+}
+fileChecks().catch(error => { console.error(error); process.exitCode = 1; });
