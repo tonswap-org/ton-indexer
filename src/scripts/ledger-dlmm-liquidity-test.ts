@@ -1,3 +1,5 @@
+import { fixtureIdentities, storedRefresh } from './support/ledgerGraphFixture';
+import { fixtureHead } from './support/chainFixture';
 import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -108,7 +110,7 @@ async function buildDiscovery(label: string, options: {missingRecipientWallet?: 
   const registry = new Address(0, Buffer.alloc(32, 0x72)).toRawString();
   const calls: {method: string; account?: string; master?: string; getter?: string}[] = [], forbiddenCalls: string[] = [], crawled: string[] = [];
   const requireRaw = (account: string) => assert.equal(account, canonicalLedgerAddress(account), 'all datasource and crawler addresses are canonical raw identities');
-  const sourceMethods = fixtureChainSource({
+  const sourceMethods = fixtureChainSource({ physicalCurrentReads: true,
     network: 'localnet',
     getAccountState: async (account: string) => {
       requireRaw(account); calls.push({method: 'getAccountState', account});
@@ -157,9 +159,9 @@ async function buildDiscovery(label: string, options: {missingRecipientWallet?: 
     assert.deepEqual((await store.rawHistory(generations.get(owner)!)).map(row => row.raw), ownerTransactions);
     discoveryReadOnly = true;
     const builder = new LedgerGraphBuilder('localnet', source, store, [], options.registry === 'absent' ? undefined : registry,
-      async wallet => { requireRaw(wallet); return assets.get(wallet) ?? null; },
-      async account => { requireRaw(account); crawled.push(account); return true; });
-    const graph = await builder.build(owner, generations.get(owner)!, observed);
+      fixtureIdentities(source, async wallet => { requireRaw(wallet); return assets.get(wallet) ?? null; }),
+      storedRefresh(store, 'localnet', account => { requireRaw(account); crawled.push(account); }));
+    const graph = await builder.build(owner, generations.get(owner)!, { boundary: fixtureHead() });
     assert.deepEqual(forbiddenCalls, [], 'no send, signing, provider writes or unconfigured reads');
     assert(calls.every(call => ['runGetMethod', 'walletBalance', 'getAccountState'].includes(call.method)));
     assert([...graph.chains.keys(), ...graph.wallets.keys(), ...graph.pools.keys(), ...crawled].every(account => account === canonicalLedgerAddress(account)));
@@ -524,8 +526,8 @@ async function main() {
       connect:async()=>sql,end:()=>db.close()};
     await verifyPersistence(sql);
   });
-  if (process.env.LEDGER_LIQUIDITY_TEST_DATABASE_URL) await test('native loopback PostgreSQL preserves the same exact owner projections in an isolated schema', async () => {
-    const value = process.env.LEDGER_LIQUIDITY_TEST_DATABASE_URL!, url = new URL(value);
+  if (process.env.INDEXER_TEST_DATABASE_URL) await test('native loopback PostgreSQL preserves the same exact owner projections in an isolated schema', async () => {
+    const value = process.env.INDEXER_TEST_DATABASE_URL!, url = new URL(value);
     assert(['postgres:', 'postgresql:'].includes(url.protocol) && ['127.0.0.1','[::1]','localhost'].includes(url.hostname) && !url.search && !url.hash,
       'Native fixture database must be a loopback PostgreSQL URL without connection overrides');
     if (url.hostname === 'localhost') assert((await lookup('localhost',{all:true})).every(row=>row.address==='127.0.0.1'||row.address==='::1'),'localhost must resolve only to loopback');

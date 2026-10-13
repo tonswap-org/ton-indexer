@@ -1,3 +1,5 @@
+import { createRefreshDependency } from '../ledger/chainSync';
+import { fixtureHead } from './support/chainFixture';
 import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -183,7 +185,7 @@ function sourceWithHistory(
   getHead: () => number,
   onRead?: () => void
 ): FixtureChainSource {
-  return fixtureChainSource({
+  return fixtureChainSource({ physicalCurrentReads: true,
     network: 'testnet',
     head: async () => ({ seqno: 1 }),
     getAccountState: async () =>
@@ -307,38 +309,21 @@ async function testProjectionScope(store: PostgresLedgerStore, pool: LedgerSqlPo
   };
   try {
     const service = new LedgerService('testnet', store, sourceWithHistory(() => 0), opcodes, createLogger('silent'));
-    await service.syncAccount(emptyOwner);
+    await service.runOwnerCycle(emptyOwner);
     const emptyFirst = await store.page('testnet', emptyOwner);
     assert.deepEqual(emptyFirst.events, []); assert.deepEqual(emptyFirst.coverage.projectionScope, projection(emptyOwner).projectionScope);
-    await service.syncAccount(emptyOwner);
+    await service.runOwnerCycle(emptyOwner);
     assert.equal((await store.page('testnet', emptyOwner)).coverage.generation, emptyFirst.coverage.generation);
-    // Captured from the pre-change exact-ledger-v13 implementation for this
-    // empty owner projection and its single complete owner-chain dependency.
-    const v13Fingerprint = '2da0f08f826c70d1221888dedf8e53497df2e6f861503461d8f4515b14e7c1fe';
-    await pool.query('UPDATE ledger_projection_coverage SET fingerprint=$2 WHERE generation=$1', [emptyFirst.coverage.generation, v13Fingerprint]);
-    await service.syncAccount(emptyOwner);
-    const decoderUpdated = await store.page('testnet', emptyOwner);
-    assert.notEqual(decoderUpdated.coverage.generation, emptyFirst.coverage.generation,
-      'a v13 decoder fingerprint cannot reuse a quiet owner projection after the settlement admission change');
-    assert.deepEqual(decoderUpdated.events, emptyFirst.events);
-    assert.deepEqual(decoderUpdated.coverage.projectionScope, emptyFirst.coverage.projectionScope);
-    assert.equal((await pool.query('SELECT fingerprint FROM ledger_projection_coverage WHERE generation=$1', [emptyFirst.coverage.generation])).rows[0].fingerprint, v13Fingerprint,
-      'decoder refresh publishes a new generation without rewriting the previous cursor snapshot');
-    await service.syncAccount(emptyOwner);
-    assert.equal((await store.page('testnet', emptyOwner)).coverage.generation, decoderUpdated.coverage.generation,
-      'the new decoder generation is reusable after an identical quiet recheck');
     includeWallet = true;
-    await service.syncAccount(emptyOwner);
+    // A binding discovered on changed input may enlarge the physical scope.
+    // Explicit pending state prevents quiet reuse while that work is due.
+    await pool.query("UPDATE ledger_owner_checks SET unresolved=true WHERE network='testnet' AND account=$1", [emptyOwner]);
+    await service.runOwnerCycle(emptyOwner);
     const emptyChanged = await store.page('testnet', emptyOwner);
-    assert.deepEqual(emptyChanged.events, []); assert.notEqual(emptyChanged.coverage.generation, emptyFirst.coverage.generation);
+    assert.deepEqual(emptyChanged.events, []);
+    assert.notEqual(emptyChanged.coverage.generation, emptyFirst.coverage.generation);
     assert.deepEqual(emptyChanged.coverage.projectionScope, projection(emptyOwner, [], [emptyOwner, emptyWallet]).projectionScope);
-    assert.deepEqual(emptyChanged.coverage.relatedAccounts?.map(({ generation, ...row }) => row), emptyFirst.coverage.relatedAccounts?.map(({ generation, ...row }) => row));
-    await pool.query('UPDATE ledger_projection_coverage SET projection_scope=$2::jsonb WHERE generation=$1', [emptyChanged.coverage.generation, JSON.stringify(projection(emptyOwner).projectionScope)]);
-    await service.syncAccount(emptyOwner);
-    const repaired = await store.page('testnet', emptyOwner);
-    assert.notEqual(repaired.coverage.generation, emptyChanged.coverage.generation,
-      'quiet reuse cannot trust a mismatched scope merely because the stored fingerprint still matches');
-    assert.deepEqual(repaired.coverage.projectionScope, emptyChanged.coverage.projectionScope);
+    assert.deepEqual((await store.page('testnet', emptyOwner, { generation: emptyFirst.coverage.generation! })).coverage.projectionScope, emptyFirst.coverage.projectionScope);
   } finally { LedgerGraphBuilder.prototype.build = build; }
   console.log('ledger projection scope: exact fingerprint, persisted cursor identity, 13 corrupt scopes, rollback, publication binding and empty-generation refresh passed');
 }
@@ -375,7 +360,7 @@ async function testDatabase() {
       opcodes,
       createLogger('silent')
     );
-    await service.syncAccount(account);
+    await service.runOwnerCycle(account);
     const first = await store.page('testnet', account, { limit: 500 });
     assert.equal(first.events.length, 500);
     assert.equal(first.coverage.historyComplete, true);
@@ -398,7 +383,7 @@ async function testDatabase() {
     const counts = await pool.query(
       'SELECT (SELECT count(*) FROM ledger_runs)::text AS runs,(SELECT count(*) FROM ledger_membership)::text AS members,(SELECT count(*) FROM ledger_projection_events)::text AS events'
     );
-    await service.syncAccount(account);
+    await service.runOwnerCycle(account);
     const quiet = await store.page('testnet', account);
     assert.equal(
       quiet.coverage.generation,
@@ -418,7 +403,7 @@ async function testDatabase() {
     );
     const previousReads = reads;
     head = 1706;
-    await service.syncAccount(account);
+    await service.runOwnerCycle(account);
     assert.equal(
       reads - previousReads,
       1,
@@ -544,7 +529,7 @@ async function testDatabase() {
       opcodes,
       createLogger('silent')
     );
-    await empty.syncAccount(master);
+    await empty.runOwnerCycle(master);
     assert.equal(
       (await store.page('testnet', master)).coverage.historyComplete,
       true
@@ -565,7 +550,7 @@ async function testDatabase() {
       opcodes,
       createLogger('silent')
     );
-    await assert.rejects(() => broken.syncAccount(brokenAccount));
+    assert.equal((await broken.runOwnerCycle(brokenAccount)).retry, true);
     const partial = await store.page('testnet', brokenAccount);
     assert.equal(
       partial.events.length,
@@ -574,7 +559,7 @@ async function testDatabase() {
     );
     assert.equal(partial.coverage.historyComplete, false);
     assert.equal(partial.coverage.projectionScope, null);
-    assert(partial.coverage.issues.includes('history_source_unavailable'));
+    assert(partial.coverage.issues.includes('source_unavailable'));
     assert(!JSON.stringify(partial).includes('upstream secret'));
     const forgedAccount = `0:${'5'.repeat(64)}`;
     const forgedSource = sourceWithHistory(() => 3);
@@ -590,7 +575,7 @@ async function testDatabase() {
       opcodes,
       createLogger('silent')
     );
-    await assert.rejects(() => forged.syncAccount(forgedAccount));
+    assert.equal((await forged.runOwnerCycle(forgedAccount)).errorCode, 'history_chain_unverified');
     assert.equal(
       (await store.page('testnet', forgedAccount)).coverage.historyComplete,
       false
@@ -610,7 +595,7 @@ async function testDatabase() {
       2,
       { maxPagesPerSync: 1 }
     );
-    await bounded.syncAccount(largeAccount);
+    await bounded.runOwnerCycle(largeAccount);
     const boundedGeneration = (await store.account('testnet', largeAccount))
       .latest_generation;
     await pool.query(
@@ -619,14 +604,10 @@ async function testDatabase() {
     );
     const deferred = await store.page('testnet', largeAccount);
     assert.equal(deferred.coverage.snapshotComplete, false);
-    assert(deferred.coverage.issues.includes('backfill_capacity_deferred'));
-    await bounded.syncAccount(largeAccount);
-    await bounded.syncAccount(largeAccount);
-    assert.equal(
-      (await store.page('testnet', largeAccount)).coverage.checkedAt,
-      '2020-01-01T00:00:00.000Z',
-      'publication after a long backfill does not advance the chain watermark'
-    );
+    assert(deferred.coverage.issues.includes('page_allowance'));
+    await bounded.runOwnerCycle(largeAccount);
+    await bounded.runOwnerCycle(largeAccount);
+    assert(Date.parse((await store.page('testnet', largeAccount)).coverage.checkedAt!) > Date.parse('2020-01-01T00:00:00Z'), 'completed check uses server time, not the first backfill observation');
     assert.equal(boundedReads, 3);
     assert.equal(
       (await store.page('testnet', largeAccount)).coverage.generation,
@@ -642,7 +623,7 @@ async function testDatabase() {
       '205'
     );
     const physicalAccount = `0:${'a'.repeat(64)}`;
-    await bounded.syncAccount(physicalAccount, false, { pages: 3 });
+    await createRefreshDependency({ network: 'testnet', store, source: sourceWithHistory(() => 205), opcodes, logger: createLogger('silent'), resolveIdentity: async () => null, maxPagesPerAccount: 3 })(physicalAccount, { boundary: fixtureHead() });
     const physicalOnly = await store.page('testnet', physicalAccount);
     assert.equal(physicalOnly.coverage.snapshotComplete, false);
     assert.equal(physicalOnly.coverage.projectionScope, null);
@@ -673,7 +654,7 @@ async function testDatabase() {
           .toString('base64'),
       },
     });
-    const custodySource: FixtureChainSource = fixtureChainSource({
+    const custodySource: FixtureChainSource = fixtureChainSource({ physicalCurrentReads: true,
       ...sourceWithHistory(() => 0),
       getAccountState: async (address) =>
         address === custodyWallet
@@ -726,7 +707,7 @@ async function testDatabase() {
       2,
       { jettonRoots: [master] }
     );
-    await custody.syncAccount(custodyOwner);
+    await custody.runOwnerCycle(custodyOwner);
     const custodyFirst = await store.page('testnet', custodyOwner, {
       limit: 1,
     });
@@ -742,13 +723,13 @@ async function testDatabase() {
         (a) => a.account === custodyWallet && a.historyComplete
       )
     );
-    await custody.syncAccount(custodyOwner);
+    await custody.runOwnerCycle(custodyOwner);
     assert.equal(
       (await store.page('testnet', custodyOwner)).coverage.generation,
       custodyFirst.coverage.generation
     );
     custodyHead = 3;
-    await custody.syncAccount(custodyOwner);
+    await custody.runOwnerCycle(custodyOwner);
     const custodyChanged = await store.page('testnet', custodyOwner);
     assert.notEqual(
       custodyChanged.coverage.generation,

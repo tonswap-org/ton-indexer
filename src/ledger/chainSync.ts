@@ -125,9 +125,9 @@ export function createRefreshDependency(deps: ChainSyncDeps): RefreshDependency 
   const perform: RefreshDependency = async (account, cycle) => {
     let result = storedResult(account, null);
     try {
-      result = storedResult(account, await deps.store.account(deps.network, account));
+      result = storedResult(account, await deps.store.physicalAccount(deps.network, account));
       const locked = await deps.store.withAccountLock(deps.network, account, async () => {
-        const previous = await deps.store.account(deps.network, account);
+        const previous = await deps.store.physicalAccount(deps.network, account);
         result = storedResult(account, previous);
         cycle.signal?.throwIfAborted();
         const head = accountHead(await deps.source.getAccountState(account, { at: cycle.boundary, signal: cycle.signal }));
@@ -140,7 +140,7 @@ export function createRefreshDependency(deps: ChainSyncDeps): RefreshDependency 
     } catch (error) {
       // A resumed run may have completed before its newer head failed. Report
       // the actual stored generation, or retain our snapshot if storage failed.
-      try { result = storedResult(account, await deps.store.account(deps.network, account)); } catch { /* preserve facts */ }
+      try { result = storedResult(account, await deps.store.physicalAccount(deps.network, account)); } catch { /* preserve facts */ }
       result.atBoundary = false;
       result.errorCode = failureCode(error);
       try { await deps.store.failed(deps.network, account, result.errorCode); } catch { /* preserve original failure */ }
@@ -180,7 +180,7 @@ export async function syncOwnerChain(deps: ChainSyncDeps, owner: string, cycle: 
     account = canonicalLedgerAddress(owner);
     cycle.signal?.throwIfAborted();
     const head = accountHead(await deps.source.getAccountState(account, { at: cycle.boundary, signal: cycle.signal }));
-    const previous = await deps.store.account(deps.network, account);
+    const previous = await deps.store.physicalAccount(deps.network, account);
     const result = await syncLocked(deps, account, cycle, false, head, previous);
     report(deps, account, null);
     return result;

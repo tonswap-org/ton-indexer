@@ -1,3 +1,4 @@
+import { archiveBindingKey } from './publication';
 import type { OwnerCycle, RefreshDependency } from './cycle';
 import type { WalletIdentityStore } from './identities';
 import type { DlmmMarketBinding } from "./marketTypes";
@@ -822,25 +823,30 @@ export class LedgerGraphBuilder {
         if (relevant) issues.add("t3_hub_identity_or_custody_unresolved");
       }
     }
+    const archiveFailures = new Set<string>();
     const stateAt: ProjectionInput["stateAt"] = async (account, lt, hash) => {
       const canonicalHash = canonicalLedgerHash(hash);
-      const existing = (
-        await this.store.pool.query(
+      const key = archiveBindingKey(account, lt, canonicalHash);
+      bindings[key] = false;
+      try {
+        const existing = (await this.store.pool.query(
           "SELECT snapshot FROM ledger_account_states WHERE network=$1 AND account=$2 AND lt=$3 AND hash=$4",
-          [this.network, account, lt, canonicalHash],
-        )
-      ).rows[0];
-      if (existing && existing.snapshot.seqno <= cycle.boundary.seqno) return existing.snapshot as LedgerStateSnapshot;
-      const snapshot = await findTransactionState(this.source, account, {
-        lt,
-        hash: canonicalHash,
-      }, cycle.boundary.seqno, { signal: cycle.signal });
-      if (snapshot)
-        await this.store.pool.query(
+          [this.network, account, lt, canonicalHash])).rows[0];
+        const snapshot = existing && existing.snapshot.seqno <= cycle.boundary.seqno
+          ? existing.snapshot as LedgerStateSnapshot
+          : await findTransactionState(this.source, account, { lt, hash: canonicalHash }, cycle.boundary.seqno, { signal: cycle.signal });
+        if (snapshot && !existing) await this.store.pool.query(
           `INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING`,
-          [this.network, account, lt, canonicalHash, JSON.stringify(snapshot)],
-        );
-      return snapshot;
+          [this.network, account, lt, canonicalHash, JSON.stringify(snapshot)]);
+        if (!snapshot) archiveFailures.add(key);
+        // A decoder may already have caught one failed lookup. A later success
+        // in this cycle cannot erase that lost input and permit degradation.
+        bindings[key] = Boolean(snapshot) && !archiveFailures.has(key);
+        return snapshot;
+      } catch (error) {
+        archiveFailures.add(key); bindings[key] = false;
+        throw error;
+      }
     };
     if (this.perpsEngine && references(addr(this.perpsEngine))) {
       bindings[`perps:${this.perpsEngine}`] = false;

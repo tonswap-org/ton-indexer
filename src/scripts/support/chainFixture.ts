@@ -7,6 +7,7 @@ import { fakeChainSource } from './fakeChainSource';
 export type FixtureGetter = (address: string, method: string, args?: TupleItem[], options?: Parameters<ChainSource['runGetMethod']>[3]) => Promise<{ exitCode: number; stack: TupleItem[] } | null>;
 type WalletBalance = (owner: string, root: string) => Promise<{ wallet: string; balance: string } | null>;
 export type ChainFixtureOptions = Omit<Partial<ChainSource>, 'head' | 'runGetMethod'> & {
+  physicalCurrentReads?: boolean;
   head?: () => Promise<{ seqno: number; utime?: number }>;
   runGetMethod?: FixtureGetter;
   walletBalance?: WalletBalance;
@@ -27,7 +28,9 @@ function content(metadata: JettonMetadata) {
 }
 
 /** Domain fixtures explicitly model the previously assumed qualified wallet.
- * Only pinned reader calls receive synthetic current root/wallet state. Original
+ * By default only pinned reader calls receive synthetic current root/wallet state.
+ * physicalCurrentReads explicitly preserves original physical account pointers
+ * for owner-cycle fixtures whose every current read is pinned. Original
  * account histories, archived cells and physical transaction fixtures pass through
  * unchanged; this helper never supplies historical evidence or proof authority.
  * Real wallet qualification and rejection cases use fakeChainSource directly. */
@@ -39,7 +42,16 @@ export function fixtureChainSource(options: ChainFixtureOptions = {}): FixtureCh
   const raw = fakeChainSource();
   const source = fakeChainSource({ ...options,
     async head() { const head = await options.head?.(); return fixtureHead(head?.seqno, head?.utime); },
+    async read(calls, readOptions) {
+      if (options.read) return options.read(calls, readOptions);
+      const boundary = readOptions?.at ?? await source.head();
+      return { head: boundary, results: await Promise.all(calls.map(async call => call.kind === 'account'
+        ? { kind: 'account' as const, address: call.address, state: await source.getAccountState(call.address, { ...readOptions, at: boundary }) }
+        : { kind: 'getter' as const, address: call.address, ...await source.runGetMethod(call.address, call.method, call.args, { ...readOptions, at: boundary }) })) };
+    },
     async getAccountState(address, readOptions) {
+      const original = options.getAccountState && (options.physicalCurrentReads || !options.walletBalance || !readOptions?.at)
+        ? await options.getAccountState(address, readOptions) : undefined;
       if (options.walletBalance && readOptions?.at) {
         const wallet = wallets.get(address);
         if (wallet || roots.has(address)) {
@@ -48,21 +60,22 @@ export function fixtureChainSource(options: ChainFixtureOptions = {}): FixtureCh
             if (!row || Address.parse(row.wallet).toRawString() !== address) throw new ChainReadError('upstream_unavailable');
             wallet.row = row; wallet.consumed = false;
           }
-          return { balance: '0', accountState: 'active', codeBoc: code.toBoc().toString('base64'),
-            lastTxLt: '1', lastTxHash: '1'.repeat(64) };
+          return { balance: '0', accountState: 'active', ...original, codeBoc: code.toBoc().toString('base64'),
+            lastTxLt: original?.lastTxLt ?? '1', lastTxHash: original?.lastTxHash ?? '1'.repeat(64) };
         }
         // Root qualification invokes account and getter concurrently.
-        roots.add(address);
-        return { balance: '0', accountState: 'active', codeBoc: code.toBoc().toString('base64') };
+        if (!original) return { balance: '0', accountState: 'active', codeBoc: code.toBoc().toString('base64') };
+        return { ...original, accountState: original.accountState ?? (original.lastTxLt ? 'active' : 'uninitialized'), codeBoc: original.codeBoc ?? code.toBoc().toString('base64') };
       }
-      return (options.getAccountState ?? raw.getAccountState)(address, readOptions);
+      const state = original ?? await raw.getAccountState(address, readOptions);
+      return options.physicalCurrentReads ? { ...state, accountState: state.accountState ?? (state.lastTxLt ? 'active' : 'uninitialized') } : state;
     },
     async runGetMethod(address, method, args, readOptions) {
       if (options.walletBalance && readOptions?.at) {
         if (method === 'get_jetton_data') {
           roots.add(address);
           return { exitCode: 0, stack: [{ type: 'int', value: 0n }, { type: 'int', value: -1n },
-            { type: 'null' }, { type: 'cell', cell: content({}) }, { type: 'cell', cell: code }] };
+            { type: 'null' }, { type: 'cell', cell: content(options.physicalCurrentReads ? await jettonMetadata(address) ?? {} : {}) }, { type: 'cell', cell: code }] };
         }
         if (method === 'get_wallet_address') {
           const arg = args?.[0];

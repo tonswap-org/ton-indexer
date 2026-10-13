@@ -1340,11 +1340,15 @@ export const ledgerSchemas = {
           },
           generation: { type: ["string", "null"], format: "uuid" },
           publishedAt: nullableDate,
+          boundary: { type: ["object", "null"], required: ["seqno", "utime"], properties: {
+            seqno: { type: "integer", minimum: 0 }, utime: { type: "integer", minimum: 0 },
+          }, description: "Chain boundary of the check; chain time is separate from all server observation timestamps." },
+          refreshPending: { type: "array", items: { type: "string" }, description: "Accounts requiring another check. The owner is included for unresolved bindings without a specific pending dependency. Stored history completeness is unchanged." },
           headObservedAt: nullableDate,
           checkedAt: {
             ...nullableDate,
             description:
-              "Conservative observation time of the latest full dependency verification of this generation. Root polling consumers pin this with generation; publication time is never a chain watermark.",
+              "Server-clock time of the latest completed owner check on an uncursored current page. Cursor pages retain their generation observation time; refreshPending reports incomplete refreshes.",
           },
           snapshotComplete: {
             type: "boolean",
@@ -1378,6 +1382,8 @@ export const ledgerSchemas = {
                 account: { type: "string" },
                 generation: { type: ["string", "null"] },
                 historyComplete: { type: "boolean" },
+                headLt: { type: ["string", "null"] }, headHash: { type: ["string", "null"] },
+                atBoundary: { type: "boolean" },
                 role: {
                   type: "string",
                   enum: [

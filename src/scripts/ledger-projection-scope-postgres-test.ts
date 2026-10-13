@@ -1,3 +1,4 @@
+import { encodeBindings } from '../ledger/publication';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
@@ -6,8 +7,8 @@ import type { LedgerEvent, LedgerProjection, LedgerProjectionScope } from '../le
 
 /** Native-driver transaction checks. Every run owns one random, disposable schema. */
 async function main() {
-  const connectionString = process.env.LEDGER_SCOPE_TEST_DATABASE_URL;
-  if (!connectionString) throw new Error('Set LEDGER_SCOPE_TEST_DATABASE_URL to an isolated PostgreSQL test database.');
+  const connectionString = process.env.INDEXER_TEST_DATABASE_URL;
+  if (!connectionString) throw new Error('Set INDEXER_TEST_DATABASE_URL to an isolated PostgreSQL test database.');
   const schema = 'scope_' + randomUUID().replace(/-/g, '');
   const admin = new Pool({ connectionString, max: 1 });
   let pool: Pool | undefined;
@@ -20,7 +21,7 @@ async function main() {
     id: `scope-fee-${lt}`, account, network: 'testnet', lt: String(lt), hash: hash(lt), txId: `${lt}:${hash(lt)}`,
     utime: 1_735_689_600 + lt, status: 'success', kind: 'transfer', totalFeesRaw: fee, actions: [], issues: [],
     movements: [{ id: `physical-${physical}-${lt}:fee`, direction: 'fee', amountRaw: fee, source: physical,
-      asset: { kind: 'native', id: 'testnet:native', symbol: 'TON', decimals: 9 },
+      asset: { kind: 'native', id: 'testnet:native', symbol: 'GRAM', decimals: 9 },
       evidence: { kind: 'transaction_fee', transactionStatus: 'success', transactions: [{ account: physical, lt: String(lt), hash: hash(lt), utime: 1_735_689_600 + lt }] } }],
   });
   const projection: LedgerProjection = { events: [event(10, '10', account), event(12, '5', custody)], projectionScope: scope() };
@@ -66,6 +67,18 @@ async function main() {
     assert.deepEqual(retired.coverage.projectionScope, projection.projectionScope);
     assert.equal(retired.coverage.checkedAt, '2026-01-02T00:00:00.000Z');
     checks.push('scope-only change fingerprints distinctly; retired cursor keeps its own scope');
+
+    await store.saveOwnerCheck('testnet', account, {
+      checkedAt: new Date().toISOString(), boundary: { seqno: 50, utime: 1_735_689_650 },
+      headVector: [], pendingAccounts: [custody], bindings: encodeBindings({}, { generation: second, bindings: {} }), unresolved: false, errorCode: 'source_unavailable',
+    });
+    const failedRefresh = await store.page('testnet', account);
+    assert.equal(failedRefresh.coverage.historyComplete, current.coverage.historyComplete);
+    assert.equal(failedRefresh.coverage.generation, second);
+    assert(failedRefresh.coverage.refreshPending!.length > 0);
+    assert(failedRefresh.coverage.issues.includes('related_account_refresh_pending'));
+    assert.equal((await store.page('testnet', account, { cursor: page.nextCursor! })).coverage.checkedAt, retired.coverage.checkedAt);
+    checks.push('failed refresh preserves published history and immutable cursor coverage');
 
     await assert.rejects(store.project(second, projection, [], []), /not writable/);
     const third = randomUUID();

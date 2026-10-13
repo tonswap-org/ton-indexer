@@ -377,6 +377,8 @@ export type LedgerRangeCoverage = {
   retryAfter: string | null;
 };
 export type LedgerCoverage = {
+  boundary?: { seqno: number; utime: number } | null;
+  refreshPending?: string[];
   range?: LedgerRangeCoverage;
   projectionScope: LedgerProjectionScope | null;
   generation: string | null;

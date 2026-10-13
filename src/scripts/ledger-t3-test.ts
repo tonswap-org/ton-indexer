@@ -1,3 +1,6 @@
+import { installFixtureIdentities } from './support/ledgerGraphFixture';
+import { fixtureIdentities, storedRefresh } from './support/ledgerGraphFixture';
+import { fixtureHead } from './support/chainFixture';
 import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import { writeCurrentJettonWalletStorage } from "../ledger/jettonWalletState";
 import './t3-mint-fees-test';
@@ -307,7 +310,7 @@ function fixture() {
   };
   return { input, config, identity, msg, tx, transfer };
 }
-function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped = false,
+export function mint(basket = [amount, 0n, 0n], referrer: string | null = null, wrapped = false,
   parked: boolean | number | 'duplicate-finalize' = false,
   economics?: { beforeBalances: bigint[]; fees: bigint[]; minted: bigint }) {
   const f = fixture(),
@@ -697,7 +700,7 @@ async function discoverRejectedMintRefund(identityHash?: string, kind: 3 | 5 = 3
   }
   const walletAssets = f.input.wallets;
   const store = {
-    account: async (_network: string, account: string) => ({ current_generation: account, syncing: false }),
+    account: async (_network: string, account: string) => ({ current_generation: account, syncing: false, complete: true }),
     rawHistory: async (generation: string) =>
       (repeated ? [...(f.input.chains.get(generation)?.transactions ?? [])].reverse()
         : f.input.chains.get(generation)?.transactions ?? []).map(raw => ({ raw })),
@@ -711,7 +714,7 @@ async function discoverRejectedMintRefund(identityHash?: string, kind: 3 | 5 = 3
   routes[2] = { type: 'cell', cell: code };
   for (const [index, rootAddress] of [[3, roots[0]], [8, roots[1]], [13, roots[2]]] as const)
     routes[index] = slice(rootAddress);
-  const source = fixtureChainSource({
+  const source = fixtureChainSource({ physicalCurrentReads: true,
     getAccountState: async (account: string) => account === hub
       ? { balance: '0', accountState: 'active', codeBoc: code.toBoc().toString('base64'),
         dataBoc: state().toBoc().toString('base64') }
@@ -751,8 +754,8 @@ async function discoverRejectedMintRefund(identityHash?: string, kind: 3 | 5 = 3
     },
   });
   const graph = await new LedgerGraphBuilder('localnet', source, store, [], undefined,
-    async address => walletAssets.get(address) ?? null, async () => true, 256,
-    undefined, hub, root).build(owner, owner);
+    fixtureIdentities(source, async address => walletAssets.get(address) ?? null), storedRefresh(store, 'localnet'), 256,
+    undefined, hub, root).build(owner, owner, { boundary: fixtureHead() });
   return { graph, admissionLt: f.hubAdmission.lt, repeatAdmissionLt };
 }
 function redeem(sliced = false, recovery = false, referrer: string | null = null, wrapped = false) {
@@ -1746,7 +1749,7 @@ async function database() {
       type: "slice" as const,
       cell: beginCell().storeAddress(A(v)).endCell(),
     });
-  const source: FixtureChainSource = fixtureChainSource({
+  const source: FixtureChainSource = fixtureChainSource({ physicalCurrentReads: true,
     network: "localnet",
     head: async () => ({ seqno: 1 }),
     getAccountState: async (a) => {
@@ -1755,7 +1758,7 @@ async function database() {
         balance: "0",
         lastTxLt: head?.lt,
         lastTxHash: head?.hash,
-        accountState: "active",
+        accountState: head ? "active" : "uninitialized",
         codeBoc: code.toBoc().toString("base64"),
         ...(a === hub ? { dataBoc: state().toBoc().toString("base64") } : {}),
       };
@@ -1826,7 +1829,8 @@ async function database() {
   );
   try {
     await store.initialize();
-    await service.syncAccount(owner);
+    installFixtureIdentities(service, source, f.input.wallets);
+    await service.runOwnerCycle(owner);
     let page = await store.page("localnet", owner);
     assert.equal(page.coverage.historyComplete, false);
     assert(
@@ -1835,7 +1839,7 @@ async function database() {
       ),
     );
     partial = false;
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     page = await store.page("localnet", owner);
     assert.equal(
       page.coverage.historyComplete,
@@ -1854,23 +1858,19 @@ async function database() {
       ),
     );
     const generation = page.coverage.generation;
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     assert.equal(
       (await store.page("localnet", owner)).coverage.generation,
       generation,
       "unchanged receiver/identity evidence must reuse durable snapshot",
     );
     wrong = true;
-    await service.syncAccount(owner);
+    await pool.query("UPDATE ledger_owner_checks SET unresolved=true WHERE account=$1", [owner]);
+    await service.runOwnerCycle(owner);
     page = await store.page("localnet", owner);
-    assert(
-      !page.events.some(
-        (e) => e.kind === "t3_redeem" && e.settlement?.status === "confirmed",
-      ),
-    );
-    assert(
-      page.coverage.issues.includes("t3_hub_identity_or_custody_unresolved"),
-    );
+    assert.equal(page.coverage.generation, generation, "failed current binding cannot erase a confirmed redemption");
+    assert(page.events.some(e => e.kind === "t3_redeem" && e.settlement?.status === "confirmed"));
+    assert(page.coverage.refreshPending!.length > 0);
   } finally {
     await service.stop();
     await pool.end();
@@ -2598,7 +2598,7 @@ async function main() {
     "T3 exact ledger mint/redemption, custody, fees, replay and incomplete evidence tests passed",
   );
 }
-main().catch((e) => {
+if (require.main === module) main().catch((e) => {
   console.error(e);
   process.exit(1);
 });

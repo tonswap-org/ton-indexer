@@ -1,24 +1,34 @@
-import { jettonWalletOrNull, jettonWalletReader } from '../data/jettonWalletCompat';
-import { metadataText } from "../utils/jettonMetadata";
-import { PerpsRangeService } from "./perpsRange";
-import { randomUUID } from "node:crypto";
-import type { ChainSource } from "../data/dataSource";
-import {
-  transactionPageIsLinkedInclusiveSegment,
-  transactionPageReachesHistoryStart,
-} from "../data/dataSource";
-import type { Network } from "../models";
-import type { OpcodeSets } from "../utils/opcodes";
-import type { Logger } from "../utils/logger";
-import { PostgresLedgerStore, projectionFingerprint, validProjectionScope } from "./store";
-import {
-  canonicalLedgerAddress,
-  canonicalLedgerHash,
-  normalizeLedgerEvent,
-} from "./normalize";
-import type { LedgerAsset, LedgerQuery, LedgerDiscoveryQuery } from "./types";
-import { LedgerGraphBuilder } from "./graph";
-import { projectOwnerLedger } from "./project";
+import { PerpsRangeService } from './perpsRange';
+import { randomUUID } from 'node:crypto';
+import type { AccountStateResponse, ChainSource } from '../data/dataSource';
+import type { Network } from '../models';
+import type { OpcodeSets } from '../utils/opcodes';
+import type { Logger } from '../utils/logger';
+import { PostgresLedgerStore, projectionFingerprint, validProjectionScope, type OwnerCheckRecord } from './store';
+import { canonicalLedgerAddress, canonicalLedgerHash } from './normalize';
+import type { LedgerQuery, LedgerDiscoveryQuery, LedgerEvent } from './types';
+import { LedgerGraphBuilder } from './graph';
+import { projectOwnerLedger } from './project';
+import { WalletIdentityStore } from './identities';
+import { createRefreshDependency, syncOwnerChain, type ChainSyncDeps } from './chainSync';
+import type { OwnerCycle } from './cycle';
+import { decidePublication, countConfirmedRegressions, encodeBindings, decodeBindings, parseArchiveBindingKey, type PublicationInputs } from './publication';
+
+export type OwnerCycleResult = {
+  status: 'published' | 'kept' | 'quiet'; generation: string | null; retry: boolean;
+  pendingAccounts: string[]; confirmedRegressions: number; errorCode?: string;
+  timings: { headMs: number; chainMs: number; graphMs: number; projectMs: number; publishMs: number; totalMs: number };
+};
+function pointer(state: AccountStateResponse): { headLt: string | null; headHash: string | null } {
+  if (state.accountState === 'uninitialized' && ((!state.lastTxLt && !state.lastTxHash) ||
+    (state.lastTxLt === '0' && state.lastTxHash && canonicalLedgerHash(state.lastTxHash) === Buffer.alloc(32).toString('base64'))))
+    return { headLt: null, headHash: null };
+  if (!state.lastTxLt || !/^[1-9][0-9]*$/.test(state.lastTxLt) || BigInt(state.lastTxLt) > 0xffffffffffffffffn || !state.lastTxHash)
+    throw new Error('head_unavailable');
+  return { headLt: state.lastTxLt, headHash: canonicalLedgerHash(state.lastTxHash) };
+}
+const samePointer = (a: { headLt: string | null; headHash: string | null }, b: { headLt: string | null; headHash: string | null }) =>
+  a.headLt === b.headLt && a.headHash === b.headHash;
 
 /** Persists and validates account chains without consulting MemoryStore or its retention cap. */
 export class LedgerService {
@@ -27,10 +37,7 @@ export class LedgerService {
   private running = new Map<string, Promise<unknown>>();
   private timer?: NodeJS.Timeout;
   private stopped = false;
-  private identityCache = new Map<
-    string,
-    { expiresAt: number; promise: Promise<LedgerAsset | null> }
-  >();
+  private identities?: WalletIdentityStore;
 
   constructor(
     readonly network: Network,
@@ -41,6 +48,8 @@ export class LedgerService {
     private concurrency = 2,
     private options: {
       jettonRoots?: string[];
+      walletTemplateCodeHash?: string | null;
+      tokens?: Array<{ master: string; symbol?: string; decimals?: number }>;
       dlmmRegistry?: string;
       marketBindings?: import("./marketTypes").DlmmMarketBinding[];
       optionFactory?: string;
@@ -152,7 +161,7 @@ export class LedgerService {
     while (this.running.size < this.concurrency && this.pending.size) {
       const account = this.pending.values().next().value as string;
       this.pending.delete(account);
-      const work = this.syncAccount(account)
+      const work = this.runOwnerCycle(account)
         .catch(() =>
           this.logger.warn("ledger synchronization failed", { account }),
         )
@@ -195,330 +204,150 @@ export class LedgerService {
     return page;
   }
 
-  async syncAccount(
-    address: string,
-    project = true,
-    budget = { pages: this.options.maxPagesPerSync ?? 20 },
-  ) {
-    const account = canonicalLedgerAddress(address);
-    return this.store.withAccountLock(this.network, account, async () => {
+  /** One pinned owner check. Scheduling belongs to the worker, not this method. */
+  async runOwnerCycle(address: string): Promise<OwnerCycleResult> {
+    const account = canonicalLedgerAddress(address), started = performance.now();
+    const timings: OwnerCycleResult['timings'] = { headMs: 0, chainMs: 0, graphMs: 0, projectMs: 0, publishMs: 0, totalMs: 0 };
+    let result: OwnerCycleResult = { status: 'kept', generation: null, retry: true, pendingAccounts: [account], confirmedRegressions: 0, timings, errorCode: 'lock_busy' };
+    // All quiet-check inputs are reloaded AFTER taking the owner lock. An earlier
+    // observer cannot clear a pending dependency or overwrite a newer checkpoint.
+    const locked = await this.store.withAccountLock(this.network, account, async () => {
+      let previousCheck: OwnerCheckRecord | null = null;
+      let cycle: OwnerCycle | undefined;
+      let checkpoint: ReturnType<typeof decodeBindings> = null;
+      let previous: any;
+      const save = async (record: OwnerCheckRecord) => this.store.saveOwnerCheck(this.network, account, record);
       try {
-        const observedAt = new Date().toISOString();
-        const state = await this.source.getAccountState(account);
-        if (Boolean(state.lastTxLt) !== Boolean(state.lastTxHash))
-          throw new Error("head_unavailable");
-        const head =
-          state.lastTxLt && state.lastTxHash
-            ? {
-                lt: state.lastTxLt,
-                hash: canonicalLedgerHash(state.lastTxHash),
-              }
-            : undefined;
-        const previous = await this.store.account(this.network, account);
-        if (
-          !project &&
-          previous?.complete &&
-          (head?.lt ?? null) === previous.head_lt &&
-          (head?.hash ?? null) === previous.head_hash
-        ) {
-          await this.store.pool.query(
-            "UPDATE ledger_accounts SET attempted_at=now(),synced_at=now(),checked_at=$3,syncing=false,error_code=NULL WHERE network=$1 AND account=$2",
-            [this.network, account, observedAt],
-          );
+        previous = await this.store.account(this.network, account);
+        result.generation = previous?.current_generation ?? null;
+        previousCheck = await this.store.ownerCheck(this.network, account);
+        checkpoint = decodeBindings(previousCheck?.bindings);
+        let phase = performance.now();
+        cycle = { boundary: await this.source.head() };
+        timings.headMs = performance.now() - phase;
+        const boundary = { seqno: cycle.boundary.seqno, utime: cycle.boundary.utime };
+        const old = previous?.current_generation ? (await this.store.pool.query(
+          'SELECT projection_scope,related_accounts,fingerprint FROM ledger_projection_coverage WHERE generation=$1',
+          [previous.current_generation])).rows[0] : null;
+        if (old && (!validProjectionScope(old.projection_scope, account) || !checkpoint?.published ||
+          checkpoint.published.generation !== previous.current_generation)) throw new Error('publication_checkpoint_invalid');
+        if (previousCheck && boundary.seqno < previousCheck.boundary.seqno) throw new Error('boundary_behind');
+        let ownerHead: ReturnType<typeof pointer> | undefined;
+        if (old && previousCheck && !previousCheck.pendingAccounts.length && !previousCheck.unresolved && !previousCheck.errorCode &&
+          previousCheck.headVector.some(row => row.account === account)) {
+          const vector = previousCheck.headVector;
+          try {
+            const batch = await this.source.read(vector.map(row => ({ kind: 'account' as const, address: row.account })), { at: cycle.boundary });
+            if (JSON.stringify(batch.head) !== JSON.stringify(cycle.boundary) || batch.results.length !== vector.length) throw new Error('boundary_mismatch');
+            const heads = batch.results.map((row, index) => {
+              if (row.kind !== 'account' || row.address !== vector[index].account) throw new Error('boundary_mismatch');
+              return { account: row.address, ...pointer(row.state) };
+            });
+            ownerHead = heads.find(row => row.account === account);
+            if (heads.every((row, index) => samePointer(row, vector[index]))) {
+              await save({ ...previousCheck, checkedAt: new Date().toISOString(), boundary });
+              result = { status: 'quiet', generation: previous.current_generation, retry: false, pendingAccounts: [], confirmedRegressions: 0, timings };
+              return;
+            }
+          } catch { /* Retry each dependency; a failed batch never certifies quiet. */ }
+        }
+        this.identities ??= new WalletIdentityStore({ network: this.network, store: this.store, source: this.source,
+          walletTemplateCodeHash: this.options.walletTemplateCodeHash ?? null, tokens: this.options.tokens });
+        const deps: ChainSyncDeps = { network: this.network, store: this.store, source: this.source, opcodes: this.opcodes,
+          logger: this.logger, maxPagesPerAccount: this.options.maxPagesPerSync ?? 20,
+          resolveIdentity: wallet => this.identities!.resolve(wallet, cycle!) };
+        phase = performance.now();
+        ownerHead ??= pointer(await this.source.getAccountState(account, { at: cycle.boundary }));
+        let generation: string;
+        if (previous?.complete && samePointer(ownerHead, { headLt: previous.head_lt, headHash: previous.head_hash })) {
+          generation = previous.current_generation;
+        } else {
+          const synced = await syncOwnerChain(deps, account, cycle);
+          if ('errorCode' in synced) throw new Error(synced.errorCode);
+          generation = synced.generation;
+        }
+        timings.chainMs = performance.now() - phase;
+        phase = performance.now();
+        const builder = new LedgerGraphBuilder(this.network, this.source, this.store,
+          this.options.jettonRoots ?? [], this.options.dlmmRegistry, this.identities, createRefreshDependency(deps),
+          this.options.maxRelatedAccounts ?? 256, this.options.optionFactory, this.options.t3Hub, this.options.t3Root,
+          this.options.perpsEngine, this.options.perpsEngineCodeHash, this.options.optionVault, this.options.optionCodeHashes,
+          this.options.t3RedemptionBinding, this.options.launchpadCodeHashes, this.options.launchpadControllers, this.options.marketBindings);
+        const graph = await builder.build(account, generation, cycle);
+        timings.graphMs = performance.now() - phase;
+        phase = performance.now();
+        const projection = await projectOwnerLedger({ network: this.network, owner: account, opcodes: this.opcodes, ...graph });
+        // Historical bindings are populated by project-time stateAt calls. A
+        // skipped old operation cannot silently drop its published proof inputs:
+        // recheck those exact archives before applying the publication rule.
+        for (const [key, resolved] of Object.entries(checkpoint?.published?.bindings ?? {})) {
+          if (!resolved || Object.hasOwn(graph.bindings, key)) continue;
+          const archive = parseArchiveBindingKey(key);
+          if (archive) await graph.stateAt(archive.account, archive.lt, archive.hash).catch(() => null);
+        }
+        const related = [...graph.chains.values()].map(({ transactions, checkedAt, ...chain }) => chain);
+        const inputs: PublicationInputs = { accounts: related.map(row => ({ account: row.account,
+          headLt: row.headLt ?? null, headHash: row.headHash ?? null })), bindings: graph.bindings };
+        const priorInputs: PublicationInputs | null = old ? { accounts: old.related_accounts.map((row: any) => ({
+          account: row.account, headLt: row.headLt ?? null, headHash: row.headHash ?? null })), bindings: checkpoint!.published!.bindings } : null;
+        const decision = decidePublication(priorInputs, inputs);
+        const pendingAccounts = [...new Set([...graph.pendingAccounts, ...(!decision.publish ? decision.accounts : [])])].sort();
+        const unresolved = Object.values(graph.bindings).some(flag => !flag) || !decision.publish;
+        const errorCode = !decision.publish ? decision.reason : pendingAccounts.length ? 'related_account_refresh_pending' : null;
+        if ((unresolved || pendingAccounts.length) && !graph.issues.includes('related_account_refresh_pending'))
+          graph.issues.push('related_account_refresh_pending');
+        const record: OwnerCheckRecord = { checkedAt: new Date().toISOString(), boundary, headVector: inputs.accounts,
+          pendingAccounts, bindings: encodeBindings(graph.bindings, checkpoint?.published ?? null), unresolved, errorCode };
+        timings.projectMs = performance.now() - phase;
+        const fingerprint = projectionFingerprint(projection, related, graph.issues);
+        if (!decision.publish || old?.fingerprint === fingerprint) {
+          await save(record);
+          if (generation !== previous?.current_generation)
+            await this.store.failed(this.network, account, errorCode ?? 'owner_projection_pending');
+          result = { status: 'kept', generation: previous?.current_generation ?? null, retry: unresolved || pendingAccounts.length > 0,
+            pendingAccounts, confirmedRegressions: 0, timings, ...(errorCode ? { errorCode } : {}) };
           return;
         }
-        const build = async (generation: string, ownerCheckedAt?: string) => {
-          const builder = new LedgerGraphBuilder(
-            this.network,
-            this.source,
-            this.store,
-            this.options.jettonRoots ?? [],
-            this.options.dlmmRegistry,
-            (wallet) => this.resolveJetton(wallet),
-            (related) => this.syncAccount(related, false, budget),
-            this.options.maxRelatedAccounts ?? 256,
-            this.options.optionFactory,
-            this.options.t3Hub,
-            this.options.t3Root,
-            this.options.perpsEngine,
-            this.options.perpsEngineCodeHash,
-            this.options.optionVault,
-            this.options.optionCodeHashes,
-            this.options.t3RedemptionBinding,
-            this.options.launchpadCodeHashes,
-            this.options.launchpadControllers,
-            this.options.marketBindings,
-          );
-          const graph = await builder.build(
-            account,
-            generation,
-            ownerCheckedAt,
-          );
-          const projection = await projectOwnerLedger({
-            network: this.network,
-            owner: account,
-            opcodes: this.opcodes,
-            ...graph,
-          });
-          return {
-            graph,
-            projection,
-            related: [...graph.chains.values()].map(
-              ({ transactions, checkedAt, ...chain }) => chain,
-            ),
-          };
-        };
-        let prepared: Awaited<ReturnType<typeof build>> | undefined;
-        if (
-          project &&
-          previous?.complete &&
-          (head?.lt ?? null) === previous.head_lt &&
-          (head?.hash ?? null) === previous.head_hash
-        ) {
-          prepared = await build(previous.current_generation, observedAt);
-          const old = (
-            await this.store.pool.query(
-              "SELECT fingerprint,projection_scope FROM ledger_projection_coverage WHERE generation=$1",
-              [previous.current_generation],
-            )
-          ).rows[0];
-          if (
-            validProjectionScope(old?.projection_scope, account) &&
-            JSON.stringify(old.projection_scope.physicalAccounts) === JSON.stringify(prepared.projection.projectionScope.physicalAccounts) &&
-            old.fingerprint ===
-            projectionFingerprint(
-              prepared.projection,
-              prepared.related,
-              prepared.graph.issues,
-            )
-          ) {
-            await this.store.pool.query(
-              "UPDATE ledger_accounts SET attempted_at=now(),synced_at=now(),checked_at=$3,syncing=false,error_code=NULL WHERE network=$1 AND account=$2",
-              [this.network, account, prepared.graph.checkedAt ?? observedAt],
-            );
-            return;
-          }
+        phase = performance.now();
+        // Unchanged owner history must not allocate a run until publication is
+        // admitted and its economic fingerprint differs. Copy only physical rows.
+        if (generation === previous?.current_generation) {
+          const sourceGeneration = generation;
+          generation = randomUUID();
+          await this.store.begin(this.network, account, generation, ownerHead.headLt && ownerHead.headHash
+            ? { lt: ownerHead.headLt, hash: ownerHead.headHash } : undefined);
+          if (ownerHead.headLt && ownerHead.headHash && !await this.store.copySourceTail(generation, sourceGeneration, ownerHead.headLt, ownerHead.headHash))
+            throw new Error('owner_history_unavailable');
         }
-        const unfinished = previous?.latest_generation
-          ? (
-              await this.store.pool.query(
-                "SELECT generation,next_lt::text,next_hash,source_complete FROM ledger_runs WHERE generation=$1 AND complete=false",
-                [previous.latest_generation],
-              )
-            ).rows[0]
-          : null;
-        const generation = unfinished?.generation ?? randomUUID();
-        if (!unfinished)
-          await this.store.begin(
-            this.network,
-            account,
-            generation,
-            head,
-            observedAt,
-          );
-        else
-          await this.store.pool.query(
-            "UPDATE ledger_accounts SET attempted_at=now(),syncing=true,error_code=NULL WHERE network=$1 AND account=$2",
-            [this.network, account],
-          );
-        const finish = async () => {
-          await this.store.pool.query(
-            "UPDATE ledger_runs SET source_complete=true,next_lt=NULL,next_hash=NULL WHERE generation=$1",
-            [generation],
-          );
-          let checkedAt: string | null = null;
-          if (project) {
-            const result = prepared ?? (await build(generation));
-            checkedAt = result.graph.checkedAt;
-            const related = result.related.map((chain) =>
-              chain.role === "owner" ? { ...chain, generation } : chain,
-            );
-            await this.store.project(
-              generation,
-              result.projection,
-              related,
-              result.graph.issues,
-            );
-          }
-          await this.store.complete(
-            this.network,
-            account,
-            generation,
-            checkedAt,
-          );
-        };
-        if (unfinished?.source_complete) {
-          await finish();
-          return;
-        }
-        if (!head && !unfinished) {
-          await finish();
-          return;
-        }
-        if (
-          !unfinished &&
-          previous?.complete &&
-          head?.lt === previous.head_lt &&
-          head?.hash === previous.head_hash &&
-          (await this.store.copyKnownTail(
-            generation,
-            previous.current_generation,
-            head!.lt,
-            head!.hash,
-          ))
-        ) {
-          await finish();
-          return;
-        }
-        let cursor = unfinished
-          ? { lt: unfinished.next_lt, hash: unfinished.next_hash }
-          : head!;
-        const seen = new Set<string>();
-        while (!this.stopped) {
-          if (budget.pages <= 0) {
-            await this.store.failed(
-              this.network,
-              account,
-              "backfill_capacity_deferred",
-            );
-            return;
-          }
-          budget.pages--;
-          const key = `${cursor.lt}:${cursor.hash}`;
-          if (seen.has(key)) throw new Error("history_cursor_stalled");
-          seen.add(key);
-          const raw = await this.source.getTransactions(
-            account,
-            100,
-            cursor.lt,
-            cursor.hash,
-          );
-          if (
-            !raw.length ||
-            raw.length > 100 ||
-            !transactionPageIsLinkedInclusiveSegment(
-              raw,
-              cursor,
-              raw[raw.length - 1],
-            )
-          )
-            throw new Error("history_chain_unverified");
-          const events = [];
-          for (const tx of raw)
-            events.push(
-              await normalizeLedgerEvent(
-                this.network,
-                account,
-                tx,
-                this.opcodes,
-                (wallet) => this.resolveJetton(wallet),
-              ),
-            );
-          await this.store.append(generation, events, raw);
-          const tail = raw[raw.length - 1];
-          if (
-            transactionPageReachesHistoryStart(raw, cursor) ||
-            (previous?.current_generation &&
-              (await this.store.copyKnownTail(
-                generation,
-                previous.current_generation,
-                tail.lt,
-                canonicalLedgerHash(tail.hash),
-              )))
-          ) {
-            await this.store.pool.query(
-              "UPDATE ledger_runs SET source_complete=true,next_lt=NULL,next_hash=NULL WHERE generation=$1",
-              [generation],
-            );
-            await finish();
-            return;
-          }
-          if (!tail.prevTransactionLt || !tail.prevTransactionHash)
-            throw new Error("history_predecessor_unavailable");
-          cursor = {
-            lt: tail.prevTransactionLt,
-            hash: canonicalLedgerHash(tail.prevTransactionHash),
-          };
-          await this.store.pool.query(
-            "UPDATE ledger_runs SET next_lt=$2,next_hash=$3 WHERE generation=$1",
-            [generation, cursor.lt, cursor.hash],
-          );
-        }
-        throw new Error("history_sync_interrupted");
+        const previousEvents: LedgerEvent[] = old ? (await this.store.pool.query(
+          'SELECT event FROM ledger_projection_events WHERE generation=$1', [previous.current_generation])).rows.map(row => row.event) : [];
+        const regressions = countConfirmedRegressions(previousEvents, projection.events);
+        await this.store.project(generation, projection, related.map(row => row.role === 'owner' ? { ...row, generation } : row), graph.issues, boundary);
+        record.bindings = encodeBindings(graph.bindings, { generation, bindings: graph.bindings });
+        await this.store.complete(this.network, account, generation, record.checkedAt, record);
+        timings.publishMs = performance.now() - phase;
+        result = { status: 'published', generation, retry: unresolved || pendingAccounts.length > 0, pendingAccounts,
+          confirmedRegressions: regressions, timings, ...(errorCode ? { errorCode } : {}) };
       } catch (error) {
-        const known = [
-          "head_unavailable",
-          "history_cursor_stalled",
-          "history_chain_unverified",
-          "history_predecessor_unavailable",
-          "history_sync_interrupted",
-        ];
-        const postgresCode = error && typeof error === "object" && "code" in error ? String(error.code) : "";
-        const code = /^[0-9A-Z]{5}$/.test(postgresCode) ? "ledger_storage_unavailable" :
-          error instanceof Error && known.includes(error.message)
-            ? error.message
-            : "history_source_unavailable";
-        await this.store.failed(this.network, account, code);
-        throw error;
+        const known = ['publication_checkpoint_invalid', 'boundary_behind', 'head_unavailable', 'page_allowance',
+          'history_chain_unverified', 'history_cursor_stalled', 'history_predecessor_unavailable', 'owner_history_unavailable', 'source_unavailable'];
+        const code = error instanceof Error && known.includes(error.message) ? error.message : 'owner_cycle_unavailable';
+        // Retain the publication checkpoint on every failure, including failed
+        // diagnostics writes. Never derive authority from the last current map.
+        const state = await this.store.account(this.network, account).catch(() => null);
+        if (state && (cycle || previousCheck)) await save({
+          checkedAt: new Date().toISOString(), boundary: cycle ? { seqno: cycle.boundary.seqno, utime: cycle.boundary.utime } : previousCheck!.boundary,
+          headVector: previousCheck?.headVector ?? [], pendingAccounts: [...new Set([...(previousCheck?.pendingAccounts ?? []), account])].sort(),
+          bindings: previousCheck?.bindings ?? encodeBindings({}, null), unresolved: true, errorCode: code,
+        }).catch(() => undefined);
+        await this.store.failed(this.network, account, code).catch(() => undefined);
+        result = { status: 'kept', generation: state?.current_generation ?? previous?.current_generation ?? null, retry: true,
+          pendingAccounts: [account], confirmedRegressions: 0, timings, errorCode: code };
+        this.logger.warn('ledger owner check pending', { account, code });
       }
     });
-  }
-
-  private resolveJetton(wallet: string): Promise<LedgerAsset | null> {
-    if (this.identityCache.size > 1000) this.identityCache.clear();
-    let entry = this.identityCache.get(wallet);
-    if (!entry || entry.expiresAt <= Date.now()) {
-      entry = {
-        expiresAt: Date.now() + 30_000,
-        promise: this.loadJettonIdentity(wallet).catch(() => null),
-      };
-      this.identityCache.set(wallet, entry);
-    }
-    return entry.promise;
-  }
-
-  private async loadJettonIdentity(
-    wallet: string,
-  ): Promise<LedgerAsset | null> {
-    const result = await this.source.runGetMethod(wallet, "get_wallet_data");
-    if (!result || result.exitCode !== 0 || result.stack.length !== 4)
-      return null;
-    const [balance, ownerItem, rootItem] = result.stack;
-    if (
-      balance.type !== "int" ||
-      balance.value < 0n ||
-      !["cell", "slice", "builder"].includes(ownerItem.type) ||
-      !["cell", "slice", "builder"].includes(rootItem.type)
-    )
-      return null;
-    if (!("cell" in ownerItem) || !("cell" in rootItem)) return null;
-    const ownerSlice = ownerItem.cell.beginParse();
-    const rootSlice = rootItem.cell.beginParse();
-    const owner = ownerSlice.loadAddress().toRawString();
-    const master = rootSlice.loadAddress().toRawString();
-    if (
-      ownerSlice.remainingBits ||
-      ownerSlice.remainingRefs ||
-      rootSlice.remainingBits ||
-      rootSlice.remainingRefs
-    )
-      return null;
-    // The source validates root getter, wallet address, owner, and deployed code.
-    const verified = await jettonWalletOrNull(this.source, owner, master);
-    if (
-      !verified ||
-      canonicalLedgerAddress(verified.wallet) !== canonicalLedgerAddress(wallet)
-    )
-      return null;
-    const metadata = await jettonWalletReader(this.source).metadata(master);
-    return {
-      kind: "jetton",
-      id: `${this.network}:jetton:${master}`,
-      master,
-      wallet: canonicalLedgerAddress(wallet),
-      owner,
-      symbol: metadataText(metadata?.symbol),
-      decimals: metadata?.decimals,
-    };
+    if (!locked) result.generation = (await this.store.account(this.network, account))?.current_generation ?? null;
+    timings.totalMs = performance.now() - started;
+    return result;
   }
 }
