@@ -1,6 +1,8 @@
 #pragma once
 
 #include "tonlib/VerifiedAdmissionProof.h"
+#include "auto/tl/tonlib_api.h"
+#include <functional>
 
 namespace ton::tonlib_api { class ton_blockIdExt; class blocks_header; class raw_fullAccountState; }
 namespace tonlib_api = ton::tonlib_api;
@@ -14,6 +16,24 @@ td::Status initialize_admission_vm();
 td::Status validate_admission_readiness(const tonlib_api::ton_blockIdExt& accepted,
   const tonlib_api::blocks_header& header, const tonlib_api::raw_fullAccountState& account,
   td::Slice expected_code_hash, ton::UnixTime host_now);
+
+// Startup reads only. All three reads use the same client/retained LastBlock
+// trust state; header/account must be official verified exact-block APIs.
+struct AdmissionStartupReads {
+  std::function<td::Result<tonlib_api::object_ptr<tonlib_api::ton_blockIdExt>>()> sync;
+  std::function<td::Result<tonlib_api::object_ptr<tonlib_api::blocks_header>>(
+      const tonlib_api::ton_blockIdExt&)> header;
+  std::function<td::Result<tonlib_api::object_ptr<tonlib_api::raw_fullAccountState>>(
+      const tonlib_api::ton_blockIdExt&)> account;
+  std::function<ton::UnixTime()> host_now;
+  // Consult the original process deadline; never renew it for a new round.
+  std::function<bool()> within_deadline;
+  // Called only after exact authenticated identity and qualified code checks.
+  std::function<void(unsigned, td::int32, ton::UnixTime, ton::UnixTime, ton::UnixTime,
+                     const td::Status&)> observe_clock;
+};
+td::Result<tonlib_api::object_ptr<tonlib_api::smc_verifiedAdmissionReady>>
+authenticate_admission_startup(const AdmissionStartupReads& reads, td::Slice expected_code_hash);
 
 struct VerifiedAdmissionVmResult {
   td::Ref<vm::Stack> stack;

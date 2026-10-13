@@ -13,3 +13,15 @@ macOS rejects a finite RLIMIT_AS and denies the unprivileged physical-footprint 
 Build with pinned CMake/Ninja, the git-pinned submodules, and the macOS SDK: `TON_ONLY_TONLIB=ON`, `TONLIBJSON_STATIC=ON`, `USE_QUIC=OFF`, `TON_USE_ROCKSDB=OFF`, `TON_USE_ABSEIL=OFF`, `CMAKE_OSX_ARCHITECTURES=arm64`, and deployment target 13.0. The supported worker runtime is macOS arm64 (deployment target 13.0 or newer); Linux/Docker admission runtime is not provided by this package. The worker target is built and installed only on Apple platforms. Targets are `ton-admission-worker` and `test-verified-admission`. Build logs and exact inputs are retained outside the source tree in the release qualification workspace. The resulting executable links only the system C++ and System libraries; TON and cryptographic dependencies are static.
 
 The retained mode-0 configuration fixture is deliberately rejected as incomplete context. It is not a positive authenticated-execution receipt. Fresh full-context execution, measured warm latency, adversarial VM/worker tests, and independent final source/build review remain qualification requirements.
+
+
+Current startup freshness handoff: up to three total sync rounds share network-error
+and past-stale retries. Every successful sync must provide a new exact verified
+header/account pair and the qualified code before clock classification. Only
+past-stale authenticated clocks permit another round; missing/future/inconsistent
+clocks fail immediately. The 30-second age and three-second future-skew checks,
+original 600-second startup deadline, 120-second validated-progress stall guard,
+CPU and memory limits remain unchanged. Retrying does not renew either clock.
+Only fresh readiness reaches stdout. Private bounded numeric diagnostics include
+round, accepted sequence, host clock and authenticated master/shard ages.
+Admission executions are never retried.

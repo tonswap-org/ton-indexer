@@ -14,12 +14,17 @@ td::Status validate_admission_proof_times(ton::UnixTime trusted_host_now, ton::U
   }
   for (auto value : {master_utime, shard_utime}) {
     auto age = static_cast<td::int64>(trusted_host_now) - static_cast<td::int64>(value);
-    if (age > 30 || age < -3) {
-      return td::Status::Error("admission proof clock is stale or in the future");
+    if (age < -3) {
+      return td::Status::Error("admission proof clock is in the future");
     }
   }
   if (shard_utime > master_utime) {
     return td::Status::Error("admission account shard is newer than its accepted master");
+  }
+  for (auto value : {master_utime, shard_utime}) {
+    if (static_cast<td::int64>(trusted_host_now) - static_cast<td::int64>(value) > 30) {
+      return td::Status::Error(admission_past_stale_clock, "admission proof clock is past stale");
+    }
   }
   return td::Status::OK();
 }

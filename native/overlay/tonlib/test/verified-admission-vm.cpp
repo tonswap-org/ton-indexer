@@ -149,3 +149,149 @@ TEST(VerifiedAdmissionVm, ReadinessRequiresExactAuthenticatedHeadAccountAndClock
     if(mutation==0)status.ensure();else status.ensure_error();
   }
 }
+
+namespace {
+// The read boundary is synthetic; code/data come from the retained verified
+// execution fixture. These tests exercise startup orchestration, not live trust.
+struct StartupRound {
+  ton::UnixTime master_time{1789399603};
+  ton::UnixTime shard_time{1789399602};
+  int mutation{0};
+  bool network_error{false};
+};
+struct StartupFixture {
+  std::vector<StartupRound> rounds;
+  ton::UnixTime now{1789399604};
+  unsigned syncs{0}, headers{0}, accounts{0}, observations{0}, checks{0}, expire_at{0};
+  std::string calls;
+  std::string code, data;
+  std::vector<td::int64> observed_master_ages;
+  StartupFixture(std::vector<StartupRound> values) : rounds(std::move(values)) {
+    auto p = proof();
+    auto execution = tonlib::execute_verified_admission(
+        p, address(), code_hash(), "close_order_preflight", arguments()).move_as_ok();
+    code = vm::std_boc_serialize(execution.code).move_as_ok().as_slice().str();
+    data = vm::std_boc_serialize(execution.data).move_as_ok().as_slice().str();
+  }
+  auto id() const {
+    auto m = master();
+    return tonlib_api::make_object<tonlib_api::ton_blockIdExt>(m.id.workchain,
+        static_cast<td::int64>(m.id.shard), m.id.seqno + syncs,
+        m.root_hash.as_slice().str(), m.file_hash.as_slice().str());
+  }
+  void require_id(const tonlib_api::ton_blockIdExt& value) {
+    auto expected = id();
+    ASSERT_EQ(value.seqno_, expected->seqno_);
+    ASSERT_EQ(value.root_hash_, expected->root_hash_);
+    ASSERT_EQ(value.file_hash_, expected->file_hash_);
+  }
+  auto reads() {
+    tonlib::AdmissionStartupReads result;
+    result.sync = [&]() -> td::Result<tonlib_api::object_ptr<tonlib_api::ton_blockIdExt>> {
+      ASSERT_TRUE(syncs < rounds.size());
+      calls += 's';
+      if (rounds[syncs++].network_error) return td::Status::Error("LITE_SERVER_NETWORK: fixture");
+      return id();
+    };
+    result.header = [&](const tonlib_api::ton_blockIdExt& accepted)
+        -> td::Result<tonlib_api::object_ptr<tonlib_api::blocks_header>> {
+      require_id(accepted); ++headers; calls += 'h';
+      const auto& round = rounds[syncs - 1];
+      if (round.mutation == 8) return td::Status::Error("fixture invalid Merkle proof");
+      auto header = tonlib_api::make_object<tonlib_api::blocks_header>();
+      header->id_ = id(); header->global_id_ = -3; header->gen_utime_ = round.master_time;
+      if (round.mutation == 1) header->id_->seqno_--;
+      return std::move(header);
+    };
+    result.account = [&](const tonlib_api::ton_blockIdExt& accepted)
+        -> td::Result<tonlib_api::object_ptr<tonlib_api::raw_fullAccountState>> {
+      require_id(accepted); ++accounts; calls += 'a';
+      const auto& round = rounds[syncs - 1];
+      auto account = tonlib_api::make_object<tonlib_api::raw_fullAccountState>();
+      account->block_id_ = id(); account->sync_utime_ = round.shard_time;
+      account->code_ = code; account->data_ = data;
+      if (round.mutation == 2) account->code_ = vm::std_boc_serialize(vm::CellBuilder{}.finalize()).move_as_ok().as_slice().str();
+      if (round.mutation == 3) account->block_id_->root_hash_[0] ^= 1;
+      if (round.mutation == 4) account->frozen_hash_ = "frozen";
+      if (round.mutation == 5) account->code_.push_back('x');
+      if (round.mutation == 6) account->sync_utime_ = 0;
+      return std::move(account);
+    };
+    result.host_now = [&] { calls += 't'; return now; };
+    result.within_deadline = [&] { return !expire_at || ++checks < expire_at; };
+    result.observe_clock = [&](unsigned round, td::int32 seqno, ton::UnixTime host,
+        ton::UnixTime master_time, ton::UnixTime, const td::Status&) {
+      ASSERT_EQ(round, syncs); ASSERT_EQ(seqno, id()->seqno_); ASSERT_EQ(host, now);
+      ++observations; observed_master_ages.push_back(static_cast<td::int64>(host) - master_time);
+    };
+    return result;
+  }
+};
+}
+
+TEST(VerifiedAdmissionVm, StartupRefreshesOnlyAuthenticatedPastStaleState) {
+  StartupFixture fixture({{1789399530, 1789399529}, {}});
+  auto ready = tonlib::authenticate_admission_startup(fixture.reads(), code_hash()).move_as_ok();
+  ASSERT_EQ(fixture.calls, "shatshat");
+  ASSERT_EQ(fixture.syncs, 2u); ASSERT_EQ(fixture.observations, 2u);
+  ASSERT_EQ(fixture.observed_master_ages[0], 74); ASSERT_EQ(fixture.observed_master_ages[1], 1);
+  ASSERT_EQ(ready->block_id_->seqno_, fixture.id()->seqno_);
+  ASSERT_EQ(ready->master_utime_, 1789399603); ASSERT_EQ(ready->shard_utime_, 1789399602);
+}
+
+TEST(VerifiedAdmissionVm, StartupSharesThreeRoundBoundWithNetworkFailures) {
+  StartupRound stale{1789399530, 1789399529}, network{}; network.network_error = true;
+  for (auto rounds : {std::vector<StartupRound>{stale, stale, stale},
+                      std::vector<StartupRound>{network, stale, stale},
+                      std::vector<StartupRound>{stale, network, network}}) {
+    StartupFixture fixture(std::move(rounds));
+    tonlib::authenticate_admission_startup(fixture.reads(), code_hash()).ensure_error();
+    ASSERT_EQ(fixture.syncs, 3u);
+    ASSERT_EQ(fixture.headers, fixture.accounts);
+  }
+  StartupFixture fixture({network, {}});
+  tonlib::authenticate_admission_startup(fixture.reads(), code_hash()).ensure();
+  ASSERT_EQ(fixture.calls, "sshat");
+}
+
+TEST(VerifiedAdmissionVm, StartupNeverRefreshesInvalidIdentityCodeProofOrClock) {
+  for (int mutation : {1, 2, 3, 4, 5, 6, 8}) {
+    StartupFixture fixture({{1789399530, 1789399529, mutation}});
+    auto failed = tonlib::authenticate_admission_startup(fixture.reads(), code_hash());
+    ASSERT_TRUE(failed.is_error()); ASSERT_TRUE(failed.error().code() != tonlib::admission_past_stale_clock);
+    ASSERT_EQ(fixture.syncs, 1u); ASSERT_EQ(fixture.observations, 0u);
+  }
+  // A stale clock must not hide a future clock or impossible master/shard order.
+  for (auto round : {StartupRound{1789399608, 1789399529},
+                     StartupRound{1789399530, 1789399608},
+                     StartupRound{1789399530, 1789399531}}) {
+    StartupFixture fixture({round});
+    auto failed = tonlib::authenticate_admission_startup(fixture.reads(), code_hash());
+    ASSERT_TRUE(failed.is_error()); ASSERT_TRUE(failed.error().code() != tonlib::admission_past_stale_clock);
+    ASSERT_EQ(fixture.syncs, 1u); ASSERT_EQ(fixture.observations, 1u);
+  }
+}
+
+TEST(VerifiedAdmissionVm, StartupNeverRenewsOriginalDeadline) {
+  for (unsigned expired = 1; expired <= 6; ++expired) {
+    StartupFixture fixture({{1789399530, 1789399529}, {}});
+    fixture.expire_at = expired;
+    tonlib::authenticate_admission_startup(fixture.reads(), code_hash()).ensure_error();
+    ASSERT_TRUE(fixture.syncs <= 1);
+    ASSERT_EQ(fixture.checks, expired);
+  }
+  StartupFixture fixture(std::vector<StartupRound>{StartupRound{}}); fixture.expire_at = 5;
+  tonlib::authenticate_admission_startup(fixture.reads(), code_hash()).ensure_error();
+  ASSERT_EQ(fixture.syncs, 1u);  // Even fresh state cannot publish after expiry.
+}
+
+TEST(VerifiedAdmissionVm, ClockRefreshClassificationPreservesExactBoundaries) {
+  tonlib::validate_admission_proof_times(100, 100, 70).ensure();
+  tonlib::validate_admission_proof_times(100, 103, 103).ensure();
+  auto past = tonlib::validate_admission_proof_times(100, 100, 69);
+  ASSERT_TRUE(past.is_error()); ASSERT_EQ(past.code(), tonlib::admission_past_stale_clock);
+  for (auto times : {std::pair<ton::UnixTime, ton::UnixTime>{104, 69}, {69, 104}, {68, 69}, {100, 0}}) {
+    auto failed = tonlib::validate_admission_proof_times(100, times.first, times.second);
+    ASSERT_TRUE(failed.is_error()); ASSERT_TRUE(failed.code() != tonlib::admission_past_stale_clock);
+  }
+}
