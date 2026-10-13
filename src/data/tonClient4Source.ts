@@ -10,6 +10,7 @@ import {
   RawTransaction,
   TonDataSource
 } from './dataSource';
+import { FreshHeadFence, type FreshReadHeadFloor } from './freshHead';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 import { canonicalAccountHash, parseAccountTransactionPointer } from './accountState';
 import { assertFreshReadActive, freshReadDelay, assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
@@ -201,6 +202,7 @@ const parseRunMethodResponse = (response: unknown): { exitCode: number; stack: T
 };
 
 export class TonClient4DataSource implements TonDataSource {
+  private readonly freshHeads = new FreshHeadFence();
   network: Network;
   private client: TonClient4Like;
   private endpoints: string[];
@@ -264,10 +266,16 @@ export class TonClient4DataSource implements TonDataSource {
     return this.mapAccountStateResponse(account);
   }
 
-  async readFresh(calls: FreshReadCall[], signal?: AbortSignal): Promise<FreshReadBatch> {
+  async readFresh(calls: FreshReadCall[], signal?: AbortSignal, headFloor?: FreshReadHeadFloor): Promise<FreshReadBatch> {
     const queriedAt = Date.now();
-    const master = await this.call(client => client.getLastBlock(), signal);
-    assertFreshNetwork(this.network, master.init);
+    const floor = this.freshHeads.capture(headFloor);
+    const master = await this.call(async client => {
+      const candidate = await client.getLastBlock();
+      assertFreshReadActive(signal);
+      assertFreshNetwork(this.network, candidate.init);
+      this.freshHeads.assert(freshMasterchainBlock(candidate.last), floor);
+      return candidate;
+    }, signal);
     const head = freshMasterchainBlock(master.last);
     const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
       const address = Address.parse(call.address).toRawString();
@@ -283,6 +291,8 @@ export class TonClient4DataSource implements TonDataSource {
     }, signal);
     const batch: FreshReadBatch = { network: this.network, readContext: { source: 'http4', head, queriedAt }, results };
     assertFreshReadBatch(batch, calls, this.network, queriedAt);
+    assertFreshReadActive(signal);
+    this.freshHeads.accept(head, floor);
     return batch;
   }
 

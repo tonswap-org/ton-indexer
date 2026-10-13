@@ -148,7 +148,17 @@ coalescing and public JSON-RPC regressions. `npm test` includes these cases;
 is `{ "calls": [{ "kind": "account", "address": "0:..." }, { "kind": "getter",
 "address": "0:...", "method": "get_wallet_data", "stack": [] }] }` (1–32 calls).
 Each request acquires a new uncached masterchain head, checks the source's actual
-network zero state, and reads every call at that exact block. Account reads return
+network zero state, and reads every call at that exact block. Each operation captures
+the highest fully validated head returned before it started, including across
+Lite/HTTP4 fallback, and rejects lower or same-height conflicting heads. A slower
+concurrent batch may finish at its original valid head without lowering that
+retained maximum. Only block identities are retained, never financial state.
+Lite metadata must have a canonical `lastUtime` within 30 seconds of local time
+(with at most five seconds of future clock skew), a consistent peer clock, and
+remain fresh when the batch completes. Stale head responses consume the existing
+bounded peer failover budget; `awaitSeqno` asks lagging peers to catch up. HTTP4
+preserves the same identity floor but its server clock is not block-age evidence.
+Account reads return
 the full queried code, data, state and atomic native balance; they never use the
 indexer's persisted account projection. A resilient provider replaces the whole
 batch, never merges observations from different heads. The response includes the

@@ -145,7 +145,7 @@ async function sourceCancellation() {
     const owner = new AbortController(); const gate = deferred(); let reads = 0;
     const headRead = async (args?: { signal?: AbortSignal }) => {
       if (kind === 'lite') assert.equal(args?.signal, owner.signal, 'Lite head wire receives caller ownership');
-      await gate.promise; return { last: head, init };
+      await gate.promise; return { last: head, init, lastUtime: Math.floor(Date.now() / 1_000), now: Math.floor(Date.now() / 1_000) };
     };
     const client = { getMasterchainInfoExt: headRead, getLastBlock: headRead,
       async getAccountStateRaw() { reads++; throw Error('must not read'); },
@@ -164,7 +164,7 @@ async function sourceCancellation() {
   const ownerOfBatch = new AbortController(); const activeGate = deferred();
   const wireSignals: AbortSignal[] = [];
   const client = {
-    async getMasterchainInfoExt() { return { last: head, init }; },
+    async getMasterchainInfoExt() { return { last: head, init, lastUtime: Math.floor(Date.now() / 1_000), now: Math.floor(Date.now() / 1_000) }; },
     async getAccountStateRaw(_address: unknown, _block: unknown, args: { signal: AbortSignal }) {
       wireSignals.push(args.signal); await activeGate.promise;
       return { block: head, state: null, balance: { coins: 0n }, lastTx: null };

@@ -4,7 +4,7 @@ import type { LiteEngine } from 'ton-lite-client';
 import type { TLFunction } from 'ton-tl';
 import { assertFreshReadActive, freshReadDelay } from './freshRead';
 
-type QueryOptions = { timeout?: number; awaitSeqno?: number; signal?: AbortSignal };
+type QueryOptions = { timeout?: number; awaitSeqno?: number; signal?: AbortSignal; validateResponse?: (response: unknown) => void };
 
 export class BoundedLiteQueryError extends Error {
   readonly attempts: readonly Readonly<{ endpointIndex: number; cause: unknown }>[];
@@ -84,6 +84,9 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
           timeout: Math.min(this.options.attemptTimeoutMs, remainingMs),
         });
         assertFreshReadActive(args.signal);
+        // A transport-successful but stale/conflicting head must consume this
+        // same bounded peer budget, not escape it or restart a compound read.
+        args.validateResponse?.(result);
         return result;
       } catch (error) {
         assertFreshReadActive(args.signal);

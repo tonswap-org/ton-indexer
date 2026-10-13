@@ -48,7 +48,7 @@ async function liteCases() {
   const client = {
     async getMasterchainInfo() { ordinaryHeads++; return { last: block(1) }; },
     async getMasterchainInfoExt() { heads++; if (failedHead) throw Error('head unavailable');
-      last = block(100 + heads); return { last, init: zeroState(wrongNetwork ? 'mainnet' : 'testnet') }; },
+      last = block(100 + heads); return { last, lastUtime: Math.floor(Date.now() / 1_000), now: Math.floor(Date.now() / 1_000), init: zeroState(wrongNetwork ? 'mainnet' : 'testnet') }; },
     async getAccountState(_address: Address, at: ReturnType<typeof block>) {
       cachedAccounts++; return account(at, 999n);
     },

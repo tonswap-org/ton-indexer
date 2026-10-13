@@ -8,6 +8,7 @@ import {
 } from './dataSource';
 import { JettonMetadata, Network } from '../models';
 import { assertFreshReadActive, assertFreshReadBatch, FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
+import { FreshHeadFence, type FreshReadHeadFloor } from './freshHead';
 
 type RunGetMethodResult = { exitCode: number; stack: TupleItem[] } | null;
 
@@ -42,6 +43,7 @@ const callSafely = async <T>(fn: () => Promise<T>): Promise<T | null> => {
 };
 
 export class ResilientTonDataSource implements TonDataSource {
+  private readonly freshHeads = new FreshHeadFence();
   readonly network: Network;
   private primary: TonDataSource;
   private fallback: TonDataSource;
@@ -60,16 +62,18 @@ export class ResilientTonDataSource implements TonDataSource {
     throw new Error('Masterchain info unavailable from both data sources.');
   }
 
-  async readFresh(calls: FreshReadCall[], signal?: AbortSignal): Promise<FreshReadBatch> {
+  async readFresh(calls: FreshReadCall[], signal?: AbortSignal, headFloor?: FreshReadHeadFloor): Promise<FreshReadBatch> {
     const startedAt = Date.now();
+    const floor = this.freshHeads.capture(headFloor);
     const failures: unknown[] = [];
     for (const source of [this.primary, this.fallback]) {
       assertFreshReadActive(signal);
       if (source.network !== this.network || !source.readFresh) continue;
       try {
-        const result = await source.readFresh(calls, signal);
+        const result = await source.readFresh(calls, signal, floor);
         assertFreshReadActive(signal);
         assertFreshReadBatch(result, calls, this.network, startedAt);
+        this.freshHeads.accept(result.readContext.head, floor);
         return result;
       } catch (error) {
         failures.push(error);

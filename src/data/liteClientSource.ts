@@ -19,6 +19,7 @@ import {
 import { LiteClient, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
 import { BoundedLiteEngine } from './boundedLiteEngine';
 import { createLiteClientCache } from './liteAccountCache';
+import { FreshHeadFence, assertFreshLiteHeadTime, type FreshReadHeadFloor } from './freshHead';
 import { assertFreshReadActive, assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
   FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 import { errorDiagnostic, type Logger } from '../utils/logger';
@@ -351,6 +352,7 @@ const MASTERCHAIN_INFO_TTL_MS = 1_000;
 type LiteMasterchainRef = Awaited<ReturnType<LiteClient['getMasterchainInfo']>>;
 
 export class LiteClientDataSource implements TonDataSource {
+  private readonly freshHeads = new FreshHeadFence();
   network: Network;
   private client: LiteClient;
   private masterchainRef: LiteMasterchainRef | null = null;
@@ -481,12 +483,19 @@ export class LiteClientDataSource implements TonDataSource {
     return this.readAccountStateAtBlock(address, master.last);
   }
 
-  async readFresh(calls: FreshReadCall[], signal?: AbortSignal): Promise<FreshReadBatch> {
+  async readFresh(calls: FreshReadCall[], signal?: AbortSignal, headFloor?: FreshReadHeadFloor): Promise<FreshReadBatch> {
     const queriedAt = Date.now();
+    const floor = this.freshHeads.capture(headFloor);
+    const validateHead = (response: unknown) => {
+      const master = response as Awaited<ReturnType<LiteClient['getMasterchainInfoExt']>>;
+      assertFreshNetwork(this.network, master?.init);
+      assertFreshLiteHeadTime(master);
+      this.freshHeads.assert(freshMasterchainBlock(master.last), floor);
+    };
     // Do not enter the datasource head cache or the LiteClient account loader.
-    const queryArgs = { timeout: 5_000, signal };
+    const queryArgs = { timeout: 5_000, signal, awaitSeqno: floor.head?.seqno, validateResponse: validateHead };
     const master = await this.call(client => client.getMasterchainInfoExt(queryArgs), signal);
-    assertFreshNetwork(this.network, master.init);
+    validateHead(master);
     const head = freshMasterchainBlock(master.last);
     const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
       const address = Address.parse(call.address).toRawString();
@@ -498,6 +507,9 @@ export class LiteClientDataSource implements TonDataSource {
     }, signal);
     const batch: FreshReadBatch = { network: this.network, readContext: { source: 'lite', head, queriedAt }, results };
     assertFreshReadBatch(batch, calls, this.network, queriedAt);
+    assertFreshReadActive(signal);
+    assertFreshLiteHeadTime(master);
+    this.freshHeads.accept(head, floor);
     return batch;
   }
 
