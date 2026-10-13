@@ -1,7 +1,7 @@
 # ton-indexer
 Indexer for faster/more reliable data from TON.
 
-This repo now contains a minimal TypeScript service that follows the design in `roadmap.md` and exposes the v1 API.
+This TypeScript service provides pinned TON chain reads, current balances, bounded activity history and durable product settlement evidence. The runtime requires one reviewed release manifest and a locally configured liteserver pool.
 
 The first-release chain schema requires TVM12 or newer. Raw internal messages expose
 `extraFlagsRaw`; the upstream SDK/toncenter compatibility wire key `ihrFee`/`ihr_fee`
@@ -35,38 +35,39 @@ malformed tuples remain unavailable. Run `npm test` to check these API decoders;
 the retained native account fixtures are ABI regressions, not release qualification.
 
 ## Requirements
-- Node.js 18+
+- Node.js 22
 
 ## Setup
 ```bash
-npm install
+npm ci
 ```
 
 ## Run (dev)
 Dev runs on testnet with the lite client enabled. Every startup requires the native deployer's reviewed release manifest through `INDEXER_RELEASE_MANIFEST`.
 ```bash
+LITESERVER_POOL_TESTNET=/absolute/path/to/reviewed-global.config.json \
 INDEXER_RELEASE_MANIFEST=/absolute/path/to/testnet.manifest.json npm run dev
 ```
 
 Run dev on mainnet (lite client):
 ```bash
+LITESERVER_POOL_MAINNET=/absolute/path/to/reviewed-mainnet.config.json \
 INDEXER_RELEASE_MANIFEST=/absolute/path/to/mainnet.manifest.json npm run dev:mainnet
 ```
 
 Run against a local TON network:
 ```bash
-LITESERVER_POOL_LOCALNET=../tonswap_tolk/tmp_mylocalton/global.config.json \
+LITESERVER_POOL_LOCALNET=/absolute/path/to/reviewed-localnet.config.json \
 INDEXER_RELEASE_MANIFEST=/absolute/path/to/localnet.manifest.json \
 npm run dev:localnet
 ```
-Localnet never falls back to a public TON endpoint: the lite datasource requires
-`LITESERVER_POOL_LOCALNET`, while the HTTP datasource requires
-`TON_HTTP_ENDPOINT`.
+Each network requires its own reviewed local pool. The service does not fetch pool configuration, discover peers or use an HTTP chain provider.
 
 ## Build + Run
 ```bash
 npm run build
 npm run test:historical-replay
+LITESERVER_POOL_TESTNET=/absolute/path/to/reviewed-global.config.json \
 INDEXER_RELEASE_MANIFEST=/absolute/path/to/release-manifest.json npm run start
 ```
 
@@ -108,54 +109,22 @@ npm run build
 ```
 
 The regression suite covers transaction-chain continuity, reorg replacement,
-snapshot integrity, datasource fallbacks, classifier decoding, and public API
+snapshot integrity, bounded liteserver retries, classifier decoding, and public API
 validation/streaming behavior.
 
-`npm test` also checks the shared liteserver deadline with a deterministic monotonic
-clock, including whole-millisecond dispatch/wait budgets and attempt limits, plus
-real-timer cleanup and recovery. Starting peers rotate across requests; each request
-then advances its own failover sequence, so concurrent reads cannot repeatedly
-send it to a failed peer while consuming its healthy alternatives. The existing
-5-second total budget, 2-second attempt limit and three-attempt cap still apply.
-Exhausted queries retain frozen, ordered endpoint-index/cause records and the last
-cause; server diagnostics report bounded nested errors without exposing arbitrary
-error properties or changing public response schemas. Run
-`npx tsx src/scripts/lite-engine-test.ts` for the deterministic concurrent failover,
-budget and cleanup checks; `npm run build` typechecks and compiles the same engine.
+The source uses one monotonic, network-authenticated process head with a one-second reuse window. Account and getter reads pin that head, share only identical in-flight work and propagate cancellation. Peers retain health, failure and circuit state; bounded retries and delayed hedges never extend the caller deadline. Only one delayed hedge may belong to a read, with at most eight globally. Message submission is a single attempt and is never hedged or replayed after a disconnect. Run `npx tsx src/scripts/chain-source-test.ts` and `npx tsx src/scripts/lite-engine-test.ts` for source lifecycle checks.
 
-## Current getter reads
+## Current chain reads
 
-Latest-head getter results are not retained after a request completes. Getters
-can depend on the execution block and chain time even without arguments or
-account writes. Concurrent identical reads share one source request, identified
-by the normalized account, method and complete canonical TON tuple. Nested
-arguments and cell contents are included, and caller arguments are captured
-before execution. Response/state cache settings do not extend getter freshness.
+`POST /api/indexer/v1/readFresh` accepts 1–32 account/getter calls and executes them at one exact masterchain boundary. Its `readContext` contains `source: "lite"`, the complete head including `utime`, and the server query-start timestamp `queriedAt`. Account results contain the authenticated shard block and its creation time in `anchor`. The response also carries the current native release ID and manifest hash. No persisted account projection supplies a current chain read. Partial, wrong-network and wrong-block batches fail; actual getter VM exits remain outcomes. Perps admission stays on its separately authenticated native executor.
 
-Run `npx tsx src/scripts/response-cache-test.ts` for the getter freshness,
-coalescing and public JSON-RPC regressions. `npm test` includes these cases;
-`npm run build` typechecks and compiles the service for `npm run start`.
+The source does not retain completed getters. `SnapshotReader` shares active loads and permits completed reuse only when a caller explicitly supplies an age limit, optionally also requiring an unchanged exact account transaction pointer read at the current head. A reused value retains its original `asOfSeqno`. Farms and volatility-index reads never enable reuse because their values depend on chain time. Timed-out or abandoned work cannot publish into a later request, and there is no stale-success response mode.
 
-`POST /api/indexer/v1/readFresh` is the transaction-preflight read path. Its body
-is `{ "calls": [{ "kind": "account", "address": "0:..." }, { "kind": "getter",
-"address": "0:...", "method": "get_wallet_data", "stack": [] }] }` (1–32 calls).
-Each request acquires a new uncached masterchain head, checks the source's actual
-network zero state, and reads every call at that exact block. Account reads return
-the full queried code, data, state and atomic native balance; they never use the
-indexer's persisted account projection. A resilient provider replaces the whole
-batch, never merges observations from different heads. The response includes the
-current native manifest's release ID/hash and `readContext: { source, head,
-queriedAt }`; `head` contains workchain, shard, seqno and hexadecimal root/file
-hashes. `queriedAt` is the head-query start time in epoch milliseconds, not a
-claim about block creation time. Responses use `Cache-Control: no-store` and
-unavailable, incomplete, wrong-network or wrong-block observations fail with
-503 `fresh_read_unavailable`. Getter VM exit codes remain actual outcomes.
-Perps admission stays on its bounded verified native executor and cannot enter
-this generic fresh getter path. Run `npm run test:fresh-read` for these guarantees.
-All HTTP account reads use the current SDK account shape: malformed or missing
-atomic balances and partial transaction cursors fail instead of becoming zero or
-empty history. Explicit null cursors and complete uint64-zero/hash-zero cursors
-remain valid observations of unused accounts.
+REST request errors use the flat body: `{ "error": "safe explanation", "code": "machine_code" }`. Validation uses 400, unknown or removed paths use 404, unsupported content types use 415, limiting uses 429, unavailable reads use 503/`upstream_unavailable`, timed-out reads use 504/`upstream_timeout`, and unknown internal errors use 500. Native admission keeps its separate typed errors. All errors are `no-store`; 429, 503 and 504 include `Retry-After`, exposed through CORS. Operational `/health` retains its component-status document even when its HTTP status is 503. Request disconnects cancel remaining work. Route budgets are five seconds for getters, balances and JSON-RPC, eighteen seconds for `readFresh`, and ten seconds for product snapshots.
+
+`/jsonRPC` and `/api/v2/jsonRPC` use the same configured chain source. Masterchain responses use real head hashes; account responses use the actual shard anchor and chain creation time. Missing anchors never become wall-clock timestamps or fabricated blocks. Only explicit unused accounts receive a zero transaction cursor. `sendBoc` and `sendBocReturnHash` send one validated BOC through that source when `INDEXER_ENABLE_WRITE_RPC=true`; other writes and external JSON-RPC forwarding are unavailable.
+
+Run `npm run test:fresh-read`, `npx tsx src/scripts/service-deadline-test.ts`, `npx tsx src/scripts/error-contract-test.ts` and `npx tsx src/scripts/jsonrpc-anchor-test.ts` for these boundaries.
 
 ## Durable account ledger
 
@@ -181,7 +150,7 @@ require a fresh database initialized from this canonical schema. Bootstrap rejec
 an existing ledger schema without `ledger_projection_coverage.projection_scope`;
 it does not infer scope, migrate old formats, or reset an existing database. The database role needs
 schema/table creation rights for bootstrap and normal DML rights at runtime.
-Do not publish the connection URL in the frontend bundle. The container includes
+Do not publish the connection URL in the frontend bundle. The compiled deployment must retain
 the SQL schema. PostgreSQL persistence, backups, and TLS are deployment concerns;
 a filesystem snapshot is not a substitute for this database.
 
@@ -198,7 +167,7 @@ Every page has `coverage.projectionScope`: a published owner projection contains
 `{ kind: "owner", owner, physicalAccounts }`, with canonical raw TON addresses and
 a sorted, unique list of the physical accounts represented by that projection,
 including the owner. The scope is persisted with the generation, included in its
-decoder `exact-ledger-v20` fingerprint, and preserved by older cursors. A scope
+decoder `exact-ledger-v21` fingerprint, and preserved by older cursors. A scope
 change creates a new generation even when both generations have no events.
 This describes represented accounts; it does not certify discovery of every
 owned asset or complete history. Published projections with explicit history or
@@ -208,16 +177,11 @@ also suppresses events and cursors, sets completeness flags false, and reports
 `owner_projection_metadata_invalid`; consumers must not substitute the owner as
 an inferred scope.
 
-Two workers run concurrently. `INDEXER_MAX_WATCHED_ACCOUNTS` defaults to 1,000
-(maximum 100,000); admission overflow returns `watch_capacity_reached` and creates
-no watch/account row. `INDEXER_MAX_PAGES_PER_SYNC` defaults to 20 (maximum 100),
-shared across the owner and its related-account crawl; each page has at most 100
-transactions. Exhausted budgets persist the next exact cursor with
-`backfill_capacity_deferred`, then resume the same run on a later pass. No old
-transactions are discarded. The fair scheduler revisits only explicitly admitted
-owners, ordered by last attempt. `INDEXER_MAX_RELATED_ACCOUNTS` defaults to 256
-(maximum 1,024); discovery overflow is an explicit coverage gap. Operators must
-set these admission/crawl limits for their upstream and PostgreSQL capacity.
+`INDEXER_LEDGER_WORKERS` defaults to three and accepts 2–8. Foreground ledger requests precede background work, which may occupy at most workers−1 slots. Running requests coalesce into one follow-up; failures retry after 2, 4, 8, 16, 32 and then 60 seconds. A thirty-second sweep revisits watches requested within fifteen minutes or marked unresolved. Startup prewarms physical history for the manifest T3 hub/root, Perps engine, Options factory/vault, router and spot pools without consuming wallet-watch capacity.
+
+`INDEXER_MAX_WATCHED_ACCOUNTS` defaults to 1,000 (maximum 100,000); overflow reports `watch_capacity_reached` and creates no watch/account row. `INDEXER_MAX_PAGES_PER_SYNC` defaults to 20 (maximum 100) **per physical account** per cycle, each page at most 100 transactions. Resumable backfills retain their exact cursor, and an old completed head never certifies a newer boundary. `INDEXER_MAX_RELATED_ACCOUNTS` defaults to 256 (maximum 1,024). Related refresh uses four concurrent account operations and one account-scoped lock shared across processes.
+
+The worker PostgreSQL pool has workers×5+4 connections (19 by default); API pages, admission and readiness have a separate ten-connection read pool. Use a dedicated database role for each release or project and budget both pools for that role. The host connection budget must also cover any side-by-side release workers with their separate roles. Keep these capacities distinct from the bounded perps-range collectors.
 
 Configured jetton roots and observed transfers/notifications identify controlled
 wallets. Root/wallet getters, owner identity, and active wallet code are verified.
@@ -227,17 +191,11 @@ registered DLMM pools are crawled too. `coverage.relatedAccounts` records each
 account, physical generation, role and chain coverage. This discovery scope does
 not enumerate arbitrary unconfigured tokens that never notify the owner.
 
-Quiet polling compares the decoded projection and complete dependency evidence
-(including identities, related generations, projection scope, coverage and decoder version) before
-creating a generation. Unchanged evidence reuses the published snapshot without
-copying memberships or events. A changed custody-wallet head still creates a new
-projection even when the owner head is unchanged. `generation`, `publishedAt`,
-and `headObservedAt` identify the immutable snapshot. `checkedAt` records the
-conservative head-observation time of its latest full dependency recheck;
-`publishedAt`/`syncedAt` are publication times and must not be used as chain
-watermarks. Consumers pin `checkedAt` from the root page while paging that
-generation. Later root polling can advance it after unchanged dependencies have
-been checked again. Failed backfills do not mutate already-published evidence.
+Every owner cycle captures one head and qualifies all current dependencies at that boundary. An eligible quiet check reads the stored head vector once and advances only the mutable owner check when every pointer is unchanged. Stored `historyComplete` means that physical history is linked to genesis; it does not mean the account was refreshed at the latest boundary. `coverage.boundary` identifies the masterchain observation, and `refreshPending` lists canonical accounts needing refresh. Positive settlement evidence needs coverage through its exact transactions; a conclusion relying on absence needs coverage at the current boundary.
+
+Publication requires every prior physical graph account at an equal-or-later head (equal LT also requires equal hash) and every previously resolved binding still resolved. Failure preserves the old immutable publication. Changes in related generation IDs or observation timestamps alone do not change the economic fingerprint; exact evidence, scope, address/role/history completeness and stable issues do. `exact-ledger-v21` excludes mutable refresh-pending diagnostics. Confirmed regression counts are diagnostics, never a replacement publication rule.
+
+`generation`, `publishedAt` and `headObservedAt` identify an immutable snapshot. `checkedAt` is the server time of the completed owner check; `boundary.utime` is chain time. Current root pages and first discovery pages merge the latest completed check only when its publication generation matches. Cursor pages preserve their original generation, observations and boundary. Neither publication timestamps nor server check timestamps are chain watermarks. Raw evidence, old generations and incomplete resumable work are retained.
 
 All amounts are unsigned atomic decimal **strings** with an explicit `in`, `out`
 or `fee` direction. Native assets use `<network>:native`, the `GRAM` ticker, and nine decimals;
@@ -252,8 +210,8 @@ with unresolved identity, not dropped or converted to zero.
 
 Native transfers between the owner's controlled accounts cancel within the owner
 projection. Each physical owned-account transaction fee remains, together with
-outgoing forwarding/IHR fees. `totalFeesRaw` aggregates transaction fees already
-represented by `transaction_fee` movements; **never add it again**. Forwarding/IHR
+outgoing forwarding fees. `totalFeesRaw` aggregates transaction fees already
+represented by `transaction_fee` movements; **never add it again**. Forwarding
 fees are separate `message_forward_fee` movements. Each movement retains its
 physical account, LT, hash, timestamp and, where applicable, message/body evidence.
 
@@ -266,8 +224,8 @@ physical proof is supported; retries cannot supply a candle output either.
 `minOut` is never execution output. Run `npx tsx src/scripts/ledger-settlement-test.ts`
 and `npx tsx src/scripts/market-candles-test.ts` for these boundaries; `npm test`
 includes both suites. This does not make candles exact historical tax valuations.
-The `exact-ledger-v20` projection fingerprint forces fresh decoder generations
-on recheck, including quiet accounts, while preserving previous cursor snapshots.
+The `exact-ledger-v21` projection fingerprint forces fresh decoder generations
+on recheck, while preserving previous cursor snapshots.
 Run `npx tsx src/scripts/ledger-test.ts` for persisted decoder invalidation.
 
 ### Historical market execution ledger
@@ -381,7 +339,7 @@ exact amounts, missing evidence, quiet-chain freshness and route behavior.
 explicit 6/9 decimal content; the older fixtures remain unchanged and their
 malformed metadata remains unresolved. Its archive adapter uses simulated block
 sequence labels over original executor cells, not live masterchain proof.
-The owner decoder fingerprint is `exact-ledger-v20`; the separate market schema
+The owner decoder fingerprint is `exact-ledger-v21`; the separate market schema
 is `dlmm-market-ledger-v1`. Neither adds a backwards-compatibility decoder.
 LP deposits require both matched funding legs and an exact positive
 position delta at the applying pool transaction. LP withdrawals require the exact
@@ -399,7 +357,7 @@ transactions in one block may have no exposed intermediate account state. The
 lite source can reconstruct a bounded internal-transaction segment using the
 authenticated replay described below; missing archive inputs or unsupported execution remain
 explicit `lp_*_state_unavailable` issues. No current position getter or requested
-minimum is substituted. This requires an archive-capable HTTP4/lite source and
+minimum is substituted. This requires an archive-capable configured liteserver and
 does not claim every historic LP event can be resolved by all providers.
 
 Option purchases use the configured `OptionFactory`, its collateral root and
@@ -536,24 +494,20 @@ Run `npm run build` to typecheck and compile. For focused projection checks, run
 `npx tsx src/scripts/ledger-test.ts` for PGlite persistence, scope-only refresh,
 immutable cursor scope, invalid metadata suppression, and transaction rollback.
 The native PostgreSQL test uses the actual `pg` driver and a separately provisioned,
-disposable empty database; set `LEDGER_SCOPE_TEST_DATABASE_URL` in that test
+disposable empty database; set `INDEXER_TEST_DATABASE_URL` in that test
 process, then run `npx tsx src/scripts/ledger-projection-scope-postgres-test.ts`.
 Never point this test at an application database. The test does not establish
 production archive availability or change the ledger's explicit decoding limits.
 
-## Production Container
-```bash
-docker build -t ti-indexer:release .
-docker run --rm -p 8787:8787 \
-  --mount type=bind,src=/absolute/path/to/release-manifest.json,dst=/release/manifest.json,readonly \
-  -e INDEXER_RELEASE_MANIFEST=/release/manifest.json ti-indexer:release
-```
+## Startup and release operations
 
-The image defaults to `INDEXER_MODE=production`, `TON_NETWORK=mainnet`, and the
-lite-client mainnet pool. Startup requires a valid current-network
-`INDEXER_RELEASE_MANIFEST`; there is no bundled contract-address map. A registered
-PerpsEngine also requires the separately qualified native admission package,
-which the generic Linux image does not provide.
+Configuration, manifest and admission-artifact validation happen before listen. The listener opens before chain, database and native admission initialization; a live listener alone is not readiness. `/health` reports actual peer readiness, ledger state, disk capacity and admission state. It returns 503 when no peer is ready, disk is critical, or configured admission is not ready. Release admission separately requires the ledger to report ready. Database connection failures retry with bounded 2–60 second backoff; namespace, release or catalog conflicts remain unavailable without resetting data. Native authentication retries after 1–60 seconds while retaining its proof and artifact requirements. Source-mode workers cannot claim authenticated compiled-ledger readiness.
+
+Use a fresh canonical database for this first-release schema. Retain old database/snapshot/journal state; there is no migration fallback. In one cutover window, start the new worker beside the existing one on another port with its new database and wait for readiness and singleton prewarm. Publish this phase's web build first, then switch the proxy to the new indexer, record ledger admission and run release acceptance. If the host cannot run two admission runtimes, publish the web first and then restart the indexer on the new database. Incomplete ledger reads remain pending. Rollback switches the proxy to the retained old indexer/database while the new web stays deployed. See `docs/rollback-checklist.md`.
+
+The public proxy template is `config/nginx-indexer.conf`. Render `PUBLIC_MOUNT`, `LISTEN`, `BACKEND` and `ERROR_ROOT`, place `config/proxy-error.json` at the rendered error root, and run `nginx -t` before installation. It supports `/api/indexer` and `/api/indexer-r2`, unbuffered SSE, a three-second connect timeout and a twenty-five-second JSON timeout. Backend 429/503/504 responses pass unchanged; an unavailable backend produces the exact static 503 JSON, CORS, `Retry-After: 5` and `no-store`. Public metrics, debug and snapshots are blocked.
+
+Rate limiting runs in the process. The edge must pass both `X-TONSwap-Edge-Key` and `X-TONSwap-Client-IP`; only a matching configured key and valid IP select a visitor bucket. Otherwise the raw socket address is the key. `X-Forwarded-For` supplies no identity. Direct requests remain allowed and share their socket bucket; the proxy does not add another limiter.
 
 ## Production Smoke
 ```bash
@@ -610,50 +564,36 @@ standalone smoke therefore enforces six distinct, coherent transaction-backed
 candles; the canonical release wrapper remains responsible for matching those
 candles to the retained release proof.
 
-Public mainnet/testnet JSON-RPC proxies verify the selected upstream's
-`getMasterchainInfo.init` workchain and both zero-state hashes on every request.
-Configured URLs and discovered URLs receive the same check. A mismatched or missing
-identity skips that upstream; if none can prove the selected network, the public
-JSON-RPC error reports the failure without exposing URLs or credentials. Enabled
-`sendBoc`, `sendBocReturnHash`, and `estimateFee` calls require a fresh successful
-check against that same endpoint before forwarding. Explicit localnet endpoints
-retain their own network identity and never use public endpoint discovery. The
-route registrar requires an explicit validated network. Run `npm run test:rpc-network`
-for the focused network and SDK-protocol regressions.
+Release acceptance uses the current local liteserver source, exact manifest service identity and native runtime qualification. Repository checks do not install the live proxy or mutate a funded release.
 
 ## Configuration
 `INDEXER_RELEASE_MANIFEST` is required at bootstrap. Other environment variables
 have defaults or are required only for their documented feature:
 - `PORT` (default: `8787`)
 - `HOST` (default: `127.0.0.1`)
-- `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (`true` only when the service is behind a trusted proxy)
 - `INDEXER_MODE` (`dev` | `production`, default: `dev`)
 - `TON_NETWORK` (`mainnet` | `testnet` | `localnet`, default: `testnet`)
-- `TON_DATASOURCE` (`http` | `lite`, default: `http`)
-- `TON_HTTP_ENDPOINT` (explicit TonClient4 endpoint; if unset uses `@orbs-network/ton-access`)
-- `INDEXER_WRITE_RPC_ENDPOINT` / `INDEXER_WRITE_RPC_ENDPOINTS` (optional upstream JSON-RPC endpoint or comma-separated endpoints for masterchain metadata and enabled write methods)
-- `INDEXER_ENABLE_WRITE_RPC` (`true` to allow proxied write methods; default `false`)
-- `INDEXER_WRITE_RPC_API_KEY` (optional API key passed as `X-API-Key` to `INDEXER_WRITE_RPC_ENDPOINT`)
-- `INDEXER_RPC_PROXY_TIMEOUT_MS` (default: `30000`)
+- `INDEXER_ENABLE_WRITE_RPC` (`true` to allow single-attempt liteserver BOC submission; default `false`)
 - `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` / `LITESERVER_POOL_LOCALNET` (lite client pool; see below)
 - `INDEXER_RELEASE_MANIFEST` (reviewed `tonswap-release-v1` file path or HTTPS URL; HTTP is allowed only on loopback; polled every five seconds)
-- `INDEXER_DATABASE_URL` (PostgreSQL account/market ledger; each manifest hash receives a separate release schema)
+- `INDEXER_DATABASE_URL` or `INDEXER_DATABASE_URL_FILE` (exactly one PostgreSQL secret source; each manifest hash receives a separate release schema)
+- `INDEXER_EDGE_KEY` (optional authenticated-edge secret, at least 32 characters)
+- `INDEXER_LEDGER_WORKERS` (default `3`, range `2..8`)
+- `INDEXER_DISK_GUARD_PATH` (filesystem to monitor; defaults to the snapshot parent)
+- `INDEXER_DISK_SOFT_FLOOR_BYTES` (default `2147483648`, 2 GiB)
+- `INDEXER_DISK_HARD_FLOOR_BYTES` (default `536870912`, 512 MiB; must not exceed soft floor)
 - `INDEXER_MAX_WATCHED_ACCOUNTS` (default: `1000`, range: `1..100000`)
 - `INDEXER_MAX_PAGES_PER_SYNC` (default: `20`, range: `1..100`)
 - `INDEXER_MAX_RELATED_ACCOUNTS` (default: `256`, range: `1..1024`)
 - Native-release service metadata uses the manifest's exact `services.indexer` URL,
   with its host and mount path as the service ID. Exact current release bindings
   advertise `fresh-read` and `/api/indexer/v1/readFresh` in `/service-info`.
-- `INDEXER_SERVICE_ID` (optional standalone service identity; without an explicit ID
-  or URL, metadata names `ton-indexer:<network>`)
-- `INDEXER_PUBLIC_BASE_URL` (optional standalone public URL; absent means `null`;
-  the active native manifest is authoritative for release services)
 - `CORS_ENABLED` (`true` to enable CORS headers; default `true`)
 - `CORS_ALLOW_ORIGIN` (default: `*`; `reflect` is treated as wildcard without credentials)
 - `CORS_ALLOW_ORIGINS` (comma-separated exact-origin allowlist; when set, only matching origins receive credentialed CORS headers)
 - `CORS_ALLOW_METHODS` (default: `GET,HEAD,POST,OPTIONS`)
 - `CORS_ALLOW_HEADERS` (default: `content-type,accept`)
-- `CORS_EXPOSE_HEADERS` (default: `x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset`)
+- `CORS_EXPOSE_HEADERS` (rate-limit headers plus mandatory `retry-after`)
 - `CORS_MAX_AGE` (default: `600`)
 - `SNAPSHOT_PATH` (snapshot path prefix; the actual file includes the manifest hash and is loaded only for that release)
 - `SNAPSHOT_ON_EXIT` (`true` to write snapshot on shutdown; default `false`)
@@ -664,11 +604,8 @@ have defaults or are required only for their documented feature:
 - `RATE_LIMIT_MAX` (default: `10000`)
 - `RATE_LIMIT_BUCKETS_JSON` (optional endpoint-class limits override JSON)
 - `RESPONSE_CACHE_ENABLED` (`true` to enable response caching; default `true`)
-- `BALANCE_CACHE_TTL_MS` (default: `2000`)
-- `JETTON_BALANCE_TIMEOUT_MS` (default: `2000`; caps per-root jetton balance probes so native GRAM balance reads stay responsive)
-- `INITIAL_HISTORY_TIMEOUT_MS` (default: `10000`, range: `1..120000`; caps the first account-history source read and returns `503` if it expires)
+- `INITIAL_HISTORY_TIMEOUT_MS` (default: `10000`, range: `1..120000`; caps the first account-history source read and returns `504` if it expires)
 - `TX_CACHE_TTL_MS` (default: `1000`)
-- `STATE_CACHE_TTL_MS` (default: `1000`)
 - `HEALTH_CACHE_TTL_MS` (default: `1000`)
 - `METRICS_CACHE_TTL_MS` (default: `1000`)
 - `PAGE_SIZE` (default: `10`)
@@ -678,69 +615,39 @@ have defaults or are required only for their documented feature:
 - `BACKFILL_PAGE_BATCH` (default: `5`)
 - `BACKFILL_MAX_PAGES_PER_ADDRESS` (default: `150`)
 - `BACKFILL_CONCURRENCY` (default: `2`)
-- `JETTON_METADATA_TTL_MS` (default: `86400000`)
 - `WATCHLIST_REFRESH_MS` (default: `5000`)
 - `BLOCK_POLL_MS` (default: `5000`)
 - `LOG_LEVEL` (default: `info`)
-- `INDEXER_ADMIN_TOKEN` / `INDEXER_ADMIN_API_KEY` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
+- `INDEXER_ADMIN_TOKEN` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
 
-Explicit enum values for `INDEXER_MODE`, `TON_NETWORK`, and `TON_DATASOURCE` fail startup when unsupported instead of silently falling back.
+Explicit enum values for `INDEXER_MODE` and `TON_NETWORK` fail startup when unsupported instead of silently falling back.
 The worker binds the configured `PORT`. If it is occupied, startup fails and the supervisor retries; a release reload never silently moves the public API to another port.
 
 Production safeguards:
 - Missing, malformed, unauthenticated or wrong-network release manifests fail startup.
 - Code pins and deployment bindings come only from that manifest. Opcode definitions are bundled with the service.
 - A changed manifest hash stops the old child worker before a fresh process starts with separate snapshots, PostgreSQL schema, jobs, caches and native admission workers.
-- `npm run audit:deployment-evidence -- --require-ready` requires recorded Docker image and successful live smoke evidence.
-- For `https://ti.soramitsu.io` production deployment guidance, see `docs/ti-production.md`.
 
 ## API
 
-Native balance assets, swap token-code `1`, and ledger movements expose `GRAM` as
-their display symbol. Symbols are not native identity: balances use `kind: native`
-and ledger assets use `<network>:native`. The existing raw `ton`/`ton_raw` response
-fields and transaction `kind: ton` discriminator are schema identifiers, not a
-second ticker. Native amounts retain nine decimals. Run `npm run test:balances`,
-`npx tsx src/scripts/classifier-test.ts`, `npx tsx src/scripts/response-cache-test.ts`,
-and `npx tsx src/scripts/ledger-test.ts` for the native ticker boundary checks.
+Native assets expose `GRAM` with nine decimals. `TON` names the network. Native identity is `kind: "native"` in balances and `<network>:native` in ledger movements; symbols never establish token identity.
 
-- `GET /api/indexer/v1/accounts/{addr}/balance`
+`GET /api/indexer/v1/accounts/{addr}/balances` returns `{address, network, head_seqno, head_utime, complete, assets}`. Assets are GRAM then every manifest token in manifest order, always with manifest symbol and decimals. A verified row is `status: "ok"` with an atomic `balance_raw` string; a qualified undeployed wallet is `not_deployed` with `"0"`; an unavailable row retains its identity with `balance_raw: null` and a reason. Native read failure fails the whole request. `complete` is true only when all rows are verified or undeployed. There is no completed balance cache.
+
+The wallet reader authenticates root code and the canonical root getter. Current-template wallet addresses derive locally from the exact StateInit; other roots use their canonical address getter. Wallet code, owner/root identity and transaction pointers must qualify at the same head. A read failure never means zero; display metadata never supplies accounting precision.
+
+SSE `/stream/balances` accepts `address` and comma-separated `addresses`; `wallet` has no effect. One HeadFeed subscriber shares per-owner reads, with at most eight owners running and slow owners coalescing to the newest head. Each client gets an initial snapshot. Later verified amount changes emit `balances_changed` before a snapshot. Unavailable rows keep the previous verified comparison value, so availability flapping does not fabricate changes; the first verified value after initial unavailability does count.
+
+Current routes include:
+
 - `GET /api/indexer/v1/accounts/{addr}/balances`
-- `GET /api/indexer/v1/accounts/{addr}/assets` (alias of `/balances`)
-- `GET /api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload`
 - `GET /api/indexer/v1/accounts/{addr}/txs?page=1`
-- `GET /api/indexer/v1/accounts/{addr}/swaps?limit=100&from_utime=1700000000&to_utime=1700003600&pay_token=GRAM&receive_token=T3&include_reverse=true`
-- `GET /api/indexer/v1/markets/{market}/candles?market_address={pool}&asset_symbol=TOKEN&quote_symbol=T3&interval=1m`
 - `GET /api/indexer/v1/accounts/{addr}/state`
-- `GET /api/indexer/v1/perps/{engine}/snapshot?market_ids=1,2&max_markets=64` — `status.feeBps`
-  is read from the canonical 33-field `engine_config` getter and is `null` if that tuple cannot be
-  decoded exactly or the base fee is outside `0..10000`; clients must combine it with each market's
-  signed `controlFeeDeltaBps` and clamp the result to `0..10000`.
-  Explicit market reads start alongside status reads, with at most four market
-  getters in flight per snapshot. `market_ids` must be comma-separated positive
-  uint32 integers and must fit `max_markets`; invalid selectors fail instead of
-  triggering market discovery. The lite transport uses one five-second budget
-  per wire query, at most three attempts, and at most two seconds per endpoint.
-  Timeouts release failed in-flight reads so later requests can recover. Engine
-  status and market getters remain independent observations, not an atomic
-  historical snapshot. Run `npx tsx src/scripts/lite-engine-test.ts` and
-  `npx tsx src/scripts/perps-snapshot-test.ts` for failover and concurrency checks.
-  Release markets bind `perpsPool`, `contractRoles.perpsPool` and
-  `codeHashes.perpsPool` explicitly. The corresponding `perps-oracle:{marketId}`
-  candle key resolves only that pool; `spot:{symbol}-T3` still resolves `pool`.
-  These are confirmed underlying pool swap candles, not perps execution prices.
-  Current perps ledger state requires the second stats reference containing the
-  exact bounded oracle refresh journal and the third reference containing the
-  mandatory funding checkpoint. Receipt wire IDs must be positive, unique and
-  below the next nonce. Older layouts are rejected regardless of code hash; the
-  caller separately binds this sole decoder to the qualified release code.
-  Run `npx tsx src/scripts/perps-oracle-state-test.ts` to reject malformed and
-  obsolete receipt records.
-  A direct failed CLOSE is terminally rejected only with the exact authenticated
-  owner request, failed engine execution, complete histories and unchanged
-  qualified before/after data hashes. Its original position remains present;
-  `execution.status=failed` identifies the engine receipt while deposit, payout
-  and economic movements remain zero. A wallet send alone is insufficient.
+- `GET /api/indexer/v1/accounts/{addr}/ledger`
+- `GET /api/indexer/v1/accounts/{addr}/ledger/discoveries`
+- `GET /api/indexer/v1/markets/{market}/candles?market_address={pool}&asset_symbol=TOKEN&quote_symbol=T3&interval=1m`
+- `GET /api/indexer/v1/ledger/readiness`
+
 - `GET /api/indexer/v1/vol-index/{vol_index}/snapshot?pool={pool}&route_ids={job_ids}` — current
   snapshots require the exact seven-field config, ten-field state and three-field route getters.
   `route_ids` accepts at most 64 positive uint32 IDs; malformed selectors fail instead of being
@@ -748,8 +655,6 @@ and `npx tsx src/scripts/ledger-test.ts` for the native ticker boundary checks.
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
   - Governance pages additionally accept `start_id` (positive uint64 string) and return `next_start_id` plus `coverage` (`rangeKnown`, `pageComplete`, `scanComplete`, `nextProposalId`, `dataHash`, `issues`). The current Voting storage counter bounds proposal discovery; unsupported storage or failed getters remain incomplete, retain the same page cursor, and never imply that proposals are absent. `max_misses` no longer truncates governance pages. Run `npm run test:governance` for pagination, later proposals and transient-hole coverage; this also runs before the default test suite.
 - `GET /api/indexer/v1/pools/{pool}/farms?owner={address}&start_id=1&limit=20`
-- `GET /api/indexer/v1/options/{factory}/snapshot?after_id=0&limit=64`
-  - Options discovery follows the canonical factory `series_catalog` dictionary cursor, including sparse full-range uint64 IDs and newly created drafts. `next_after_id` is the next exclusive cursor; null means the catalog is complete. Pages contain at most 64 series and `page_complete: true` only after every listed ID has a valid current `series_info` result. Unsupported catalogs, malformed cursor chains, or missing series details fail the whole request. The immutable release manifest authenticates the factory and code; it is not a whitelist of user-created series. Run `npm run test:options-catalog` for exact pagination and failure coverage.
 - `GET /api/indexer/v1/cover/{manager}/snapshot?owner={addr}&max_scan=20&max_misses=2` — policy
   IDs remain exact uint64 strings throughout scanning. The current 19-field policy includes
   `coveredNotional`, `lastVolatilityTimestamp` and `lastVolatilityRequestHash`; shifted 18-field
@@ -757,23 +662,21 @@ and `npx tsx src/scripts/ledger-test.ts` for the native ticker boundary checks.
 - `GET /api/indexer/v1/contracts`
 - `GET /api/indexer/v1/service-info`
 - `GET /api/indexer/v1/stream/balances?address={addr}` (Server-Sent Events stream)
-- `GET /api/indexer/v1/stream?address={addr}` (alias of `/stream/balances`)
 - `GET /api/indexer/v1/health`
 - `GET /api/indexer/v1/metrics`
 - `GET /api/indexer/v1/metrics/prometheus`
 - `GET /api/indexer/v1/openapi.json`
 - `GET /api/indexer/v1/docs`
 - `POST /api/indexer/v1/runGetMethod`
-- `POST /api/indexer/v1/runGetMethods`
+- `POST /api/indexer/v1/readFresh`
 
 JSON-RPC compatibility endpoints:
 - `POST /jsonRPC`
 - `POST /api/v2/jsonRPC`
 
-When `INDEXER_WRITE_RPC_ENDPOINT` is set, proxied JSON-RPC methods are available through `/jsonRPC` and `/api/v2/jsonRPC`; write methods stay disabled unless `INDEXER_ENABLE_WRITE_RPC=true`.
-Public read endpoints intentionally include `/jsonRPC`, `/api/v2/jsonRPC`, `/api/indexer/v1/runGetMethod`, and `/api/indexer/v1/runGetMethods` so browser-only decentralized clients such as `../tonswap_web` can use the indexer directly.
+These compatibility endpoints serve the same local chain source. Unsupported methods return 404; enabled BOC submission uses the same authenticated network. The OpenAPI document lists the current manifest mount.
 
-Admin endpoints require `INDEXER_ADMIN_TOKEN` / `INDEXER_ADMIN_API_KEY`:
+Admin endpoints require `INDEXER_ADMIN_TOKEN`:
 - `POST /api/indexer/v1/snapshot/save`
 - `POST /api/indexer/v1/snapshot/load`
 - `GET /api/indexer/v1/debug?limit=100`
@@ -784,13 +687,11 @@ Optional tx cursor query params:
 
 Stream query params:
 - `address` (single address)
-- `wallet` (single address alias)
 - `addresses` (comma-separated addresses)
 
-Metrics payload highlights:
-- `request_stats`: count, avg, p50, p95, max (ms)
-- `cache_stats`: balance/tx hit rates
-- `backfill_*`: pending/inflight plus batch/tx counters
+Metrics require the admin token. Existing request/cache/backfill counters remain; runtime metrics use `indexer_runtime_`. These include chain query latency and outcomes, head sequence/time, event-loop p95/max delay, ledger scheduler depth/foreground age, per-role pool wait, cycle phases, first-publication latency, five-minute database-size observations, refresh failure codes and confirmed regressions. Source/database timing totals are additive and may overlap wall-clock phases. Metric cardinality and log buffering are bounded; dropped-series and dropped-log counts reveal overload.
+
+The disk guard samples every thirty seconds and treats unknown capacity as critical. Below the soft floor the state is low; below the hard floor or on statfs failure it is critical. Snapshot saves run only when disk is ok. Saves serialize asynchronously through one owned temporary file per destination, then rename; shutdown awaits in-flight saves. Critical capacity keeps health unavailable. Existing ledger evidence and resumable work remain intact; operators must restore storage capacity. No guard deletes operational data.
 
 ## Release Manifest
 
@@ -817,40 +718,20 @@ remain required. Deployed identities do not establish fresh oracle depth, mint
 delivery, writer backing or an economically funded Cover product.
 
 ## Notes
-- This implementation supports `TonClient4` (HTTP v4) with endpoint rotation and a native liteserver adapter (`ton-lite-client`).
-- Jetton balances use the runtime manifest's explicit T3, TS, USDT, USDC and KUSD token roots. Concurrent HTTP and SSE balance reads share one request per owner. Cold native reads return independently of transaction backfill; store updates still respect the account's history lock. On-chain metadata is cached and refreshed in the background, so slow metadata never delays verified raw balances. Unknown precision continues to omit formatted amounts and decimals; subsequent snapshots include metadata once available. Run `npm run test:balances` for the cold-wallet latency and concurrency regressions.
-- Swap/LP decoding is opcode-based and extracts DLMM swap/add-liquidity intent from Jetton transfer forward payloads (`SWAP`, `DLAD`) where available.
-- Swap classifier now also decodes optional execution hints from swap `queryId` (market/limit/twap, optional twap slice/total, and optional token symbol codes) and returns them in both `detail` and `actions` for `kind: "swap"` tx entries.
-- Swap hint decoding also exposes `querySequence` + `queryNonce` (from queryId metadata) so clients can group TWAP slices by run.
-- `/accounts/{addr}/swaps` provides a chart-friendly swap execution feed with server-side filters for pair direction, execution type, status, and optional `from_utime` / `to_utime` time windows.
-- `/markets/{market}/candles` aggregates only successful DLMM swaps for which
-  the actual outbound transfer amount was decoded and matched to the inbound
-  swap query ID. It excludes `minOut` fallbacks, normalizes both directions
-  into quote-per-base OHLCV, and includes the source transaction IDs in every
-  candle. The requested key, pool, symbols,
-  and decimals must exactly match one of its canonical markets.
-- `/accounts/{addr}/swaps` also returns chart helpers:
-  - `summary` (status + execution type counters, pending limit count, twap run count)
-  - `twap_runs` (run-level progress/status snapshots)
-  - `pending_limits` (pending limit orders for quick UI overlays)
-  - `synced_at` (server unix timestamp in seconds when the payload was generated)
+
+The sole source is the configured `ton-lite-client` pool. Current reads and durable historical proofs share its network authentication but have separate evidence requirements. Activity classification extracts intent from message opcodes and optional query metadata; classifier hints do not prove settlement. Candles include only confirmed DLMM swaps with decoded actual outputs, exact canonical market metadata and source transaction IDs. Minimum output never substitutes for received output.
 
 ### Swap `queryId` Metadata (Optional)
 - Backward compatible formats:
   - `0xd1` (v1): mode + twap slice/total + timestamp/nonce.
   - `0xd2` (v2): mode + twap slice/total + pay/receive token codes + sequence/nonce.
 - v2 token codes currently recognized:
-  - `1=TON`, `2=T3`, `3=USDT`, `4=USDC`, `5=KUSD`, `6=TS`
+  - `1=GRAM`, `2=T3`, `3=USDT`, `4=USDC`, `5=KUSD`, `6=TS`
 - If `queryId` metadata is absent, classifier still falls back to opcode-level swap decoding.
 
 ### Liteserver Pool Format
-`LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` /
-`LITESERVER_POOL_LOCALNET` can be one of:
-- URL to a TON global config JSON
-  - mainnet: `https://ton.org/global.config.json`
-  - testnet: `https://ton.org/testnet-global.config.json`
-- Local path to a config JSON file
-- Comma-separated `ip:port:pubkey` entries (pubkey is base64); ip can be dotted or integer
+
+Set the selected network's `LITESERVER_POOL_MAINNET`, `LITESERVER_POOL_TESTNET` or `LITESERVER_POOL_LOCALNET` to an absolute path containing a reviewed TON global-config JSON, or an inline comma-separated `host:port:base64-public-key` list. IPv4 and bracketed IPv6 endpoints are accepted. Pool files and endpoints are operator-supplied; URLs, relative paths, implicit public defaults and remote peer discovery are rejected. Missing or malformed pools fail configuration before listen.
 
 ### Exact perps ledger evidence
 
@@ -1102,7 +983,7 @@ Committed deposits decrease both bucket and aggregate locked/premium amounts
 without changing tracked balance. Orphan custody increases tracked balance by
 the exact principal and preserves the complete bucket dictionary and aggregate
 amounts. Missing fields are not a substitute for proof. Snapshot identity uses
-decoder `exact-ledger-v20`; consumers use this canonical format without an older
+decoder `exact-ledger-v21`; consumers use this canonical format without an older
 format adapter. A partial return records only its actual credit and leaves the purchase
 refund pending. A complete refund conserves the original gross funding exactly
 once, and replaces that request's incomplete acquisition event with the same
@@ -1208,7 +1089,7 @@ only its observed cash flow and owned physical transaction fees; the separately
 queued creator insurance return does not become the participant's refund.
 `npm run test:ledger:launchpad` runs configuration, storage/wire, projector, and
 graph discovery checks using a contract sandbox trace. No provider credentials or
-live transactions are needed. The decoder fingerprint is `exact-ledger-v20`, so
+live transactions are needed. The decoder fingerprint is `exact-ledger-v21`, so
 changed decoding or evidence publishes a fresh immutable generation instead of
 reusing earlier projections.
 
@@ -1231,7 +1112,7 @@ This is one canonical first-release schema: `ledger_runs.discovery_revision`, `l
 
 Run `npm run test:ledger:discovery`, `npm run test:ledger` and `npm run build`. The discovery suite exercises actual PostgreSQL SQL in PGlite, including delayed settlement, fixed cursor pages, exact large revisions, wallet/network isolation and rollback. PGlite does not establish multi-process row-lock behavior or real browser push delivery.
 
-For actual connection and row-lock verification, provision an isolated **loopback-only** PostgreSQL test instance, set `LEDGER_DISCOVERY_TEST_DATABASE_URL` only in the test process, and run `npm run test:ledger:discovery:native`. It creates and removes its own random schema. The fixture observes two simultaneously blocked generation publications, allows an independent owner to publish, verifies exact commit ordering, and forces a partial insertion rollback before proving the next publication can acquire the lock and reuse the uncommitted revision. Never target an application database.
+For actual connection and row-lock verification, provision an isolated **loopback-only** PostgreSQL test instance, set `INDEXER_TEST_DATABASE_URL` only in the test process, and run `npm run test:ledger:discovery:native`. It creates and removes its own random schema. The fixture observes two simultaneously blocked generation publications, allows an independent owner to publish, verifies exact commit ordering, and forces a partial insertion rollback before proving the next publication can acquire the lock and reuse the uncommitted revision. Never target an application database.
 
 
 ### DLMM liquidity source evidence
@@ -1295,13 +1176,13 @@ mainnet deployment, fiat valuation, historical token precision or tax policy.
 
 ## Original transaction evidence
 
-`getTransactions` on `/jsonRPC` and `/api/v2/jsonRPC` reads original transaction cells directly from the configured TON data sources. Each response includes `data` (the original cell graph as a base64 BOC), exact `transaction_id`, message bodies and actual compute/action outcomes. It never turns activity-summary cache rows into transaction proof. The REST activity-history endpoints remain paginated summaries.
+`getTransactions` on `/jsonRPC` and `/api/v2/jsonRPC` reads original transaction cells directly from the configured TON liteserver pool. Each response includes `data` (the original cell graph as a base64 BOC), exact `transaction_id`, message bodies and actual compute/action outcomes. It never turns activity-summary cache rows into transaction proof. The REST activity-history endpoints remain paginated summaries.
 
 A cursor-free read first obtains the account's current transaction LT/hash; an explicit `lt`/`hash` request is exact and inclusive. Every page must match that anchor, the requested account/workchain, and every predecessor LT/hash. The reader fills the requested limit (1–50) across provider pages, or stops only at the canonical first-transaction predecessor. Missing original cells, malformed data, broken links and incomplete anchors fail the request. This is hash-bound provider evidence, not a substitute for independently verifying TON consensus proofs.
 
-The Lite source preserves original returned cells and block workchains. The TonClient4 source uses the SDK's unparsed transaction endpoint and preserves `Transaction.raw`; neither source serializes reconstructed transaction summaries. No database migration or cached-history rewrite is needed.
+The liteserver source preserves original returned cells and block workchains; it never serializes reconstructed transaction summaries. No database migration or cached-history rewrite is needed.
 
-`npm test` runs the original-evidence regression through the mandatory adversarial suite. For a focused local check, run `npx tsx src/scripts/transaction-evidence-test.ts`; it uses authentic sandbox-emitted transaction cells and tests both source adapters, exact cursor chains, actual failures, atomic amounts, and the service/HTTP response.
+`npm test` runs the original-evidence regression through the mandatory adversarial suite. For a focused local check, run `npx tsx src/scripts/transaction-evidence-test.ts`; it uses authentic sandbox-emitted transaction cells and tests the liteserver source, exact cursor chains, actual failures, atomic amounts, and the service/HTTP response.
 
 
 #### DLMM withdrawals with zero token payout
@@ -1353,7 +1234,7 @@ A failed token transfer instruction remains unconfirmed and does not create a
 settled token credit. Terminal status is specific to native movement evidence;
 shared historical transaction references and market evidence retain their own
 contracts. This does not infer beneficial ownership, tax classification or a
-deduction. Decoder `exact-ledger-v20` gives reprojected canonical records a new
+deduction. Decoder `exact-ledger-v21` gives reprojected canonical records a new
 fingerprint, without an old-format adapter.
 
 Run `npm run test:ledger:native-terminal`, `npm run test:ledger`, and `npm run build`.
@@ -1417,7 +1298,7 @@ Run `npx tsx src/scripts/ledger-perps-recovery-test.ts`,
 `npm run build` after changing this lifecycle. The recovery regression admits 128
 actual head-wait jobs through the public API, restarts the ledger without owner
 polling, and checks startup/timer progress, backoff, expiry and new-owner admission.
-Set `LEDGER_PERPS_RETRY_TEST_DATABASE_URL` to an isolated loopback PostgreSQL database
+Set `INDEXER_TEST_DATABASE_URL` to an isolated loopback PostgreSQL database
 to additionally verify independent-connection recovery locks; each run creates and
 drops its own schema. The default isolated PGlite run does not qualify those locks.
 
@@ -1430,20 +1311,11 @@ report `ledger_storage_unavailable` separately from chain-source failures. Run
 `npm run build`, `npm test`, and
 `npx tsx src/scripts/ledger-perps-range-test.ts` and
 `npx tsx src/scripts/ledger-perps-retry-test.ts` to qualify these changes. The retry
-suite additionally supports `LEDGER_PERPS_RETRY_TEST_DATABASE_URL` for independent
+suite additionally supports `INDEXER_TEST_DATABASE_URL` for independent
 connection/worker lock tests in an explicitly selected loopback PostgreSQL instance;
 it creates and removes an isolated schema.
 
-Masterchain freshness uses the canonical block creation time (`lastUtime` for
-LiteServer), never its server clock. The V4 HTTP provider lacks this timestamp, so
-its head time stays unavailable; perps interval closure fails closed without it.
-Historical account lookup brackets backward from the recent head before binary
-searching the exact containing block, avoiding unrelated ancient archive holes.
-Intermediate states still require original transaction and Account-hash replay.
-Replay uses pinned `@ton/sandbox` 0.43.0 to support the authentic current testnet
-configuration. `historical-replay-testnet-test.ts` replays the captured real OPEN
-and all five original engine transactions through payout finalization, requiring
-the original transaction and full Account hashes; tampered evidence is rejected.
+Masterchain freshness uses authenticated block creation time, never the server clock. Historical lookup brackets backward from the recent head before locating the exact containing block. Intermediate states require original transaction and Account-hash replay using the pinned sandbox. The retained current native fixtures and historical replay tests preserve original evidence; unsupported old layouts are not accepted through compatibility readers.
 
 ## Public testnet report regression checks
 
@@ -1472,7 +1344,7 @@ no admin token is configured. Public browser reads remain open.
 
 Application CORS headers are installed before rate limiting and survive application
 429/400/415/503 responses. Reverse proxies must also add CORS to their own 429/502/503/504
-responses. `config/nginx-public-api.example.conf` supplies an exact-origin example
+responses. `config/nginx-indexer.conf` supplies the reviewed public-mount template
 with `always` headers, hides duplicate upstream CORS headers and blocks operational
 paths from the public listener. Adapt and validate it on the actual edge before
 reloading; application tests cannot verify a separately managed proxy.
@@ -1502,7 +1374,7 @@ Async perps debt conservation uses the exact callback before-market deficit as i
 starting balance. Its freshly authenticated callback market supplies execution
 price, funding and safety controls only. Accepted insolvent CLOSE execution can
 therefore prove the new protocol debt without reporting cash that was never paid.
-The `exact-ledger-v20` owner fingerprint and `perps-range-v3` range binding identify
+The `exact-ledger-v21` owner fingerprint and `perps-range-v3` range binding identify
 these corrected projections; no older state layout is decoded as a fallback.
 
 The current DLMM liquidity evidence ABI records one original notification per
@@ -1667,9 +1539,9 @@ Current perps journal qualification uses a 128-record eligibility index. The exa
 
 ### Verified testnet perps admission runtime
 
-A registered PerpsEngine requires the qualified native admission worker on macOS arm64, testnet, and the exact engine code hash. Set `PERPS_ADMISSION_BINARY_PATH`, `PERPS_ADMISSION_BINARY_SHA256`, `PERPS_ADMISSION_CONFIG_PATH`, and `PERPS_ADMISSION_CONFIG_SHA256` to the immutable reviewed native package. The package carries the native binary, its official TON source/toolchain provenance, and the exact global configuration with its retained trust anchor. All four values are mandatory together. The generic Linux Dockerfile does not package this macOS worker and does not support a registered perps engine; such startup fails closed.
+A registered PerpsEngine requires the qualified native admission worker on macOS arm64, testnet, and the exact engine code hash. Set `PERPS_ADMISSION_BINARY_PATH`, `PERPS_ADMISSION_BINARY_SHA256`, `PERPS_ADMISSION_CONFIG_PATH`, and `PERPS_ADMISSION_CONFIG_SHA256` to the immutable reviewed native package. The package carries the native binary, its official TON source/toolchain provenance, and the exact global configuration with its retained trust anchor. All four values are mandatory together. There is no generic container deployment in this release; the host must provide the reviewed native package.
 
-Two persistent owned worker processes authenticate the signature chain and a fresh exact-block engine account before HTTP readiness. Cold bootstrap has a 600-second total deadline and a 120-second validated-progress stall deadline; the parent allows 610 seconds for process startup and cleanup. Deployment health gates must allow at least this cold-start interval. Each admission request has one attempt, a five-second timeout, a fixed one-million TVM gas maximum, and complete authenticated account/configuration/context binding. Busy workers return `admission_busy`; unavailable, timeout, proof, context and worker failures retain distinct safe API codes. Economic denial, VM failure and exhausted gas retain their actual getter result and gas usage. Admission requests never use generic remote-getter fallback or response caching.
+The HTTP listener opens first. Two persistent owned worker processes authenticate the signature chain and a fresh exact-block engine account before readiness. Cold bootstrap has a 600-second total deadline and a 120-second validated-progress stall deadline; the parent allows 610 seconds for process startup and cleanup. Deployment health gates must allow at least this cold-start interval. Each admission request has one attempt, a five-second timeout, a fixed one-million TVM gas maximum, and complete authenticated account/configuration/context binding. Busy workers return `admission_busy`; unavailable, timeout, proof, context and worker failures retain distinct safe API codes. Economic denial, VM failure and exhausted gas retain their actual getter result and gas usage. Admission requests never use generic remote-getter fallback or response caching.
 
 Perps economic qualification uses only the current isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Run `npx tsx src/scripts/ledger-perps-test.ts`, `npx tsx src/scripts/perps-counterparty-economics-test.ts`, `npx tsx src/scripts/perps-risk-admission-test.ts`, and `npx tsx src/scripts/perps-oracle-state-test.ts`, followed by the complete `npm run test:ledger`.
 

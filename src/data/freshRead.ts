@@ -12,7 +12,7 @@ export type FreshReadResult =
   | { kind: 'getter'; address: string; exitCode: number; stack: TupleItem[] };
 export type FreshReadBatch = {
   network: Network;
-  readContext: { source: 'lite' | 'http4'; head: TonBlockIdExt & { utime?: number }; queriedAt: number };
+  readContext: { source: 'lite'; head: TonBlockIdExt & { utime?: number }; queriedAt: number };
   results: FreshReadResult[];
 };
 
@@ -67,7 +67,7 @@ function assertAccount(state: AccountStateResponse): void {
 /** A fresh provider must return one complete observation, never a merge of different heads. */
 export function assertFreshReadBatch(batch: FreshReadBatch, calls: FreshReadCall[], network: Network, startedAt: number): void {
   if (!batch || batch.network !== network || !batch.readContext
-    || !['lite', 'http4'].includes(batch.readContext.source)
+    || batch.readContext.source !== 'lite'
     || !Number.isSafeInteger(batch.readContext.queriedAt) || batch.readContext.queriedAt < startedAt
     || batch.readContext.queriedAt > Date.now() || batch.results?.length !== calls.length) throw new FreshReadUnavailableError();
   const head = batch.readContext.head;

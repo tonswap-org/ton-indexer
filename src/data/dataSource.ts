@@ -1,7 +1,6 @@
 import { TupleItem } from '@ton/core';
 import { Buffer } from 'node:buffer';
 import { Network } from '../models';
-import { JettonMetadata } from '../models';
 
 export type RawMessage = {
   source?: string;
@@ -190,12 +189,6 @@ export type AccountStateResponse = {
   }>;
 };
 
-export type MasterchainInfo = {
-  seqno: number;
-  /** Canonical masterblock creation time, never provider/server wall clock. */
-  timestamp?: number;
-};
-
 export type TonBlockIdExt = {
   seqno: number;
   workchain: number;
@@ -225,30 +218,5 @@ export interface ChainSource {
   sendMessage(boc: Buffer, options?: { signal?: AbortSignal }): Promise<void>;
   health(): { peersConfigured: number; peersReady: number; head: ChainHead | null;
     peers: Array<{ index: number; ready: boolean; open: boolean; failures: number; latencyMs: number | null }> };
-  close(): Promise<void>;
-}
-
-export interface TonDataSource {
-  network: Network;
-  /** Uncached current head, complete same-head account/getter observations, or failure. */
-  readFresh?(calls: import('./freshRead').FreshReadCall[]): Promise<import('./freshRead').FreshReadBatch>;
-  getMasterchainInfo(): Promise<MasterchainInfo>;
-  getAccountState(address: string): Promise<AccountStateResponse>;
-  getAccountStateLite?(address: string): Promise<AccountStateResponse>;
-  /** Archival account state at a masterchain boundary; callers must bind lastTx to the desired transaction. */
-  getAccountStateAtSeqno?(address: string, seqno: number): Promise<AccountStateResponse>;
-  /** Exact intermediate state, authenticated by the original transaction and Account hashes. */
-  getAccountStateAtTransaction?(address: string, cursor: TransactionCursor, containingSeqno: number): Promise<AccountStateResponse>;
-  getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]>;
-  runGetMethod(
-    address: string,
-    method: string,
-    args?: TupleItem[]
-  ): Promise<{ exitCode: number; stack: TupleItem[] } | null>;
-  // Canonical TEP-74 only. Implementations return null unless the root and
-  // wallet getters have exact canonical shapes and the wallet owner/root/code
-  // identities can be verified against active account code.
-  getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null>;
-  getJettonMetadata(master: string): Promise<JettonMetadata | null>;
   close(): Promise<void>;
 }

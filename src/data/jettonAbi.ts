@@ -21,22 +21,6 @@ export type CanonicalJettonWalletData = {
   walletCode: Cell;
 };
 
-export type CanonicalJettonBalance = {
-  wallet: string;
-  balance: string;
-};
-
-type CanonicalJettonBalanceReader = {
-  owner: string;
-  master: string;
-  runGetMethod: (
-    address: string,
-    method: 'get_jetton_data' | 'get_wallet_address' | 'get_wallet_data',
-    args?: TupleItem[]
-  ) => Promise<RunGetMethodResult>;
-  readAccountCode: (address: string) => Promise<Cell | null>;
-};
-
 const unwrapTransportTuple = (stack: TupleItem[]): TupleItem[] => {
   if (stack.length === 1 && stack[0].type === 'tuple') {
     return stack[0].items;
@@ -197,60 +181,6 @@ export const cellFromAccountCodeBoc = (codeBoc: string | null | undefined): Cell
   try {
     const cells = Cell.fromBoc(Buffer.from(codeBoc.trim(), 'base64'));
     return cells.length === 1 ? cells[0] : null;
-  } catch {
-    return null;
-  }
-};
-
-export const readCanonicalJettonBalance = async (
-  reader: CanonicalJettonBalanceReader
-): Promise<CanonicalJettonBalance | null> => {
-  try {
-    const owner = Address.parse(reader.owner);
-    const master = Address.parse(reader.master);
-    const masterRaw = master.toRawString();
-
-    const rootResult = await reader.runGetMethod(masterRaw, 'get_jetton_data', []);
-    if (!isSuccessfulGetterResult(rootResult)) return null;
-    const rootData = parseCanonicalJettonRootData(rootResult.stack);
-    if (!rootData) return null;
-
-    const ownerArgument: TupleItem = {
-      type: 'slice',
-      cell: beginCell().storeAddress(owner).endCell()
-    };
-    const addressResult = await reader.runGetMethod(
-      masterRaw,
-      'get_wallet_address',
-      [ownerArgument]
-    );
-    if (!isSuccessfulGetterResult(addressResult)) return null;
-    const wallet = parseCanonicalJettonWalletAddress(addressResult.stack);
-    if (!wallet) return null;
-
-    const walletRaw = wallet.toRawString();
-    const walletResult = await reader.runGetMethod(walletRaw, 'get_wallet_data', []);
-    if (!isSuccessfulGetterResult(walletResult)) return null;
-    const walletData = parseCanonicalJettonWalletData(walletResult.stack, {
-      owner,
-      root: master,
-      walletCode: rootData.walletCode
-    });
-    if (!walletData) return null;
-
-    // TEP-74 does not standardize a wallet's persistent-data layout, so an indexer
-    // cannot independently derive every third-party wallet address from code alone.
-    // It can still fail closed on all identities the getter ABI exposes. Requiring
-    // the active account code additionally prevents trusting a wallet getter that
-    // merely claims the root's expected code. A source that cannot expose account
-    // code returns no balance instead of weakening this check.
-    const accountCode = await reader.readAccountCode(walletRaw);
-    if (!accountCode || !sameCell(accountCode, rootData.walletCode)) return null;
-
-    return {
-      wallet: wallet.toString({ urlSafe: true, bounceable: true }),
-      balance: walletData.balance.toString(10)
-    };
   } catch {
     return null;
   }

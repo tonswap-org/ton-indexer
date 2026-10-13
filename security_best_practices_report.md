@@ -1,42 +1,23 @@
-# Security Best Practices Report
+# Security best practices report
 
-Date: 2026-05-26
-Repository: `/Users/mtakemiya/dev/ton-indexer`
+Updated for the current release contract, 2026-10-13.
 
-## Current Model
+## Current model
 
-The service is a public decentralized read API used directly by `../tonswap_web`.
-Browser reads need no authentication. Operational metrics, debug and snapshot routes require the configured admin token.
+Browser chain reads are public. Operational metrics, debug and snapshot routes require INDEXER_ADMIN_TOKEN and are blocked at the public proxy. The sole chain source is an operator-reviewed local liteserver pool with authenticated network identity, exact current account anchors, bounded deadlines/cancellation and typed failures. There is no external JSON-RPC forwarder or peer-discovery service. BOC submission is disabled by default; when explicitly enabled it performs one attempt through the same source without retry or hedging.
 
-Public routes include:
-- TONSWAP account, balance, transaction, swap, state, stream, registry, health, docs, and OpenAPI endpoints.
-- `/jsonRPC` and `/api/v2/jsonRPC` compatibility endpoints.
-- `/api/indexer/v1/runGetMethod` and `/api/indexer/v1/runGetMethods`.
-- Metrics, debug, and snapshot routes are operational endpoints requiring an admin token; public browser reads remain unauthenticated.
+## Implemented boundaries
 
-Write JSON-RPC relay remains disabled by default. If `INDEXER_ENABLE_WRITE_RPC=true` is set, write relay methods are public by design and should only be enabled for deployments that intentionally provide that public relay.
+- One manifest supplies release identity, deployed addresses/code pins and public URL. Wrong or missing bindings cannot advertise release-bound fresh reads.
+- Rate limits run in process. Only the matching X-TONSwap-Edge-Key plus a valid X-TONSwap-Client-IP choose a visitor identity; other requests use the raw socket. X-Forwarded-For is ignored. The limiter map is bounded, and the proxy adds no separate rate limit.
+- Flat safe errors retain actual status, no-store and Retry-After for 429/503/504. Exception details and credentials never become public messages. CORS uses exact credentialed allowlists; wildcard/reflect mode does not grant credentials.
+- Global security headers and nonce CSP protect the built-in docs. Snapshot destinations come from configuration, not request parameters; writes are serialized and skipped unless monitored capacity is ok.
+- Qualified wallet/root identities and explicit unavailable rows prevent failure-to-zero balances. Display metadata never supplies accounting precision.
+- Durable publication requires preserved account and resolved-binding inputs, immutable cursors and independently authenticated physical settlement evidence. Missing evidence remains unresolved; current getters and transfer requests cannot prove cash delivery.
+- Logging, cache entries, request sharing and runtime metric series have bounded lifetimes/capacities. Dropped logs/series and source/database timings expose overload.
 
-## Remediation Status
+## Operational obligations
 
-Implemented in this worktree:
-- Public reads remain unauthenticated; operational routes use admin authentication.
-- Operational authentication is documented by OpenAPI AdminToken/AdminBearer security schemes.
-- Kept decentralized read routes public for `../tonswap_web`.
-- Kept route-level getter timeouts and sanitized public error responses.
-- Added global security headers and nonce-based CSP on the built-in docs page.
-- Replaced credentialed CORS reflection with exact-origin allowlisting via `CORS_ALLOW_ORIGINS`; `reflect` behaves as wildcard without credentials.
-- Added a dependency override so transitive `ws` resolves to `8.21.0`; `npm audit --omit=dev` reports zero vulnerabilities.
+Use `config/nginx-indexer.conf` with the exact manifest mount and retained static error JSON; validate with nginx -t before installation. Configure edge-key secrecy, connection capacity across read/worker pools, disk floors, reviewed peers, PostgreSQL persistence/backups/TLS and the native admission package. Offline tests do not certify live archive availability, latency, disk headroom or economic release qualification. CI retains dependency audit on its host; this phase performs no registry audit and makes no current vulnerability-count claim.
 
-## Remaining Public-Service Risks
-
-- Public getter/RPC routes can consume upstream TON provider capacity. Mitigate with rate limits, caching, bounded concurrency, and deployment-level capacity planning.
-- Metrics/debug/snapshot require configured admin authentication. Additionally block these paths at the public edge; example configuration is in `config/nginx-public-api.example.conf`.
-- Public write relay is intentionally off by default. Enabling it makes the service a public relay.
-
-## Positive Observations
-
-- Mainnet placeholder registry addresses fail startup in production mainnet mode.
-- Write JSON-RPC methods are disabled by default.
-- Address, cursor, and numeric query parameters are validated before use.
-- Snapshot paths are configured through environment variables, not request parameters.
-- In-memory caches and stored transaction counts are bounded.
+Use a fresh canonical release database and keep old release state for rollback. Publish the new web before switching the indexer; rollback restores the old upstream/database while the web stays. Never remove release candidates, credentials, complete signing journals or capture evidence by age or path name.

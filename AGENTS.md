@@ -21,13 +21,13 @@ hiding independently verified mint hub/root identities.
 
 Option lifecycle qualification uses manifest-approved factory, vault, Shout, Outperformance and wallet Cell hashes. Deployment identities and historical state must match. Exercise right retirement, actual holder payout and RiskVault reimbursement are separate facts. `ReleaseCollateral` never supplies a cash refund. An early OCRC receipt never proves a completed claim. Preserve raw fees and explicit archive/related-history gaps; owner-OBAR unwind requires original funding, historical cancellation and exact independent factory/vault cash finalizers. Initial BOYR/BBUY bounce recovery additionally requires the actual qualified failed product transaction, exact standard VM bounce, historical series/index unwind and independent physical factory return. Other automatic abort/retry recovery and expiry-only paths remain unsupported and must not fabricate payouts.
 - **Is**: a runnable indexer service with in-memory storage and background workers, plus release-manifest bindings.
-- **Isn’t**: a production-hardened indexer yet (liteserver pool adapter and full swap/LP decoding remain partial).
+- Product settlement support is deliberately bounded by the exact historical proof rules below; unqualified or missing evidence stays unresolved.
 
 ## Release Manifest
-- The sole runtime input is required `INDEXER_RELEASE_MANIFEST`, using schema `tonswap-release-v1`. Singleton entries are exact address/codeHash objects; reserves use USDT/USDC/KUSD token roles and the hub role is T3. Network/globalId and manifestHash must validate. No registry files, ledger pin environment variables, opcode file loading or parity checks are supported.
+- The sole release/deployment identity input is required `INDEXER_RELEASE_MANIFEST`, using schema `tonswap-release-v1`. Singleton entries are exact address/codeHash objects; reserves use USDT/USDC/KUSD token roles and the hub role is T3. Network/globalId and manifestHash must validate. No registry files, ledger pin environment variables, opcode file loading or parity checks are supported.
 - Poll every five seconds. Stop the old child worker before starting a changed manifest in a fresh process. Snapshots and PostgreSQL schemas are scoped to manifestHash; never resume old jobs under new bindings or delete retained release state.
 - `/contracts` and `/service-info` expose `release: { releaseId, manifestHash }`. Opcode definitions are bundled. Runtime ledger limits use `INDEXER_MAX_WATCHED_ACCOUNTS`, `INDEXER_MAX_PAGES_PER_SYNC` and `INDEXER_MAX_RELATED_ACCOUNTS`.
-- Native service metadata derives its public URL and service ID from the current manifest's `services.indexer`; config identity/URL only describes standalone services. Advertise fresh reads only with exact current native network/release/hash bindings. Never default metadata to an unrelated public deployment. Public discovery, OpenAPI paths and docs use that exact manifest mount. Backend routes remain `/api/indexer`; an externally reviewed proxy maps a distinct public mount to them without redirecting to another release. Production smoke derives the mount and public identity from its pinned manifest, and rejects a conflicting explicit mount. Run `npm run test:public-mount` and `npx tsx src/scripts/production-smoke-adversarial-test.ts` after mount changes.
+- Service metadata derives its public URL and service ID solely from the current manifest's `services.indexer`. There are no standalone identity/URL inputs. Advertise fresh reads only with exact current native network/release/hash bindings. Never default metadata to an unrelated public deployment. Public discovery, OpenAPI paths and docs use that exact manifest mount. Backend routes remain `/api/indexer`; an externally reviewed proxy maps a distinct public mount to them without redirecting to another release. Production smoke derives the mount and public identity from its pinned manifest, and rejects a conflicting explicit mount. Run `npm run test:public-mount` and `npx tsx src/scripts/production-smoke-adversarial-test.ts` after mount changes.
 - First-release perps instruments bind the declared market ID and symbol to
   the explicit spot pool and `templates.DlmmPool` code hash. Oracle pool candles use the canonical
   `perps-oracle:{marketId}` key; never substitute a spot pool by symbol. Current
@@ -165,14 +165,15 @@ The current oracle journal stores count:uint16, nextWireQueryId:uint64, an eligi
 Registered testnet perps engines require the reviewed macOS arm64 admission runtime.
 Configure all four `PERPS_ADMISSION_BINARY_PATH`, `PERPS_ADMISSION_BINARY_SHA256`,
 `PERPS_ADMISSION_CONFIG_PATH`, and `PERPS_ADMISSION_CONFIG_SHA256` values together.
-Startup authenticates the chain, fresh exact-block engine state and configured code
-before readiness. OPEN/CLOSE admission uses only the bounded native workers, with
+The HTTP listener opens before native authentication. Readiness requires the chain,
+fresh exact-block engine state and configured code to authenticate; failed native
+startup retries with bounded backoff without replaying an admission request. OPEN/CLOSE admission uses only the bounded native workers, with
 authenticated account/configuration/context, a hard gas maximum, and no generic
 remote-getter fallback or response cache. Preserve actual economic denial, VM exit
 and gas usage separately from typed infrastructure errors. Run `npm run test:admission`
 and the complete `npm test`; the ordinary build must retain owned clean-dist cleanup.
-The native package is qualified and installed separately; the Linux Docker image
-does not provide it or support a registered perps engine.
+The native package is qualified and installed separately on its supported host.
+There is no generic container deployment for this release.
 
 Current routed DLMM observations require strict RTR1/extras5/RSJ8 historical router
 state and the sole RSWI/RPSX/RPSC/RPCA ordinary single-pool wire. Payer funding,
@@ -212,3 +213,26 @@ bypass. Capture evidence and runtime admission are separate: this migration does
 not relax the macOS arm64 admission binary/configuration requirements. Run
 `npm run test:capture-build`, all ledger checks, the full suite and the ordinary
 clean-dist build after capture verifier changes.
+
+
+## Current chain, API and ledger contract
+
+The sole chain source is the reviewed local liteserver pool. The selected network requires an absolute local global-config file or an explicit inline peer list. No HTTP source, remote pool URL, public endpoint default, discovery service or alternate RPC proxy is supported. Configuration and admission artifacts validate before listen; chain, database and admission initialization start after listen. Listener availability never establishes ledger or native readiness. Namespace/catalog/release conflicts remain unavailable without resetting operational data.
+
+One monotonic network-authenticated head pins each current batch. Accounts carry real shard-block anchors and chain creation times; server time never supplies a chain anchor. Completed getters and balances are not cached. Snapshot reuse must be explicit and retain its original asOfSeqno; farms and volatility snapshots cannot reuse time-dependent values. Cancellation and bounded deadlines apply to callers and underlying shared work. Typed REST failures use flat `{error,code}` with honest 400/404/415/429/500/503/504 statuses and no-store; retryable 429/503/504 responses include Retry-After. JSON-RPC uses the same source and authentic anchors. Enabled BOC submission is single-attempt and never retried or hedged.
+
+Balance rows always include GRAM and every manifest root in manifest order, with manifest decimals, atomic strings, exact head sequence/time and complete. Verified values are ok, qualified undeployed wallets are not_deployed with zero, and failed or unqualified reads are unavailable with null amounts. SSE shares one HeadFeed and at most eight simultaneous owner reads; unavailable transitions never fabricate balance changes. Display metadata is never accounting precision.
+
+The in-process limiter accepts a visitor IP only with a valid X-TONSwap-Edge-Key and X-TONSwap-Client-IP. Otherwise it keys on the raw socket address. X-Forwarded-For is never trusted. INDEXER_EDGE_KEY requires at least 32 characters. The proxy template forwards the two headers, blocks operational endpoints, preserves application errors and streams, and supplies the exact static JSON 503 only for an unavailable backend. It does not run a second limiter.
+
+Stored historyComplete means genesis-linked physical history, separately from current-boundary coverage. Every owner cycle pins one head; coverage.boundary uses chain time while checkedAt, headObservedAt and publishedAt are server observations. Every previously published physical graph account must remain at an equal-or-later head with exact hash at equal LT, and every prior resolved binding must stay resolved. An unresolved refresh retains the immutable publication. Positive evidence needs its concrete transactions; negative conclusions require current-boundary coverage. Current root pages merge only the completed owner check for that publication; cursor generations never change. Related generation IDs, timestamps and mutable refresh-pending diagnostics never change the exact-ledger-v21 economic fingerprint.
+
+The priority scheduler reserves one foreground slot, uses independent per-account page allowances and retries after 2–60 seconds. A thirty-second sweep schedules recent or unresolved owner watches. Singleton prewarm does not consume watch capacity. INDEXER_LEDGER_WORKERS is 2–8 (default 3), worker-pool capacity is workers × 5 + 4 and the separate read pool has 10 connections; budget both pools across every worker process. Perps bounded-range read/admission work uses the read pool while collection and sweeps use workers, retaining the independent bounded-range schema and locks.
+
+Cross-repository qualification relies on unchanged createReleaseLedgerPool(url,hash,options?), PostgresLedgerStore constructor/initialize/begin/append/project/complete/page surfaces, exact readiness success keys and build identity inputs, canonical schema and immutable cursor behavior. Use a fresh canonical database for this first-release schema; do not migrate, reset or weaken the native qualification contract. Qualification reads stored physical history independently from owner publication and orders logical times numerically.
+
+Only gate packages start an isolated native PostgreSQL test server. Native sections use the sole INDEXER_TEST_DATABASE_URL and create their own random loopback schema. npm run test:ledger passes with only PATH and LANG; server-dependent sections stay optional. Package acceptance runs only owned scripts and a scoped typecheck. The phase does not read the npm registry or modify worktree node_modules. Dependency edits are manual and proved by an offline install/test in a separate scratch copy, with the documented fallback if the local cache cannot complete it.
+
+Disk monitoring never deletes operational data. Unknown capacity is critical; low/critical capacity skips snapshot saves and critical health returns 503. Snapshots serialize through the asynchronous writer, use one owned temporary file per target and are awaited during shutdown. Logs and metric series are bounded and expose dropped counts. Runtime metrics include source/database/phase timing, scheduler depth, foreground age, pool wait, first-publication latency and database size; additive concurrent I/O totals need not equal wall-clock phases.
+
+Publish this phase's web first, then switch the indexer within one release window. Keep the old indexer/database available for proxy rollback; the new web stays. No acceptance run or release announcement belongs between those two cutover steps.

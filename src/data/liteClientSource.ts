@@ -16,17 +16,16 @@ import {
 } from '@ton/core';
 import { LiteClient, type LiteEngine } from 'ton-lite-client';
 import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError } from './boundedLiteEngine';
-import { loadLiteserverPool, type LiteserverPeer } from './liteserverPool';
+import type { LiteserverPeer } from './liteserverPool';
 import { HeadTracker } from './headTracker';
 import { readAccountAnchor, blockHeaderTime } from './accountAnchor';
-import { assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
-  FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
+import { assertFreshBlock, assertFreshNetwork, executeFreshCalls, freshMasterchainBlock,
+  FreshReadUnavailableError, type FreshReadCall } from './freshRead';
 import { errorDiagnostic, type Logger } from '../utils/logger';
 import { Functions } from 'ton-lite-client/dist/schema';
 import { Network } from '../models';
 import {
   AccountStateResponse,
-  MasterchainInfo,
   RawTransaction,
   ChainReadError, type ChainSource, type ChainHead, type ReadOptions,
   TransactionCursor,
@@ -35,14 +34,6 @@ import {
   MAX_HISTORICAL_REPLAY_TRANSACTIONS, replayHistoricalAccount, replayBlockContext,
   verifiedReplayBlock, type HistoricalReplayStep,
 } from './historicalReplay';
-import { parseJettonMetadata } from '../utils/jettonMetadata';
-import {
-  cellFromAccountCodeBoc,
-  isSuccessfulGetterResult,
-  parseCanonicalJettonRootData,
-  readCanonicalJettonBalance
-} from './jettonAbi';
-
 const cellToBase64 = (cell: Cell | null | undefined): string | undefined => {
   if (!cell) return undefined;
   return cell.toBoc({ idx: false }).toString('base64');
@@ -270,9 +261,6 @@ export class LiteClientDataSource implements ChainSource {
     this.logger = options.logger;
     this.heads = new HeadTracker(this.network, options.observer?.head);
   }
-  static async create(network: Network, pool: string | undefined, logger: Logger) {
-    return createLiteChainSource({ network, peers: loadLiteserverPool(pool), logger });
-  }
   private ensure(): BoundedLiteEngine {
     if (this.closed) throw new ChainReadError('upstream_unavailable');
     if (!this.engine) {
@@ -397,9 +385,6 @@ export class LiteClientDataSource implements ChainSource {
     );
   }
 
-  async getMasterchainInfo(): Promise<MasterchainInfo> {
-    const head = await this.head(); return { seqno: head.seqno, timestamp: head.utime };
-  }
   async getAccountState(address: string, options: ReadOptions = {}): Promise<AccountStateResponse> {
     return this.scope(options, async signal => {
       const head = options.at ?? await this.head({ signal });
@@ -419,12 +404,6 @@ export class LiteClientDataSource implements ChainSource {
       });
       return { head, results };
     }, 18_000);
-  }
-  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
-    const queriedAt = Date.now(), { head, results } = await this.read(calls);
-    const batch: FreshReadBatch = { network: this.network, readContext: { source: 'lite', head, queriedAt }, results };
-    assertFreshReadBatch(batch, calls, this.network, queriedAt);
-    return batch;
   }
   async getAccountStateAtSeqno(address: string, seqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
     return this.scope(options, async signal => this.ensure().withOptions({ signal, awaitSeqno: seqno }, async () => {
@@ -608,30 +587,6 @@ export class LiteClientDataSource implements ChainSource {
       exitCode,
       stack
     };
-  }
-
-  async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
-    return readCanonicalJettonBalance({
-      owner,
-      master,
-      runGetMethod: (address, method, args = []) => this.runGetMethod(address, method, args),
-      readAccountCode: async (address) => {
-        const state = await this.getAccountState(address);
-        if (state.accountState !== 'active') return null;
-        return cellFromAccountCodeBoc(state.codeBoc);
-      }
-    });
-  }
-
-  async getJettonMetadata(master: string) {
-    try {
-      const result = await this.runGetMethod(master, 'get_jetton_data', []);
-      if (!isSuccessfulGetterResult(result)) return null;
-      const data = parseCanonicalJettonRootData(result.stack);
-      return data ? parseJettonMetadata(data.content) : null;
-    } catch {
-      return null;
-    }
   }
 
   async sendMessage(boc: Buffer, options: { signal?: AbortSignal } = {}): Promise<void> {

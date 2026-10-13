@@ -10,9 +10,12 @@ import {
   buildTonswapJettonWalletInitialData,
   parseCanonicalJettonRootData,
   parseCanonicalJettonWalletAddress,
-  parseCanonicalJettonWalletData,
-  readCanonicalJettonBalance
+  parseCanonicalJettonWalletData
 } from '../data/jettonAbi';
+import { createJettonWalletReader } from '../data/jettonWallet';
+import { ChainReadError } from '../data/dataSource';
+import { fakeChainSource } from './support/fakeChainSource';
+import { fixtureHead } from './support/chainFixture';
 
 import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 
@@ -61,6 +64,33 @@ const walletStack = (
 
 type GetterName = 'get_jetton_data' | 'get_wallet_address' | 'get_wallet_data';
 
+// Exercise the current foreign-root reader while retaining the existing ABI
+// fixture's nullable result convention. Only production status:ok is a value.
+const readFixtureBalance = async (reader: {
+  owner: string; master: string;
+  runGetMethod: (address: string, method: GetterName, args?: TupleItem[]) => Promise<{ exitCode: number; stack: TupleItem[] } | null>;
+  readAccountCode: (address: string) => Promise<Cell | null>;
+}) => {
+  const at = fixtureHead();
+  const source = fakeChainSource({
+    head: async () => at,
+    getAccountState: async (address, options) => {
+      assert.deepEqual(options?.at, at, 'root and wallet identities use the selected head');
+      const code = address === reader.master ? walletCode : await reader.readAccountCode(address);
+      return { balance: '0', accountState: 'active', codeBoc: code?.toBoc().toString('base64'),
+        lastTxLt: '1', lastTxHash: '1'.repeat(64) };
+    },
+    runGetMethod: async (address, method, args, options) => {
+      assert.deepEqual(options?.at, at, 'canonical getter reads share the selected head');
+      const result = await reader.runGetMethod(address, method as GetterName, args);
+      if (!result) throw new ChainReadError('upstream_unavailable');
+      return result;
+    },
+  });
+  const result = await createJettonWalletReader({ source, walletTemplateCodeHash: null }).wallet(reader.master, reader.owner);
+  return result.status === 'ok' ? { wallet: result.wallet, balance: result.balanceRaw } : null;
+};
+
 const runBalanceRead = async (overrides: {
   result?: Partial<Record<GetterName, { exitCode: number; stack: TupleItem[] } | null>>;
   accountCode?: Cell | null;
@@ -72,7 +102,7 @@ const runBalanceRead = async (overrides: {
     get_wallet_address: { exitCode: 0, stack: walletAddressStack() },
     get_wallet_data: { exitCode: 0, stack: walletStack() }
   };
-  return readCanonicalJettonBalance({
+  return readFixtureBalance({
     owner: owner.toRawString(),
     master: root.toRawString(),
     runGetMethod: async (_address, method) => {
@@ -230,7 +260,7 @@ const main = async () => {
     wallet_address: { exitCode: 0, stack: walletAddressStack() },
     wallet_data: { exitCode: 0, stack: walletStack() }
   };
-  const legacyAddressOnly = await readCanonicalJettonBalance({
+  const legacyAddressOnly = await readFixtureBalance({
     owner: owner.toRawString(),
     master: root.toRawString(),
     runGetMethod: async (_address, method) => {
@@ -250,7 +280,7 @@ const main = async () => {
     get_wallet_address: { exitCode: 0, stack: walletAddressStack() },
     wallet_data: { exitCode: 0, stack: walletStack() }
   };
-  const legacyWalletOnly = await readCanonicalJettonBalance({
+  const legacyWalletOnly = await readFixtureBalance({
     owner: owner.toRawString(),
     master: root.toRawString(),
     runGetMethod: async (_address, method) => {
