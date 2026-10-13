@@ -78,6 +78,9 @@ export type DlmmLiquidityMetadata = {
 };
 export type LedgerRelatedAccount = {
   account: string;
+  headLt?: string | null;
+  headHash?: string | null;
+  atBoundary?: boolean;
   generation: string | null;
   historyComplete: boolean;
   role:

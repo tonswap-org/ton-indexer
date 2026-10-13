@@ -70,7 +70,10 @@ CREATE TABLE IF NOT EXISTS ledger_projection_coverage (
   projection_scope jsonb NOT NULL,
   fingerprint text NOT NULL,
   related_accounts jsonb NOT NULL,
-  issues jsonb NOT NULL
+  issues jsonb NOT NULL,
+  boundary_seqno bigint,
+  boundary_utime bigint,
+  CHECK ((boundary_seqno IS NULL) = (boundary_utime IS NULL))
 );
 -- Owner-specific publication order is allocated under one transactional row
 -- lock. It never relies on a global sequence whose commits can arrive out of order.
@@ -109,8 +112,34 @@ CREATE TABLE IF NOT EXISTS ledger_account_states (
 CREATE TABLE IF NOT EXISTS ledger_watch_accounts (
   network text NOT NULL,
   account text NOT NULL,
+  requested_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(network,account),
   FOREIGN KEY(network,account) REFERENCES ledger_accounts(network,account)
+);
+
+-- Mutable owner rechecks are separate from immutable published coverage.
+CREATE TABLE IF NOT EXISTS ledger_owner_checks (
+  network text NOT NULL,
+  account text NOT NULL,
+  checked_at timestamptz NOT NULL,
+  boundary_seqno bigint NOT NULL,
+  boundary_utime bigint NOT NULL,
+  head_vector jsonb NOT NULL,
+  pending_accounts jsonb NOT NULL DEFAULT '[]',
+  bindings jsonb NOT NULL DEFAULT '{}',
+  unresolved boolean NOT NULL DEFAULT false,
+  error_code text,
+  PRIMARY KEY (network, account),
+  FOREIGN KEY (network, account) REFERENCES ledger_accounts(network, account)
+);
+CREATE TABLE IF NOT EXISTS ledger_wallet_identities (
+  network text NOT NULL,
+  wallet text NOT NULL,
+  owner text NOT NULL,
+  master text NOT NULL,
+  code_hash text NOT NULL,
+  verified_seqno bigint NOT NULL,
+  PRIMARY KEY (network, wallet)
 );
 
 -- Immutable market evidence is separate from account/owner projections and from

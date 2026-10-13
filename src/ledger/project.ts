@@ -91,6 +91,10 @@ export function chainCoversTransaction(chain: LedgerChain | undefined, tx: RawTr
   return Boolean(chain && (chain.historyComplete || (chain.verifiedRange &&
     tx.utime >= chain.verifiedRange.fromUtime && tx.utime < chain.verifiedRange.toUtime)));
 }
+/** Complete history supports absence only when it also reaches this cycle's boundary. */
+export function chainAtBoundary(chain: LedgerChain | undefined): boolean {
+  return Boolean(chain && chain.historyComplete && chain.atBoundary !== false && !chain.verifiedRange);
+}
 export type LedgerPool = {
   address: string;
   tokenT: string;

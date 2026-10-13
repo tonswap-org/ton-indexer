@@ -119,7 +119,10 @@ export class PostgresLedgerStore {
         readFileSync(resolve(__dirname, "../../sql/ledger.sql"), "utf8"),
       );
       // This first-release schema must already be canonical; never infer old scope.
-      await client.query("SELECT projection_scope FROM ledger_projection_coverage LIMIT 0");
+      await client.query("SELECT projection_scope,boundary_seqno,boundary_utime FROM ledger_projection_coverage LIMIT 0");
+      await client.query("SELECT requested_at FROM ledger_watch_accounts LIMIT 0");
+      await client.query("SELECT network,account,checked_at,boundary_seqno,boundary_utime,head_vector,pending_accounts,bindings,unresolved,error_code FROM ledger_owner_checks LIMIT 0");
+      await client.query("SELECT network,wallet,owner,master,code_hash,verified_seqno FROM ledger_wallet_identities LIMIT 0");
       await client.query("SELECT discovery_revision FROM ledger_runs LIMIT 0");
       await client.query("SELECT generation_order,backoff_seconds,retry_after FROM ledger_perps_ranges LIMIT 0");
     } finally {
