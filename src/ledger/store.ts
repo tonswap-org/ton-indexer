@@ -104,6 +104,16 @@ export function projectionFingerprint(
     .digest("hex");
 }
 
+export type OwnerCheckRecord = {
+  checkedAt: string;
+  boundary: { seqno: number; utime: number };
+  headVector: Array<{ account: string; headLt: string | null; headHash: string | null }>;
+  pendingAccounts: string[];
+  bindings: Record<string, boolean>;
+  unresolved: boolean;
+  errorCode: string | null;
+};
+
 export class LedgerCursorError extends Error {}
 
 export class PostgresLedgerStore {
@@ -139,9 +149,13 @@ export class PostgresLedgerStore {
     work: () => Promise<void>,
   ): Promise<boolean> {
     const client = await this.pool.connect();
-    const key = `ledger:${network}:${account}`;
+    let key: string | undefined;
     let locked = false;
     try {
+      // Resolve on the lock's own connection: search_path is session state.
+      const schema = (await client.query("SELECT current_schema() AS schema")).rows[0]?.schema;
+      if (typeof schema !== "string" || !schema) throw new Error("ledger_schema_unavailable");
+      key = `ledger:${schema}:${network}:${account}`;
       locked =
         (
           await client.query(
@@ -173,6 +187,31 @@ export class PostgresLedgerStore {
         )
       ).rows[0] ?? null
     );
+  }
+
+  async ownerCheck(network: Network, account: string): Promise<OwnerCheckRecord | null> {
+    const row = (await this.pool.query(
+      "SELECT * FROM ledger_owner_checks WHERE network=$1 AND account=$2", [network, account],
+    )).rows[0];
+    return row ? {
+      checkedAt: new Date(row.checked_at).toISOString(),
+      boundary: { seqno: Number(row.boundary_seqno), utime: Number(row.boundary_utime) },
+      headVector: row.head_vector, pendingAccounts: row.pending_accounts,
+      bindings: row.bindings, unresolved: row.unresolved, errorCode: row.error_code,
+    } : null;
+  }
+
+  async saveOwnerCheck(network: Network, account: string, record: OwnerCheckRecord): Promise<void> {
+    await this.pool.query(`INSERT INTO ledger_owner_checks
+      (network,account,checked_at,boundary_seqno,boundary_utime,head_vector,pending_accounts,bindings,unresolved,error_code)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10)
+      ON CONFLICT(network,account) DO UPDATE SET checked_at=EXCLUDED.checked_at,
+      boundary_seqno=EXCLUDED.boundary_seqno,boundary_utime=EXCLUDED.boundary_utime,
+      head_vector=EXCLUDED.head_vector,pending_accounts=EXCLUDED.pending_accounts,
+      bindings=EXCLUDED.bindings,unresolved=EXCLUDED.unresolved,error_code=EXCLUDED.error_code`,
+      [network, account, record.checkedAt, record.boundary.seqno, record.boundary.utime,
+        JSON.stringify(record.headVector), JSON.stringify(record.pendingAccounts),
+        JSON.stringify(record.bindings), record.unresolved, record.errorCode]);
   }
 
   async begin(
@@ -309,6 +348,24 @@ export class PostgresLedgerStore {
       WHERE m.generation=$1 ON CONFLICT DO NOTHING`,
       [generation],
     );
+    return true;
+  }
+
+  /** Reuse a chain linked to genesis without publishing its owner projection.
+   * Callers hold the account lock. Scope and exact tail membership are checked;
+   * no projected events or coverage are copied from the source generation. */
+  async copySourceTail(generation: string, sourceGeneration: string, lt: string, hash: string): Promise<boolean> {
+    const target = await this.assertWritable(this.pool, generation);
+    const match = await this.pool.query(`SELECT 1 FROM ledger_membership m JOIN ledger_runs r USING(generation)
+      WHERE m.generation=$1 AND m.lt=$2 AND m.hash=$3 AND r.source_complete=true
+      AND r.network=$4 AND r.account=$5`, [sourceGeneration, lt, hash, target.network, target.account]);
+    if (!match.rows.length) return false;
+    await this.pool.query(`INSERT INTO ledger_membership(generation,network,account,lt,hash)
+      SELECT $1,network,account,lt,hash FROM ledger_membership WHERE generation=$2 AND lt <= $3
+      ON CONFLICT DO NOTHING`, [generation, sourceGeneration, lt]);
+    await this.pool.query(`INSERT INTO ledger_projection_events(generation,event_id,network,account,lt,hash,utime,event)
+      SELECT $1,t.event_id,t.network,t.account,t.lt,t.hash,t.utime,t.event FROM ledger_membership m
+      JOIN ledger_transactions t USING(network,account,lt,hash) WHERE m.generation=$1 ON CONFLICT DO NOTHING`, [generation]);
     return true;
   }
 
