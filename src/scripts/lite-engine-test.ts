@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import { createServer, type AddressInfo } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { performance } from 'node:perf_hooks';
 import type { ADNLClientTCP } from 'adnl';
@@ -11,6 +12,20 @@ import { FakeLiteEngine } from './support/fakeLiteEngine';
 
 const method: TLFunction<{}, number> = { encodeRequest: (_req, writer) => { writer.writeInt32(1); }, decodeResponse: reader => reader.readInt32() };
 async function main() {
+  // Exercise the installed ADNL client's socket path, exclusively on loopback.
+  let accept!: () => void;
+  const accepted = new Promise<void>(resolve => { accept = resolve; });
+  const server = createServer(socket => { assert.equal(socket.remoteAddress, '::1'); socket.destroy(); accept(); });
+  server.listen(0, '::1'); await once(server, 'listening');
+  const ipv6 = new AbortableLitePeer(`tcp://[::1]:${(server.address() as AddressInfo).port}`, Buffer.alloc(32, 3));
+  let deadline: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([accepted, new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => reject(Error('IPv6 ADNL socket never reached loopback')), 2_000);
+    })]);
+  } finally {
+    clearTimeout(deadline); ipv6.close(); await new Promise<void>(resolve => server.close(() => resolve()));
+  }
   const failing = new FakeLiteEngine(async () => { throw new Error('peer unavailable'); });
   const healthy = new FakeLiteEngine(async () => 7);
   const observations: Array<{ index: number; ok: boolean; ms: number }> = [];

@@ -33,6 +33,15 @@ function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** adnl passes URL.hostname directly to Socket.connect. Node's URL retains
+ * IPv6 brackets, while a socket requires the bare address. */
+class PoolADNLClientTCP extends ADNLClientTCP {
+  constructor(host: string, publicKey: Buffer) {
+    super(host, publicKey);
+    if (this.host.startsWith('[') && this.host.endsWith(']')) this.host = this.host.slice(1, -1);
+  }
+}
+
 /** The installed LiteSingleEngine cannot cancel an individual pending query.
  * This small ADNL adapter owns that lifecycle, including timers and reconnects;
  * cancelling one request never disconnects another request on the same peer. */
@@ -43,7 +52,7 @@ export class AbortableLitePeer extends EventEmitter implements LiteEngine {
   private reconnect?: NodeJS.Timeout;
   private readonly pending = new Map<string, { finish(error?: unknown, value?: unknown): void; decode(data: Buffer): unknown }>();
   constructor(private readonly host: string, private readonly publicKey: Buffer,
-    private readonly clientFactory: (host: string, publicKey: Buffer) => ADNLClientTCP = (host, key) => new ADNLClientTCP(host, key)) {
+    private readonly clientFactory: (host: string, publicKey: Buffer) => ADNLClientTCP = (host, key) => new PoolADNLClientTCP(host, key)) {
     super();
     this.connect();
   }
