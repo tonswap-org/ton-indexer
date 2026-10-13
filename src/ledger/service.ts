@@ -83,6 +83,7 @@ export class LedgerService {
     this.source = new Proxy(target, { get: (object, key) => {
       const value = Reflect.get(object, key);
       if (typeof value !== 'function') return value;
+      if (key === 'health') return value.bind(object);
       return async (...args: unknown[]) => {
         const context = ledgerCycleIo.getStore(), started = performance.now();
         try { return await value.apply(object, args); }
