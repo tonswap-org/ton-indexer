@@ -5,7 +5,8 @@ import type { LedgerOptionsCodeHashes, LedgerLaunchpadCodeHashes, LedgerT3Redemp
 
 export type RuntimeManifestBindings = {
   network: Network;
-  jettonRoots: Array<{ master: string; symbol: string }>;
+  jettonRoots: Array<{ master: string; symbol: string; decimals: number }>;
+  walletTemplateCodeHash: string | null;
   dlmmRegistry?: string;
   optionFactory?: string;
   optionVault?: string;
@@ -43,7 +44,8 @@ export function deriveRuntimeManifestBindings(manifest: RuntimeReleaseManifest):
   }
   return {
     network,
-    jettonRoots: manifest.tokens.map(token => ({ master: token.root, symbol: token.symbol })),
+    jettonRoots: manifest.tokens.map(token => ({ master: token.root, symbol: token.symbol, decimals: token.decimals })),
+    walletTemplateCodeHash: templates.JettonWallet ?? null,
     dlmmRegistry: contracts.DlmmRegistry?.address,
     optionFactory: contracts.OptionFactory?.address,
     optionVault: contracts.OptionVault?.address,

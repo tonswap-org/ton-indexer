@@ -73,8 +73,9 @@ const sameAddress = (left: Address, right: Address) => left.equals(right);
  * Builds the exact initial persistent-data cell used by TONSWAP JettonWallet.
  *
  * TEP-74 does not standardize wallet storage, so this helper must only be used
- * for TONSWAP roots whose getter address is independently checked against the
- * resulting StateInit. JTW1 stores bounded identity, accounting and journal
+ * for TONSWAP roots whose own wallet code matches the release template; release
+ * qualification independently checks the getter address against this StateInit.
+ * JTW1 stores bounded identity, accounting and journal
  * groups and the protected Pool/application policies in four references; those references
  * are part of the wallet address.
  */
