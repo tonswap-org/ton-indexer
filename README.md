@@ -167,6 +167,14 @@ fresh reads continue to bypass this account cache entirely. Run
 `npx tsx src/scripts/lite-account-cache-test.ts` for retention and real SDK
 DataLoader regressions. These limits bound cache retention, not active reads or
 the process's total heap.
+
+Full code/data BOCs use canonical base64 and exactly one root. Their immutable
+structural validation is reused by exact original content across source, resilient
+and service checks, bounded to 64 entries and 4 MiB of retained key storage. No
+Cell graph or account observation is retained; every request still checks its
+current head, network, query time, balances, pointers and result identity. Oversized
+valid BOCs parse normally without retention; malformed inputs never supply a cache
+entry. The fresh suite tests exact-byte changes and count/byte eviction.
 All HTTP account reads use the current SDK account shape: malformed or missing
 atomic balances and partial transaction cursors fail instead of becoming zero or
 empty history. Explicit null cursors and complete uint64-zero/hash-zero cursors

@@ -1,8 +1,9 @@
-import { Address, Cell, type TupleItem } from '@ton/core';
+import { Address, type TupleItem } from '@ton/core';
 import { matchesPublicRpcNetwork } from '../api/rpcNetwork';
 import type { Network } from '../models';
 import type { AccountStateResponse, TonBlockIdExt } from './dataSource';
 import { assertAccountTransactionPointer } from './accountState';
+import { hasSingleRootFreshBoc } from './freshBocValidation';
 
 export type FreshReadCall =
   | { kind: 'account'; address: string }
@@ -75,7 +76,7 @@ function assertAccount(state: AccountStateResponse): void {
     || !['active', 'uninitialized', 'frozen'].includes(state.accountState ?? '')) throw new FreshReadUnavailableError();
   for (const boc of [state.codeBoc, state.dataBoc]) {
     if (boc !== null && boc !== undefined) {
-      if (typeof boc !== 'string' || Cell.fromBoc(Buffer.from(boc, 'base64')).length !== 1) throw new FreshReadUnavailableError();
+      if (typeof boc !== 'string' || !hasSingleRootFreshBoc(boc)) throw new FreshReadUnavailableError();
     }
   }
   if (state.accountState === 'active' && (!state.codeBoc || !state.dataBoc)) throw new FreshReadUnavailableError();

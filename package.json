@@ -9,7 +9,7 @@
     "test:public-mount": "tsx src/scripts/public-mount-test.ts",
     "test:release-surface": "tsx src/scripts/first-release-surface-test.ts",
     "test:rpc-network": "tsx src/scripts/rpc-network-test.ts",
-    "test:fresh-read": "tsx src/scripts/fresh-read-test.ts && tsx src/scripts/fresh-read-ownership-test.ts",
+    "test:fresh-read": "tsx src/scripts/fresh-read-test.ts && tsx src/scripts/fresh-read-ownership-test.ts && tsx src/scripts/fresh-boc-validation-test.ts",
     "test:balances": "tsx src/scripts/balance-latency-test.ts",
     "test:governance": "tsx src/scripts/governance-pagination-test.ts",
     "dev": "TON_NETWORK=testnet TON_DATASOURCE=lite LITESERVER_POOL_TESTNET=https://ton.org/testnet-global.config.json tsx src/index.ts",
