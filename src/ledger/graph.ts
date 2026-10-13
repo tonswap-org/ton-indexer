@@ -1,3 +1,4 @@
+import { jettonWalletOrNull } from '../data/jettonWalletCompat';
 import type { DlmmMarketBinding } from "./marketTypes";
 import { readDlmmRouterState } from "./dlmmRouterState";
 import { readDlmmMarketState } from "./dlmmState";
@@ -18,7 +19,7 @@ import { optionOwnerAbort } from "./optionAbortWire";
 import { readOptionFactoryConfig } from "./optionLifecycleState";
 import type { LedgerOptionsCodeHashes } from "./bindings";
 import { Address, Cell, beginCell } from "@ton/core";
-import type { TonDataSource } from "../data/dataSource";
+import type { ChainSource } from "../data/dataSource";
 import type { Network } from "../models";
 import type { LedgerAsset, LedgerRelatedAccount } from "./types";
 import type { LedgerChain, LedgerPool, ProjectionInput } from "./project";
@@ -61,7 +62,7 @@ const stackAddress = (item: any) => {
 export class LedgerGraphBuilder {
   constructor(
     private network: Network,
-    private source: TonDataSource,
+    private source: ChainSource,
     private store: PostgresLedgerStore,
     private roots: string[],
     private registry: string | undefined,
@@ -166,8 +167,7 @@ export class LedgerGraphBuilder {
       return identity;
     };
     const ownerWallet = async (root: string) => {
-      const balance = await this.source
-        .getJettonBalance(owner, root)
+      const balance = await jettonWalletOrNull(this.source, owner, root)
         .catch(() => null);
       if (balance) {
         if (!(await wallet(balance.wallet, "owned_jetton_wallet")))
@@ -411,8 +411,7 @@ export class LedgerGraphBuilder {
       pools.set(candidate, pool);
       await load(candidate, "pool");
       for (const root of [pool.tokenT, pool.tokenX]) {
-        const balance = await this.source
-          .getJettonBalance(candidate, root)
+        const balance = await jettonWalletOrNull(this.source, candidate, root)
           .catch(() => null);
         if (balance) await wallet(balance.wallet, "counterparty");
         else issues.add("pool_wallet_identity_unresolved");
@@ -434,7 +433,7 @@ export class LedgerGraphBuilder {
             return transfer?.op === TRANSFER && transfer.owner === recipient && BigInt(transfer.amountRaw) > 0n;
           }));
           if (!dispatched) continue;
-          const delivered = await this.source.getJettonBalance(recipient, root).catch(() => null);
+          const delivered = await jettonWalletOrNull(this.source, recipient, root).catch(() => null);
           const identity = delivered ? await wallet(delivered.wallet, "counterparty") : null;
           if (!identity || identity.owner !== recipient || identity.master !== root) issues.add("dlmm_recipient_wallet_unresolved");
         }
@@ -504,8 +503,7 @@ export class LedgerGraphBuilder {
                 parties.add(payout.recipient);
             }
           for (const party of parties) {
-            const balance = await this.source
-              .getJettonBalance(party, collateralRoot)
+            const balance = await jettonWalletOrNull(this.source, party, collateralRoot)
               .catch(() => null);
             if (!balance) {
               issues.add("option_custody_wallet_identity_unresolved");
@@ -681,8 +679,7 @@ export class LedgerGraphBuilder {
               hub.receiver = receiver;
               await load(receiver, "controlled_contract");
               for (const root of hub.reserveRoots) {
-                const b = await this.source
-                  .getJettonBalance(receiver, root)
+                const b = await jettonWalletOrNull(this.source, receiver, root)
                   .catch(() => null);
                 if (b) {
                   const a = await wallet(b.wallet, "owned_jetton_wallet");

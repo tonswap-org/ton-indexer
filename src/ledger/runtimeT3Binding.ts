@@ -1,5 +1,5 @@
 import { Cell } from '@ton/core';
-import type { TonDataSource } from '../data/dataSource';
+import type { ChainSource } from '../data/dataSource';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
 import type { LedgerT3RedemptionBinding } from './bindings';
 import { readT3RecoveryRoot } from './t3RecoveryState';
@@ -7,7 +7,7 @@ import { perpsWalletAddress } from './perpsWire';
 
 /** Use the manifest's approved code hashes and the root's authenticated wallet
  * Cell. Discovery never enrolls today's observed code as a trusted decoder. */
-export async function deriveT3RedemptionBinding(manifest: RuntimeReleaseManifest, source: Pick<TonDataSource, 'getAccountState'>): Promise<LedgerT3RedemptionBinding | undefined> {
+export async function deriveT3RedemptionBinding(manifest: RuntimeReleaseManifest, source: Pick<ChainSource, 'getAccountState'>): Promise<LedgerT3RedemptionBinding | undefined> {
   const hub = manifest.contracts.T3, root = manifest.contracts.T3Root;
   if (!hub || !root) return undefined;
   const roots = ['USDT', 'USDC', 'KUSD'].map(symbol => manifest.tokens.find(token => token.symbol === symbol)?.root);

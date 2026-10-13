@@ -1,6 +1,6 @@
 import { Address, Cell, Message, beginCell, loadTransaction, storeStateInit } from '@ton/core';
 import {
-  RawMessage, RawTransaction, RawTransactionStatus, TonDataSource, TransactionCursor,
+  RawMessage, RawTransaction, RawTransactionStatus, ChainSource, TransactionCursor,
   transactionPageIsLinkedInclusiveSegment, transactionPageReachesHistoryStart,
 } from './dataSource';
 
@@ -205,7 +205,7 @@ const canonicalCursor = (lt: string, hash: string): TransactionCursor => {
 
 /** Read fresh original evidence directly, independently of the activity-summary cache. */
 export const readOriginalTransactionEvidence = async (
-  source: TonDataSource, address: string, limit: number, requestedCursor?: TransactionCursor, deadlineAt = Number.POSITIVE_INFINITY,
+  source: ChainSource, address: string, limit: number, requestedCursor?: TransactionCursor, deadlineAt = Number.POSITIVE_INFINITY,
 ): Promise<RawTransaction[]> => {
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Transaction evidence limit must be 1 through 50.');
   const account = Address.parse(address);
@@ -214,9 +214,7 @@ export const readOriginalTransactionEvidence = async (
   if (requestedCursor) {
     cursor = canonicalCursor(requestedCursor.lt, requestedCursor.hash);
   } else {
-    const state = source.getAccountStateLite
-      ? await source.getAccountStateLite(rawAddress)
-      : await source.getAccountState(rawAddress);
+    const state = await source.getAccountState(rawAddress);
     if (state.lastTxLt === undefined && state.lastTxHash === undefined) {
       if (state.accountState !== 'uninitialized') throw new Error('Existing account transaction evidence anchor is missing.');
       return [];

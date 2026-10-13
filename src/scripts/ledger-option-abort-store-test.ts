@@ -1,7 +1,8 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { beginCell, Cell } from "@ton/core";
 import { PGlite } from "@electric-sql/pglite";
-import type { TonDataSource } from "../data/dataSource";
+
 import { PostgresLedgerStore, type LedgerSqlPool } from "../ledger/store";
 import { LedgerService } from "../ledger/service";
 import { createLogger } from "../utils/logger";
@@ -78,9 +79,9 @@ export async function durableOptionAbort(
       type: "slice" as const,
       cell: beginCell().storeAddress(A(a)).endCell(),
     });
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({
     network: "testnet",
-    getMasterchainInfo: async () => ({ seqno: 1000 }),
+    head: async () => ({ seqno: 1000 }),
     getAccountState: async (a) => stateAtSeq(a),
     getAccountStateAtSeqno: async (a, s) => stateAtSeq(a, s),
     getTransactions: async (a, limit, lt) =>
@@ -89,11 +90,11 @@ export async function durableOptionAbort(
         .slice()
         .reverse()
         .slice(0, limit),
-    getJettonBalance: async (p, m) =>
+    walletBalance: async (p, m) =>
       m === root && [owner, other, factory, vault].includes(p)
         ? { wallet: wallet(p), balance: "0" }
         : null,
-    getJettonMetadata: async () => ({ decimals: 9 }),
+    jettonMetadata: async () => ({ decimals: 9 }),
     close: async () => {},
     runGetMethod: async (account, method) => {
       const asset = f.input.wallets.get(account);
@@ -127,7 +128,7 @@ export async function durableOptionAbort(
         throw Error("Latest getter cannot prove an aborted purchase");
       return null;
     },
-  };
+  });
   const service = new LedgerService(
     "testnet",
     store,

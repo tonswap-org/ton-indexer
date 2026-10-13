@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay, setImmediate as nextTurn } from 'node:timers/promises';
@@ -8,7 +9,7 @@ import { LedgerService } from '../ledger/service';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import { loadOpcodes } from '../utils/opcodes';
 import type { Logger } from '../utils/logger';
-import type { TonDataSource } from '../data/dataSource';
+
 
 async function settle(service: PerpsRangeService) {
   while ((service as any).running.size) await Promise.allSettled((service as any).running.values());
@@ -42,11 +43,11 @@ async function main() {
   const now = Math.floor(Date.now() / 1000), bounds = { scope: 'perps' as const, fromUtime: now - 60, toUtime: now };
   const owner = (index: number) => `0:${BigInt(index).toString(16).padStart(64, '0')}`;
   let head = now - 1, reads = 0, inFlight = 0, peak = 0;
-  const source = { getMasterchainInfo: async () => {
+  const source = fixtureChainSource({ head: async () => {
     reads++; peak = Math.max(peak, ++inFlight);
     await nextTurn(); inFlight--;
-    return { seqno: 100, timestamp: head };
-  } } as unknown as TonDataSource;
+    return { seqno: 100, utime: head };
+  } });
   const workers: PerpsRangeService[] = [];
   const worker = (dataSource = source) => {
     const value = new PerpsRangeService('localnet', store, dataSource, opcodes, options);
@@ -80,7 +81,7 @@ async function main() {
     assert(peak > 0 && peak <= 2, 'startup and timer share the two-worker bound');
     assert.deepEqual(warnings, []);
     const outcomes = (await sql.query('SELECT status,error_code,count(*)::int AS count FROM ledger_perps_ranges GROUP BY status,error_code')).rows;
-    assert.deepEqual(outcomes, [{ status: 'failed', error_code: 'perps_range_archive_unavailable', count: 128 }]);
+    assert.deepEqual(outcomes, [{ status: 'failed', error_code: 'history_source_unavailable', count: 128 }]);
     const admitted = await ledger.page(owner(129), bounds);
     assert(admitted.coverage.generation);
     const stoppedRanges = (ledger as any).ranges as PerpsRangeService;
@@ -167,7 +168,7 @@ async function main() {
       let entered!: () => void, release!: () => void;
       const readEntered = new Promise<void>(resolve => { entered = resolve; });
       const released = new Promise<void>(resolve => { release = resolve; });
-      const held = worker({ getMasterchainInfo: async () => { entered(); await released; throw Error('held source unavailable'); } } as unknown as TonDataSource);
+      const held = worker(fixtureChainSource({ head: async () => { entered(); await released; throw Error('held source unavailable'); } }));
       const locked = randomUUID();
       await sql.query(`INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status)
         VALUES($1,'localnet',$2,$3,$4,$5,'pending')`, [locked, owner(400), bounds.fromUtime, bounds.toUtime, binding]);

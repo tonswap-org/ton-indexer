@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { beginCell, Dictionary, type Cell } from '@ton/core';
 import { createHash } from 'node:crypto';
@@ -46,9 +47,9 @@ const testUnknownJettonDecimalsAreOmitted = async () => {
   const owner = `0:${'1'.repeat(64)}`;
   const master = `0:${'2'.repeat(64)}`;
   const wallet = `0:${'3'.repeat(64)}`;
-  const source = {
+  const source = fixtureChainSource({
     network: 'testnet',
-    async getMasterchainInfo() {
+    async head() {
       return { seqno: 1 };
     },
     async getAccountState() {
@@ -60,16 +61,16 @@ const testUnknownJettonDecimalsAreOmitted = async () => {
     async runGetMethod() {
       return null;
     },
-    async getJettonBalance() {
+    async walletBalance() {
       return { wallet, balance: '7' };
     },
-    async getJettonMetadata() {
+    async jettonMetadata() {
       return null;
     },
     async close() {
       return;
     },
-  };
+  });
   const service = new IndexerService(
     config,
     new MemoryStore(config),
@@ -103,9 +104,9 @@ const testPartialBalancePreservesSourceFreshness = async () => {
     balance: '11',
     updatedAt: 1_234_000,
   });
-  const source = {
+  const source = fixtureChainSource({
     network: 'testnet',
-    async getMasterchainInfo() {
+    async head() {
       return { seqno: 1 };
     },
     async getAccountState() {
@@ -117,16 +118,16 @@ const testPartialBalancePreservesSourceFreshness = async () => {
     async runGetMethod() {
       return null;
     },
-    async getJettonBalance() {
+    async walletBalance() {
       return new Promise<null>(() => undefined);
     },
-    async getJettonMetadata() {
+    async jettonMetadata() {
       return null;
     },
     async close() {
       return;
     },
-  };
+  });
   const service = new IndexerService(
     config,
     store,

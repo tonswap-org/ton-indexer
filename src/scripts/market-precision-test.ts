@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -13,7 +14,7 @@ import { projectDlmmMarket } from '../ledger/marketProjection';
 import { PostgresMarketStore, validateMarketProjection } from '../ledger/marketStore';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import type { LedgerService } from '../ledger/service';
-import type { TonDataSource, AccountStateResponse } from '../data/dataSource';
+import type {AccountStateResponse} from '../data/dataSource';
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
 const fixturePath=resolve(__dirname,'fixtures/dlmm-referral-market-current/dlmm-market-precision.json');
 const f=JSON.parse(readFileSync(fixturePath,'utf8'));
@@ -72,7 +73,7 @@ async function graphAndStorage(){
   // Original executor account cells are authenticated above. Masterchain sequence
   // labels here model only the archive adapter, not a real network block proof.
   for(const b of f.boundaries)for(const value of [b.before,b.after]){const state={...value,accountState:value.accountState==='uninit'?'uninitialized':value.accountState};await pool.query('INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING',['localnet',b.account,state.lastTxLt,canonicalLedgerHash(state.lastTxHash),JSON.stringify({seqno:50,state})]);}
-  const reads:Array<[string,number]>=[];const source={network:'localnet',getAccountStateAtSeqno:async(root:string,seqno:number)=>{assert([binding.tokenT,binding.tokenX].includes(root));assert([49,50].includes(seqno));reads.push([root,seqno]);return structuredClone(rootState(root));}} as unknown as TonDataSource;
+  const reads:Array<[string,number]>=[];const source=fixtureChainSource({network:'localnet',getAccountStateAtSeqno:async(root:string,seqno:number)=>{assert([binding.tokenT,binding.tokenX].includes(root));assert([49,50].includes(seqno));reads.push([root,seqno]);return structuredClone(rootState(root));}});
   const ledger={network:'localnet',store,syncAccount:async()=>true} as unknown as LedgerService;
   const graph=await new DlmmMarketGraphBuilder(ledger,source).build(binding);const result=projectDlmmMarket(binding,graph.nodes,graph.dependencies);assert.equal(result.observations.length,5);assert.equal(result.historyComplete,true);assert.deepEqual(result.observations.map(o=>[o.assetPrecision.input.decimals,o.assetPrecision.output.decimals]),[[6,9],[9,6],[6,9],[6,9],[6,9]]);assert.equal(reads.length,4,'each root/block query is shared across all observations');
   validateMarketProjection(result);
@@ -89,11 +90,11 @@ async function graphAndStorage(){
   const unavailable=projectDlmmMarket(binding,graph.nodes.map(n=>({...n,assetPrecision:undefined})),graph.dependencies);assert.equal(unavailable.observations.length,5);assert.equal(unavailable.observations[0].assetPrecision.input.status,'unresolved');
   validateMarketProjection(unavailable);
   await pool.query('DELETE FROM market_root_archive_states');
-  const missingSource={network:'localnet',getAccountStateAtSeqno:async()=>{throw Error('archive unavailable');}} as unknown as TonDataSource;
+  const missingSource=fixtureChainSource({network:'localnet',getAccountStateAtSeqno:async()=>{throw Error('archive unavailable');}});
   const missingGraph=await new DlmmMarketGraphBuilder(ledger,missingSource).build(binding);const missing=projectDlmmMarket(binding,missingGraph.nodes,missingGraph.dependencies);assert.equal(missing.observations.length,5);assert.equal(missing.historyComplete,true);assert(missing.observations.every(o=>o.assetPrecision.input.status==='unresolved'&&o.assetPrecision.output.status==='unresolved'));validateMarketProjection(missing);
   // Simulate another publisher winning the same root/block insert. The graph
   // must return the winning immutable archive bytes, never the losing response.
-  const racingSource={network:'localnet',getAccountStateAtSeqno:async(root:string,seqno:number)=>{const state=rootState(root);await pool.query('INSERT INTO market_root_archive_states(network,root,seqno,snapshot,observed_at) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT DO NOTHING',['localnet',root,seqno,JSON.stringify(state),'2026-09-11T00:00:00.000Z']);return withContent(state,onchain({decimals:snake('18')}));}} as unknown as TonDataSource;
+  const racingSource=fixtureChainSource({network:'localnet',getAccountStateAtSeqno:async(root:string,seqno:number)=>{const state=rootState(root);await pool.query('INSERT INTO market_root_archive_states(network,root,seqno,snapshot,observed_at) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT DO NOTHING',['localnet',root,seqno,JSON.stringify(state),'2026-09-11T00:00:00.000Z']);return withContent(state,onchain({decimals:snake('18')}));}});
   const racingGraph=await new DlmmMarketGraphBuilder(ledger,racingSource).build(binding),racing=projectDlmmMarket(binding,racingGraph.nodes,racingGraph.dependencies);assert.deepEqual(racing.observations.map(o=>[o.assetPrecision.input.decimals,o.assetPrecision.output.decimals]),[[6,9],[9,6],[6,9],[6,9],[6,9]]);validateMarketProjection(racing);
   if(process.env.MARKET_PRECISION_EXPORT_DIR){const dir=process.env.MARKET_PRECISION_EXPORT_DIR;writeFileSync(resolve(dir,'resolved-market-page.json'),JSON.stringify(page,null,2)+'\n');writeFileSync(resolve(dir,'resolved-market-projection.json'),JSON.stringify(result,null,2)+'\n');}
   console.log('PASS authentic6/9 graph→exact projection→PostgreSQL roundtrip, four pinned root reads, durable archive reuse and atomic execution preservation');checks++;

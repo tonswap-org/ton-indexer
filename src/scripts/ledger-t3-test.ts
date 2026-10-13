@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import { writeCurrentJettonWalletStorage } from "../ledger/jettonWalletState";
 import './t3-mint-fees-test';
 import assert from "node:assert/strict";
@@ -11,7 +12,7 @@ import {
   type LedgerChain,
 } from "../ledger/project";
 import { LedgerGraphBuilder } from "../ledger/graph";
-import type { RawMessage, RawTransaction } from "../data/dataSource";
+import type { RawMessage, RawTransaction } from '../data/dataSource';
 import { loadOpcodes } from "../utils/opcodes";
 import { INTERNAL, NOTIFY, TRANSFER, BURN, BURN_NOTIFY } from "../ledger/wire";
 import { NATIVE_FUNDING } from "../ledger/nativeFunding";
@@ -28,7 +29,7 @@ import {
 import { PGlite } from "@electric-sql/pglite";
 import { LedgerService } from "../ledger/service";
 import { createLogger } from "../utils/logger";
-import type { TonDataSource } from "../data/dataSource";
+
 const address = (n: number) => `0:${n.toString(16).padStart(64, "0")}`,
   A = (s: string) => Address.parse(s);
 const code = beginCell().storeUint(17, 32).endCell();
@@ -710,15 +711,15 @@ async function discoverRejectedMintRefund(identityHash?: string, kind: 3 | 5 = 3
   routes[2] = { type: 'cell', cell: code };
   for (const [index, rootAddress] of [[3, roots[0]], [8, roots[1]], [13, roots[2]]] as const)
     routes[index] = slice(rootAddress);
-  const source = {
+  const source = fixtureChainSource({
     getAccountState: async (account: string) => account === hub
-      ? { accountState: 'active', codeBoc: code.toBoc().toString('base64'),
+      ? { balance: '0', accountState: 'active', codeBoc: code.toBoc().toString('base64'),
         dataBoc: state().toBoc().toString('base64') }
       : account === receiver
-        ? { accountState: 'active', codeBoc: code.toBoc().toString('base64'),
+        ? { balance: '0', accountState: 'active', codeBoc: code.toBoc().toString('base64'),
           dataBoc: Cell.EMPTY.toBoc().toString('base64') }
-        : { accountState: 'uninitialized', codeBoc: null, dataBoc: null },
-    getJettonBalance: async (holder: string, master: string) => {
+        : { balance: '0', accountState: 'uninitialized', codeBoc: null, dataBoc: null },
+    walletBalance: async (holder: string, master: string) => {
       if (holder === owner && master === root) return { wallet: tw, balance: '0' };
       const token = roots.indexOf(master);
       if (token < 0) return null;
@@ -748,7 +749,7 @@ async function discoverRejectedMintRefund(identityHash?: string, kind: 3 | 5 = 3
         stack: [integer(1n), integer(f.raw), integer(0n), integer(0n)] };
       return null;
     },
-  } as unknown as TonDataSource;
+  });
   const graph = await new LedgerGraphBuilder('localnet', source, store, [], undefined,
     async address => walletAssets.get(address) ?? null, async () => true, 256,
     undefined, hub, root).build(owner, owner);
@@ -1745,9 +1746,9 @@ async function database() {
       type: "slice" as const,
       cell: beginCell().storeAddress(A(v)).endCell(),
     });
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({
     network: "localnet",
-    getMasterchainInfo: async () => ({ seqno: 1 }),
+    head: async () => ({ seqno: 1 }),
     getAccountState: async (a) => {
       const head = f.input.chains.get(a)?.transactions.at(-1);
       return {
@@ -1767,13 +1768,13 @@ async function database() {
             .slice()
             .reverse()
             .slice(0, limit),
-    getJettonBalance: async (o, r) => {
+    walletBalance: async (o, r) => {
       const a = [...f.input.wallets.values()].find(
         (a) => a.owner === o && a.master === r,
       );
       return a ? { wallet: a.wallet!, balance: "0" } : null;
     },
-    getJettonMetadata: async () => ({ decimals: 9 }),
+    jettonMetadata: async () => ({ decimals: 9 }),
     close: async () => {},
     runGetMethod: async (a, m) => {
       const wallet = f.input.wallets.get(a);
@@ -1813,7 +1814,7 @@ async function database() {
         return { exitCode: 0, stack: [int(1), int(payout), int(1), int(wire)] };
       return null;
     },
-  };
+  });
   const service = new LedgerService(
     "localnet",
     store,

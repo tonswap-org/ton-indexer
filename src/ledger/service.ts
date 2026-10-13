@@ -1,7 +1,8 @@
+import { jettonWalletOrNull, jettonWalletReader } from '../data/jettonWalletCompat';
 import { metadataText } from "../utils/jettonMetadata";
 import { PerpsRangeService } from "./perpsRange";
 import { randomUUID } from "node:crypto";
-import type { TonDataSource } from "../data/dataSource";
+import type { ChainSource } from "../data/dataSource";
 import {
   transactionPageIsLinkedInclusiveSegment,
   transactionPageReachesHistoryStart,
@@ -34,7 +35,7 @@ export class LedgerService {
   constructor(
     readonly network: Network,
     readonly store: PostgresLedgerStore,
-    private source: TonDataSource,
+    private source: ChainSource,
     private opcodes: OpcodeSets,
     private logger: Logger,
     private concurrency = 2,
@@ -503,13 +504,13 @@ export class LedgerService {
     )
       return null;
     // The source validates root getter, wallet address, owner, and deployed code.
-    const verified = await this.source.getJettonBalance(owner, master);
+    const verified = await jettonWalletOrNull(this.source, owner, master);
     if (
       !verified ||
       canonicalLedgerAddress(verified.wallet) !== canonicalLedgerAddress(wallet)
     )
       return null;
-    const metadata = await this.source.getJettonMetadata(master);
+    const metadata = await jettonWalletReader(this.source).metadata(master);
     return {
       kind: "jetton",
       id: `${this.network}:jetton:${master}`,

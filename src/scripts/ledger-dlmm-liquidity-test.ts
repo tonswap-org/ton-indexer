@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,7 +15,7 @@ import { canonicalLedgerAddress, canonicalLedgerHash, normalizeLedgerEvent } fro
 import { LedgerGraphBuilder } from '../ledger/graph';
 import { readDlmmMarketState } from '../ledger/dlmmState';
 import { COLLECT, COLLECT_TO, REMOVE, opcode } from '../ledger/wire';
-import type { AccountStateResponse, RawTransaction, TonDataSource } from '../data/dataSource';
+import type {AccountStateResponse, RawTransaction} from '../data/dataSource';
 import type { MarketNode } from '../ledger/marketTypes';
 import type { LedgerAsset, LedgerEvidenceRef, LedgerEvent } from '../ledger/types';
 import { loadOpcodes } from '../utils/opcodes';
@@ -107,14 +108,14 @@ async function buildDiscovery(label: string, options: {missingRecipientWallet?: 
   const registry = new Address(0, Buffer.alloc(32, 0x72)).toRawString();
   const calls: {method: string; account?: string; master?: string; getter?: string}[] = [], forbiddenCalls: string[] = [], crawled: string[] = [];
   const requireRaw = (account: string) => assert.equal(account, canonicalLedgerAddress(account), 'all datasource and crawler addresses are canonical raw identities');
-  const sourceMethods = {
+  const sourceMethods = fixtureChainSource({
     network: 'localnet',
     getAccountState: async (account: string) => {
       requireRaw(account); calls.push({method: 'getAccountState', account});
       return structuredClone(current.get(account) ?? {balance: '0', accountState: 'uninitialized', lastTxLt: '0'});
     },
-    getJettonBalance: async (account: string, master: string) => {
-      requireRaw(account); requireRaw(master); calls.push({method: 'getJettonBalance', account, master});
+    walletBalance: async (account: string, master: string) => {
+      requireRaw(account); requireRaw(master); calls.push({method: 'walletBalance', account, master});
       if (options.missingRecipientWallet && account === fixture.accounts.recipient && master === binding.tokenT) return null;
       const asset = [...assets.values()].find(row => row.owner === account && row.master === master);
       // Provider-friendly wallet strings must be normalized before resolution or persistence.
@@ -130,11 +131,11 @@ async function buildDiscovery(label: string, options: {missingRecipientWallet?: 
       }
       throw new Error(`Unexpected read-only fixture getter: ${getter}`);
     },
-  };
+  });
   const source = new Proxy(sourceMethods, {get(target, key) {
     if (Object.hasOwn(target, key)) return Reflect.get(target, key);
     forbiddenCalls.push(String(key)); throw new Error(`Unsupported datasource operation: ${String(key)}`);
-  }}) as unknown as TonDataSource;
+  }});
   const db = new PGlite(); let discoveryReadOnly = false;
   const sql: LedgerSqlPool = {query: async (text, params) => {
     if (discoveryReadOnly) assert(/^SELECT\b/i.test(text.trim()), 'graph discovery never writes or publishes to the local ledger');
@@ -160,7 +161,7 @@ async function buildDiscovery(label: string, options: {missingRecipientWallet?: 
       async account => { requireRaw(account); crawled.push(account); return true; });
     const graph = await builder.build(owner, generations.get(owner)!, observed);
     assert.deepEqual(forbiddenCalls, [], 'no send, signing, provider writes or unconfigured reads');
-    assert(calls.every(call => ['runGetMethod', 'getJettonBalance', 'getAccountState'].includes(call.method)));
+    assert(calls.every(call => ['runGetMethod', 'walletBalance', 'getAccountState'].includes(call.method)));
     assert([...graph.chains.keys(), ...graph.wallets.keys(), ...graph.pools.keys(), ...crawled].every(account => account === canonicalLedgerAddress(account)));
     assert.equal(JSON.stringify(fixture), frozenJson); assert.equal(sha(readFileSync(fixturePath)), sha(fixtureBytes));
     graphDiscovery.push({label, options, scope: 'targeted graph discovery with actual transaction subsets, real PGlite and synthetic registry responses; not new chain qualification',
@@ -442,7 +443,7 @@ async function main() {
           assert(result.crawled.includes(wallet));
         }
         assert(!graph.wallets.has(fixture.accounts.wallets.recipient[1]), 'zero X payout has no deployed recipient wallet');
-        assert(!result.calls.some(call => call.method === 'getJettonBalance' && call.account === fixture.accounts.recipient && call.master === binding.tokenX), 'zero payout does not request unrelated recipient history');
+        assert(!result.calls.some(call => call.method === 'walletBalance' && call.account === fixture.accounts.recipient && call.master === binding.tokenX), 'zero payout does not request unrelated recipient history');
         assert(![...graph.chains.values()].some(chain => chain.role === 'owned_jetton_wallet' && graph.wallets.get(chain.account)?.owner !== fixture.accounts.lp));
       }
     });

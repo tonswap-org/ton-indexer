@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { Address, Cell, Dictionary, beginCell } from "@ton/core";
 import { createHash } from "node:crypto";
@@ -8,8 +9,7 @@ import { createLogger } from "../utils/logger";
 import type {
   RawMessage,
   RawTransaction,
-  TonDataSource,
-} from "../data/dataSource";
+} from '../data/dataSource';
 import {
   projectOwnerLedger,
   type ProjectionInput,
@@ -317,9 +317,9 @@ async function durableGraph() {
       type: "slice" as const,
       cell: beginCell().storeAddress(A(address)).endCell(),
     });
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({
     network: "testnet",
-    getMasterchainInfo: async () => ({ seqno: 100 }),
+    head: async () => ({ seqno: 100 }),
     getAccountStateAtSeqno: async (account, seqno) => {
       const latest = history(account)
         .filter((t) => BigInt(t.lt) <= BigInt(seqno))
@@ -365,14 +365,14 @@ async function durableGraph() {
         .slice()
         .reverse()
         .slice(0, limit),
-    getJettonBalance: async (owner, master) =>
+    walletBalance: async (owner, master) =>
       master === root && [buyer, factory].includes(owner)
         ? {
             wallet: owner === buyer ? buyerWallet : factoryWallet,
             balance: "0",
           }
         : null,
-    getJettonMetadata: async () => ({ decimals: 9 }),
+    jettonMetadata: async () => ({ decimals: 9 }),
     close: async () => {},
     runGetMethod: async (account, method, args) => {
       if (
@@ -412,7 +412,7 @@ async function durableGraph() {
         );
       return null;
     },
-  };
+  });
   try {
     await store.initialize();
     const service = new LedgerService(

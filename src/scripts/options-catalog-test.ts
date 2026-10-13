@@ -1,17 +1,18 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { Address, beginCell, type TupleItem } from '@ton/core';
 import { IndexerService } from '../indexerService';
 import { loadConfig } from '../config';
 import { MemoryStore } from '../store/memoryStore';
-import type { TonDataSource } from '../data/dataSource';
+
 const address = `0:${'1'.repeat(64)}`, option = `0:${'2'.repeat(64)}`;
 const config = { ...loadConfig(), responseCacheEnabled: false, network: 'testnet' as const };
 let ids = [2n, 18_000_000_000_000_000_000n], failure = false, malformed = false;
 const requested: bigint[] = [];
 const integer = (value: bigint): TupleItem => ({ type: 'int', value });
-const source: TonDataSource = { network: 'testnet', async getMasterchainInfo() { return { seqno: 1 }; },
+const source: FixtureChainSource = fixtureChainSource({ network: 'testnet', async head() { return { seqno: 1 }; },
   async getAccountState() { return { balance: '0' }; }, async getTransactions() { return []; },
-  async getJettonBalance() { return null; }, async getJettonMetadata() { return null; }, async close() {},
+  async walletBalance() { return null; }, async jettonMetadata() { return null; }, async close() {},
   async runGetMethod(_address, method, args) {
     if (method === 'series_catalog') {
       const after = (args![0] as { value: bigint }).value, limit = Number((args![1] as { value: bigint }).value);
@@ -28,7 +29,7 @@ const source: TonDataSource = { network: 'testnet', async getMasterchainInfo() {
     stack[0] = integer(1n); stack[3] = { type: 'slice', cell: beginCell().storeAddress(Address.parse(option)).endCell() };
     stack[4] = integer(9_999_999_999n); stack[5] = integer(100n); stack[8] = integer(10n);
     return { exitCode: 0, stack };
-  } };
+  } });
 const service = new IndexerService(config, new MemoryStore(config), source,
   { swap: new Set(), lpDeposit: new Set(), lpWithdraw: new Set(), jettonTransfer: new Set(), jettonNotify: new Set() }, []);
 async function main() {

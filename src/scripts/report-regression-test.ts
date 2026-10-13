@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { Address } from '@ton/core';
 import fastify from 'fastify';
@@ -7,24 +8,24 @@ import { setCorsHeaders } from '../api/cors';
 import { RateLimiter } from '../api/rateLimit';
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
-import { TonDataSource } from '../data/dataSource';
+
 import { loadOpcodes } from '../utils/opcodes';
 
 const owner = `0:${'1'.repeat(64)}`, root = `0:${'2'.repeat(64)}`, wallet = `0:${'3'.repeat(64)}`;
 const config = { ...loadConfig(), network: 'testnet' as const, adminToken: 'report-test-token' };
-const source: TonDataSource = {
-  network: 'testnet', async getMasterchainInfo() { return { seqno: 1 }; },
+const source: FixtureChainSource = fixtureChainSource({
+  network: 'testnet', async head() { return { seqno: 1 }; },
   async getAccountState() { return { balance: '2000000000', accountState: 'uninitialized' as const }; },
   async getTransactions() { return []; }, async runGetMethod() { return null; },
-  async getJettonBalance() { return { wallet: Address.parse(wallet).toString(), balance: '1000000000000' }; },
-  async getJettonMetadata() { return null; }, async close() {},
-};
+  async walletBalance() { return { wallet: Address.parse(wallet).toString(), balance: '1000000000000' }; },
+  async jettonMetadata() { return null; }, async close() {},
+});
 
 async function main() {
   let walletReads = 0;
-  const service = new IndexerService(config, new MemoryStore(config), {
-    ...source, async getJettonBalance() { walletReads++; return source.getJettonBalance(owner, root); },
-  }, loadOpcodes(), [{ master: root, symbol: 'USDT' }, { master: Address.parse(root).toString(), symbol: 'USDT' }]);
+  const service = new IndexerService(config, new MemoryStore(config), fixtureChainSource({
+    ...source, async walletBalance() { walletReads++; return source.walletBalance(owner, root); },
+  }), loadOpcodes(), [{ master: root, symbol: 'USDT' }, { master: Address.parse(root).toString(), symbol: 'USDT' }]);
   const reads = await Promise.all(Array.from({ length: 20 }, (_, index) => service.getBalances(index % 2 ? owner : Address.parse(owner).toString())));
   assert.equal(walletReads, 1);
   for (const read of reads) {
@@ -36,9 +37,9 @@ async function main() {
     assert.equal(read.assets[1].balance, undefined, 'USDT symbol must not imply 6 decimals');
     assert.equal(read.assets[1].decimals, undefined);
   }
-  const preciseService = new IndexerService(config, new MemoryStore(config), {
-    ...source, async getJettonMetadata() { return { symbol: 'USDT', decimals: 9 }; },
-  }, loadOpcodes(), [{ master: root, symbol: 'USDT' }]);
+  const preciseService = new IndexerService(config, new MemoryStore(config), fixtureChainSource({
+    ...source, async jettonMetadata() { return { symbol: 'USDT', decimals: 9 }; },
+  }), loadOpcodes(), [{ master: root, symbol: 'USDT' }]);
   const precise = await preciseService.getBalances(owner);
   assert.equal(precise.assets[1].balance, '1000');
   assert.equal(precise.assets[1].decimals, 9);

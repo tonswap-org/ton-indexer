@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -5,7 +6,7 @@ import { Address, Cell, TupleItem, beginCell } from '@ton/core';
 import { LedgerGraphBuilder } from '../ledger/graph';
 import { PostgresLedgerStore } from '../ledger/store';
 import { LedgerAsset } from '../ledger/types';
-import { TonDataSource } from '../data/dataSource';
+
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { MINT_INTERNAL, mintInternal, receiverAddress, t3State } from '../ledger/t3Wire';
 
@@ -60,7 +61,7 @@ async function inspect(failRoutes: boolean, current = true, receiverFailure: 'un
     rawHistory: async (generation: string) => generation === fixture.wallet ? [{ raw: original }] : [],
     pool: { query: async () => ({ rows: [{ complete: true }] }) },
   } as unknown as PostgresLedgerStore;
-  const source = {
+  const source = fixtureChainSource({
     getAccountState: async (address: string) => {
       reads.push(address);
       if (address === receiver) {
@@ -71,7 +72,7 @@ async function inspect(failRoutes: boolean, current = true, receiverFailure: 'un
         codeBoc: fixture.hubState.code_boc, dataBoc: current ? currentState.toBoc().toString("base64") : fixture.hubState.data_boc };
       return { accountState: 'uninitialized', balance: '0' };
     },
-    getJettonBalance: async (owner: string, master: string) => owner === fixture.owner && master === fixture.root
+    walletBalance: async (owner: string, master: string) => owner === fixture.owner && master === fixture.root
       ? { wallet: fixture.wallet, balance: '1099388353090' } : null,
     runGetMethod: async (address: string, method: string) => {
       if (address === receiver && method === 'receiver_identity' && receiverFailure === 'getter')
@@ -83,7 +84,7 @@ async function inspect(failRoutes: boolean, current = true, receiverFailure: 'un
       if (address === fixture.root && method === 'root_emitter') return { exitCode: 0, stack: [{ type: 'slice', cell: beginCell().storeAddress(Address.parse(fixture.hub)).endCell() }] };
       return null;
     },
-  } as TonDataSource;
+  });
   const graph = await new LedgerGraphBuilder('testnet', source, store, [], undefined,
     async wallet => identities.get(wallet) ?? null, async () => true, 256, undefined, fixture.hub, fixture.root)
     .build(fixture.owner, fixture.owner, '2026-09-13T00:00:00.000Z');

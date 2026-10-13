@@ -1,3 +1,4 @@
+import { jettonWalletOrNull, jettonWalletReader } from './data/jettonWalletCompat';
 import { readCoverPolicyPage, type CoverPageOptions, type CoverPolicySnapshot } from './utils/cover';
 import { decodeControlMeshSnapshot } from './utils/controlMesh';
 import { decodeRiskControllerSnapshot, type RiskControllerSnapshot } from './utils/riskController';
@@ -11,7 +12,7 @@ import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
 import {
   RawTransaction,
-  TonDataSource,
+  ChainSource,
   transactionPageIsLinkedInclusiveSegment,
   transactionPageReachesHistoryStart
 } from './data/dataSource';
@@ -962,7 +963,7 @@ export class IndexerService {
   setSwapLedgerReader(reader: SwapLedgerReader) { this.swapLedgerReader = reader; }
   private config: Config;
   private store: MemoryStore;
-  private source: TonDataSource;
+  private source: ChainSource;
   private opcodes: OpcodeSets;
   private network: Network;
   private lastMasterSeqno?: number;
@@ -1006,7 +1007,7 @@ export class IndexerService {
   constructor(
     config: Config,
     store: MemoryStore,
-    source: TonDataSource,
+    source: ChainSource,
     opcodes: OpcodeSets,
     jettonRoots: Array<{ master: string; symbol?: string }>,
     metrics?: MetricsCollector,
@@ -1137,7 +1138,7 @@ export class IndexerService {
     const jettonPromise = Promise.all(
       this.jettonRoots.map(async (root) => {
         const balance = await this.withTimeoutOrNull(
-          this.source.getJettonBalance(address, root.master),
+          jettonWalletOrNull(this.source, address, root.master),
           this.config.jettonBalanceTimeoutMs
         );
         if (balance) this.refreshJettonMetadata(root.master);
@@ -1285,7 +1286,7 @@ export class IndexerService {
 
     // Metadata enriches display amounts, but never holds up verified raw balances.
     const pending = (async () => {
-      const meta = await this.source.getJettonMetadata(master);
+      const meta = await jettonWalletReader(this.source).metadata(master);
       this.jettonMetadataRevision += 1;
       this.jettonMetaCache.set(master, { meta, updatedAt: Date.now(), revision: this.jettonMetadataRevision });
     })()
@@ -1482,7 +1483,7 @@ export class IndexerService {
     const normalizedJetton = normalizeAddress(jettonAddress);
     const normalizedOwner = normalizeAddress(ownerAddress);
 
-    const walletFromBalance = await this.source.getJettonBalance(normalizedOwner, normalizedJetton).catch(() => null);
+    const walletFromBalance = await jettonWalletOrNull(this.source, normalizedOwner, normalizedJetton).catch(() => null);
     const walletAddress = walletFromBalance?.wallet
       ? normalizeAddress(walletFromBalance.wallet)
       : await this.resolveJettonWalletAddress(normalizedJetton, normalizedOwner);
@@ -1572,13 +1573,14 @@ export class IndexerService {
 
   async readFresh(calls: FreshReadCall[]) {
     const startedAt = Date.now();
-    if (!this.source.readFresh || this.source.network !== this.network
+    if (this.source.network !== this.network
       || calls.some(call => call.kind === 'getter' && isAdmissionMethod(call.method))) throw new FreshReadUnavailableError();
     // Capture the complete tuple before handing it to a source. This path never
     // enters MemoryStore or any ordinary read's pending/completed cache.
     const captured = calls.map(call => call.kind === 'account' ? { ...call } :
       { ...call, args: parseTuple(serializeTuple(call.args)) });
-    const batch = await this.source.readFresh(captured);
+    const read = await this.source.read(captured);
+    const batch = { network: this.source.network, readContext: { source: 'lite' as const, head: read.head, queriedAt: startedAt }, results: read.results };
     assertFreshReadBatch(batch, captured, this.network, startedAt);
     return { network: batch.network, readContext: batch.readContext, results: batch.results.map(result => {
       if (result.kind === 'getter') return { kind: result.kind, address: result.address,
@@ -2037,7 +2039,7 @@ export class IndexerService {
     // Read directly: owner reward state changes with time and wallet actions.
     // A success certifies a complete current page, never a payout settlement.
     const pool = Address.parse(poolAddress).toRawString();
-    const snapshot = await readDlmmFarmSnapshot(pool, options, (method, args) => this.source.runGetMethod(pool, method, args));
+    const snapshot = await readDlmmFarmSnapshot(pool, options, (method, args) => this.source.runGetMethod(pool, method, args).catch(() => null));
     return { ...snapshot, source: this.config.dataSource === 'lite' ? 'lite' : 'http4', network: this.network,
       updated_at: Math.floor(Date.now() / 1000) };
   }
@@ -2054,7 +2056,7 @@ export class IndexerService {
     }
     const page = await this.source.runGetMethod(factory, 'series_catalog', [
       { type: 'int', value: afterId }, { type: 'int', value: BigInt(limit) },
-    ]);
+    ]).catch(() => null);
     if (!page || page.exitCode !== 0) throw new Error('Current options catalog unavailable.');
     let node = tupleItemCell(page.stack[0]);
     const cursor = tupleItemBigInt(page.stack[1]), more = tupleItemBigInt(page.stack[2]);
@@ -2070,15 +2072,15 @@ export class IndexerService {
     if (ids.some((id, index) => id <= (index === 0 ? afterId : ids[index - 1]!)) ||
       cursor !== (ids.at(-1) ?? afterId) || (more === 1n && ids.length !== limit)) throw new Error('Invalid options catalog continuation.');
     const [governance, enabled] = await Promise.all([
-      this.source.runGetMethod(factory, 'governance', []),
-      this.source.runGetMethod(factory, 'registry_enabled', []),
+      this.source.runGetMethod(factory, 'governance', []).catch(() => null),
+      this.source.runGetMethod(factory, 'registry_enabled', []).catch(() => null),
     ]);
     const status = governance?.exitCode === 0 && enabled?.exitCode === 0
       ? { governance: tupleItemAddress(governance.stack[0]), enabled: tupleItemBool(enabled.stack[0]) } : null;
     const series: OptionSeriesSnapshotRecord[] = [];
     for (let offset = 0; offset < ids.length; offset += 4) {
       const batch = await Promise.all(ids.slice(offset, offset + 4).map(async seriesId => {
-        const result = await this.source.runGetMethod(factory, 'series_info', [{ type: 'int', value: seriesId }]);
+        const result = await this.source.runGetMethod(factory, 'series_info', [{ type: 'int', value: seriesId }]).catch(() => null);
         if (!result || result.exitCode !== 0 || !tupleItemBool(result.stack[0])) throw new Error('Options catalog details unavailable.');
         const stack = result.stack, expiry = tupleItemBigInt(stack[4]), state = tupleItemBigInt(stack[9]),
           max = tupleItemBigInt(stack[5]), open = tupleItemBigInt(stack[8]), address = tupleItemAddress(stack[3]);
@@ -3487,9 +3489,7 @@ export class IndexerService {
     if (existing) return existing;
 
     const pending = (async () => {
-      const state = this.source.getAccountStateLite
-        ? await this.source.getAccountStateLite(address)
-        : await this.source.getAccountState(address);
+      const state = await this.source.getAccountState(address);
       const balance: AccountState = { ...state, address, updatedAt: Date.now() };
       // History may hold the address lock while fetching remote pages. Read-only
       // balance responses need not wait for it; publish later without replacing
@@ -3524,10 +3524,7 @@ export class IndexerService {
 
   private async refreshAccountStateUnlocked(address: string, options: { lite?: boolean } = {}) {
     const previous = this.store.get(address)?.balance;
-    const state =
-      options.lite && this.source.getAccountStateLite
-        ? await this.source.getAccountStateLite(address)
-        : await this.source.getAccountState(address);
+    const state = await this.source.getAccountState(address);
     const accountState: AccountState = {
       address,
       balance: state.balance,
@@ -3637,7 +3634,12 @@ export class IndexerService {
       maxTransactions
     );
     const receivedRaw = await this.withInitialHistoryTimeout(
-      this.source.getTransactions(address, limit),
+      (async () => {
+        const head = await this.source.getAccountState(address);
+        if ((!head.lastTxLt && !head.lastTxHash && head.accountState === 'uninitialized') || head.lastTxLt === '0') return [];
+        if (!head.lastTxLt || !head.lastTxHash) throw new Error('Transaction history head unavailable.');
+        return this.source.getTransactions(address, limit, head.lastTxLt, head.lastTxHash);
+      })(),
       this.config.initialHistoryTimeoutMs
     );
     const initialResponseTruncated = receivedRaw.length > limit;

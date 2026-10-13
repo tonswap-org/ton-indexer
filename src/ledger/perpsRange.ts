@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { Cell, type Slice } from '@ton/core';
 import type { Network } from '../models';
-import type { TonDataSource, RawTransaction, AccountStateResponse } from '../data/dataSource';
+import type { ChainSource, RawTransaction, AccountStateResponse } from '../data/dataSource';
 import { transactionPageIsLinkedInclusiveSegment, transactionPageReachesHistoryStart } from '../data/dataSource';
 import type { OpcodeSets } from '../utils/opcodes';
 import { canonicalLedgerAddress, canonicalLedgerHash } from './normalize';
@@ -83,7 +83,7 @@ export function ledgerFailureCode(error: unknown): string {
 }
 /** Capture every linked transaction inside [from,to) at one immutable chain head.
  * The first transaction older than from is retained as the lower-bound witness. */
-export async function capturePerpsRangeChain(source: TonDataSource, account: string, state: AccountStateResponse,
+export async function capturePerpsRangeChain(source: ChainSource, account: string, state: AccountStateResponse,
   bounds: Bounds, budget: { pages: number; deadline: number }) {
   if (Date.now() > budget.deadline) throw Error('perps_range_capacity_exceeded');
   if (Boolean(state.lastTxLt) !== Boolean(state.lastTxHash)) throw Error('perps_range_head_unavailable');
@@ -127,7 +127,7 @@ export class PerpsRangeService {
   private timer?: NodeJS.Timeout;
   private recovery?: Promise<void>;
   private readonly binding: string;
-  constructor(private network: Network, private store: PostgresLedgerStore, private source: TonDataSource,
+  constructor(private network: Network, private store: PostgresLedgerStore, private source: ChainSource,
     private opcodes: OpcodeSets, private options: Options) {
     this.binding = digest({ network, engine: options.perpsEngine, root: options.t3Root, code: options.perpsEngineCodeHash, decoder: 'perps-range-v3' });
   }
@@ -271,14 +271,12 @@ export class PerpsRangeService {
       try {
         await this.store.pool.query("UPDATE ledger_perps_ranges SET status='running',attempted_at=now(),error_code=NULL,retry_after=NULL WHERE generation=$1", [generation]);
         const bounds = { fromUtime: Number(row.from_utime), toUtime: Number(row.to_utime) };
-        const master = await this.source.getMasterchainInfo();
+        const master = await this.source.head();
         if (!Number.isSafeInteger(master.seqno) || master.seqno < 0) throw Error('perps_range_head_unavailable');
-        if (!Number.isSafeInteger(master.timestamp) || master.timestamp! < 0) throw Error('perps_range_head_time_unavailable');
-        if (master.timestamp! < bounds.toUtime) {
+        if (master.utime < bounds.toUtime) {
           await this.store.pool.query("UPDATE ledger_perps_ranges SET status='pending',error_code='perps_range_head_not_ready',retry_after=now()+backoff_seconds*interval '1 second',backoff_seconds=LEAST(300,backoff_seconds*2) WHERE generation=$1", [generation]);
           return;
         }
-        if (!this.source.getAccountStateAtSeqno) throw Error('perps_range_archive_unavailable');
         const { perpsEngine, perpsEngineCodeHash, t3Root } = this.options;
         if (!perpsEngine || !perpsEngineCodeHash || !t3Root) throw Error('perps_range_binding_unconfigured');
         const engine = canonicalLedgerAddress(perpsEngine), owner = row.account;
@@ -290,7 +288,7 @@ export class PerpsRangeService {
         const ownerWallet = perpsWalletAddress(parsed.walletCode, parsed.root, owner), engineWallet = perpsWalletAddress(parsed.walletCode, parsed.root, engine);
         const accounts = [owner, ownerWallet, engine, engineWallet];
         if (new Set(accounts).size !== 4) throw Error('perps_range_account_identity_conflict');
-        const states = await Promise.all(accounts.map(a => a === engine ? current : this.source.getAccountStateAtSeqno!(a, master.seqno)));
+        const states = await Promise.all(accounts.map(a => a === engine ? current : this.source.getAccountStateAtSeqno(a, master.seqno)));
         const wallets = new Map<string, LedgerAsset>();
         for (const [i, expectedOwner] of [[1, owner], [3, engine]] as const) {
           wallets.set(accounts[i], qualifyPerpsRangeWallet(this.network, accounts[i], expectedOwner,
@@ -301,7 +299,7 @@ export class PerpsRangeService {
         for (let i = 0; i < accounts.length; i++) {
           const captured = await capturePerpsRangeChain(this.source, accounts[i], states[i], bounds, budget);
           chains.set(accounts[i], { account: accounts[i], generation, role: i === 0 ? 'owner' : i === 1 ? 'owned_jetton_wallet' : 'counterparty',
-            historyComplete: false, verifiedRange: bounds, checkedAt: new Date(master.timestamp! * 1000).toISOString(), ...captured,
+            historyComplete: false, verifiedRange: bounds, checkedAt: new Date(master.utime * 1000).toISOString(), ...captured,
             headLt: states[i].lastTxLt ?? null, headHash: states[i].lastTxHash ? canonicalLedgerHash(states[i].lastTxHash!) : null });
         }
         const oraclePools = new Set<string>();
@@ -332,26 +330,26 @@ export class PerpsRangeService {
             wallets.set(peer, qualifyPerpsRangeWallet(this.network, peer, custodyOwner, parsed.root, parsed.walletCode, state));
           const captured = await capturePerpsRangeChain(this.source, peer, state, bounds, budget);
           chains.set(peer, { account: peer, generation, role: 'counterparty', historyComplete: false, verifiedRange: bounds,
-            checkedAt: new Date(master.timestamp! * 1000).toISOString(), ...captured,
+            checkedAt: new Date(master.utime * 1000).toISOString(), ...captured,
             headLt: state.lastTxLt ?? null, headHash: state.lastTxHash ? canonicalLedgerHash(state.lastTxHash) : null });
         }
         // Reuse exact positive boundary reads across before/after proofs, and
         // never move beyond the masterchain head captured for this interval.
         const boundaryReads = new Map<string, Promise<AccountStateResponse>>();
         const archiveSource = {
-          getMasterchainInfo: () => this.source.getMasterchainInfo(),
+          head: () => this.source.head(),
           getAccountStateAtSeqno: (account: string, seqno: number) => {
             const key = `${account}:${seqno}`;
             let read = boundaryReads.get(key);
             if (!read) {
-              read = this.source.getAccountStateAtSeqno!(account, seqno);
+              read = this.source.getAccountStateAtSeqno(account, seqno);
               boundaryReads.set(key, read);
               void read.catch(() => boundaryReads.delete(key));
             }
             return read;
           },
-          getAccountStateAtTransaction: this.source.getAccountStateAtTransaction?.bind(this.source),
-        } as TonDataSource;
+          getAccountStateAtTransaction: this.source.getAccountStateAtTransaction.bind(this.source),
+        } satisfies Pick<ChainSource, 'head' | 'getAccountStateAtSeqno' | 'getAccountStateAtTransaction'>;
         const stateAt = async (account: string, lt: string, hash: string): Promise<LedgerStateSnapshot | null> => {
           const h = canonicalLedgerHash(hash), params = [this.network, account, lt, h];
           const cached = (await this.store.pool.query('SELECT snapshot FROM ledger_account_states WHERE network=$1 AND account=$2 AND lt=$3 AND hash=$4', params)).rows[0];
@@ -364,7 +362,7 @@ export class PerpsRangeService {
           perpsEngines: new Map([[engine, { address: engine, root: parsed.root, codeHash: perpsEngineCodeHash, walletCodeHash: parsed.walletCode.hash().toString('hex'), ownerWallet, engineWallet }]]) });
         projection.events = projection.events.filter(e => e.kind === 'perps_operation' || e.settlement?.protocol === 'perps')
           .sort((a, b) => BigInt(a.lt) === BigInt(b.lt) ? b.hash.localeCompare(a.hash) : BigInt(a.lt) > BigInt(b.lt) ? -1 : 1);
-        const snapshot: RangeSnapshot = { schema: 'perps-range-v3', masterSeqno: master.seqno, masterTimestamp: master.timestamp!, observedAt,
+        const snapshot: RangeSnapshot = { schema: 'perps-range-v3', masterSeqno: master.seqno, masterTimestamp: master.utime, observedAt,
           oraclePools: [...oraclePools].filter(pool => !accounts.includes(pool)), protocolPeers: [...protocolPeers], projection, chains: [...chains.values()] };
         // Exact chain coverage may still lack archive state needed to decode an
         // operation. Publish that honest snapshot, then permit a new generation

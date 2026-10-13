@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
 import { createHash } from 'node:crypto';
 import { assertPerpsProducerReceipt } from './perps-fixture-producer';
 import assert from 'node:assert/strict';
@@ -7,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { loadConfig } from '../config';
-import { RawTransaction, TonDataSource } from '../data/dataSource';
+import {RawTransaction} from '../data/dataSource';
 import { IndexerService } from '../indexerService';
 import { PoolTracker } from '../poolTracker';
 import { MemoryStore } from '../store/memoryStore';
@@ -56,9 +57,9 @@ const forkRange = (fork: string, newest: number, oldest: number) =>
     (_, index) => forkTx(fork, newest - index)
   );
 
-const makeSource = (overrides: Partial<TonDataSource> = {}): TonDataSource => ({
+const makeSource = (overrides: ChainFixtureOptions = {}): FixtureChainSource => (fixtureChainSource({
   network: 'testnet',
-  async getMasterchainInfo() {
+  async head() {
     return { seqno: 1 };
   },
   async getAccountState() {
@@ -70,17 +71,17 @@ const makeSource = (overrides: Partial<TonDataSource> = {}): TonDataSource => ({
   async runGetMethod() {
     return null;
   },
-  async getJettonBalance() {
+  async walletBalance() {
     return null;
   },
-  async getJettonMetadata() {
+  async jettonMetadata() {
     return null;
   },
   async close() {
     return;
   },
   ...overrides,
-});
+}));
 
 const config = {
   ...loadConfig(),
@@ -92,7 +93,7 @@ const config = {
 };
 const opcodes = loadOpcodes();
 
-const makeWorker = (store: MemoryStore, source: TonDataSource) =>
+const makeWorker = (store: MemoryStore, source: FixtureChainSource) =>
   new BackfillWorker(config, store, source, opcodes, createLogger('fatal'));
 
 const testEmptyInitialPageCanResumeFromStoredHead = async () => {
@@ -102,8 +103,8 @@ const testEmptyInitialPageCanResumeFromStoredHead = async () => {
     async getTransactions(_address, _limit, lt, hashValue) {
       reads += 1;
       if (reads === 1) {
-        assert.equal(lt, undefined);
-        assert.equal(hashValue, undefined);
+        assert.equal(lt, '7');
+        assert.equal(hashValue, hash(7));
         return [];
       }
       assert.equal(lt, '7');
@@ -669,7 +670,7 @@ const testSnapshotGenerationInvalidatesCapturedFollowerBatches = async () => {
   for (const oldAddress of oldAddresses) store.touch(oldAddress);
   const replacementAddress = `0:${'f'.repeat(64)}`;
   const source = makeSource({
-    async getMasterchainInfo() {
+    async head() {
       return { seqno: 12 };
     },
     async getAccountState() {

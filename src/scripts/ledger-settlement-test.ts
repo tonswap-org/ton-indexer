@@ -1,13 +1,11 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Address, Cell, Dictionary, beginCell } from '@ton/core';
 import { createHash } from 'node:crypto';
-import type {
-  RawMessage,
-  RawTransaction,
-  TonDataSource,
-} from '../data/dataSource';
+import type {RawMessage,
+  RawTransaction,} from '../data/dataSource';
 import type { LedgerAsset } from '../ledger/types';
 import {
   projectOwnerLedger,
@@ -425,7 +423,7 @@ async function testSwap() {
   const head = originals.slice().sort((a, b) => BigInt(a.lt) > BigInt(b.lt) ? -1 : 1)[0];
   store.setBalance(owner, { address: owner, balance: '0', lastTxLt: head.lt, lastTxHash: head.hash, updatedAt: Date.now() });
   store.markHistoryComplete(owner);
-  const service = new IndexerService(config, store, {} as TonDataSource, opcodes, []);
+  const service = new IndexerService(config, store, fixtureChainSource({}), opcodes, []);
   const page = (events: typeof result) => ({ network: 'testnet' as const, account: owner, events, nextCursor: null,
     coverage: { generation: 'receipt-generation', snapshotComplete: true, historyComplete: false, issues: ['unrelated_wallet_gap'] } }) as any;
   service.setSwapLedgerReader(async () => page(qualifiedResult));
@@ -715,8 +713,8 @@ async function testCandlePoolEvidenceConsumer() {
     store.markHistoryComplete(pool);
     let calls = 0;
     const unavailable = async (): Promise<never> => { calls++; throw Error('Unexpected source request'); };
-    const source: TonDataSource = { network: 'testnet', getMasterchainInfo: unavailable, getAccountState: unavailable,
-      getTransactions: unavailable, runGetMethod: unavailable, getJettonBalance: unavailable, getJettonMetadata: unavailable, close: async () => {} };
+    const source: FixtureChainSource = fixtureChainSource({ network: 'testnet', head: unavailable, getAccountState: unavailable,
+      getTransactions: unavailable, runGetMethod: unavailable, walletBalance: unavailable, jettonMetadata: unavailable, close: async () => {} });
     const service = new IndexerService(config, store, source, opcodes, []);
     const result = await service.getMarketCandles('spot:TOKEN-T3', pool, { assetSymbol: 'TOKEN', quoteSymbol: 'T3', assetDecimals: 9, quoteDecimals: 9 });
     assert.equal(result.candle_count, malformed ? 0 : 1, 'candle fallback consumes the rich evidence amount only when its identities qualify');
@@ -1009,30 +1007,30 @@ async function testTransfersAndDedup() {
 }
 async function testArchive() {
   const zeroHash = '0'.repeat(64);
-  const emptySource = {
-    getMasterchainInfo: async () => ({seqno: 100}),
+  const emptySource = fixtureChainSource({
+    head: async () => ({seqno: 100}),
     getAccountStateAtSeqno: async (_account: string, seqno: number) => seqno < 40
       ? {balance: '0', accountState: 'uninitialized', lastTxLt: '0', lastTxHash: zeroHash}
       : {balance: '1', accountState: 'active', lastTxLt: '10', lastTxHash: hash(10)},
-  } as TonDataSource;
+  });
   assert.equal((await findTransactionState(emptySource, pool, {lt: '0', hash: zeroHash}))?.seqno, 39,
     'First credit uses the last authenticated transaction-free block');
   assert.equal(await findTransactionState(emptySource, pool, {lt: '0', hash: hash(1)}), null, 'Nonzero first-transaction hash is rejected');
-  assert.equal(await findTransactionState({...emptySource, getAccountStateAtSeqno: async () =>
-    ({balance: '0', accountState: 'active', lastTxLt: '0', lastTxHash: zeroHash})} as TonDataSource, pool, {lt: '0', hash: zeroHash}), null,
+  assert.equal(await findTransactionState(fixtureChainSource({...emptySource, getAccountStateAtSeqno: async () =>
+    ({balance: '0', accountState: 'active', lastTxLt: '0', lastTxHash: zeroHash})}), pool, {lt: '0', hash: zeroHash}), null,
     'An active zero-cursor state cannot establish an undeployed wallet');
-  assert.equal(await findTransactionState({...emptySource, getAccountStateAtSeqno: async () =>
-    ({balance: '0', accountState: 'uninitialized'})} as TonDataSource, pool, {lt: '0', hash: zeroHash}), null,
+  assert.equal(await findTransactionState(fixtureChainSource({...emptySource, getAccountStateAtSeqno: async () =>
+    ({balance: '0', accountState: 'uninitialized'})}), pool, {lt: '0', hash: zeroHash}), null,
     'Missing history metadata does not establish absence');
   assert.throws(() => readDlmmLiquidityState(positionData(9007199254740993n).toBoc().toString('base64')), 'A partial position cell is not the current DLMM layout');
-  const source = {
-    getMasterchainInfo: async () => ({ seqno: 100 }),
+  const source = fixtureChainSource({
+    head: async () => ({ seqno: 100 }),
     getAccountStateAtSeqno: async (_account: string, seqno: number) => ({
       balance: '0',
       lastTxLt: seqno < 40 ? '10' : seqno < 80 ? '20' : '30',
       lastTxHash: hash(seqno < 40 ? 10 : seqno < 80 ? 20 : 30),
     }),
-  } as TonDataSource;
+  });
   assert.equal(
     (await findTransactionState(source, pool, { lt: '20', hash: hash(20) }))
       ?.seqno,

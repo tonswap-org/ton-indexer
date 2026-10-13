@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import { assertCaptureCode } from './capture-build';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -11,7 +12,7 @@ import { readT3RecoveryWallet } from '../ledger/t3RecoveryState';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { canonicalLedgerHash } from '../ledger/normalize';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
-import type { TonDataSource, AccountStateResponse, RawTransaction } from '../data/dataSource';
+import type {AccountStateResponse, RawTransaction} from '../data/dataSource';
 import { perpsWalletAddress } from '../ledger/perpsWire';
 import { loadOpcodes } from '../utils/opcodes';
 import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
@@ -187,7 +188,7 @@ export async function testPerpsRangeWalletIdentity() {
   }
   const reads: Array<[string, number]> = []; let forbiddenReads = 0;
   const forbidden = async () => { forbiddenReads++; throw Error('latest-head getter/metadata unavailable'); };
-  const source = { network: 'localnet', getMasterchainInfo: async () => ({ seqno: 1000, timestamp: to }),
+  const source = fixtureChainSource({ network: 'localnet', head: async () => ({ seqno: 1000, utime: to }),
     getAccountStateAtSeqno: async (account: string, seqno: number) => {
       reads.push([account, seqno]); assert.equal(seqno, 1000);
       const row = head(account); assert(row);
@@ -195,8 +196,8 @@ export async function testPerpsRangeWalletIdentity() {
         dataBoc: row.newStorage, lastTxLt: row.raw.lt, lastTxHash: row.raw.hash };
     }, getTransactions: async (account: string, limit: number, lt: string) => rows.filter(row => row.account === account && BigInt(row.raw.lt) <= BigInt(lt))
       .map(row => row.raw).reverse().slice(0, limit),
-    getAccountState: forbidden, runGetMethod: forbidden, getJettonBalance: forbidden, getJettonMetadata: forbidden,
-  } as unknown as TonDataSource;
+    getAccountState: forbidden, runGetMethod: forbidden, walletBalance: forbidden, jettonMetadata: forbidden,
+  });
   const service = new PerpsRangeService('localnet', store, source, loadOpcodes(),
     { t3Root: open.root, perpsEngine: open.engine, perpsEngineCodeHash: hash(open.engineCode) });
   try {

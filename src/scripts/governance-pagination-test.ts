@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { beginCell, type TupleItem } from '@ton/core';
 import Fastify from 'fastify';
@@ -6,7 +7,7 @@ import { loadConfig } from '../config';
 import { MemoryStore } from '../store/memoryStore';
 import { IndexerService } from '../indexerService';
 import { registerRoutes } from '../api/routes';
-import type { TonDataSource } from '../data/dataSource';
+
 const address = `0:${'1'.repeat(64)}`;
 const empty = beginCell().endCell();
 function storage(next: bigint) { return beginCell().storeRef(empty).storeUint(0, 320).storeRef(empty)
@@ -16,16 +17,16 @@ assert.equal(governanceProposalRange(empty.toBoc().toString('base64')), null);
 assert.equal(governanceProposalRange('invalid'), null);
 const config = { ...loadConfig(), responseCacheEnabled: false, network: 'testnet' as const };
 const calls: bigint[] = []; let failingId: bigint | null = null; let malformedState = false;
-const source: TonDataSource = { network: 'testnet', async getMasterchainInfo() { return { seqno: 1 }; },
+const source: FixtureChainSource = fixtureChainSource({ network: 'testnet', async head() { return { seqno: 1 }; },
   async getAccountState() { return { balance: '0', dataBoc: (malformedState ? empty : storage(131n)).toBoc().toString('base64') }; },
-  async getTransactions() { return []; }, async getJettonBalance() { return null; }, async getJettonMetadata() { return null; }, async close() {},
+  async getTransactions() { return []; }, async walletBalance() { return null; }, async jettonMetadata() { return null; }, async close() {},
   async runGetMethod(_address, method, args) {
     if (method !== 'governance_proposal') return null;
     const id = (args?.[0] as { value: bigint }).value; calls.push(id);
     if (id === failingId) return null;
     const stack: TupleItem[] = Array.from({ length: 15 }, (_, index) => index === 12 ? { type: 'null' } : { type: 'int', value: index === 0 ? id : 0n });
     return { exitCode: 0, stack };
-  } };
+  } });
 const service = new IndexerService(config, new MemoryStore(config), source, { swap: new Set(), lpDeposit: new Set(), lpWithdraw: new Set(), jettonTransfer: new Set(), jettonNotify: new Set() }, []);
 async function main() {
   const first = await service.getGovernanceSnapshot(address, { maxScan: 64 });

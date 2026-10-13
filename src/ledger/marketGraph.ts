@@ -1,5 +1,5 @@
 import { resolveHistoricalJettonPrecision, type HistoricalRootArchive } from './jettonPrecision';
-import type { TonDataSource } from '../data/dataSource';
+import type { ChainSource } from '../data/dataSource';
 import type { LedgerService } from './service';
 import type { DlmmMarketBinding, MarketDependency, MarketNode } from './marketTypes';
 import { findTransactionState, type LedgerStateSnapshot } from './archive';
@@ -13,7 +13,7 @@ import { perpsWalletAddress } from './perpsWire';
 
 /** A pool-seeded, ownership-independent graph over durable physical chains. */
 export class DlmmMarketGraphBuilder {
-  constructor(private ledger: LedgerService, private source: TonDataSource, private maxAccounts = 256) {}
+  constructor(private ledger: LedgerService, private source: ChainSource, private maxAccounts = 256) {}
 
   async build(binding: DlmmMarketBinding) {
     if (binding.network !== this.ledger.network) throw new Error('market_network_mismatch');
@@ -25,7 +25,7 @@ export class DlmmMarketGraphBuilder {
       if(!promise){promise=(async()=>{
         const cached=(await this.ledger.store.pool.query('SELECT snapshot,observed_at FROM market_root_archive_states WHERE network=$1 AND root=$2 AND seqno=$3',[binding.network,root,seqno])).rows[0];
         if(cached)return {state:cached.snapshot,observedAt:new Date(cached.observed_at).toISOString()};
-        if(!this.source.getAccountStateAtSeqno || this.source.network!==binding.network)throw Error('root_archive_provider_unavailable');
+        if(this.source.network!==binding.network)throw Error('root_archive_provider_unavailable');
         const state=await this.source.getAccountStateAtSeqno(root,seqno),observedAt=new Date().toISOString();
         if(state.accountState!=='active' || !state.codeBoc || !state.dataBoc || !state.lastTxLt || !state.lastTxHash)throw Error('root_archive_state_unavailable');
         const inserted=await this.ledger.store.pool.query('INSERT INTO market_root_archive_states(network,root,seqno,snapshot,observed_at) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT DO NOTHING RETURNING snapshot,observed_at',[binding.network,root,seqno,JSON.stringify(state),observedAt]);

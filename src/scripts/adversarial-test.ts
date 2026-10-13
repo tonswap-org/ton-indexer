@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
 import { runTransactionEvidenceTests } from './transaction-evidence-test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,11 +17,8 @@ import { loadSnapshotFile } from '../snapshot';
 import { IndexedTx } from '../models';
 import { BlockFollower } from '../workers/blockFollower';
 import { BackfillWorker } from '../workers/backfillWorker';
-import {
-  TonDataSource,
-  RawTransaction,
-  transactionPageReachesHistoryStart
-} from '../data/dataSource';
+import {RawTransaction,
+  transactionPageReachesHistoryStart} from '../data/dataSource';
 import { createLogger } from '../utils/logger';
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
@@ -103,9 +101,9 @@ const testHistoryStartProofRejectsOutOfRangeLt = () => {
   assert.equal(transactionPageReachesHistoryStart([malformed]), false);
 };
 
-const makeSource = (overrides: Partial<TonDataSource> = {}): TonDataSource => ({
+const makeSource = (overrides: ChainFixtureOptions = {}): FixtureChainSource => (fixtureChainSource({
   network: 'testnet',
-  async getMasterchainInfo() {
+  async head() {
     return { seqno: 1 };
   },
   async getAccountState() {
@@ -117,17 +115,17 @@ const makeSource = (overrides: Partial<TonDataSource> = {}): TonDataSource => ({
   async runGetMethod() {
     return null;
   },
-  async getJettonBalance() {
+  async walletBalance() {
     return null;
   },
-  async getJettonMetadata() {
+  async jettonMetadata() {
     return null;
   },
   async close() {
     return;
   },
   ...overrides,
-});
+}));
 
 const testRateLimitIgnoresUntrustedForwardedFor = async () => {
   const config = {
@@ -1971,7 +1969,7 @@ const testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill = async (
   await service.ensureInitialTransactions(validAddress);
 
   const entry = store.get(validAddress);
-  assert.deepEqual(calls, [{ lt: undefined, hash: undefined, limit: 50 }]);
+  assert.deepEqual(calls, [{ lt: '158', hash: linkedHistoryHash(158), limit: 50 }]);
   assert.equal(entry?.txs.length, 18);
   assert.equal(entry?.stats.lastBackfillLt, '141');
   assert.equal(entry?.stats.historyComplete, false);
@@ -1991,6 +1989,7 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
     finiteFailureConfig,
     finiteFailureStore,
     makeSource({
+      async getAccountState() { return { balance: '0', lastTxLt: '1', lastTxHash: linkedHistoryHash(1) }; },
       async getTransactions() {
         throw new Error('finite lite read failure');
       },
@@ -2010,6 +2009,7 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
       config,
       hangingStore,
       makeSource({
+      async getAccountState() { return { balance: '0', lastTxLt: '1', lastTxHash: linkedHistoryHash(1) }; },
         async getTransactions() {
           return await new Promise<RawTransaction[]>(() => undefined);
         },
@@ -2040,6 +2040,7 @@ const testInitialHistoryTimeoutFailsFastWithoutChangingFiniteErrorFallback = asy
     finiteFailureConfig,
     new MemoryStore(finiteFailureConfig),
     makeSource({
+      async getAccountState() { return { balance: '0', lastTxLt: '1', lastTxHash: linkedHistoryHash(1) }; },
       async getTransactions() {
         return await new Promise<RawTransaction[]>((_resolve, reject) => {
           setTimeout(() => {
@@ -2073,7 +2074,7 @@ const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
   let calls = 0;
   const source = makeSource({
     async getAccountState() {
-      return { balance: '0' };
+      return { balance: '0', accountState: 'uninitialized' };
     },
     async getTransactions() {
       calls += 1;
@@ -2087,7 +2088,7 @@ const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
   await service.ensureInitialTransactions(validAddress);
 
   const entry = store.get(validAddress);
-  assert.equal(calls, 1);
+  assert.equal(calls, 0, 'An uninitialized account has no cursor to query');
   assert.equal(entry?.txs.length, 0);
   assert.equal(entry?.stats.historyComplete, true);
   assert.deepEqual(queued, []);

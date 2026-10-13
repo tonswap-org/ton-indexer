@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -6,7 +7,7 @@ import { gunzipSync } from 'node:zlib';
 import { Cell, beginCell, loadTransaction } from '@ton/core';
 import { readDlmmMarketState } from '../ledger/dlmmState';
 import { readT3RecoveryWallet } from '../ledger/t3RecoveryState';
-import type { TonDataSource } from '../data/dataSource';
+
 import { projectOwnerLedger, type LedgerChain, type ProjectionInput } from '../ledger/project';
 import { canonicalLedgerHash } from '../ledger/normalize';
 import { createDlmmProofGraph, type DlmmProofBinding } from '../ledger/dlmmProof';
@@ -132,7 +133,7 @@ async function main() {
     const originals = nodes.filter(node=>node.account===owner).map(node=>classifyTransaction(owner,node.raw,opcodes));
     store.addTransactions(owner,originals);const head=[...originals].sort((a,b)=>BigInt(a.lt)>BigInt(b.lt)?-1:1)[0];
     store.setBalance(owner,{address:owner,balance:'0',lastTxLt:head.lt,lastTxHash:head.hash,updatedAt:Date.now()});store.markHistoryComplete(owner);
-    const service=new IndexerService(config,store,{} as TonDataSource,opcodes,[]);
+    const service=new IndexerService(config,store,fixtureChainSource({}),opcodes,[]);
     const page=(events:LedgerEvent[])=>({network:'localnet' as const,account:owner,events,nextCursor:null,
       coverage:{generation:'sandbox-swap-projection',snapshotComplete:true,historyComplete:true,issues:[]}}) as any;
     service.setSwapLedgerReader(async()=>page(projection.events));

@@ -1,7 +1,8 @@
+import { fixtureChainSource, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { Address } from '@ton/core';
 import { loadConfig } from '../config';
-import { TonDataSource } from '../data/dataSource';
+
 import { IndexerService } from '../indexerService';
 import { AccountState, JettonMetadata } from '../models';
 import { MemoryStore } from '../store/memoryStore';
@@ -32,17 +33,17 @@ const promptly = async <T>(promise: Promise<T>): Promise<T> => {
   }
 };
 
-const sourceWith = (overrides: Partial<TonDataSource>): TonDataSource => ({
+const sourceWith = (overrides: ChainFixtureOptions): FixtureChainSource => (fixtureChainSource({
   network: 'testnet',
-  async getMasterchainInfo() { return { seqno: 1 }; },
+  async head() { return { seqno: 1 }; },
   async getAccountState() { return { balance: '123' }; },
   async getTransactions() { return []; },
   async runGetMethod() { return null; },
-  async getJettonBalance() { return { wallet, balance: '1234567' }; },
-  async getJettonMetadata() { return null; },
+  async walletBalance() { return { wallet, balance: '1234567' }; },
+  async jettonMetadata() { return null; },
   async close() {},
   ...overrides,
-});
+}));
 
 const testConcurrentReadsAndMetadataEnrichment = async () => {
   const native = deferred<{ balance: string }>();
@@ -53,8 +54,8 @@ const testConcurrentReadsAndMetadataEnrichment = async () => {
   let metadataCalls = 0;
   const service = new IndexerService(config, new MemoryStore(config), sourceWith({
     async getAccountState() { nativeCalls += 1; return native.promise; },
-    async getJettonBalance() { jettonCalls += 1; return jetton.promise; },
-    async getJettonMetadata() { metadataCalls += 1; return metadata.promise; },
+    async walletBalance() { jettonCalls += 1; return jetton.promise; },
+    async jettonMetadata() { metadataCalls += 1; return metadata.promise; },
   }), loadOpcodes(), [{ master, symbol: 'UNKNOWN' }]);
 
   // The REST raw/formatted endpoints and SSE snapshots share one canonical read,
@@ -136,7 +137,7 @@ const testFailedNativeReadCanRetry = async () => {
       if (calls === 1) throw new Error('Temporary source failure');
       return { balance: '456' };
     },
-    async getJettonMetadata() { throw new Error('Metadata unavailable'); },
+    async jettonMetadata() { throw new Error('Metadata unavailable'); },
   }), loadOpcodes(), [{ master, symbol: 'UNKNOWN' }]);
   const failures = await Promise.allSettled([service.getBalance(owner), service.getBalances(owner)]);
   assert.ok(failures.every((result) => result.status === 'rejected'));
@@ -151,7 +152,7 @@ const testFreshMetadataWithCachingDisabled = async () => {
   const uncachedConfig = { ...config, responseCacheEnabled: false, jettonMetadataTtlMs: 0 };
   let metadataCalls = 0;
   const service = new IndexerService(uncachedConfig, new MemoryStore(uncachedConfig), sourceWith({
-    async getJettonMetadata() { metadataCalls += 1; return { decimals: 6 }; },
+    async jettonMetadata() { metadataCalls += 1; return { decimals: 6 }; },
   }), loadOpcodes(), [{ master, symbol: 'UNKNOWN' }]);
   const first = await service.getBalances(owner);
   const second = await service.getBalances(owner);
@@ -163,7 +164,7 @@ const testFreshMetadataWithCachingDisabled = async () => {
 const testPartialJettonReadCanRetry = async () => {
   let calls = 0;
   const service = new IndexerService(config, new MemoryStore(config), sourceWith({
-    async getJettonBalance() {
+    async walletBalance() {
       calls += 1;
       return calls === 1 ? null : { wallet, balance: '1234567' };
     },

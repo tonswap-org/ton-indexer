@@ -1,7 +1,8 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { Address, TupleItem, beginCell } from '@ton/core';
 import { loadConfig } from '../config';
-import { TonDataSource } from '../data/dataSource';
+
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
 import { loadOpcodes } from '../utils/opcodes';
@@ -18,9 +19,9 @@ const address = (value: string): TupleItem => ({
 
 const makeSource = (configStack: TupleItem[], automationStack?: TupleItem[]) => {
   const calls: string[] = [];
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({
     network: 'localnet',
-    async getMasterchainInfo() {
+    async head() {
       return { seqno: 1 };
     },
     async getAccountState() {
@@ -47,16 +48,16 @@ const makeSource = (configStack: TupleItem[], automationStack?: TupleItem[]) => 
       }
       return null;
     },
-    async getJettonBalance() {
+    async walletBalance() {
       return null;
     },
-    async getJettonMetadata() {
+    async jettonMetadata() {
       return null;
     },
     async close() {
       return;
     },
-  };
+  });
   return { source, calls };
 };
 

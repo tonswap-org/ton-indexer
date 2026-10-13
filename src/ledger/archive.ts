@@ -1,6 +1,6 @@
 import type {
   AccountStateResponse,
-  TonDataSource,
+  ChainSource,
   TransactionCursor,
 } from '../data/dataSource';
 import { canonicalLedgerHash } from './normalize';
@@ -12,15 +12,15 @@ export type LedgerStateSnapshot = {
 /** A boundary is usable only if its account last-transaction hash is exact.
  * Intermediate states require authenticated replay, never interpolation. */
 export async function findTransactionState(
-  source: TonDataSource,
+  source: Pick<ChainSource, 'head' | 'getAccountStateAtSeqno' | 'getAccountStateAtTransaction'>,
   account: string,
   cursor: TransactionCursor,
   headSeqno?: number,
 ): Promise<LedgerStateSnapshot | null> {
-  if (!source.getAccountStateAtSeqno || !/^(0|[1-9][0-9]*)$/.test(cursor.lt))
+  if (!/^(0|[1-9][0-9]*)$/.test(cursor.lt))
     return null;
   try {
-    const head = headSeqno ?? (await source.getMasterchainInfo()).seqno;
+    const head = headSeqno ?? (await source.head()).seqno;
     if (!Number.isSafeInteger(head) || head < 0) return null;
     if (cursor.lt === '0') {
       let low = 0, high = head;
@@ -58,8 +58,7 @@ export async function findTransactionState(
         high = seqno;
       } else low = seqno + 1;
     }
-    if (candidate && BigInt(candidate.state.lastTxLt ?? '0') > BigInt(cursor.lt) &&
-        source.getAccountStateAtTransaction) {
+    if (candidate && BigInt(candidate.state.lastTxLt ?? '0') > BigInt(cursor.lt)) {
       candidate = {
         seqno: candidate.seqno,
         state: await source.getAccountStateAtTransaction(account, cursor, candidate.seqno),

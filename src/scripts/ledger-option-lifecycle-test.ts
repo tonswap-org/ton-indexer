@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -11,8 +12,7 @@ import {
 import type {
   RawMessage,
   RawTransaction,
-  TonDataSource,
-} from "../data/dataSource";
+} from '../data/dataSource';
 import { PGlite } from "@electric-sql/pglite";
 import { PostgresLedgerStore, type LedgerSqlPool } from "../ledger/store";
 import { LedgerService } from "../ledger/service";
@@ -1123,9 +1123,9 @@ async function durableLifecycle() {
       type: "slice" as const,
       cell: beginCell().storeAddress(A(address)).endCell(),
     });
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({
     network: "testnet",
-    getMasterchainInfo: async () => ({ seqno: 1000 }),
+    head: async () => ({ seqno: 1000 }),
     getAccountState: async (account) => stateAtSeq(account),
     getAccountStateAtSeqno: async (account, seqno) =>
       stateAtSeq(account, seqno),
@@ -1135,11 +1135,11 @@ async function durableLifecycle() {
         .slice()
         .reverse()
         .slice(0, limit),
-    getJettonBalance: async (party, master) =>
+    walletBalance: async (party, master) =>
       master === root && [owner, other, factory, vault].includes(party)
         ? { wallet: wallet(party), balance: "0" }
         : null,
-    getJettonMetadata: async () => ({ decimals: 9 }),
+    jettonMetadata: async () => ({ decimals: 9 }),
     close: async () => {},
     runGetMethod: async (account, method) => {
       const asset = f.input.wallets.get(account);
@@ -1173,7 +1173,7 @@ async function durableLifecycle() {
         throw Error("Latest positions cannot establish lifecycle evidence");
       return null;
     },
-  };
+  });
   const service = new LedgerService(
     "testnet",
     store,

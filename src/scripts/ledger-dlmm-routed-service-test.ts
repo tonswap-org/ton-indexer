@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -13,7 +14,7 @@ import { canonicalLedgerHash, normalizeLedgerEvent } from '../ledger/normalize';
 import { validateMarketBindings } from '../ledger/bindings';
 import { loadOpcodes } from '../utils/opcodes';
 import type { LedgerService } from '../ledger/service';
-import type { TonDataSource } from '../data/dataSource';
+
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
 async function main() {
     const f = JSON.parse(readFileSync(`${__dirname}/fixtures/dlmm-referral-liquidity-current/dlmm-liquidity-settlements.json`, 'utf8'));
@@ -38,7 +39,7 @@ async function main() {
             await pool.query('INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING', ['localnet', b.account, state.lastTxLt, canonicalLedgerHash(state.lastTxHash), JSON.stringify({ seqno: 0, state })]);
         }
     const ledger = { network: 'localnet', store, syncAccount: async (account: string, project: boolean) => { assert.equal(project, false); calls.add(account); } } as unknown as LedgerService;
-    const graph = await new DlmmMarketGraphBuilder(ledger, {} as TonDataSource).build(binding);
+    const graph = await new DlmmMarketGraphBuilder(ledger, fixtureChainSource({})).build(binding);
     assert.deepEqual(graph.issues, []);
     assert.ok(calls.has(binding.router!));
     assert.ok(calls.has(f.accounts.payer));
@@ -55,7 +56,7 @@ async function main() {
     assert.equal(page.coverage?.generation, publication.generation);
     assert.equal(page.observations.length, 2);
     assert.ok(page.observations.every(o => o.routing?.router === binding.router));
-    const limited = await new DlmmMarketGraphBuilder(ledger, {} as TonDataSource, 1).build(binding);
+    const limited = await new DlmmMarketGraphBuilder(ledger, fixtureChainSource({}), 1).build(binding);
     assert.ok(limited.issues.includes('market_related_account_limit'));
     assert.equal(projectDlmmMarket(binding, limited.nodes, limited.dependencies).observations.length, 0);
     const wallets = new Map<string, LedgerAsset>();
@@ -67,7 +68,7 @@ async function main() {
             const owner = name === 'other' ? f.accounts.otherPayer : f.accounts[name], master = side ? binding.tokenX : binding.tokenT;
             wallets.set(wallet, { kind: 'jetton', id: `localnet:jetton:${master}`, wallet, owner, master });
         }
-    const source = { network: 'localnet', getJettonBalance: async (owner: string, root: string) => { const entry = [...wallets.values()].find(w => w.owner === owner && w.master === root); return entry ? { wallet: entry.wallet, balance: '0' } : null; }, runGetMethod: async () => ({ exitCode: 11, stack: [] }) } as unknown as TonDataSource;
+    const source = fixtureChainSource({ network: 'localnet', walletBalance: async (owner: string, root: string) => { const entry = [...wallets.values()].find(w => w.owner === owner && w.master === root); return entry?.wallet ? { wallet: entry.wallet, balance: '0' } : null; }, runGetMethod: async () => ({ exitCode: 11, stack: [] }) });
     const generation = (await store.account('localnet', f.accounts.payer))!.current_generation!;
     const build = (limit = 256) => new LedgerGraphBuilder('localnet', source, store, [binding.tokenT, binding.tokenX], undefined, async (wallet) => wallets.get(wallet) ?? null, async () => true, limit, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], [binding]).build(f.accounts.payer, generation);
     const ownerGraph = await build();

@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
@@ -5,7 +6,7 @@ import { Pool } from 'pg';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import { PerpsRangeService } from '../ledger/perpsRange';
 import { loadOpcodes } from '../utils/opcodes';
-import type { TonDataSource } from '../data/dataSource';
+
 
 /** The optional native run uses an isolated schema on an explicitly selected
  * loopback database, proving independent-connection admission and worker locks. */
@@ -25,7 +26,7 @@ async function main() {
   const store = new PostgresLedgerStore(sql);
   const owner = `0:${'1'.repeat(64)}`, bounds = { scope: 'perps' as const, fromUtime: 100, toUtime: 200 };
   let sourceCalls = 0;
-  const source = { getMasterchainInfo: async () => { sourceCalls++; throw Error('temporary provider outage'); } } as unknown as TonDataSource;
+  const source = fixtureChainSource({ head: async () => { sourceCalls++; throw Error('temporary provider outage'); } });
   const options = { perpsEngine: `0:${'2'.repeat(64)}`, t3Root: `0:${'3'.repeat(64)}`, perpsEngineCodeHash: '4'.repeat(64) };
   const services: PerpsRangeService[] = [];
   const service = async () => {
@@ -108,7 +109,7 @@ async function main() {
       let rejectRead!: (error: Error) => void;
       let entered!: () => void;
       const readEntered = new Promise<void>(resolve => { entered = resolve; });
-      const heldSource = { getMasterchainInfo: async () => { sourceCalls++; entered(); return new Promise((_resolve, reject) => { rejectRead = reject; }); } } as unknown as TonDataSource;
+      const heldSource = fixtureChainSource({ head: async () => { sourceCalls++; entered(); return new Promise((_resolve, reject) => { rejectRead = reject; }); } });
       const workers = [0, 1].map(() => new PerpsRangeService('localnet', store, heldSource, loadOpcodes(), options));
       services.push(...workers);
       const generation = page.coverage.generation!;

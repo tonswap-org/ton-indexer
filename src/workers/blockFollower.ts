@@ -2,7 +2,7 @@ import { Config } from '../config';
 import { MemoryStore } from '../store/memoryStore';
 import {
   RawTransaction,
-  TonDataSource,
+  ChainSource,
   transactionPageIsLinkedInclusiveSegment,
   transactionPageReachesHistoryStart
 } from '../data/dataSource';
@@ -34,7 +34,7 @@ const retainedExactTransactions = (
 export class BlockFollower {
   private config: Config;
   private store: MemoryStore;
-  private source: TonDataSource;
+  private source: ChainSource;
   private opcodes: OpcodeSets;
   private logger: Logger;
   private service: IndexerService;
@@ -46,7 +46,7 @@ export class BlockFollower {
   constructor(
     config: Config,
     store: MemoryStore,
-    source: TonDataSource,
+    source: ChainSource,
     opcodes: OpcodeSets,
     logger: Logger,
     service: IndexerService,
@@ -79,10 +79,10 @@ export class BlockFollower {
     this.inFlight = true;
 
     try {
-      const master = await this.source.getMasterchainInfo();
+      const master = await this.source.head();
       if (this.lastSeqno && master.seqno <= this.lastSeqno) return;
       this.lastSeqno = master.seqno;
-      this.service.setMasterchainInfo(master.seqno, master.timestamp);
+      this.service.setMasterchainInfo(master.seqno, master.utime);
 
       this.store.purgeStale();
       const workflowGeneration = this.store.getWorkflowGeneration();

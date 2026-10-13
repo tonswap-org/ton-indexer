@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -12,7 +13,7 @@ import { PostgresMarketStore } from '../ledger/marketStore';
 import { canonicalLedgerHash, normalizeLedgerEvent } from '../ledger/normalize';
 import { loadOpcodes } from '../utils/opcodes';
 import type { LedgerService } from '../ledger/service';
-import type { TonDataSource } from '../data/dataSource';
+
 import type { Logger } from '../utils/logger';
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
 
@@ -41,7 +42,7 @@ async function main() {
       ['localnet', boundary.account, state.lastTxLt, canonicalLedgerHash(state.lastTxHash), JSON.stringify({ seqno: 0, state })]);
   }
   const ledger = { network: 'localnet', store: ledgerStore, syncAccount: async (account: string, project: boolean) => { assert.equal(project, false); calls.push(account); return true; } } as unknown as LedgerService;
-  const source = {} as TonDataSource, logger: Logger = { warn: () => {}, info: () => {}, error: () => {}, debug: () => {} };
+  const source = fixtureChainSource({}), logger: Logger = { warn: () => {}, info: () => {}, error: () => {}, debug: () => {} };
   const graph = await new DlmmMarketGraphBuilder(ledger, source).build(binding);
   assert.deepEqual(graph.issues, []); assert.ok(graph.nodes.length > 0); assert.ok(graph.dependencies.every(value => value.historyComplete));
   assert.ok(calls.includes(binding.pool)); assert.ok(!calls.includes(f.accounts.tokenT), 'discovery does not recursively traverse unrelated root history');

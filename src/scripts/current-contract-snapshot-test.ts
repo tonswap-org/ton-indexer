@@ -1,9 +1,10 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { Address, Dictionary, TupleItem, beginCell } from '@ton/core';
 import Fastify from 'fastify';
 import { registerRoutes } from '../api/routes';
 import { loadConfig } from '../config';
-import { TonDataSource } from '../data/dataSource';
+
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
 import { loadOpcodes } from '../utils/opcodes';
@@ -58,10 +59,10 @@ function livePage(entries: Array<[number, bigint]>, args?: TupleItem[], revision
   return [int(revision), int(selected.at(-1)?.[0] ?? cursor.value), int(remaining.length <= selected.length ? -1 : 0), { type: 'cell', cell: beginCell().storeDict(ids).endCell() }];
 }
 
-function sourceFor(retired = false): TonDataSource {
-  return {
+function sourceFor(retired = false): FixtureChainSource {
+  return fixtureChainSource({
     network: 'localnet',
-    async getMasterchainInfo() { return { seqno: 1 }; },
+    async head() { return { seqno: 1 }; },
     async getAccountState() { return { balance: '0' }; },
     async getTransactions() { return []; },
     async runGetMethod(_address, method, args) {
@@ -88,10 +89,10 @@ function sourceFor(retired = false): TonDataSource {
       if (method === 'get_risk_controller_state') return { exitCode: 0, stack: riskControllerState };
       return null;
     },
-    async getJettonBalance() { return null; },
-    async getJettonMetadata() { return null; },
+    async walletBalance() { return null; },
+    async jettonMetadata() { return null; },
     async close() {},
-  };
+  });
 }
 
 const config = { ...loadConfig(), network: 'localnet' as const, responseCacheEnabled: false };

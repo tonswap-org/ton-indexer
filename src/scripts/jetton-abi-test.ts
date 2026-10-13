@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import {
   Address,
@@ -15,7 +16,7 @@ import {
   parseCanonicalJettonWalletData,
   readCanonicalJettonBalance
 } from '../data/jettonAbi';
-import { TonDataSource } from '../data/dataSource';
+
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
 import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
@@ -224,13 +225,14 @@ const assertCanonicalInitialWalletLayout = () => {
 const transferPayloadSource = (
   getterWallet: Address,
   accountStateCalls: string[]
-): TonDataSource => ({
+): FixtureChainSource => (fixtureChainSource({
   network: 'testnet',
-  async getMasterchainInfo() {
+  async head() {
     return { seqno: 0 };
   },
-  async getAccountState(address) {
-    accountStateCalls.push(address);
+  async getAccountState(address, options) {
+    if (!options?.at) accountStateCalls.push(address);
+    if (address === root.toRawString()) return { balance: '0', accountState: 'active', codeBoc: walletCode.toBoc().toString('base64') };
     return { balance: '0', accountState: 'uninitialized' };
   },
   async getTransactions() {
@@ -246,16 +248,10 @@ const transferPayloadSource = (
     }
     return null;
   },
-  async getJettonBalance() {
-    return null;
-  },
-  async getJettonMetadata() {
-    return null;
-  },
   async close() {
     return;
   }
-});
+}));
 
 const assertTransferPayloadUsesExactWalletLayout = async () => {
   const config = loadConfig();

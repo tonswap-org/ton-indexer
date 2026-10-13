@@ -2,7 +2,7 @@ import { Config } from '../config';
 import { MemoryStore } from '../store/memoryStore';
 import {
   RawTransaction,
-  TonDataSource,
+  ChainSource,
   transactionPageIsLinkedInclusiveSegment,
   transactionPageReachesHistoryStart
 } from '../data/dataSource';
@@ -41,7 +41,7 @@ const retainedExactInclusiveBackfillPage = (
 export class BackfillWorker {
   private config: Config;
   private store: MemoryStore;
-  private source: TonDataSource;
+  private source: ChainSource;
   private opcodes: OpcodeSets;
   private logger: Logger;
   private metrics?: MetricsCollector;
@@ -54,7 +54,7 @@ export class BackfillWorker {
   constructor(
     config: Config,
     store: MemoryStore,
-    source: TonDataSource,
+    source: ChainSource,
     opcodes: OpcodeSets,
     logger: Logger,
     metrics?: MetricsCollector,

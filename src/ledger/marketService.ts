@@ -1,4 +1,4 @@
-import type { TonDataSource } from '../data/dataSource';
+import type { ChainSource } from '../data/dataSource';
 import type { Logger } from '../utils/logger';
 import type { LedgerService } from './service';
 import type { DlmmMarketBinding } from './marketTypes';
@@ -17,7 +17,7 @@ export class DlmmMarketService {
   private errors = new Set<string>();
   private bindings: Map<string, DlmmMarketBinding>;
   private graph: DlmmMarketGraphBuilder;
-  constructor(private ledger: LedgerService, private source: TonDataSource, readonly store: PostgresMarketStore,
+  constructor(private ledger: LedgerService, private source: ChainSource, readonly store: PostgresMarketStore,
     bindings: DlmmMarketBinding[], private logger: Logger, maxAccounts = 256) {
     this.bindings = new Map(bindings.map(binding => [binding.pool, binding]));
     this.graph = new DlmmMarketGraphBuilder(ledger, source, maxAccounts);

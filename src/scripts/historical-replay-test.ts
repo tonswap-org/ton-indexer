@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,7 +10,7 @@ import { findTransactionState } from '../ledger/archive';
 import { readPerpsState } from '../ledger/perpsState';
 import { projectOwnerLedger, type ProjectionInput, type LedgerChain } from '../ledger/project';
 import { loadOpcodes } from '../utils/opcodes';
-import type { AccountStateResponse, TonDataSource, RawTransaction } from '../data/dataSource';
+import type {AccountStateResponse, RawTransaction} from '../data/dataSource';
 
 const dir = join(__dirname, 'fixtures/perps-intermediate-state');
 const provenance = JSON.parse(readFileSync(join(dir, 'provenance.json'), 'utf8'));
@@ -107,15 +108,15 @@ async function main() {
   snapshots.set(before.lastTransactionLt.toString(), beforeState);
   await check('masterchain search uses exact replay only for a skipped intermediate cursor', async () => {
     let replayCalls = 0;
-    const source = { getMasterchainInfo: async () => ({ seqno: 8103 }),
+    const source = fixtureChainSource({ head: async () => ({ seqno: 8103 }),
       getAccountStateAtSeqno: async (_a: string, seqno: number) => seqno < 8102 ? beforeState : snapshots.get('8218000019')!,
       getAccountStateAtTransaction: async (_a: string, c: typeof cursor, seqno: number) => {
         replayCalls++; assert.equal(seqno, 8102); assert.deepEqual(c, cursor); return snapshots.get(cursor.lt)!;
       },
-    } as unknown as TonDataSource;
+    });
     assert.equal((await findTransactionState(source, address.toRawString(), cursor))?.state.lastTxLt, cursor.lt);
     assert.equal(replayCalls, 1);
-    delete source.getAccountStateAtTransaction;
+    source.getAccountStateAtTransaction = async () => { throw Error('archive unavailable'); };
     assert.equal(await findTransactionState(source, address.toRawString(), cursor), null);
   });
 

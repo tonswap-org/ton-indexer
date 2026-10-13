@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { MemoryStore } from '../store/memoryStore';
@@ -5,16 +6,16 @@ import { DebugService } from '../debugService';
 import { BackfillWorker } from '../workers/backfillWorker';
 import { createLogger } from '../utils/logger';
 import { loadOpcodes } from '../utils/opcodes';
-import { TonDataSource } from '../data/dataSource';
+
 
 const config = loadConfig();
 const store = new MemoryStore({ ...config, maxAddresses: 10 });
 const logger = createLogger('fatal');
 const opcodes = loadOpcodes();
 
-const dummySource: TonDataSource = {
+const dummySource: FixtureChainSource = fixtureChainSource({
   network: 'mainnet',
-  async getMasterchainInfo() {
+  async head() {
     return { seqno: 0 };
   },
   async getAccountState() {
@@ -26,16 +27,16 @@ const dummySource: TonDataSource = {
   async runGetMethod() {
     return null;
   },
-  async getJettonBalance() {
+  async walletBalance() {
     return null;
   },
-  async getJettonMetadata() {
+  async jettonMetadata() {
     return null;
   },
   async close() {
     return;
   },
-};
+});
 
 const backfill = new BackfillWorker(config, store, dummySource, opcodes, logger);
 

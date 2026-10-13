@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -7,7 +8,7 @@ import { readDatabaseUrl } from '../config/database';
 import { Address, Cell, beginCell } from '@ton/core';
 import { PGlite } from '@electric-sql/pglite';
 import fastify from 'fastify';
-import type { RawTransaction, TonDataSource } from '../data/dataSource';
+import type {RawTransaction} from '../data/dataSource';
 import { normalizeLedgerEvent } from '../ledger/normalize';
 import {
   PostgresLedgerStore,
@@ -181,10 +182,10 @@ async function testNormalization() {
 function sourceWithHistory(
   getHead: () => number,
   onRead?: () => void
-): TonDataSource {
-  return {
+): FixtureChainSource {
+  return fixtureChainSource({
     network: 'testnet',
-    getMasterchainInfo: async () => ({ seqno: 1 }),
+    head: async () => ({ seqno: 1 }),
     getAccountState: async () =>
       getHead()
         ? {
@@ -201,10 +202,10 @@ function sourceWithHistory(
       );
     },
     runGetMethod: async () => null,
-    getJettonBalance: async () => null,
-    getJettonMetadata: async () => null,
+    walletBalance: async () => null,
+    jettonMetadata: async () => null,
     close: async () => {},
-  };
+  });
 }
 
 async function testProjectionScope(store: PostgresLedgerStore, pool: LedgerSqlPool) {
@@ -672,7 +673,7 @@ async function testDatabase() {
           .toString('base64'),
       },
     });
-    const custodySource: TonDataSource = {
+    const custodySource: FixtureChainSource = fixtureChainSource({
       ...sourceWithHistory(() => 0),
       getAccountState: async (address) =>
         address === custodyWallet
@@ -688,11 +689,11 @@ async function testDatabase() {
               custodyTx(Number(lt) - i)
             )
           : [],
-      getJettonBalance: async (who, root) =>
+      walletBalance: async (who, root) =>
         who === custodyOwner && root === master
           ? { wallet: custodyWallet, balance: '300' }
           : null,
-      getJettonMetadata: async () => ({ decimals: 9 }),
+      jettonMetadata: async () => ({ decimals: 9 }),
       runGetMethod: async (address, method) =>
         address === custodyWallet && method === 'get_wallet_data'
           ? {
@@ -715,7 +716,7 @@ async function testDatabase() {
               ],
             }
           : null,
-    };
+    });
     const custody = new LedgerService(
       'testnet',
       store,

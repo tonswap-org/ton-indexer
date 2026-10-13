@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -5,7 +6,7 @@ import { Cell } from "@ton/core";
 import { LedgerGraphBuilder } from "../ledger/graph";
 import { projectOwnerLedger } from "../ledger/project";
 import type { LedgerAsset } from "../ledger/types";
-import type { AccountStateResponse, RawTransaction, TonDataSource } from "../data/dataSource";
+import type { AccountStateResponse, RawTransaction} from '../data/dataSource';
 import type { LedgerLaunchpadCodeHashes } from "../ledger/bindings";
 import type { PostgresLedgerStore } from "../ledger/store";
 import { canonicalLedgerHash } from "../ledger/normalize";
@@ -74,18 +75,18 @@ async function build(options: {
       throw Error(`Unexpected graph storage call: ${sql}`);
     } },
   } as unknown as PostgresLedgerStore;
-  const source = {
+  const source = fixtureChainSource({
     getAccountState: async (account: string) => {
       currentReads.push(account);
       if (options.missingCode && account === fixture.accounts.sale) return { ...saleState, codeBoc: null };
       return current.get(account) ?? { balance: "0", accountState: "uninitialized", lastTxLt: "0" };
     },
-    getJettonBalance: async (owner: string, master: string) => {
+    walletBalance: async (owner: string, master: string) => {
       const asset = [...assets.values()].find(asset => asset.owner === owner && asset.master === master);
-      return asset ? { wallet: asset.wallet } : null;
+      return asset?.wallet ? { wallet: asset.wallet, balance: '0' } : null;
     },
     runGetMethod: async (_account: string, method: string) => { getters.push(method); throw Error(`Unexpected getter: ${method}`); },
-  } as unknown as TonDataSource;
+  });
   const builder = new LedgerGraphBuilder("mainnet", source, store, [fixture.accounts.paymentRoot], undefined,
     async wallet => {
       const asset = assets.get(wallet);

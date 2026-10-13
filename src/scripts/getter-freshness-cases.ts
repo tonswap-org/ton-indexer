@@ -1,7 +1,8 @@
+import { fixtureChainSource, type FixtureChainSource, type FixtureGetter } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { Address, beginCell, parseTuple, serializeTuple, type TupleItem } from '@ton/core';
 import { loadConfig } from '../config';
-import type { TonDataSource } from '../data/dataSource';
+
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
 import { loadOpcodes } from '../utils/opcodes';
@@ -13,17 +14,17 @@ const address = `0:${'1'.repeat(64)}`;
 const int = (value: bigint): TupleItem => ({ type: 'int', value });
 const result = (value: bigint): Result => ({ exitCode: 0, stack: [int(value)] });
 const clone = (args: TupleItem[]) => parseTuple(serializeTuple(args));
-const make = (runGetMethod: TonDataSource['runGetMethod'], enabled = true, ttl = 100_000) => {
+const make = (runGetMethod: FixtureGetter, enabled = true, ttl = 100_000) => {
   const config = { ...loadConfig(), network: 'localnet' as const, responseCacheEnabled: enabled, stateCacheTtlMs: ttl };
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({
     network: 'localnet', runGetMethod,
-    async getMasterchainInfo() { return { seqno: 1 }; },
+    async head() { return { seqno: 1 }; },
     async getAccountState() { return { balance: '0' }; },
     async getTransactions() { return []; },
-    async getJettonBalance() { return null; },
-    async getJettonMetadata() { return null; },
+    async walletBalance() { return null; },
+    async jettonMetadata() { return null; },
     async close() {},
-  };
+  });
   return { config, service: new IndexerService(config, new MemoryStore(config), source, loadOpcodes(), []) };
 };
 const deferred = () => {

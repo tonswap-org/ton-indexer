@@ -1,10 +1,11 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { MemoryStore } from '../store/memoryStore';
 import { IndexerService } from '../indexerService';
 import { loadOpcodes } from '../utils/opcodes';
 import { AccountState } from '../models';
-import { TonDataSource } from '../data/dataSource';
+
 import { runGetterFreshnessTests } from './getter-freshness-cases';
 
 const config = {
@@ -21,9 +22,9 @@ let accountStateCalls = 0;
 const txHash = (lt: number) =>
   Buffer.from(BigInt(lt).toString(16).padStart(64, '0'), 'hex').toString('base64');
 
-const dummySource: TonDataSource = {
+const dummySource: FixtureChainSource = fixtureChainSource({
   network: 'mainnet',
-  async getMasterchainInfo() {
+  async head() {
     return { seqno: 0 };
   },
   async getAccountState() {
@@ -36,16 +37,16 @@ const dummySource: TonDataSource = {
   async runGetMethod() {
     return null;
   },
-  async getJettonBalance() {
+  async walletBalance() {
     return null;
   },
-  async getJettonMetadata() {
+  async jettonMetadata() {
     return null;
   },
   async close() {
     return;
   },
-};
+});
 
 const service = new IndexerService(config, store, dummySource, opcodes, []);
 
