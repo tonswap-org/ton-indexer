@@ -47,6 +47,7 @@ export class BackfillWorker {
   private metrics?: MetricsCollector;
   private poolTracker?: PoolTracker;
   private timer?: NodeJS.Timeout;
+  private controller = new AbortController();
   private pending: string[] = [];
   private pendingSet = new Set<string>();
   private inFlight = new Set<string>();
@@ -77,10 +78,12 @@ export class BackfillWorker {
 
   start() {
     if (this.timer) return;
+    if (this.controller.signal.aborted) this.controller = new AbortController();
     this.timer = setInterval(() => this.tick(), this.config.watchlistRefreshMs);
   }
 
   stop() {
+    this.controller.abort();
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
@@ -168,8 +171,9 @@ export class BackfillWorker {
         address,
         requestLimit,
         cursor.lt,
-        cursor.hash
+        cursor.hash, {signal: this.controller.signal}
       );
+      this.controller.signal.throwIfAborted();
       this.metrics?.recordBackfillBatch(receivedRawTxs.length);
       const responseTruncated = receivedRawTxs.length > requestLimit;
       const rawTxs = receivedRawTxs.slice(0, requestLimit);
@@ -222,7 +226,8 @@ export class BackfillWorker {
         retainedExactInclusiveBackfillPage(rawTxs, beforeTransactions, updated.txs)
       ) {
         const balanceBeforeAccountRead = this.store.get(address)?.balance;
-        const accountState = await this.source.getAccountState(address);
+        const accountState = await this.source.getAccountState(address, {signal: this.controller.signal});
+        this.controller.signal.throwIfAborted();
         const previousBalance = this.store.get(address)?.balance;
         if (previousBalance !== balanceBeforeAccountRead) {
           this.store.markHistoryIncomplete(address);

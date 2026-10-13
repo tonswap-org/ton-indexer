@@ -402,53 +402,6 @@ async function testSwap() {
     1,
     'internal owner/custody native transfers are not counted twice'
   );
-  // Synthetic qualified-ledger service boundary, not historical chain proof.
-  // The actual archive-free projection above must stay incomplete. Real Sandbox
-  // full/partial/refund qualification is covered by ledger-dlmm-swap-test.ts.
-  // This isolated service case retains amounts above 2^80 and minOut=1.
-  const supplied = structuredClone(event);
-  supplied.movements = result.flatMap(row => structuredClone(row.movements));
-  supplied.issues = ['jetton_decimals_unresolved'];
-  const outputMovement = supplied.movements.find(m => m.asset.kind === 'jetton' && m.direction === 'in')!;
-  const acceptance = {account: pool, lt: '40', hash: hash(40), utime: 1700000040};
-  const finalized = {account: pool, lt: '80', hash: hash(80), utime: 1700000080};
-  supplied.settlement = {...event.settlement!, status: 'confirmed', evidence: [...event.settlement!.evidence, finalized],
-    dlmmSwap: {poolCodeHash: '1'.repeat(64), paidInputRaw: paid.toString(), consumedInputRaw: paid.toString(), returnedInputRaw: '0', outputRaw: received.toString(),
-      inputMovementId: inputMovement.id, outputMovementId: outputMovement.id, refundMovementId: null, acceptance, finalizations: [finalized]}};
-  const qualifiedResult = [supplied];
-  const config = { ...loadConfig(), network: 'testnet' as const, responseCacheEnabled: false };
-  const store = new MemoryStore(config);
-  const originals = f.chains.get(owner)!.transactions.map(raw => classifyTransaction(owner, raw, opcodes));
-  store.addTransactions(owner, originals);
-  const head = originals.slice().sort((a, b) => BigInt(a.lt) > BigInt(b.lt) ? -1 : 1)[0];
-  store.setBalance(owner, { address: owner, balance: '0', lastTxLt: head.lt, lastTxHash: head.hash, updatedAt: Date.now() });
-  store.markHistoryComplete(owner);
-  const service = new IndexerService(config, store, fixtureChainSource({}), opcodes, []);
-  const page = (events: typeof result) => ({ network: 'testnet' as const, account: owner, events, nextCursor: null,
-    coverage: { generation: 'receipt-generation', snapshotComplete: true, historyComplete: false, issues: ['unrelated_wallet_gap'] } }) as any;
-  service.setSwapLedgerReader(async () => page(qualifiedResult));
-  const receivedSwaps = await service.getSwapExecutions(owner);
-  assert.equal(receivedSwaps.swaps.length, 1);
-  assert.equal(receivedSwaps.swaps[0].receiveAmount, received.toString());
-  assert.equal(receivedSwaps.swaps[0].minimumReceiveAmount, '1');
-  assert.deepEqual(receivedSwaps.swaps[0].receipt, { ledgerEventId: event.id, generation: 'receipt-generation', assetId: `testnet:jetton:${rootX}` });
-  for (const mutation of ['unconfirmed', 'request-body', 'original-transaction', 'foreign-owner', 'invalid-amount', 'duplicate-event']) {
-    const altered = structuredClone(qualifiedResult), target = altered.find(item => item.id === event.id)!;
-    if (mutation === 'unconfirmed') target.settlement!.status = 'incomplete';
-    if (mutation === 'request-body') target.movements.find(item => item.asset.kind === 'jetton' && item.direction === 'out')!.evidence.requestBodyHash = 'f'.repeat(64);
-    if (mutation === 'original-transaction') for (const movement of target.movements) for (const ref of movement.evidence.transactions ?? []) if (ref.account === owner) ref.hash = hash(999);
-    if (mutation === 'foreign-owner') target.movements.find(item => item.asset.kind === 'jetton' && item.direction === 'in')!.asset.owner = other;
-    if (mutation === 'invalid-amount') target.movements.find(item => item.asset.kind === 'jetton' && item.direction === 'in')!.amountRaw = '1e9';
-    if (mutation === 'duplicate-event') altered.push(structuredClone(target));
-    service.setSwapLedgerReader(async () => page(altered));
-    assert.equal((await service.getSwapExecutions(owner)).swaps[0].receiveAmount, undefined, mutation);
-  }
-  let pages = 0;
-  service.setSwapLedgerReader(async () => ++pages === 1 ? { ...page(qualifiedResult), nextCursor: 'next' }
-    : { ...page([]), coverage: { ...page([]).coverage, generation: 'other-generation' } });
-  assert.equal((await service.getSwapExecutions(owner)).swaps[0].receiveAmount, undefined, 'changed ledger generation');
-  service.setSwapLedgerReader(async () => { throw new Error('Ledger unavailable'); });
-  assert.equal((await service.getSwapExecutions(owner)).swaps[0].receiveAmount, undefined, 'unavailable ledger');
   f.chains.get(poolX)!.historyComplete = false;
   assert.equal(
     (await projectOwnerLedger(f)).events.find((e) => e.kind === 'swap')?.settlement

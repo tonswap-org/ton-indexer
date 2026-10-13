@@ -1,4 +1,4 @@
-import { fixtureChainSource, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
+import { fixtureChainSource, fixtureHead, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
 import { createHash } from 'node:crypto';
 import { assertPerpsProducerReceipt } from './perps-fixture-producer';
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { loadConfig } from '../config';
-import {RawTransaction} from '../data/dataSource';
+import { ChainReadError, type RawTransaction } from '../data/dataSource';
 import { IndexerService } from '../indexerService';
 import { PoolTracker } from '../poolTracker';
 import { MemoryStore } from '../store/memoryStore';
@@ -579,7 +579,7 @@ const testFollowerRefreshAndCatchUpAreAtomicAgainstQueuedInitialRead = async () 
     async getTransactions(_address, _limit, lt, hashValue) {
       if (lt === undefined) {
         uncursoredReads += 1;
-        throw new Error('transient initial history read failure');
+        throw new ChainReadError('upstream_timeout');
       }
       cursors.push(lt);
       assert.equal(lt, '4');
@@ -718,7 +718,7 @@ const testSnapshotGenerationInvalidatesCapturedFollowerBatches = async () => {
     return originalRefreshAddress(capturedAddress, seqno, workflowGeneration);
   };
 
-  await (follower as any).poll();
+  await (follower as any).poll(fixtureHead(12));
 
   assert.equal(refreshCalls, 11);
   assert.deepEqual(store.listWatchlist().map((entry) => entry.address), [replacementAddress]);

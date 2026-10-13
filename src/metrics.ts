@@ -53,7 +53,7 @@ export class MetricsService {
       started_at: this.startedAt,
       uptime_ms: Date.now() - this.startedAt,
       network: this.config.network,
-      data_source: this.config.dataSource,
+      data_source: 'lite',
       addresses: this.store.getAddressCount(),
       total_txs: this.store.getTotalTxs(),
       backfill_pending: backfillStats.pending,
@@ -64,7 +64,7 @@ export class MetricsService {
       cache_stats: this.collector.getCacheStats(),
       last_master_seqno: health.lastMasterSeqno ?? null,
       indexer_lag_sec: health.indexerLagSec ?? null,
-      liteserver_pool_status: health.liteserverPoolStatus ?? null,
+      chain: health.chain, ledger: health.ledger, disk: health.disk,
     };
   }
 

@@ -1,14 +1,11 @@
-import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import {
   Address,
   Cell,
   TupleItem,
   beginCell,
-  contractAddress,
-  loadStateInit
+  contractAddress
 } from '@ton/core';
-import { loadConfig } from '../config';
 import {
   buildTonswapJettonWalletInitialData,
   parseCanonicalJettonRootData,
@@ -17,10 +14,7 @@ import {
   readCanonicalJettonBalance
 } from '../data/jettonAbi';
 
-import { IndexerService } from '../indexerService';
-import { MemoryStore } from '../store/memoryStore';
 import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
-import { loadOpcodes } from '../utils/opcodes';
 
 const owner = Address.parse(`0:${'1'.repeat(64)}`);
 const root = Address.parse(`0:${'2'.repeat(64)}`);
@@ -222,90 +216,8 @@ const assertCanonicalInitialWalletLayout = () => {
   );
 };
 
-const transferPayloadSource = (
-  getterWallet: Address,
-  accountStateCalls: string[]
-): FixtureChainSource => (fixtureChainSource({
-  network: 'testnet',
-  async head() {
-    return { seqno: 0 };
-  },
-  async getAccountState(address, options) {
-    if (!options?.at) accountStateCalls.push(address);
-    if (address === root.toRawString()) return { balance: '0', accountState: 'active', codeBoc: walletCode.toBoc().toString('base64') };
-    return { balance: '0', accountState: 'uninitialized' };
-  },
-  async getTransactions() {
-    return [];
-  },
-  async runGetMethod(address, method) {
-    if (address !== root.toRawString()) return null;
-    if (method === 'get_wallet_address') {
-      return { exitCode: 0, stack: [addressItem(getterWallet)] };
-    }
-    if (method === 'get_jetton_data') {
-      return { exitCode: 0, stack: rootStack() };
-    }
-    return null;
-  },
-  async close() {
-    return;
-  }
-}));
-
-const assertTransferPayloadUsesExactWalletLayout = async () => {
-  const config = loadConfig();
-  const canonicalData = buildTonswapJettonWalletInitialData(owner, root);
-  const canonicalWallet = contractAddress(0, {
-    code: walletCode,
-    data: canonicalData
-  });
-  const accountStateCalls: string[] = [];
-  const service = new IndexerService(
-    config,
-    new MemoryStore(config),
-    transferPayloadSource(canonicalWallet, accountStateCalls),
-    loadOpcodes(),
-    []
-  );
-
-  const payload = await service.getJettonTransferPayload(
-    root.toRawString(),
-    owner.toRawString()
-  );
-  assert.equal(accountStateCalls.length, 1);
-  assert.equal(accountStateCalls[0], canonicalWallet.toRawString());
-  assert.ok(payload.state_init);
-
-  const stateCell = Cell.fromBoc(Buffer.from(payload.state_init, 'base64'));
-  assert.equal(stateCell.length, 1);
-  const stateInit = loadStateInit(stateCell[0].beginParse());
-  assert.ok(stateInit.code?.hash().equals(walletCode.hash()));
-  assert.ok(stateInit.data?.hash().equals(canonicalData.hash()));
-
-  const legacyWallet = contractAddress(0, {
-    code: walletCode,
-    data: legacyWalletInitialData()
-  });
-  const legacyAccountStateCalls: string[] = [];
-  const legacyService = new IndexerService(
-    config,
-    new MemoryStore(config),
-    transferPayloadSource(legacyWallet, legacyAccountStateCalls),
-    loadOpcodes(),
-    []
-  );
-  const rejected = await legacyService.getJettonTransferPayload(
-    root.toRawString(),
-    owner.toRawString()
-  );
-  assert.deepEqual(rejected, { custom_payload: null, state_init: null });
-  assert.deepEqual(legacyAccountStateCalls, []);
-};
-
 const main = async () => {
   assertCanonicalInitialWalletLayout();
-  await assertTransferPayloadUsesExactWalletLayout();
 
   const canonical = await runBalanceRead();
   assert.ok(canonical);

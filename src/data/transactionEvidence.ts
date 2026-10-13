@@ -205,7 +205,7 @@ const canonicalCursor = (lt: string, hash: string): TransactionCursor => {
 
 /** Read fresh original evidence directly, independently of the activity-summary cache. */
 export const readOriginalTransactionEvidence = async (
-  source: ChainSource, address: string, limit: number, requestedCursor?: TransactionCursor, deadlineAt = Number.POSITIVE_INFINITY,
+  source: ChainSource, address: string, limit: number, requestedCursor?: TransactionCursor, options: {signal?: AbortSignal} = {},
 ): Promise<RawTransaction[]> => {
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Transaction evidence limit must be 1 through 50.');
   const account = Address.parse(address);
@@ -214,7 +214,7 @@ export const readOriginalTransactionEvidence = async (
   if (requestedCursor) {
     cursor = canonicalCursor(requestedCursor.lt, requestedCursor.hash);
   } else {
-    const state = await source.getAccountState(rawAddress);
+    const state = await source.getAccountState(rawAddress, options);
     if (state.lastTxLt === undefined && state.lastTxHash === undefined) {
       if (state.accountState !== 'uninitialized') throw new Error('Existing account transaction evidence anchor is missing.');
       return [];
@@ -227,10 +227,10 @@ export const readOriginalTransactionEvidence = async (
   // Each nonempty page adds at least one strictly older transaction. At most
   // limit source reads are possible even for one-transaction provider pages.
   while (result.length < limit) {
-    if (Date.now() >= deadlineAt) throw new Error('Transaction evidence read deadline exceeded.');
+    options.signal?.throwIfAborted();
     const remaining = limit - result.length;
     const page = assertOriginalTransactionPage(
-      await source.getTransactions(rawAddress, remaining, cursor.lt, cursor.hash), account, cursor,
+      await source.getTransactions(rawAddress, remaining, cursor.lt, cursor.hash, options), account, cursor,
     );
     if (page.length > remaining) throw new Error('Transaction evidence provider exceeded the requested page bound.');
     result.push(...page);
