@@ -7,7 +7,7 @@ import {
   TransactionCursor
 } from './dataSource';
 import { JettonMetadata, Network } from '../models';
-import { assertFreshReadBatch, FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
+import { assertFreshReadActive, assertFreshReadBatch, FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 
 type RunGetMethodResult = { exitCode: number; stack: TupleItem[] } | null;
 
@@ -60,15 +60,25 @@ export class ResilientTonDataSource implements TonDataSource {
     throw new Error('Masterchain info unavailable from both data sources.');
   }
 
-  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
+  async readFresh(calls: FreshReadCall[], signal?: AbortSignal): Promise<FreshReadBatch> {
     const startedAt = Date.now();
+    const failures: unknown[] = [];
     for (const source of [this.primary, this.fallback]) {
+      assertFreshReadActive(signal);
       if (source.network !== this.network || !source.readFresh) continue;
-      const result = await callSafely(() => source.readFresh!(calls));
-      if (!result) continue;
-      try { assertFreshReadBatch(result, calls, this.network, startedAt); return result; } catch { /* try a complete fresh source */ }
+      try {
+        const result = await source.readFresh(calls, signal);
+        assertFreshReadActive(signal);
+        assertFreshReadBatch(result, calls, this.network, startedAt);
+        return result;
+      } catch (error) {
+        failures.push(error);
+        // A failed source drains its owned calls before rejecting. A request
+        // cancellation must never launch a second source after that drain.
+        assertFreshReadActive(signal);
+      }
     }
-    throw new FreshReadUnavailableError();
+    throw new FreshReadUnavailableError(new AggregateError(failures, 'Fresh read sources failed.'));
   }
 
   async getAccountState(address: string): Promise<AccountStateResponse> {

@@ -2,8 +2,9 @@ import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import type { LiteEngine } from 'ton-lite-client';
 import type { TLFunction } from 'ton-tl';
+import { assertFreshReadActive, freshReadDelay } from './freshRead';
 
-type QueryOptions = { timeout?: number; awaitSeqno?: number };
+type QueryOptions = { timeout?: number; awaitSeqno?: number; signal?: AbortSignal };
 
 export class BoundedLiteQueryError extends Error {
   readonly attempts: readonly Readonly<{ endpointIndex: number; cause: unknown }>[];
@@ -39,6 +40,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
   }
 
   async query<REQ, RES>(f: TLFunction<REQ, RES>, req: REQ, args: QueryOptions = {}): Promise<RES> {
+    assertFreshReadActive(args.signal);
     if (this.closed) throw new Error('Engine is closed');
     const requestedTimeout = args.timeout ?? this.options.timeoutMs;
     if (!Number.isFinite(requestedTimeout) || requestedTimeout <= 0) {
@@ -52,6 +54,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
     let attempts = 0;
     const failures: { endpointIndex: number; cause: unknown }[] = [];
     while (!this.closed && performance.now() < deadline && attempts < this.options.maxAttempts) {
+      assertFreshReadActive(args.signal);
       let engine: LiteEngine | undefined;
       let endpointIndex = -1;
       for (let checked = 0; checked < this.engines.length; checked += 1) {
@@ -69,21 +72,25 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
       const remainingMs = Math.floor(deadline - performance.now());
       if (this.closed || remainingMs < 1) break;
       if (!engine) {
-        await new Promise((resolve) => setTimeout(resolve, Math.min(25, remainingMs)));
+        await freshReadDelay(Math.min(25, remainingMs), args.signal);
         continue;
       }
       attempts += 1;
       try {
         // LiteSingleEngine removes its pending query when this timeout elapses.
         // Do not race an unbounded retry promise and leave network work running.
-        return await engine.query(f, req, {
-          ...args,
+        const result = await engine.query(f, req, {
+          ...(args.awaitSeqno === undefined ? {} : { awaitSeqno: args.awaitSeqno }),
           timeout: Math.min(this.options.attemptTimeoutMs, remainingMs),
         });
+        assertFreshReadActive(args.signal);
+        return result;
       } catch (error) {
+        assertFreshReadActive(args.signal);
         failures.push({ endpointIndex, cause: error });
       }
     }
+    assertFreshReadActive(args.signal);
     if (this.closed) throw new Error('Engine is closed');
     throw new BoundedLiteQueryError(failures);
   }

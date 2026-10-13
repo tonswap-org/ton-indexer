@@ -18,7 +18,7 @@ import {
 } from '@ton/core';
 import { LiteClient, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
 import { BoundedLiteEngine } from './boundedLiteEngine';
-import { assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
+import { assertFreshReadActive, assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
   FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 import { errorDiagnostic, type Logger } from '../utils/logger';
 import { Functions } from 'ton-lite-client/dist/schema';
@@ -378,10 +378,13 @@ export class LiteClientDataSource implements TonDataSource {
     return new LiteClientDataSource(network, client, logger);
   }
 
-  private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> {
+  private async call<T>(fn: (client: LiteClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
     // Failover belongs to the wire-query engine. Retrying a compound client
     // operation here multiplies latency and can repeat already completed reads.
-    return fn(this.client);
+    assertFreshReadActive(signal);
+    const result = await fn(this.client);
+    assertFreshReadActive(signal);
+    return result;
   }
 
   private async getMasterchainRef(force = false): Promise<LiteMasterchainRef> {
@@ -477,20 +480,21 @@ export class LiteClientDataSource implements TonDataSource {
     return this.readAccountStateAtBlock(address, master.last);
   }
 
-  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
+  async readFresh(calls: FreshReadCall[], signal?: AbortSignal): Promise<FreshReadBatch> {
     const queriedAt = Date.now();
     // Do not enter the datasource head cache or the LiteClient account loader.
-    const master = await this.call(client => client.getMasterchainInfoExt());
+    const queryArgs = { timeout: 5_000, signal };
+    const master = await this.call(client => client.getMasterchainInfoExt(queryArgs), signal);
     assertFreshNetwork(this.network, master.init);
     const head = freshMasterchainBlock(master.last);
-    const results = await executeFreshCalls(calls, async call => {
+    const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
       const address = Address.parse(call.address).toRawString();
       if (call.kind === 'account') return { kind: 'account', address,
-        state: await this.readAccountStateAtBlock(address, master.last, true) };
-      const result = await this.runGetMethodAtBlock(Address.parse(address), call.method, call.args, master.last, true);
+        state: await this.readAccountStateAtBlock(address, master.last, true, ownedSignal) };
+      const result = await this.runGetMethodAtBlock(Address.parse(address), call.method, call.args, master.last, true, ownedSignal);
       if (!result) throw new FreshReadUnavailableError();
       return { kind: 'getter', address, ...result };
-    });
+    }, signal);
     const batch: FreshReadBatch = { network: this.network, readContext: { source: 'lite', head, queriedAt }, results };
     assertFreshReadBatch(batch, calls, this.network, queriedAt);
     return batch;
@@ -567,9 +571,10 @@ export class LiteClientDataSource implements TonDataSource {
     return replayHistoricalAccount({ address: parsed, cursor, predecessor, steps });
   }
 
-  private async readAccountStateAtBlock(address: string, block: LiteBlockId, uncached = false): Promise<AccountStateResponse> {
+  private async readAccountStateAtBlock(address: string, block: LiteBlockId, uncached = false, signal?: AbortSignal): Promise<AccountStateResponse> {
     const parsed = Address.parse(address);
-    const state = await this.call((client) => uncached ? client.getAccountStateRaw(parsed, block) : client.getAccountState(parsed, block));
+    const queryArgs = { timeout: 5_000, signal };
+    const state = await this.call((client) => uncached ? client.getAccountStateRaw(parsed, block, queryArgs) : client.getAccountState(parsed, block), signal);
     if (uncached) {
       assertFreshBlock(state.block, freshMasterchainBlock(block));
     }
@@ -649,10 +654,12 @@ export class LiteClientDataSource implements TonDataSource {
     method: string,
     args: TupleItem[],
     block: LiteBlockId,
-    strict = false
+    strict = false,
+    signal?: AbortSignal
   ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
     const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
-    const res = await this.call((client) => client.runMethod(target, method, params, block));
+    const queryArgs = { timeout: 5_000, signal };
+    const res = await this.call((client) => client.runMethod(target, method, params, block, queryArgs), signal);
     assertBlockId(res.block, block, `Getter ${method} masterchain block`);
     if (strict && (!Number.isSafeInteger(res.exitCode) || (res.result !== null && typeof res.result !== 'string')))
       throw new FreshReadUnavailableError();

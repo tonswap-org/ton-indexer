@@ -12,7 +12,7 @@ import {
 } from './dataSource';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 import { canonicalAccountHash, parseAccountTransactionPointer } from './accountState';
-import { assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
+import { assertFreshReadActive, freshReadDelay, assertFreshBlock, assertFreshNetwork, assertFreshReadBatch, executeFreshCalls, freshMasterchainBlock,
   FreshReadUnavailableError, type FreshReadBatch, type FreshReadCall } from './freshRead';
 import {
   cellFromAccountCodeBoc,
@@ -264,23 +264,23 @@ export class TonClient4DataSource implements TonDataSource {
     return this.mapAccountStateResponse(account);
   }
 
-  async readFresh(calls: FreshReadCall[]): Promise<FreshReadBatch> {
+  async readFresh(calls: FreshReadCall[], signal?: AbortSignal): Promise<FreshReadBatch> {
     const queriedAt = Date.now();
-    const master = await this.call(client => client.getLastBlock());
+    const master = await this.call(client => client.getLastBlock(), signal);
     assertFreshNetwork(this.network, master.init);
     const head = freshMasterchainBlock(master.last);
-    const results = await executeFreshCalls(calls, async call => {
+    const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
       const address = Address.parse(call.address).toRawString();
       if (call.kind === 'account') {
-        const account = await this.call(client => client.getAccount(head.seqno, Address.parse(address)));
+        const account = await this.call(client => client.getAccount(head.seqno, Address.parse(address)), ownedSignal);
         assertFreshBlock(account.block, head);
         return { kind: 'account', address, state: this.mapAccountStateResponse(account) };
       }
-      const response = await this.call(client => client.runMethod(head.seqno, Address.parse(address), call.method, call.args));
+      const response = await this.call(client => client.runMethod(head.seqno, Address.parse(address), call.method, call.args), ownedSignal);
       assertFreshBlock(response.block, head);
       if (!Number.isSafeInteger(response.exitCode) || !Array.isArray(response.result)) throw new FreshReadUnavailableError();
       return { kind: 'getter', address, exitCode: response.exitCode, stack: response.result };
-    });
+    }, signal);
     const batch: FreshReadBatch = { network: this.network, readContext: { source: 'http4', head, queriedAt }, results };
     assertFreshReadBatch(batch, calls, this.network, queriedAt);
     return batch;
@@ -441,17 +441,21 @@ export class TonClient4DataSource implements TonDataSource {
     }
   }
 
-  private async call<T>(fn: (client: TonClient4Like) => Promise<T>): Promise<T> {
+  private async call<T>(fn: (client: TonClient4Like) => Promise<T>, signal?: AbortSignal): Promise<T> {
     let lastError: unknown;
     const attempts = Math.max(1, this.endpoints.length);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      assertFreshReadActive(signal);
       try {
-        return await fn(this.client);
+        const result = await fn(this.client);
+        assertFreshReadActive(signal);
+        return result;
       } catch (error) {
+        assertFreshReadActive(signal);
         lastError = error;
         if (this.endpoints.length <= 1) break;
         this.rotateEndpoint();
-        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+        await freshReadDelay(200 * (attempt + 1), signal);
       }
     }
     throw lastError;

@@ -151,7 +151,14 @@ claim about block creation time. Responses use `Cache-Control: no-store` and
 unavailable, incomplete, wrong-network or wrong-block observations fail with
 503 `fresh_read_unavailable`. Getter VM exit codes remain actual outcomes.
 Perps admission stays on its bounded verified native executor and cannot enter
-this generic fresh getter path. Run `npm run test:fresh-read` for these guarantees.
+this generic fresh getter path. The 18-second HTTP deadline and client disconnect
+cancel the same source operation. Failed or cancelled batches stop queued calls
+and retries, and drain their already dispatched bounded transport calls before
+fallback can begin. Active wires retain their existing transport timeout; no
+failure leaves later calls running behind a completed HTTP response. Internal
+failure diagnostics retain bounded source causes without exposing request bodies
+or stacks. Run `npm run test:fresh-read` for these guarantees, including real HTTP
+disconnect and deterministic worker/deadline ownership regressions.
 All HTTP account reads use the current SDK account shape: malformed or missing
 atomic balances and partial transaction cursors fail instead of becoming zero or
 empty history. Explicit null cursors and complete uint64-zero/hash-zero cursors

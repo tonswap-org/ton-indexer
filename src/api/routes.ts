@@ -36,6 +36,8 @@ import { publicIndexerPath } from './publicMount';
 import { publicAdmissionError, publicErrorMessage, sendError } from './errors';
 import { isAdmissionMethod } from '../data/admission/protocol';
 import type { FreshReadCall } from '../data/freshRead';
+import { withFreshReadDeadline } from './freshReadRequest';
+import { errorDiagnostic, type Logger } from '../utils/logger';
 import { currentNativeRuntime, resolveServiceMetadata } from './serviceMetadata';
 
 const BALANCE_STREAM_POLL_MS = 1_500;
@@ -347,7 +349,8 @@ export const registerRoutes = (
   debug?: DebugService,
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
-  registryMetadata?: RegistryMetadata
+  registryMetadata?: RegistryMetadata,
+  logger?: Logger
 ) => {
   const network = config.network;
   if (network !== 'mainnet' && network !== 'testnet' && network !== 'localnet') {
@@ -930,11 +933,22 @@ export const registerRoutes = (
     const manifest = currentNativeRuntime(network, registryMetadata);
     if (!manifest)
       return sendError(reply, 503, 'fresh_read_unavailable', 'Fresh chain read unavailable.');
+    const owner = new AbortController();
+    const startedAt = Date.now();
+    const disconnected = () => {
+      if (!reply.raw.writableEnded) owner.abort(new Error('Fresh read client disconnected.'));
+    };
+    reply.raw.once('close', disconnected);
     try {
-      const response = await withTimeout(service.readFresh(calls), FRESH_READ_TIMEOUT_MS);
+      const response = await withFreshReadDeadline(signal => service.readFresh(calls, signal), owner, FRESH_READ_TIMEOUT_MS);
       return { ...response, release: { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash } };
-    } catch {
+    } catch (error) {
+      owner.abort(error);
+      logger?.warn('fresh chain read unavailable', { elapsedMs: Date.now() - startedAt, calls: calls.length,
+        releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, error: errorDiagnostic(error) });
       return sendError(reply, 503, 'fresh_read_unavailable', 'Fresh chain read unavailable.');
+    } finally {
+      reply.raw.removeListener('close', disconnected);
     }
   });
 

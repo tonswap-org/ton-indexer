@@ -170,7 +170,8 @@ const start = async (manifest: LoadedManifest) => {
     debugService,
     rateLimiter,
     registry,
-    registryMetadata
+    registryMetadata,
+    logger
   );
   registerLedgerRoutes(app,ledger);
   registerLedgerReadinessRoute(app, { config, metadata: registryMetadata, pool: ledgerPool });

@@ -41,7 +41,7 @@ import {
 } from './data/jettonAbi';
 import { resolveDlmmPoolSettlementEvidence } from './utils/dlmmSettlementEvidence';
 import { enrichSwapReceipts, type SwapLedgerReader } from './ledger/swapReceipts';
-import { assertFreshReadBatch, FreshReadUnavailableError, type FreshReadCall } from './data/freshRead';
+import { assertFreshReadActive, assertFreshReadBatch, FreshReadUnavailableError, type FreshReadCall } from './data/freshRead';
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRunResult = {
@@ -1570,7 +1570,8 @@ export class IndexerService {
     }
   }
 
-  async readFresh(calls: FreshReadCall[]) {
+  async readFresh(calls: FreshReadCall[], signal?: AbortSignal) {
+    assertFreshReadActive(signal);
     const startedAt = Date.now();
     if (!this.source.readFresh || this.source.network !== this.network
       || calls.some(call => call.kind === 'getter' && isAdmissionMethod(call.method))) throw new FreshReadUnavailableError();
@@ -1578,7 +1579,8 @@ export class IndexerService {
     // enters MemoryStore or any ordinary read's pending/completed cache.
     const captured = calls.map(call => call.kind === 'account' ? { ...call } :
       { ...call, args: parseTuple(serializeTuple(call.args)) });
-    const batch = await this.source.readFresh(captured);
+    const batch = await this.source.readFresh(captured, signal);
+    assertFreshReadActive(signal);
     assertFreshReadBatch(batch, captured, this.network, startedAt);
     return { network: batch.network, readContext: batch.readContext, results: batch.results.map(result => {
       if (result.kind === 'getter') return { kind: result.kind, address: result.address,

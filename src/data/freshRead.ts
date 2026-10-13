@@ -17,7 +17,25 @@ export type FreshReadBatch = {
 };
 
 export class FreshReadUnavailableError extends Error {
-  constructor() { super('Fresh chain read unavailable.'); this.name = 'FreshReadUnavailableError'; }
+  constructor(cause?: unknown) { super('Fresh chain read unavailable.', { cause }); this.name = 'FreshReadUnavailableError'; }
+}
+
+export function assertFreshReadActive(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new FreshReadUnavailableError(signal.reason);
+}
+
+/** Cancel retry waits without abandoning an already dispatched transport query. */
+export async function freshReadDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  assertFreshReadActive(signal);
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener('abort', abort); resolve(); };
+    const timer = setTimeout(finish, ms);
+    const abort = () => {
+      clearTimeout(timer); signal?.removeEventListener('abort', abort);
+      reject(new FreshReadUnavailableError(signal?.reason));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 type SourceBlock = { workchain: number; shard: string; seqno: number; rootHash: Buffer | string; fileHash: Buffer | string };
@@ -81,14 +99,32 @@ export function assertFreshReadBatch(batch: FreshReadBatch, calls: FreshReadCall
   }
 }
 
-export async function executeFreshCalls(calls: FreshReadCall[], read: (call: FreshReadCall) => Promise<FreshReadResult>): Promise<FreshReadResult[]> {
+export async function executeFreshCalls(calls: FreshReadCall[], read: (call: FreshReadCall, signal: AbortSignal) => Promise<FreshReadResult>, signal?: AbortSignal): Promise<FreshReadResult[]> {
+  assertFreshReadActive(signal);
   const results = new Array<FreshReadResult>(calls.length);
+  const owned = new AbortController();
   let index = 0;
-  await Promise.all(Array.from({ length: Math.min(4, calls.length) }, async () => {
-    while (index < calls.length) {
-      const current = index++;
-      results[current] = await read(calls[current]);
-    }
-  }));
-  return results;
+  let failed = false;
+  let failure: unknown;
+  const fail = (error: unknown) => {
+    if (failed) return;
+    failed = true; failure = error; owned.abort(error);
+  };
+  const abort = () => fail(new FreshReadUnavailableError(signal?.reason));
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    // Workers catch locally: rejection must not release this operation's
+    // ownership while siblings can still dispatch work or overlap fallback.
+    await Promise.all(Array.from({ length: Math.min(4, calls.length) }, async () => {
+      while (!failed && index < calls.length) {
+        const current = index++;
+        try {
+          results[current] = await read(calls[current], owned.signal);
+          assertFreshReadActive(owned.signal);
+        } catch (error) { fail(error); }
+      }
+    }));
+    if (failed) throw failure;
+    return results;
+  } finally { signal?.removeEventListener('abort', abort); }
 }
