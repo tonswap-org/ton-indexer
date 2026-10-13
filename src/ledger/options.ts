@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 import { readOptionPositionState } from "./optionState";
 import { Address, Cell, beginCell } from "@ton/core";
 import type { RawMessage } from "../data/dataSource";
@@ -404,7 +405,7 @@ export async function decodeOptionPurchases(
     ];
     const complete =
       flow.confirmed &&
-      evidenceNodes.every((n) => input.chains.get(n.account)?.historyComplete);
+      evidenceNodes.every((n) => chainCoversTransaction(input.chains.get(n.account), n.raw));
     const debit = anchor.event?.movements.find(
       (m) =>
         m.id === `${flow.id}:out` &&

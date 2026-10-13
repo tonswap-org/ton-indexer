@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 import { Address, Cell } from "@ton/core";
 import type { LedgerMovement, LedgerEvidenceRef } from "./types";
 import type { Node, ProjectionInput } from "./project";
@@ -330,7 +331,7 @@ export async function recoverT3Burn(
     walletAcceptance.before.balanceRaw !== walletAcceptance.after.balanceRaw
   )
     return missing("t3_recovery_acceptance_state_unverified", ns);
-  if (ns.some((n) => !input.chains.get(n.account)?.historyComplete))
+  if (ns.some((n) => !chainCoversTransaction(input.chains.get(n.account), n.raw)))
     return missing("t3_recovery_related_history_incomplete", ns);
   const summarize = (s: NonNullable<typeof rootState>) => ({
     before: s.before.summary,

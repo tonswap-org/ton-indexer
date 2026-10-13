@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 // Prices encode the raw payment/token ratio with 18 fractional digits.
 const LAUNCHPAD_PRICE_SCALE = 10n ** 18n;
 const LAUNCHPAD_MAX_PRICE = (1n << 120n) - 1n;
@@ -230,7 +231,7 @@ export async function proveLaunchpadContribution(input: ProjectionInput, nodes: 
     flow.recipientAsset.master === sale.paymentRoot && flow.recipient.account === sale.paymentWallet, 'launchpad_original_payment_unverified');
   const {original,command,metadata}=participationRequest(input,nodes,flow,sale,receiptFor);
   const node=exactNotification(input,flow,sale,receiptFor),proof=[original.anchor,flow.source,flow.recipient,node];
-  requireEvidence(proof.every(member => input.chains.get(member.account)?.historyComplete), 'launchpad_participation_history_incomplete');
+  requireEvidence(proof.every(member => chainCoversTransaction(input.chains.get(member.account), member.raw)), 'launchpad_participation_history_incomplete');
   const amount = BigInt(flow.wire.amountRaw);
   let state:Awaited<ReturnType<typeof readFixedLaunchpadBoundary>>|Awaited<ReturnType<typeof readBondingBoundary>>|Awaited<ReturnType<typeof readAuctionBoundary>>,entitlement:LaunchpadParticipationEntitlement;
   if(sale.model==='fixed'&&command?.kind==='contribute'){state=await readFixedLaunchpadBoundary(input,node,sale);entitlement=fixedEntitlement(state,sale,input.owner,amount,command);}

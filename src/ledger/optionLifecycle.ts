@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 import { Cell } from "@ton/core";
 import type { ProjectionInput, Node, Flow } from "./project";
 import type { LedgerEvent, LedgerMovement, LedgerEvidenceRef } from "./types";
@@ -606,7 +607,7 @@ export async function decodeOptionExercises(
       }
     } else meta.protocolAccounting = { status: "not_required" };
     if (
-      unique(group).some((x) => !input.chains.get(x.account)?.historyComplete)
+      unique(group).some((x) => !chainCoversTransaction(input.chains.get(x.account), x.raw))
     ) {
       issue = "option_related_history_incomplete";
       finish();

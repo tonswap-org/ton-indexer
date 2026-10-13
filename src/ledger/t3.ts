@@ -1,3 +1,4 @@
+import { chainCoversTransaction, chainAtBoundary } from "./project";
 import { Cell } from "@ton/core";
 import type {
   LedgerAsset,
@@ -97,7 +98,7 @@ export async function decodeT3(
     usedFlows = new Set<string>(),
     seen = new Map<string, Node>();
   const complete = (ns: Node[]) =>
-    unique(ns).every((n) => input.chains.get(n.account)?.historyComplete);
+    unique(ns).every((n) => chainCoversTransaction(input.chains.get(n.account), n.raw));
   const edge = <T>(
     n: Node,
     dest: string,
@@ -545,7 +546,12 @@ export async function decodeT3(
           feeBreakdown: "unavailable",
           localNetworkFees: [],
         };
-        let issue = "t3_mint_settlement_unconfirmed";
+        const ownerWallets = [...input.wallets.values()].filter(asset =>
+          asset.owner === input.owner && asset.master === hub.root && asset.wallet);
+        const checkedAccounts = [hub.address, hub.root, d.recipient.account,
+          ...(ownerWallets.length === 1 ? [ownerWallets[0].wallet!] : [])];
+        let issue = ownerWallets.length !== 1 || checkedAccounts.some(account => !chainAtBoundary(input.chains.get(account)))
+          ? "related_account_refresh_pending" : "t3_mint_settlement_unconfirmed";
         if (refund && notification && refund.amountRaw === d.wire.amountRaw &&
             equal(refund.basketRaw, basketRaw) &&
             refund.token === hub.reserveRoots.indexOf(d.sourceAsset.master!)) {

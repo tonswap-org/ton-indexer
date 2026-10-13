@@ -415,7 +415,12 @@ export async function projectOwnerLedger(
   )[] = [];
   const usedFlows = new Set<string>();
   const relatedReady = (members: Node[]) =>
-    members.every((n) => chains.get(n.account)?.historyComplete);
+    members.every((n) => chainCoversTransaction(chains.get(n.account), n.raw));
+  const coveredEvidence = (value: LedgerEvidenceRef) => {
+    const chain = chains.get(value.account);
+    const tx = chain?.transactions.find(raw => raw.lt === value.lt && canonicalLedgerHash(raw.hash) === canonicalLedgerHash(value.hash));
+    return Boolean(tx && chainCoversTransaction(chain, tx));
+  };
   const attach = (a: Node, b: Node) => {
     merge(a, b);
     touched.add(a.id);
@@ -532,7 +537,7 @@ export async function projectOwnerLedger(
         const evidence=uniqueRefs([ref(node),ref(inputFlow.source),ref(inputFlow.recipient),...routingEvidenceRefs(proof.routing),
           ...proof.settlements.flatMap(s=>[s.request,s.debit,s.credit,s.acknowledged,s.walletFinalized,s.poolFinalized,...s.boundaries.map(b=>b.transaction)])]
           .map(value=>({...value,hash:canonicalLedgerHash(value.hash)})));
-        if(!evidence.every(value=>chains.get(value.account)?.historyComplete))throw Error('routed_swap_history_incomplete');
+        if(!evidence.every(coveredEvidence))throw Error('routed_swap_history_incomplete');
         for(const value of evidence) {const member=nodes.find(n=>n.account===value.account&&n.raw.lt===value.lt&&canonicalLedgerHash(n.raw.hash)===value.hash);if(member)attach(inputFlow.source,member);}
         for(const leg of [proof.routing.inputSettlement,terminal,...proof.settlements,...(proof.routing.protocolFeeSettlement?[proof.routing.protocolFeeSettlement]:[]),...(proof.routing.directFeeSettlement?[proof.routing.directFeeSettlement]:[])])for(const flow of matching(leg.debit,leg.credit,leg.amountRaw))usedFlows.add(flow.id);
         operation.pool=pool.address;operation.confirmed=true;operation.evidence=evidence;operation.issue=undefined;
@@ -592,7 +597,7 @@ export async function projectOwnerLedger(
           ...proof.settlements.flatMap(value => [value.request, value.debit, value.credit, value.acknowledged, value.walletFinalized, value.poolFinalized])]
           .map(value => ({...value, hash: canonicalLedgerHash(value.hash)})));
         if (!inputFlow.confirmed || proof.notice.owner !== owner || proof.forward.recipient !== owner ||
-          proof.paid.toString() !== inputFlow.wire.amountRaw || !evidence.every(value => chains.get(value.account)?.historyComplete)) throw Error('swap_history_incomplete');
+          proof.paid.toString() !== inputFlow.wire.amountRaw || !evidence.every(coveredEvidence)) throw Error('swap_history_incomplete');
         for (const {flow} of matched) { attach(inputFlow.source, flow.recipient); usedFlows.add(flow.id); }
         const output = matched.find(value => value.settlement.kind === 'swap_output');
         const refund = matched.find(value => value.settlement.kind === 'unused_input_refund');
@@ -768,7 +773,7 @@ export async function projectOwnerLedger(
             if (!flow.confirmed) candidate.issues.push('related_account_history_incomplete');
           }
         }
-        if (!candidate.evidence.every(value => chains.get(value.account)?.historyComplete)) candidate.issues.push('related_account_history_incomplete');
+        if (!candidate.evidence.every(coveredEvidence)) candidate.issues.push('related_account_history_incomplete');
         for (const issue of candidate.issues) mark(anchor, issue);
         const confirmed = Boolean(metadata && !candidate.issues.length);
         operations.push({anchor, kind: candidate.kind, pool: pool.address, queryId: candidate.queryId ?? undefined, confirmed, evidence: candidate.evidence,
@@ -925,11 +930,8 @@ export async function projectOwnerLedger(
         .filter(
           (issue) =>
             !(
-              (hasToken ||
-                groupOps.some(
-                  (op) => op.kind === "option_exercise" && op.confirmed,
-                )) &&
               knownMessages &&
+              (hasToken || (groupOps.length > 0 && groupOps.every(op => op.confirmed))) &&
               basicIssues.has(issue)
             ),
         ),
