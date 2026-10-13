@@ -47,8 +47,6 @@ type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; erro
 
 type RoutesConfig = {
   network: Network;
-  serviceId?: string;
-  publicBaseUrl?: string;
   pageSize?: number;
   enableWriteRpc?: boolean;
   edgeKey?: string;

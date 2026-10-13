@@ -1,7 +1,16 @@
 import { hashReleaseManifest } from '../../config/releaseManifest';
+import type { RegistryMetadata } from '../../config/releaseManifest';
+import type { Network } from '../../config';
 import { RUNTIME_CONTRACT_ROLES, RUNTIME_TEMPLATES, type RuntimeReleaseManifest } from '../../config/runtimeManifest';
 
 export const runtimeAddress = (value: number) => `0:${value.toString(16).padStart(64, '0')}`;
+
+/** Explicit current identity for isolated HTTP fixtures, never deployment evidence. */
+export function runtimeMetadataFixture(network: Network = 'testnet'): RegistryMetadata {
+  const runtime = runtimeManifestFixture({ network: `ton:${network}`, globalId: network === 'mainnet' ? -239 : -3,
+    releaseId: `${network}-unit-${'b'.repeat(12)}` });
+  return { runtime, releaseId: runtime.releaseId, manifestHash: runtime.manifestHash, registryHash: '' };
+}
 
 /** Synthetic parser fixture, with no assertion of deployment or chain readiness. */
 export function runtimeManifestFixture(overrides: Record<string, unknown> = {}): RuntimeReleaseManifest {
@@ -10,7 +19,7 @@ export function runtimeManifestFixture(overrides: Record<string, unknown> = {}):
     schema: 'tonswap-release-v1', network: 'ton:testnet', globalId: -3,
     releaseId: `testnet-unit-${'b'.repeat(12)}`, createdAt: '2026-10-05T00:00:00.000Z',
     source: { contracts: 'c'.repeat(40), build: 'b'.repeat(64) },
-    services: { indexer: 'https://ti.soramitsu.io', tonRpc: 'https://testnet.toncenter.com/api/v2/jsonRPC', platform: 'https://platform.tonswap.org' },
+    services: { indexer: 'https://indexer.example/api/indexer', tonRpc: 'https://testnet.toncenter.com/api/v2/jsonRPC', platform: 'https://platform.tonswap.org' },
     contracts, templates: Object.fromEntries(RUNTIME_TEMPLATES.map((role, i) => [role, (i + 1).toString(16).repeat(64)])),
     tokens: [
       { symbol: 'T3', root: contracts.T3Root.address, decimals: 9 },

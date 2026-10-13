@@ -56,8 +56,7 @@ async function main() {
 
     const response = async (overrides: { pool?: LedgerSqlPool; metadata?: RegistryMetadata; build?: AuthenticatedLedgerBuild; network?: 'testnet' | 'mainnet' } = {}) => {
       const app = Fastify();
-      registerLedgerReadinessRoute(app, { config: { network: overrides.network ?? 'testnet',
-        serviceId: 'wrong-config', publicBaseUrl: 'https://wrong-config.invalid' }, metadata: overrides.metadata ?? metadata,
+      registerLedgerReadinessRoute(app, { config: { network: overrides.network ?? 'testnet' }, metadata: overrides.metadata ?? metadata,
         pool, build, ...overrides });
       try { return await app.inject({ method: 'GET', url: route }); } finally { await app.close(); }
     };

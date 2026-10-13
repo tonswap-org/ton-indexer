@@ -4,6 +4,7 @@ import { Address } from '@ton/core';
 import fastify from 'fastify';
 import { loadConfig } from '../config';
 import { registerRoutes } from '../api/routes';
+import { runtimeMetadataFixture } from './fixtures/runtimeManifest';
 import { setCorsHeaders } from '../api/cors';
 import { RateLimiter } from '../api/rateLimit';
 import { IndexerService } from '../indexerService';
@@ -49,7 +50,7 @@ async function main() {
   }
   const service = new IndexerService(config, new MemoryStore(config), source, loadOpcodes(), []);
   const app = fastify();
-  registerRoutes(app, config, service, { getMetrics: () => ({ secret: 'operational' }), getPrometheus: () => 'metric 1\n' } as any, undefined, undefined, undefined, undefined, undefined, { balances });
+  registerRoutes(app, config, service, { getMetrics: () => ({ secret: 'operational' }), getPrometheus: () => 'metric 1\n' } as any, undefined, undefined, undefined, undefined, runtimeMetadataFixture(config.network), { balances });
   await app.ready();
   try {
     for (const path of ['/metrics', '/metrics/prometheus']) {
@@ -74,7 +75,7 @@ async function main() {
     registerRoutes(corsApp, limitedConfig, {
       async runGetMethod() { return { stack: [], exit_code: 0 }; },
 
-    } as any, undefined, undefined, undefined, new RateLimiter(limitedConfig), undefined, undefined, { balances: { async read() { throw new ChainReadError('upstream_unavailable', {cause: new Error('private upstream details')}); } } });
+    } as any, undefined, undefined, undefined, new RateLimiter(limitedConfig), undefined, runtimeMetadataFixture(config.network), { balances: { async read() { throw new ChainReadError('upstream_unavailable', {cause: new Error('private upstream details')}); } } });
     await corsApp.ready();
     try {
       const request = { method: 'POST' as const, url: '/jsonRPC', headers: { origin: 'https://test.tonswap.org' },

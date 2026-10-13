@@ -11,10 +11,8 @@ export type RateLimitBuckets = Record<RateLimitBucketName, RateLimitBucketConfig
 export type Config = {
   port: number;
   host: string;
-  trustProxy: boolean;
   mode: IndexerMode;
   network: Network;
-  dataSource: 'http' | 'lite';
   corsEnabled: boolean;
   corsAllowOrigin: string;
   corsAllowOrigins: string[];
@@ -36,11 +34,8 @@ export type Config = {
   rateLimitMax: number;
   rateLimitBuckets: RateLimitBuckets;
   responseCacheEnabled: boolean;
-  balanceCacheTtlMs: number;
-  jettonBalanceTimeoutMs: number;
   initialHistoryTimeoutMs: number;
   txCacheTtlMs: number;
-  stateCacheTtlMs: number;
   healthCacheTtlMs: number;
   metricsCacheTtlMs: number;
   pageSize: number;
@@ -51,23 +46,13 @@ export type Config = {
   backfillPageBatch: number;
   backfillMaxPagesPerAddress: number;
   backfillConcurrency: number;
-  jettonMetadataTtlMs: number;
   watchlistRefreshMs: number;
   blockPollMs: number;
-  httpEndpoint?: string;
-  rpcProxyEndpoint?: string;
-  rpcProxyEndpoints: string[];
   enableWriteRpc: boolean;
-  rpcProxyApiKey?: string;
-  rpcProxyTimeoutMs: number;
-  rpcProxyRetryAttempts: number;
-  rpcProxyRetryDelayMs: number;
   liteserverPool?: string;
   logLevel: string;
   adminToken?: string;
   releaseManifestSource?: string;
-  serviceId?: string;
-  publicBaseUrl?: string;
   edgeKey?: string;
   ledgerWorkers: number;
   diskGuardPath: string;
@@ -158,10 +143,6 @@ const networkFromEnv = (): Network => {
   return enumFromEnv<Network>('TON_NETWORK', 'testnet', ['mainnet', 'testnet', 'localnet']);
 };
 
-const dataSourceFromEnv = (): 'http' | 'lite' => {
-  return enumFromEnv<'http' | 'lite'>('TON_DATASOURCE', 'http', ['http', 'lite']);
-};
-
 export const loadConfig = (): Config => {
   const mode = modeFromEnv();
   const network = networkFromEnv();
@@ -171,26 +152,6 @@ export const loadConfig = (): Config => {
   const diskHardFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_HARD_FLOOR_BYTES', 512 * 1024 ** 2, { min: 0, max: Number.MAX_SAFE_INTEGER });
   if (diskHardFloorBytes > diskSoftFloorBytes) throw new Error('INDEXER_DISK_HARD_FLOOR_BYTES must not exceed INDEXER_DISK_SOFT_FLOOR_BYTES');
 
-  const configuredProxyEndpoints = listFromEnv([
-    'INDEXER_WRITE_RPC_ENDPOINTS',
-    'TON_WRITE_RPC_ENDPOINTS',
-    'TONSWAP_WRITE_RPC_ENDPOINTS',
-    'BLUEPRINT_WRITE_ENDPOINTS',
-    'TON_RPC_ENDPOINTS',
-    'BLUEPRINT_ENDPOINTS'
-  ]);
-  const singleProxyEndpoint =
-    stringFromEnv('INDEXER_WRITE_RPC_ENDPOINT') ||
-    stringFromEnv('TON_WRITE_RPC_ENDPOINT') ||
-    stringFromEnv('TONSWAP_WRITE_RPC_ENDPOINT') ||
-    stringFromEnv('BLUEPRINT_WRITE_ENDPOINT') ||
-    stringFromEnv('TON_RPC_ENDPOINT') ||
-    stringFromEnv('BLUEPRINT_ENDPOINT');
-  const rpcProxyEndpoints = singleProxyEndpoint
-    ? [...configuredProxyEndpoints, singleProxyEndpoint].filter(
-        (endpoint, index, list) => list.indexOf(endpoint) === index
-      )
-    : configuredProxyEndpoints;
   const defaultRateLimitWindowMs = 60_000;
   const defaultRateLimitMax = mode === 'production' ? 2_000 : 10_000;
   const rateLimitWindowMs = numberFromEnv('RATE_LIMIT_WINDOW_MS', defaultRateLimitWindowMs, {
@@ -242,10 +203,8 @@ export const loadConfig = (): Config => {
   return {
     port: numberFromEnv('PORT', 8787, { min: 0, max: 65_535, integer: true }),
     host: stringFromEnv('HOST', '127.0.0.1')!,
-    trustProxy: booleanFromEnv('TRUST_PROXY', booleanFromEnv('FASTIFY_TRUST_PROXY', false)),
     mode,
     network,
-    dataSource: dataSourceFromEnv(),
     corsEnabled: booleanFromEnv('CORS_ENABLED', true),
     corsAllowOrigin: stringFromEnv('CORS_ALLOW_ORIGIN', '*')!,
     corsAllowOrigins: listFromEnv(['CORS_ALLOW_ORIGINS']),
@@ -273,14 +232,11 @@ export const loadConfig = (): Config => {
     rateLimitMax,
     rateLimitBuckets,
     responseCacheEnabled: booleanFromEnv('RESPONSE_CACHE_ENABLED', true),
-    balanceCacheTtlMs: numberFromEnv('BALANCE_CACHE_TTL_MS', 2_000, { min: 0, integer: true }),
-    jettonBalanceTimeoutMs: numberFromEnv('JETTON_BALANCE_TIMEOUT_MS', 2_000, { min: 0, integer: true }),
     initialHistoryTimeoutMs: strictBoundedIntegerFromEnv('INITIAL_HISTORY_TIMEOUT_MS', 10_000, {
       min: 1,
       max: 120_000
     }),
     txCacheTtlMs: numberFromEnv('TX_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
-    stateCacheTtlMs: numberFromEnv('STATE_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
     healthCacheTtlMs: numberFromEnv('HEALTH_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
     metricsCacheTtlMs: numberFromEnv('METRICS_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
     pageSize: numberFromEnv('PAGE_SIZE', 10, { min: 1, integer: true }),
@@ -291,23 +247,9 @@ export const loadConfig = (): Config => {
     backfillPageBatch: numberFromEnv('BACKFILL_PAGE_BATCH', 5, { min: 1, integer: true }),
     backfillMaxPagesPerAddress: numberFromEnv('BACKFILL_MAX_PAGES_PER_ADDRESS', 150, { min: 1, integer: true }),
     backfillConcurrency: numberFromEnv('BACKFILL_CONCURRENCY', 2, { min: 1, integer: true }),
-    jettonMetadataTtlMs: numberFromEnv('JETTON_METADATA_TTL_MS', 24 * 60 * 60 * 1000, { min: 0, integer: true }),
     watchlistRefreshMs: numberFromEnv('WATCHLIST_REFRESH_MS', 5_000, { min: 1, integer: true }),
     blockPollMs: numberFromEnv('BLOCK_POLL_MS', 5_000, { min: 1, integer: true }),
-    httpEndpoint: stringFromEnv('TON_HTTP_ENDPOINT'),
-    rpcProxyEndpoint: singleProxyEndpoint,
-    rpcProxyEndpoints,
     enableWriteRpc: booleanFromEnv('INDEXER_ENABLE_WRITE_RPC', false),
-    rpcProxyApiKey:
-      stringFromEnv('INDEXER_WRITE_RPC_API_KEY') ||
-      stringFromEnv('TON_WRITE_RPC_API_KEY') ||
-      stringFromEnv('TONSWAP_WRITE_RPC_API_KEY') ||
-      stringFromEnv('BLUEPRINT_WRITE_API_KEY') ||
-      stringFromEnv('TON_RPC_API_KEY') ||
-      stringFromEnv('BLUEPRINT_API_KEY'),
-    rpcProxyTimeoutMs: numberFromEnv('INDEXER_RPC_PROXY_TIMEOUT_MS', 30_000, { min: 1, integer: true }),
-    rpcProxyRetryAttempts: numberFromEnv('INDEXER_RPC_PROXY_RETRY_ATTEMPTS', 4, { min: 1, integer: true }),
-    rpcProxyRetryDelayMs: numberFromEnv('INDEXER_RPC_PROXY_RETRY_DELAY_MS', 600, { min: 0, integer: true }),
     liteserverPool: stringFromEnv(
       network === 'mainnet'
         ? 'LITESERVER_POOL_MAINNET'
@@ -316,10 +258,8 @@ export const loadConfig = (): Config => {
           : 'LITESERVER_POOL_LOCALNET'
     ),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
-    adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN') || stringFromEnv('INDEXER_ADMIN_API_KEY'),
+    adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN'),
     releaseManifestSource: stringFromEnv('INDEXER_RELEASE_MANIFEST'),
-    serviceId: stringFromEnv('INDEXER_SERVICE_ID'),
-    publicBaseUrl: stringFromEnv('INDEXER_PUBLIC_BASE_URL'),
     edgeKey,
     ledgerWorkers: strictBoundedIntegerFromEnv('INDEXER_LEDGER_WORKERS', 3, { min: 2, max: 8 }),
     diskGuardPath: stringFromEnv('INDEXER_DISK_GUARD_PATH', dirname(resolve(stringFromEnv('SNAPSHOT_PATH', './snapshot.json')!)))!,

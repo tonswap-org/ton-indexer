@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { buildOpenApi } from '../api/openapi';
+import { runtimeMetadataFixture } from './fixtures/runtimeManifest';
 
-const spec = buildOpenApi(loadConfig());
+const config = loadConfig();
+const spec = buildOpenApi(config, runtimeMetadataFixture(config.network));
 assert.equal(spec.openapi, '3.1.0');
 const assertNoLegacyNullableKeyword = (value: unknown, path = '$'): void => {
   if (!value || typeof value !== 'object') return;
@@ -82,12 +84,12 @@ for (const retired of ['clmmFactory', 'clmmPoolHashHigh', 'clmmPoolHashLow', 'ma
 const serviceInfoProps =
   spec.components?.schemas?.ServiceInfoResponse?.properties ??
   ({} as Record<string, { enum?: string[] }>);
-assert.equal(serviceInfoProps.serviceId?.enum?.[0], `ton-indexer:${loadConfig().network}`);
+assert.equal(serviceInfoProps.serviceId?.enum?.[0], 'indexer.example/api/indexer');
 assert.equal(serviceInfoProps.ecosystem?.enum?.[0], 'ton');
 const healthProps =
   spec.components?.schemas?.HealthStatus?.properties ??
   ({} as Record<string, { enum?: string[] }>);
-assert.equal(healthProps.serviceId?.enum?.[0], `ton-indexer:${loadConfig().network}`);
+assert.equal(healthProps.serviceId?.enum?.[0], 'indexer.example/api/indexer');
 assert.equal(healthProps.ecosystem?.enum?.[0], 'ton');
 
 console.log('openapi ok');

@@ -96,7 +96,6 @@ export type ProductionSmokeOptions = {
   allowUnboundRelease?: boolean;
 };
 
-const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
 const DEFAULT_HOSTILE_CORS_ORIGIN = 'https://hostile.tonswap.invalid';
 const SHA256_RE = /^[0-9a-f]{64}$/;
 type StrictReleaseExpectation = {
@@ -149,7 +148,9 @@ export function redactedBaseUrl(value: string | undefined): string {
 }
 
 export function productionSmokeBaseUrl(target: string | undefined, indexer?: string): URL {
-  const base = normalizeBaseUrl(target ?? indexer ?? DEFAULT_BASE_URL);
+  const selected = target ?? indexer;
+  if (!selected) throw Error('Smoke requires the native manifest indexer URL or an explicit transport-test target.');
+  const base = normalizeBaseUrl(selected);
   if (indexer === undefined) {
     // The explicitly unbound transport-test seam has an origin/prefix, not a native manifest.
     base.pathname = `${base.pathname.replace(/\/+$/, '')}/api/indexer`;
@@ -490,9 +491,11 @@ export async function runProductionSmoke(
   const publicPath = (route: string) => publicIndexerPath(strictRelease?.indexer, route);
   const nativeUrl = strictRelease ? new URL(strictRelease.indexer) : undefined;
   const nativeServiceId = nativeUrl && `${nativeUrl.host}${nativeUrl.pathname.replace(/\/$/, '')}`;
-  const expectedServiceId = options.expectedServiceId ?? process.env.TON_INDEXER_EXPECTED_SERVICE_ID ?? nativeServiceId ?? 'ti.soramitsu.io';
+  const expectedServiceId = options.expectedServiceId ?? process.env.TON_INDEXER_EXPECTED_SERVICE_ID ?? nativeServiceId;
   const publicBaseOverride = options.expectedPublicBaseUrl ?? process.env.TON_INDEXER_EXPECTED_PUBLIC_BASE_URL;
-  const expectedPublicBaseUrl = strictRelease?.indexer ?? canonicalPublicBaseUrl(publicBaseOverride ?? 'https://ti.soramitsu.io');
+  if (!expectedServiceId || !strictRelease && !publicBaseOverride)
+    throw Error('Unbound transport smoke requires an explicit expected service identity and public URL.');
+  const expectedPublicBaseUrl = strictRelease?.indexer ?? canonicalPublicBaseUrl(publicBaseOverride!);
   if (strictRelease) {
     assert.equal(expectedServiceId, nativeServiceId, 'Expected service identity differs from the native manifest');
     if (publicBaseOverride !== undefined) {
@@ -502,10 +505,10 @@ export async function runProductionSmoke(
   const expectedChainId = `ton:${expectedNetwork}`;
   const health = await fetchJson(baseUrl, '/api/indexer/v1/health') as HealthInfo;
   if ('ok' in health) {
-    throw new Error('TI production routing points at a Solswap indexer contract: health contains ok. Route the selected manifest mount to its TON indexer deployment.');
+    throw new Error('Production routing points at a Solswap indexer contract: health contains ok. Route the selected manifest mount to its TON indexer deployment.');
   }
   if (!health.chain || typeof health.chain !== 'object') {
-    throw new Error(`TI production routing does not expose the TON health contract: expected chain, received keys ${objectKeys(health)}.`);
+    throw new Error(`Production routing does not expose the TON health contract: expected chain, received keys ${objectKeys(health)}.`);
   }
   assert.ok(Number.isInteger(health.chain.peersConfigured) && Number(health.chain.peersConfigured) > 0, 'health chain must configure peers');
   assert.ok(Number.isInteger(health.chain.peersReady) && Number(health.chain.peersReady) > 0, 'health chain must have ready peers');

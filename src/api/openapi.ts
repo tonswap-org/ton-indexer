@@ -56,7 +56,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           rootHashHex: {type:'string',pattern:'^[a-f0-9]{64}$'}, fileHashHex: {type:'string',pattern:'^[a-f0-9]{64}$'} } },
         HealthStatus: {
           type: 'object', properties: {
-            serviceId: {type:'string',enum:[serviceId]}, ecosystem: {type:'string',enum:['ton']}, chainId: {type:'string'}, network: {type:'string'},
+            serviceId: {type:serviceId === null ? 'null' : 'string',enum:[serviceId],description:'Exact current manifest service identity; null without current release bindings.'}, ecosystem: {type:'string',enum:['ton']}, chainId: {type:'string'}, network: {type:'string'},
             chain: {type:'object',required:['peersConfigured','peersReady','headSeqno','headAgeSec'],properties:{
               peersConfigured:{type:'integer',minimum:0},peersReady:{type:'integer',minimum:0},headSeqno:{type:['integer','null']},headAgeSec:{type:['number','null']} }},
             ledger: {type:'string',enum:['disabled','connecting','ready','unavailable']},disk:{type:'string',enum:['ok','low','critical']},
@@ -77,12 +77,12 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           type: 'object',
           properties: {
             schemaVersion: { type: 'integer', enum: [1] },
-            serviceId: { type: 'string', enum: [serviceId] },
+            serviceId: { type: serviceId === null ? 'null' : 'string', enum: [serviceId], description: 'Exact current manifest service identity; null without current release bindings.' },
             serviceName: { type: 'string' },
             ecosystem: { type: 'string', enum: ['ton'] },
             chainId: { type: 'string' },
             network: { type: 'string' },
-            publicBaseUrl: { type: ['string', 'null'], format: 'uri' },
+            publicBaseUrl: { type: serviceId === null ? 'null' : 'string', format: 'uri', description: 'The current manifest services.indexer URL, including its public mount.' },
             readOnly: { type: 'boolean' },
             capabilities: { type: 'array', items: { type: 'string' } },
             endpoints: { type: 'object', additionalProperties: { type: 'string' } },

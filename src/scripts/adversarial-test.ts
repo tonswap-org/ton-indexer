@@ -10,6 +10,7 @@ import { beginCell } from '@ton/core';
 import fastify from 'fastify';
 import { loadConfig } from '../config';
 import { registerRoutes } from '../api/routes';
+import { runtimeMetadataFixture } from './fixtures/runtimeManifest';
 import { ChainReadError } from '../data/dataSource';
 import { fakeChainSource } from './support/fakeChainSource';
 import { setCorsHeaders } from '../api/cors';
@@ -43,7 +44,7 @@ const registerTestRoutes = (
   rateLimiter?: RateLimiter,
   registry?: Record<string, string>
 ) => {
-  registerRoutes(app, config, service, metrics, snapshots, debug, rateLimiter, registry);
+  registerRoutes(app, config, service, metrics, snapshots, debug, rateLimiter, registry, runtimeMetadataFixture(config.network));
 };
 
 const makeIndexedTx = (lt: number, hash = `h${lt}`): IndexedTx => ({
@@ -144,14 +145,14 @@ const testRateLimitIgnoresUntrustedForwardedFor = async () => {
       default: { windowMs: 60_000, max: 1 },
     },
   };
-  const app = fastify({ logger: false, trustProxy: false });
+  const app = fastify({ logger: false });
   const service = {
     getAdmissionStatus() { return { configured: false, ready: false }; },
       getHealth() {
       return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
   };
-  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
+  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network));
   await app.ready();
 
   const first = await app.inject({
@@ -193,7 +194,7 @@ const testRateLimitUsesAuthenticatedEdgeOnly = async () => {
       return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
   };
-  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
+  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network));
   await app.ready();
 
   const first = await app.inject({
@@ -245,8 +246,8 @@ const testRateLimitBucketsAreIsolated = async () => {
       };
     },
   };
-  const app = fastify({ logger: false, trustProxy: false });
-  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
+  const app = fastify({ logger: false });
+  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network));
   await app.ready();
 
   assert.equal((await app.inject({ method: 'GET', url: '/api/indexer/v1/health' })).statusCode, 200);
@@ -306,7 +307,7 @@ const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const mismatch = await app.inject({
@@ -353,7 +354,7 @@ const testRestAddressRoutesRejectInvalidPathsBeforeServiceCall = async () => {
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
 
@@ -398,7 +399,7 @@ const testStreamRejectsMissingOrInvalidAddresses = async () => {
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, {} as any, undefined, undefined, undefined, undefined, undefined, undefined, {streams});
+  registerRoutes(app, { ...loadConfig() }, {} as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network), {streams});
   await app.ready();
 
   const missing = await app.inject({ method: 'GET', url: '/api/indexer/v1/stream/balances' });
@@ -441,7 +442,7 @@ const testStreamPreservesCorsAndRateLimitHeadersAfterHijack = async () => {
   app.addHook('onRequest', async (request, reply) => {
     setCorsHeaders(request as any, reply, config);
   });
-  registerRoutes(app, config, {} as any, undefined, undefined, undefined, new RateLimiter(config), undefined, undefined, { streams: { subscribe() { return () => undefined; } } });
+  registerRoutes(app, config, {} as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network), { streams: { subscribe() { return () => undefined; } } });
 
   try {
     await app.listen({ host: '127.0.0.1', port: 0 });
@@ -715,8 +716,6 @@ const testJsonRpcAddressInformationRejectsUnavailableAnchor = async () => {
 const testJsonRpcRejectsUnsupportedAndDisabledWriteMethods = async () => {
   const config = testConfig({
     enableWriteRpc: false,
-    rpcProxyEndpoint: 'https://example.invalid/jsonRPC',
-    rpcProxyEndpoints: ['https://example.invalid/jsonRPC'],
   });
   const app = fastify({ logger: false });
   registerTestRoutes(app, config, {} as any);
@@ -755,8 +754,6 @@ const testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints = async () => {
   try {
     const config = testConfig({
       network: 'localnet',
-      rpcProxyEndpoint: undefined,
-      rpcProxyEndpoints: [],
       enableWriteRpc: true,
     });
     registerTestRoutes(app, config, {} as any);
@@ -855,7 +852,7 @@ const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const missingTokens = await app.inject({
@@ -914,7 +911,7 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
 
@@ -1070,7 +1067,7 @@ const testOperationalRoutesRequireAdminAndPublicReadsStayOpen = async () => {
       return { stack: [['num', '7']], exit_code: 0, gas_used: 12 };
     },
   };
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const metrics = await app.inject({ method: 'GET', url: '/api/indexer/v1/metrics' });
@@ -1104,7 +1101,7 @@ const testWriteRpcRelayIsPublicWhenExplicitlyEnabled = async () => {
   const boc = beginCell().endCell().toBoc();
   const source = fakeChainSource({ async sendMessage(message) { calls++; assert.deepEqual(message,boc); } });
   const app = fastify();
-  registerRoutes(app, testConfig({enableWriteRpc:true}), {} as any, undefined, undefined, undefined, undefined, undefined, undefined, {source});
+  registerRoutes(app, testConfig({enableWriteRpc:true}), {} as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture((testConfig({enableWriteRpc:true})).network), {source});
   const response = await app.inject({method:'POST',url:'/jsonRPC',payload:{id:'write',jsonrpc:'2.0',method:'sendBoc',params:{boc:boc.toString('base64')}}});
   assert.equal(response.statusCode,200); assert.equal(response.json().ok,true); assert.equal(calls,1);
   await app.close();
@@ -1143,7 +1140,7 @@ const testCorsExactOriginAllowlistAndWildcardFallback = () => {
 
 const testDocsRouteSetsNonceCspAndSecurityHeaders = async () => {
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, {} as any);
+  registerRoutes(app, { ...loadConfig() }, {} as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const response = await app.inject({ method: 'GET', url: '/api/indexer/v1/docs' });
@@ -1164,20 +1161,17 @@ const testDangerousEnvValuesFallBack = () => {
     port: process.env.PORT,
     pageSize: process.env.PAGE_SIZE,
     interval: process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS,
-    retry: process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS,
     rateLimit: process.env.RATE_LIMIT_MAX,
   };
   delete process.env.INDEXER_MODE;
   process.env.PORT = '99999';
   process.env.PAGE_SIZE = '-20';
   process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS = '0';
-  process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS = '0';
   process.env.RATE_LIMIT_MAX = '-1';
   const config = loadConfig();
   assert.equal(config.port, 8787);
   assert.equal(config.pageSize, 10);
   assert.equal(config.snapshotAutosaveIntervalMs, 30_000);
-  assert.equal(config.rpcProxyRetryAttempts, 4);
   assert.equal(config.rateLimitMax, 10_000);
   if (original.mode === undefined) delete process.env.INDEXER_MODE;
   else process.env.INDEXER_MODE = original.mode;
@@ -1187,8 +1181,6 @@ const testDangerousEnvValuesFallBack = () => {
   else process.env.PAGE_SIZE = original.pageSize;
   if (original.interval === undefined) delete process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS;
   else process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS = original.interval;
-  if (original.retry === undefined) delete process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS;
-  else process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS = original.retry;
   if (original.rateLimit === undefined) delete process.env.RATE_LIMIT_MAX;
   else process.env.RATE_LIMIT_MAX = original.rateLimit;
 };
@@ -1620,7 +1612,7 @@ const testInitialHistoryFailuresAreTypedAndBounded = async () => {
     rateLimitEnabled: false,
   };
 
-  const finiteFailureConfig = { ...baseConfig, dataSource: 'http' as const };
+  const finiteFailureConfig = { ...baseConfig };
   const finiteFailureStore = new MemoryStore(finiteFailureConfig);
   const finiteFailureService = new IndexerService(
     finiteFailureConfig,

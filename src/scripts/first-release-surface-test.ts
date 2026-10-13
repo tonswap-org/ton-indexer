@@ -5,9 +5,20 @@ import fastify from 'fastify';
 import { buildOpenApi } from '../api/openapi';
 import { registerRoutes } from '../api/routes';
 import { loadConfig } from '../config';
+import { runtimeMetadataFixture } from './fixtures/runtimeManifest';
 
 const root = resolve(__dirname, '../..');
 const retiredFiles = [
+  'scripts/production-deployment-evidence.json',
+  'scripts/generate-deployment-evidence-template.sh',
+  'scripts/audit-deployment-evidence.sh',
+  'scripts/test-deployment-evidence-audit.sh',
+  'scripts/test-deployment-evidence-template.sh',
+  'src/scripts/deployment-manifest-test.ts',
+  'docs/ti-production.md',
+  'Dockerfile',
+  '.dockerignore',
+
   'src/config/ledgerBridge.ts',
   'src/config/ledgerPerps.ts',
   'src/config/ledgerOptions.ts',
@@ -92,17 +103,25 @@ for (const relative of activeRoots) {
   }
 }
 
+for (const relative of ['src/api', 'src/config', 'src/data']) {
+  for (const file of visit(relative)) assert(!readFileSync(join(root, file), 'utf8').includes('ti.' + 'soramitsu.io'), `${file} must not name an unrelated deployment`);
+}
+const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+assert.doesNotMatch(workflow, /Deployment evidence audit|Build production Docker image/);
+assert.match(workflow, /npm ci/); assert.match(workflow, /npm audit --omit=dev/);
+
 async function main() {
   const poisoned = process.env.LEDGER_SCCP_ASSETS_JSON;
   process.env.LEDGER_SCCP_ASSETS_JSON = '[{"master":"retired"}]';
   try {
     const config = loadConfig();
     assert.equal('ledgerSccpAssets' in config, false, 'retired environment input must be ignored');
-    const spec = buildOpenApi(config);
+    const metadata = runtimeMetadataFixture(config.network);
+    const spec = buildOpenApi(config, metadata);
     assert.equal(Object.keys(spec.paths).some((path) => forbidden.test(path)), false);
 
     const app = fastify({ logger: false });
-    registerRoutes(app, config, {} as never);
+    registerRoutes(app, config, {} as never, undefined, undefined, undefined, undefined, undefined, metadata);
     await app.ready();
     for (const path of [
       '/api/indexer/v1/sccp/ton/burn-status',

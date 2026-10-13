@@ -12,6 +12,7 @@ import {
 } from '../config/releaseManifest';
 import {
   runProductionSmoke,
+  productionSmokeBaseUrl,
   type ProductionSmokeOptions,
 } from './production-smoke';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
@@ -33,6 +34,7 @@ type ServerOptions = {
   requests?: string[];
 };
 
+const unboundOptions: ProductionSmokeOptions = { allowUnboundRelease: true, expectedServiceId: 'indexer.example', expectedPublicBaseUrl: 'https://indexer.example' };
 const releaseId = runtimeManifestFixture().releaseId;
 const expectedCorsOrigin = 'https://test.tonswap.org';
 const hostileCorsOrigin = 'https://hostile.tonswap.invalid';
@@ -79,7 +81,7 @@ const basicRoutes = (): Routes => ({
   [`/api/indexer/v1/accounts/${address(1)}/balances`]: {body:balanceBody(address(1),'mainnet')},
   '/api/indexer/v1/health': {
     body: {
-      serviceId: 'ti.soramitsu.io',
+      serviceId: 'indexer.example',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
       network: 'mainnet',
@@ -89,11 +91,11 @@ const basicRoutes = (): Routes => ({
   '/api/indexer/v1/service-info': {
     body: {
       schemaVersion: 1,
-      serviceId: 'ti.soramitsu.io',
+      serviceId: 'indexer.example',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
       network: 'mainnet',
-      publicBaseUrl: 'https://ti.soramitsu.io',
+      publicBaseUrl: 'https://indexer.example',
       readOnly: true,
       endpoints: { openapi: '/api/indexer/v1/openapi.json' },
       release: { releaseId: null, manifestHash: null },
@@ -124,7 +126,7 @@ const writeReleaseManifest = (
   contracts: Record<string, string>,
   markets: ReturnType<typeof releaseMarkets>,
   spots = markets,
-  indexer = 'https://ti.soramitsu.io/api/indexer',
+  indexer = 'https://indexer.example/api/indexer',
 ) => {
   const manifest = runtimeManifestFixture({
     services: { ...runtimeManifestFixture().services, indexer },
@@ -137,7 +139,7 @@ const writeReleaseManifest = (
   return { manifest, manifestPath };
 };
 
-const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://ti.soramitsu.io/api/indexer') => {
+const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://indexer.example/api/indexer') => {
   const markets = releaseMarkets();
   const contracts = releaseContracts(markets);
   const { manifest, manifestPath } = writeReleaseManifest(
@@ -350,7 +352,7 @@ const smokeCliEnvironment = (
 const assertSmokeRejects = async (
   routes: Routes,
   expected: RegExp,
-  smokeOptions: ProductionSmokeOptions = { allowUnboundRelease: true },
+  smokeOptions: ProductionSmokeOptions = unboundOptions,
   serverOptions: ServerOptions = {}
 ) => {
   await withServer(
@@ -387,12 +389,14 @@ const withSmokeEnvironment = async (
 const main = async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'ton-production-smoke-')));
   await withSmokeEnvironment({}, async () => {
+    assert.throws(() => productionSmokeBaseUrl(undefined), /requires the native manifest/);
+    await assert.rejects(() => runProductionSmoke('http://127.0.0.1:1', { allowUnboundRelease: true }), /explicit expected service identity/);
     await withServer(basicRoutes(), async (baseUrl) => {
       await assert.rejects(
         () => runProductionSmoke(baseUrl),
         /Release-bound production smoke requires explicit/
       );
-      await runProductionSmoke(baseUrl, { allowUnboundRelease: true });
+      await runProductionSmoke(baseUrl, unboundOptions);
     });
 
     const testnet = basicRoutes();
@@ -405,8 +409,8 @@ const main = async () => {
     (testnet[`/api/indexer/v1/accounts/${address(1)}/balances`].body as any).network = 'testnet';
     await withServer(testnet, async (baseUrl) => {
       await runProductionSmoke(baseUrl, {
+        ...unboundOptions,
         expectedNetwork: 'testnet',
-        allowUnboundRelease: true,
       });
     });
 
@@ -682,14 +686,14 @@ const main = async () => {
     solswapHealth['/api/indexer/v1/health'].body = { ok: true };
     await assertSmokeRejects(
       solswapHealth,
-      /TI production routing points at a Solswap indexer contract/
+      /Production routing points at a Solswap indexer contract/
     );
 
     const genericHealth = basicRoutes();
     genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
     await assertSmokeRejects(
       genericHealth,
-      /TI production routing does not expose the TON health contract/
+      /Production routing does not expose the TON health contract/
     );
 
     const nonJson = basicRoutes();
