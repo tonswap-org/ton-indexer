@@ -249,7 +249,7 @@ export class PostgresLedgerStore {
     if (!state) return null;
     const run = (await this.pool.query(`SELECT generation,head_lt::text,head_hash,source_complete
       FROM ledger_runs WHERE network=$1 AND account=$2 AND source_complete=true
-      ORDER BY head_lt DESC NULLS LAST,created_at DESC,generation DESC LIMIT 1`, [network, account])).rows[0];
+      ORDER BY ledger_runs.head_lt DESC NULLS LAST,created_at DESC,generation DESC LIMIT 1`, [network, account])).rows[0];
     return { ...state, current_generation: run?.generation ?? null, head_lt: run?.head_lt ?? null,
       head_hash: run?.head_hash ?? null, complete: run?.source_complete === true };
   }

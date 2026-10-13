@@ -15,6 +15,28 @@ const head = (seqno: number): ChainHead => ({ seqno, utime: 1700000000 + seqno,
 const tx = (n: number): RawTransaction => ({ lt: String(n), hash: hash(n), prevTransactionLt: String(n - 1), prevTransactionHash: hash(n - 1),
   utime: 1700000000 + n, success: true, status: 'success', totalFeesRaw: '0', outMessages: [] });
 const opcodes = loadOpcodes();
+async function numericPhysicalHeads(store: PostgresLedgerStore, pool: LedgerSqlPool) {
+  const account = `0:${'9'.repeat(64)}`;
+  const generations: string[] = [];
+  for (const n of [9, 22]) {
+    const generation = randomUUID(); generations.push(generation);
+    await store.begin('testnet', account, generation, { lt: String(n), hash: hash(n) });
+    await store.complete('testnet', account, generation);
+  }
+  const physical = await store.physicalAccount('testnet', account);
+  assert.equal(physical.current_generation, generations[1], 'physical progress orders numeric LTs, not their serialized text');
+  assert.equal(physical.head_lt, '22');
+  const before = (await pool.query('SELECT count(*)::int AS count FROM ledger_runs WHERE account=$1', [account])).rows[0].count;
+  const refresh = createRefreshDependency({ network: 'testnet', store, opcodes, maxPagesPerAccount: 20,
+    resolveIdentity: async () => null, logger: { info() {}, warn() {}, error() {}, debug() {} },
+    source: fakeChainSource({ getAccountState: async () => ({ balance: '0', accountState: 'active', lastTxLt: '22', lastTxHash: hash(22) }) }),
+  });
+  const unchanged = await refresh(account, { boundary: head(30) });
+  assert.equal(unchanged.generation, generations[1]); assert(unchanged.complete && unchanged.atBoundary);
+  assert.equal(unchanged.errorCode, null);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_runs WHERE account=$1', [account])).rows[0].count, before,
+    'unchanged physical head allocates no duplicate run and makes no history read');
+}
 async function main() {
   const db = new PGlite(), lockKeys: string[] = [], warnings: string[] = [];
   let lockBusy = false, reads = 0, pages = 0, failSource = false;
@@ -58,6 +80,7 @@ async function main() {
     assert.deepEqual(first, { account: owner, generation: stored, head: { lt: '2', hash: hash(2) }, complete: true, atBoundary: true, errorCode: null });
     assert.equal(pages, 0, 'same head performs no transaction queries');
     assert.equal(lockKeys[0], `ledger:public:testnet:${owner}`);
+    await numericPhysicalHeads(store, pool);
 
     const resumed = `0:${'2'.repeat(64)}`, old = await seed(resumed, 2, false);
     targets.set(resumed, 3);
@@ -160,6 +183,7 @@ async function nativeLocks(connectionString: string) {
     }
     const stores = pools.map(pool => new PostgresLedgerStore(pool));
     for (const store of stores) await store.initialize();
+    await numericPhysicalHeads(stores[0], pools[0]);
     const generation = randomUUID();
     await stores[0].begin('testnet', owner, generation);
     await stores[0].complete('testnet', owner, generation);
