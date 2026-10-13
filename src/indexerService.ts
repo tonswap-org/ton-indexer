@@ -343,12 +343,12 @@ type GovernanceSnapshotResponse = {
   next_start_id: string | null;
   coverage: { rangeKnown: boolean; pageComplete: boolean; scanComplete: boolean; nextProposalId: string | null; dataHash: string | null; issues: string[] };
   proposals: GovernanceProposalSnapshot[];
-  source: 'lite' | 'http4';
+  source: 'lite';
   network: Network;
   updated_at: number;
 };
 
-type FarmSnapshotResponse = DlmmFarmSnapshot & { source: 'lite' | 'http4'; network: Network; updated_at: number };
+type FarmSnapshotResponse = DlmmFarmSnapshot & { source: 'lite'; network: Network; updated_at: number };
 
 type CoverStateSnapshot = {
   totalPolicies: string | null;
@@ -381,7 +381,7 @@ type CoverSnapshotResponse = {
   live_revision: string;
   next_after_slot: number | null;
   page_complete: true;
-  source: 'lite' | 'http4';
+  source: 'lite';
   network: Network;
   updated_at: number;
 };
@@ -423,7 +423,7 @@ type VolIndexSnapshotResponse = {
   pool_state: VolIndexStateSnapshot | null;
   route_ids: number[];
   routes: Record<string, VolIndexRouteSnapshot>;
-  source: 'lite' | 'http4';
+  source: 'lite';
   network: Network;
   updated_at: number;
 };
