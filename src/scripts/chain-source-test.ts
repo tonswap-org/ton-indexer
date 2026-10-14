@@ -6,11 +6,12 @@ import { ChainReadError, type ChainHead } from '../data/dataSource';
 import { HeadTracker } from '../data/headTracker';
 import { FakeLiteEngine, masterAnswer, proofBlock } from './support/fakeLiteEngine';
 
+const currentTime = Math.floor(Date.now() / 1_000);
 const logger = { info() {}, debug() {}, error() {}, warn() {} };
 const address = `0:${'a'.repeat(64)}`;
-const mc = proofBlock(100, 1_700_000_100, -1), shard = proofBlock(80, 1_700_000_099);
+const mc = proofBlock(100, currentTime, -1), shard = proofBlock(80, currentTime - 1);
 const at: ChainHead = { workchain: -1, shard: mc.id.shard, seqno: mc.id.seqno, rootHashHex: mc.id.rootHash.toString('hex'),
-  fileHashHex: mc.id.fileHash.toString('hex'), utime: 1_700_000_100 };
+  fileHashHex: mc.id.fileHash.toString('hex'), utime: currentTime };
 function answer(req: any): unknown {
   if (req.kind === 'liteServer.getMasterchainInfoExt') return masterAnswer(mc);
   if (req.kind === 'liteServer.runSmcMethod') return { id: req.id, shardblk: shard.id, exitCode: 3001, result: serializeTuple([]).toBoc() };
@@ -33,19 +34,19 @@ async function main() {
 
   const tracker = new HeadTracker('testnet');
   assert.equal(tracker.accept(masterAnswer(mc)).seqno, 100);
-  assert.throws(() => tracker.accept(masterAnswer(proofBlock(99, 1_700_000_099, -1))));
-  assert.throws(() => tracker.accept(masterAnswer(proofBlock(100, 1_700_000_101, -1))));
+  assert.throws(() => tracker.accept(masterAnswer(proofBlock(99, currentTime - 1, -1))));
+  assert.throws(() => tracker.accept(masterAnswer(proofBlock(100, currentTime + 1, -1))));
   assert.throws(() => tracker.accept({ ...masterAnswer(mc), lastUtime: 0 }));
   assert.equal(tracker.current()!.seqno, 100);
   assert.equal(new HeadTracker('testnet', () => { throw new Error('observer failed'); }).accept(masterAnswer(mc)).seqno, 100);
 
   let firstHead = mc;
   const lagging = new FakeLiteEngine(async req => req.kind === 'liteServer.getMasterchainInfoExt' ? masterAnswer(firstHead) : answer(req));
-  const current = new FakeLiteEngine(async req => req.kind === 'liteServer.getMasterchainInfoExt' ? masterAnswer(proofBlock(101, 1_700_000_101, -1)) : answer(req));
+  const current = new FakeLiteEngine(async req => req.kind === 'liteServer.getMasterchainInfoExt' ? masterAnswer(proofBlock(101, currentTime + 1, -1)) : answer(req));
   const monotonic = sourceFor(lagging, current);
   try {
     assert.equal((await monotonic.head()).seqno, 100);
-    firstHead = proofBlock(99, 1_700_000_099, -1);
+    firstHead = proofBlock(99, currentTime - 1, -1);
     await delay(1_010);
     assert.equal((await monotonic.head()).seqno, 101, 'lagging first answer is skipped');
     assert.equal(monotonic.health().head!.seqno, 101);
@@ -63,7 +64,7 @@ async function main() {
     assert.ok(call.request.params.equals(serializeTuple(args).toBoc({ idx: false, crc32: false })));
     assert.equal(call.options.awaitSeqno, 100);
     const account = await source.getAccountState(address, { at });
-    assert.equal(account.anchor!.genUtime, 1_700_000_099);
+    assert.equal(account.anchor!.genUtime, currentTime - 1);
     assert.equal(account.anchor!.shardBlock.seqno, 80);
     assert.equal(account.balance, '0');
     const batch = await source.read([{ kind: 'account', address }, { kind: 'getter', address, method: 'x', args: [] }], { at });
@@ -71,7 +72,7 @@ async function main() {
     assert.equal(batch.results.length, 2);
   } finally { await source.close(); }
 
-  const wrong = new FakeLiteEngine(async req => ({ ...(answer(req) as object), id: proofBlock(99, 1_700_000_099, -1).id }));
+  const wrong = new FakeLiteEngine(async req => ({ ...(answer(req) as object), id: proofBlock(99, currentTime - 1, -1).id }));
   const badSource = sourceFor(wrong);
   try { await assert.rejects(badSource.getAccountState(address, { at }), code('upstream_unavailable')); }
   finally { await badSource.close(); }

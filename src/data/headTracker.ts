@@ -1,9 +1,10 @@
 import type { Network } from '../models';
 import { ChainReadError, type ChainHead } from './dataSource';
 import { assertFreshNetwork, freshMasterchainBlock } from './freshRead';
+import { assertFreshHeadTime, assertFreshLiteHeadTime } from './freshHead';
 
 type Candidate = { last: { workchain: number; shard: string; seqno: number; rootHash: Buffer; fileHash: Buffer };
-  init: { workchain?: number; rootHash: Buffer; fileHash: Buffer }; lastUtime: number };
+  init: { workchain?: number; rootHash: Buffer; fileHash: Buffer }; lastUtime: number; now: number };
 
 /** The only accepted process head; absence and lag never lower a published block. */
 export class HeadTracker {
@@ -11,10 +12,16 @@ export class HeadTracker {
   private observedAt = 0;
   constructor(private readonly network: Network, private readonly onHead?: (head: ChainHead) => void) {}
   current(): ChainHead | null { return this.value; }
-  fresh(): ChainHead | null { return this.value && Date.now() - this.observedAt < 1_000 ? this.value : null; }
+  fresh(): ChainHead | null {
+    if (!this.value || Date.now() - this.observedAt >= 1_000) return null;
+    try { assertFreshHeadTime(this.value.utime); }
+    catch { return null; }
+    return this.value;
+  }
   accept(candidate: Candidate): ChainHead {
     try {
       assertFreshNetwork(this.network, candidate.init);
+      assertFreshLiteHeadTime(candidate);
       if (!Number.isSafeInteger(candidate.lastUtime) || candidate.lastUtime <= 0) throw new Error('Invalid masterchain block time');
       const next = { ...freshMasterchainBlock(candidate.last), utime: candidate.lastUtime };
       const current = this.value;

@@ -18,6 +18,8 @@ import { LiteClient, type LiteEngine } from 'ton-lite-client';
 import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError } from './boundedLiteEngine';
 import type { LiteserverPeer } from './liteserverPool';
 import { HeadTracker } from './headTracker';
+import { assertFreshHeadTime } from './freshHead';
+import { createLiteClientCache } from './liteAccountCache';
 import { readAccountAnchor, blockHeaderTime } from './accountAnchor';
 import { assertFreshBlock, assertFreshNetwork, executeFreshCalls, freshMasterchainBlock,
   FreshReadUnavailableError, type FreshReadCall } from './freshRead';
@@ -267,7 +269,7 @@ export class LiteClientDataSource implements ChainSource {
       const engines = this.options.peers.map(peer => this.options.engineFactory?.(peer)
         ?? new AbortableLitePeer(`tcp://${peer.host}:${peer.port}`, peer.publicKey));
       this.engine = new BoundedLiteEngine(engines, undefined, this.options.observer?.query);
-      this.client = new LiteClient({ engine: this.engine });
+      this.client = new LiteClient({ engine: this.engine, cacheMap: createLiteClientCache });
     }
     return this.engine;
   }
@@ -324,7 +326,7 @@ export class LiteClientDataSource implements ChainSource {
       if (cached) return cached;
       return this.shared('head', signal, async signal => {
         await this.ensure().query(Functions.liteServer_getMasterchainInfoExt, { kind: 'liteServer.getMasterchainInfoExt', mode: 0 }, {
-          signal, validate: candidate => { this.heads.accept(candidate as Parameters<HeadTracker['accept']>[0]); },
+          signal, awaitSeqno: this.heads.current()?.seqno, validate: candidate => { this.heads.accept(candidate as Parameters<HeadTracker['accept']>[0]); },
         });
         return this.heads.current()!;
       });
@@ -396,12 +398,15 @@ export class LiteClientDataSource implements ChainSource {
   async read(calls: FreshReadCall[], options: ReadOptions = {}) {
     return this.scope(options, async signal => {
       const head = options.at ?? await this.head({ signal });
-      const results = await executeFreshCalls(calls, async call => {
-        if (signal.aborted) throw new ChainReadError('upstream_timeout');
+      const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
+        if (ownedSignal.aborted) throw new ChainReadError('upstream_timeout');
         const address = Address.parse(call.address).toRawString();
-        if (call.kind === 'account') return { kind: 'account', address, state: await this.getAccountState(address, { at: head, signal }) };
-        return { kind: 'getter', address, ...await this.runGetMethod(address, call.method, call.args, { at: head, signal }) };
-      });
+        if (call.kind === 'account') return { kind: 'account', address, state: await this.getAccountState(address, { at: head, signal: ownedSignal }) };
+        return { kind: 'getter', address, ...await this.runGetMethod(address, call.method, call.args, { at: head, signal: ownedSignal }) };
+      }, signal);
+      // Unpinned reads are current preflight batches. Explicit historical/cycle
+      // boundaries retain their original block identity without wall-time reuse.
+      if (!options.at) assertFreshHeadTime(head.utime);
       return { head, results };
     }, 18_000);
   }

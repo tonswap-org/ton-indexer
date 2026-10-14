@@ -36,6 +36,7 @@ import type { RuntimeMetrics } from '../runtimeMetrics';
 import { isAdmissionMethod } from '../data/admission/protocol';
 import type { FreshReadCall } from '../data/freshRead';
 import { currentNativeRuntime, resolveServiceMetadata } from './serviceMetadata';
+import { errorDiagnostic, type Logger } from '../utils/logger';
 
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
 const BALANCE_STREAM_MAX_ADDRESSES = 8;
@@ -261,7 +262,7 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics } = {}
+  runtime: { source?: ChainSource; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
   const network = config.network;
@@ -529,10 +530,13 @@ export const registerRoutes = (
     const manifest = currentNativeRuntime(network, registryMetadata);
     if (!manifest)
       return sendError(reply, 503, 'upstream_unavailable', 'Fresh chain read unavailable.');
+    const startedAt = Date.now();
     try {
       const response = await service.readFresh(calls, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.fresh) });
       return { ...response, release: { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash } };
     } catch (error) {
+      runtime.logger?.warn('fresh chain read unavailable', { elapsedMs: Date.now() - startedAt, calls: calls.length,
+        releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, error: errorDiagnostic(error) });
       return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Fresh chain read unavailable.' });
     }
   });

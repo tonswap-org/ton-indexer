@@ -114,9 +114,31 @@ validation/streaming behavior.
 
 The source uses one monotonic, network-authenticated process head with a one-second reuse window. Account and getter reads pin that head, share only identical in-flight work and propagate cancellation. Peers retain health, failure and circuit state; bounded retries and delayed hedges never extend the caller deadline. Only one delayed hedge may belong to a read, with at most eight globally. Message submission is a single attempt and is never hedged or replayed after a disconnect. Run `npx tsx src/scripts/chain-source-test.ts` and `npx tsx src/scripts/lite-engine-test.ts` for source lifecycle checks.
 
+Ledger wire checks retain only immutable body hash/opcode facts keyed by exact
+original bytes, bounded to 1,024 entries and 4 MiB of key storage. Full code/data
+BOC validation retains only immutable structural certificates, bounded to 64
+entries and 4 MiB of keys. Neither cache retains Cell graphs, account observations,
+getter results, settlement qualification or financial state. Run
+`npm run test:ledger:wire` and `npm run test:fresh-read` for their content, mutation
+isolation and eviction regressions.
+
 ## Current chain reads
 
 `POST /api/indexer/v1/readFresh` accepts 1–32 account/getter calls and executes them at one exact masterchain boundary. Its `readContext` contains `source: "lite"`, the complete head including `utime`, and the server query-start timestamp `queriedAt`. Account results contain the authenticated shard block and its creation time in `anchor`. The response also carries the current native release ID and manifest hash. No persisted account projection supplies a current chain read. Partial, wrong-network and wrong-block batches fail; actual getter VM exits remain outcomes. Perps admission stays on its separately authenticated native executor.
+
+Current metadata must have a canonical block time within 30 seconds of local
+time, at most five seconds ahead, and a consistent peer clock. Stale or lagging
+heads consume the same bounded peer budget; dependent head queries carry the
+last authenticated sequence floor. An already pinned concurrent batch keeps its
+original boundary and cannot lower the process head. Unpinned preflight batches
+must still be fresh when they finish. The one-second head reuse window remains.
+Failed or cancelled batches abort active siblings and stop queued dispatch;
+transport cancellation removes their owned pending queries. No HTTP fallback is
+present. The SDK account-loader safeguard caps retention at 64 block keys,
+8 MiB of raw buffers and 65,536 cells; current account reads bypass that loader.
+Other SDK block/header/shard caches are bounded to 256 entries. Run
+`npm run test:fresh-read`, `npx tsx src/scripts/lite-account-cache-test.ts` and
+`npx tsx src/scripts/chain-source-test.ts` for these boundaries.
 
 The source does not retain completed getters. `SnapshotReader` shares active loads and permits completed reuse only when a caller explicitly supplies an age limit, optionally also requiring an unchanged exact account transaction pointer read at the current head. A reused value retains its original `asOfSeqno`. Farms and volatility-index reads never enable reuse because their values depend on chain time. Timed-out or abandoned work cannot publish into a later request, and there is no stale-success response mode.
 
@@ -1541,7 +1563,22 @@ Current perps journal qualification uses a 128-record eligibility index. The exa
 
 A registered PerpsEngine requires the qualified native admission worker on macOS arm64, testnet, and the exact engine code hash. Set `PERPS_ADMISSION_BINARY_PATH`, `PERPS_ADMISSION_BINARY_SHA256`, `PERPS_ADMISSION_CONFIG_PATH`, and `PERPS_ADMISSION_CONFIG_SHA256` to the immutable reviewed native package. The package carries the native binary, its official TON source/toolchain provenance, and the exact global configuration with its retained trust anchor. All four values are mandatory together. There is no generic container deployment in this release; the host must provide the reviewed native package.
 
-The HTTP listener opens first. Two persistent owned worker processes authenticate the signature chain and a fresh exact-block engine account before readiness. Cold bootstrap has a 600-second total deadline and a 120-second validated-progress stall deadline; the parent allows 610 seconds for process startup and cleanup. Deployment health gates must allow at least this cold-start interval. Each admission request has one attempt, a five-second timeout, a fixed one-million TVM gas maximum, and complete authenticated account/configuration/context binding. Busy workers return `admission_busy`; unavailable, timeout, proof, context and worker failures retain distinct safe API codes. Economic denial, VM failure and exhausted gas retain their actual getter result and gas usage. Admission requests never use generic remote-getter fallback or response caching.
+The HTTP listener opens before native authentication. The pool owns at most two persistent worker processes. HTTP readiness starts as soon as one live worker authenticates the signature chain and a fresh exact-block engine account; a slow or failed sibling does not discard that authenticated capacity. Cold workers cannot receive requests, and failure of both startup attempts remains unavailable. Cold bootstrap refreshes a fully authenticated but past-stale readiness snapshot by requesting a new verified sync, exact header and exact account. At most three startup rounds share the transport/freshness retry budget; future or inconsistent clocks, invalid proofs and wrong identity/code fail immediately. The 30-second proof-age and three-second future-skew checks remain strict. Private native diagnostics record authenticated master/shard ages. Cold bootstrap has a 600-second total deadline and a 120-second validated-progress stall deadline; the parent allows 610 seconds for process startup and cleanup. Deployment health gates must allow at least this cold-start interval. Each admission request has one attempt, a five-second timeout, a fixed one-million TVM gas maximum, and complete authenticated account/configuration/context binding. Busy workers return `admission_busy`; unavailable, timeout, proof, context and worker failures retain distinct safe API codes. Economic denial, VM failure and exhausted gas retain their actual getter result and gas usage. Admission requests never use generic remote-getter fallback or response caching.
+
+After worker loss, the pool keeps authenticating replacements with exponential backoff capped at 60 seconds; repeated startup failures do not permanently exhaust recovery. When no authenticated worker remains, admission stays unavailable until a replacement authenticates. Failed requests are never replayed. Shutdown cancels pending replacement attempts and reaps owned workers. Run `npm run test:admission` for the supervisor lifecycle and API regressions.
+
+Each owned worker emits one private operator record when its process closes. It
+retains the original failure origin and phase, exact close code/signal, parent
+kill intent, readiness/timing and request/output counters. Only the last 4 KiB
+of stderr are retained and rendered as bounded printable ASCII; stdout contains
+proofs and payloads and supplies counters only. Expected shutdown and 128-job
+retirement use informational records; failures use warnings. Diagnostic sink
+errors cannot interfere with rejection, process reaping or replacement. Public
+admission error codes and messages remain fixed. The existing lifetime 1 MiB
+stderr termination guard is unchanged and separate from diagnostic retention;
+authentication, deadlines, resource limits and one-attempt execution are unchanged.
+The admission suite covers original failure preservation, exact exit status,
+stderr boundaries, same-chunk protocol failures and throwing diagnostic sinks.
 
 Perps economic qualification uses only the current isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Run `npx tsx src/scripts/ledger-perps-test.ts`, `npx tsx src/scripts/perps-counterparty-economics-test.ts`, `npx tsx src/scripts/perps-risk-admission-test.ts`, and `npx tsx src/scripts/perps-oracle-state-test.ts`, followed by the complete `npm run test:ledger`.
 

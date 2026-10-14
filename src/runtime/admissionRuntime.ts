@@ -11,7 +11,7 @@ export function createAdmissionRuntime(deps: RuntimeDeps, options: {
   if (registry.PerpsEngine) {
     if (config.network !== 'testnet' || !bindings.perpsEngineCodeHash || !config.perpsAdmissionArtifacts)
       throw new Error('The registered PerpsEngine requires a qualified testnet admission runtime and exact artifact pins.');
-    executor = (options.factory ?? (config => new NativeAdmissionPool(config)))({ ...config.perpsAdmissionArtifacts,
+    executor = (options.factory ?? (config => new NativeAdmissionPool(config, logger)))({ ...config.perpsAdmissionArtifacts,
       engine: registry.PerpsEngine, codeHash: bindings.perpsEngineCodeHash });
   } else if (config.perpsAdmissionArtifacts) throw new Error('Admission runtime artifacts require a registered PerpsEngine.');
   let started = false;

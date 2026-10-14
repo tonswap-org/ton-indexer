@@ -174,6 +174,22 @@ tonlib_api::object_ptr<tonlib_api::Object> receive(tonlib::Client& client, std::
   fail("request deadline exceeded");
 }
 
+template <class T>
+td::Result<tonlib_api::object_ptr<T>> startup_response(
+    tonlib_api::object_ptr<tonlib_api::Object> response, const char* phase) {
+  if (response->get_id() == tonlib_api::error::ID) {
+    const auto& error = static_cast<const tonlib_api::error&>(*response);
+    return td::Status::Error(error.code_, error.message_);
+  }
+  if (response->get_id() != T::ID) return td::Status::Error(td::Slice(phase, std::strlen(phase)));
+  return tonlib_api::object_ptr<T>(static_cast<T*>(response.release()));
+}
+
+tonlib_api::object_ptr<tonlib_api::ton_blockIdExt> copy_id(const tonlib_api::ton_blockIdExt& block) {
+  return tonlib_api::make_object<tonlib_api::ton_blockIdExt>(
+      block.workchain_, block.shard_, block.seqno_, block.root_hash_, block.file_hash_);
+}
+
 void emit(const tonlib_api::Object& response) {
   auto encoded = td::json_encode<std::string>(td::ToJson(response));
   if (encoded.size() > kOutputBytes) {
@@ -212,47 +228,44 @@ int main(int argc, char** argv) {
     emit(*initialized);
     fail("initialization failed");
   }
-  // sync uses LastBlock; blocks.getMasterchainInfo is deliberately unreachable.
-  tonlib_api::object_ptr<tonlib_api::Object> synced;
-  for (unsigned attempt = 0; attempt < 3; ++attempt) {
+  tonlib::AdmissionStartupReads startup;
+  // A completed LastBlock sync is authenticated but can age during cold proof
+  // validation. Re-sync retains that validated chain and queries a new proof;
+  // blocks.getMasterchainInfo never supplies an admission trust anchor.
+  startup.sync = [&]() {
     client.send({2, tonlib_api::make_object<tonlib_api::sync>()});
-    synced = receive(client, 2, std::chrono::seconds(600));
-    if (synced->get_id() != tonlib_api::error::ID) {
-      break;
-    }
-    const auto& error = static_cast<const tonlib_api::error&>(*synced);
-    if (error.message_.find("LITE_SERVER_NETWORK") != 0) {
-      break;
-    }
-    // Startup only: preserve LastBlock's validated progress while the official
-    // transport excludes the failed server. Never retry an admission execution.
-    std::fprintf(stderr, "ADMISSION_STARTUP_NETWORK: %s\n", error.message_.c_str());
+    return startup_response<tonlib_api::ton_blockIdExt>(
+        receive(client, 2, std::chrono::seconds(600)), "authenticated initialization sync failed");
+  };
+  startup.header = [&](const tonlib_api::ton_blockIdExt& accepted) {
+    client.send({3, tonlib_api::make_object<tonlib_api::blocks_getBlockHeader>(copy_id(accepted))});
+    return startup_response<tonlib_api::blocks_header>(
+        receive(client, 3, std::chrono::seconds(5)), "authenticated readiness header failed");
+  };
+  startup.account = [&](const tonlib_api::ton_blockIdExt& accepted) {
+    client.send({4, tonlib_api::make_object<tonlib_api::withBlock>(copy_id(accepted),
+        tonlib_api::make_object<tonlib_api::raw_getAccountState>(
+            tonlib_api::make_object<tonlib_api::accountAddress>(argv[2])))});
+    return startup_response<tonlib_api::raw_fullAccountState>(
+        receive(client, 4, std::chrono::seconds(5)), "authenticated readiness account failed");
+  };
+  startup.host_now = [] { return static_cast<ton::UnixTime>(std::time(nullptr)); };
+  startup.within_deadline = [] { return monotonic_milliseconds() < deadline_milliseconds.load(); };
+  startup.observe_clock = [](unsigned round, td::int32 seqno, ton::UnixTime now,
+      ton::UnixTime master_time, ton::UnixTime shard_time, const td::Status& status) {
+    // Private bounded numeric diagnostics; no addresses, proof bytes or RPC text.
+    std::fprintf(stderr,
+        "ADMISSION_READINESS_CLOCK: round=%u seqno=%d host_now=%u master_age=%lld shard_age=%lld result=%s\n",
+        round, seqno, now, static_cast<long long>(now) - master_time,
+        static_cast<long long>(now) - shard_time,
+        status.is_ok() ? "fresh" : status.code() == tonlib::admission_past_stale_clock ? "past_stale" : "invalid_clock");
+  };
+  auto readiness = tonlib::authenticate_admission_startup(startup, expected_hash.ok());
+  if (readiness.is_error()) {
+    std::fprintf(stderr, "%s\n", readiness.error().message().c_str());
+    fail("authenticated readiness validation failed");
   }
-  if (synced->get_id() != tonlib_api::ton_blockIdExt::ID) {
-    emit(*synced);
-    fail("authenticated initialization sync failed");
-  }
-  const auto& accepted = static_cast<const tonlib_api::ton_blockIdExt&>(*synced);
-  const auto accepted_id = [&] { return tonlib_api::make_object<tonlib_api::ton_blockIdExt>(
-      accepted.workchain_, accepted.shard_, accepted.seqno_, accepted.root_hash_, accepted.file_hash_); };
-  // Official getBlockHeader verifies the Merkle proof against this exact accepted
-  // ID. Exact withBlock raw account validates its shard/account proof and exposes
-  // info.gen_utime as sync_utime; neither response supplies a new trust anchor.
-  client.send({3, tonlib_api::make_object<tonlib_api::blocks_getBlockHeader>(accepted_id())});
-  auto header = receive(client, 3, std::chrono::seconds(5));
-  if (header->get_id() != tonlib_api::blocks_header::ID) { emit(*header); fail("authenticated readiness header failed"); }
-  client.send({4, tonlib_api::make_object<tonlib_api::withBlock>(accepted_id(),
-      tonlib_api::make_object<tonlib_api::raw_getAccountState>(
-          tonlib_api::make_object<tonlib_api::accountAddress>(argv[2])))});
-  auto account = receive(client, 4, std::chrono::seconds(5));
-  if (account->get_id() != tonlib_api::raw_fullAccountState::ID) { emit(*account); fail("authenticated readiness account failed"); }
-  const auto& verified_header = static_cast<const tonlib_api::blocks_header&>(*header);
-  const auto& verified_account = static_cast<const tonlib_api::raw_fullAccountState&>(*account);
-  auto readiness = tonlib::validate_admission_readiness(accepted, verified_header, verified_account,
-      expected_hash.ok(), static_cast<ton::UnixTime>(std::time(nullptr)));
-  if (readiness.is_error()) { std::fprintf(stderr,"%s\n",readiness.error().message().c_str()); fail("authenticated readiness validation failed"); }
-  emit(*tonlib_api::make_object<tonlib_api::smc_verifiedAdmissionReady>(accepted_id(),
-      verified_header.gen_utime_, verified_account.sync_utime_, expected_hash.ok()));
+  emit(*readiness.ok());
   initializing.store(false);
   deadline_after(std::chrono::seconds(900));
   std::string input;

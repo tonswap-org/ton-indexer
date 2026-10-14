@@ -48,7 +48,7 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
   });
   const metrics = new MetricsService(config, store, backfillWorker, service, metricsCollector, deps.metrics);
   registerRoutes(app, config, service, metrics, new SnapshotService(config, store),
-    new DebugService(config, store, backfillWorker, poolTracker), new RateLimiter(config), registry, { ...manifest }, { source, balances, streams, metrics: deps.metrics });
+    new DebugService(config, store, backfillWorker, poolTracker), new RateLimiter(config), registry, { ...manifest }, { source, balances, streams, metrics: deps.metrics, logger });
   ledger.registerRoutes(app);
   app.addHook('onRequest', async request => { (request as any).startTime = process.hrtime.bigint(); });
   app.addHook('onResponse', async request => {

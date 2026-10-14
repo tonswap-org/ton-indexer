@@ -23,6 +23,9 @@ struct VerifiedAdmissionProof {
 
 constexpr size_t admission_max_proof_bytes = 4 * 1024 * 1024;
 constexpr int admission_max_proof_cells = 32768;
+// Only this error permits a startup-only authenticated state refresh. Future,
+// missing and inconsistent clocks remain terminal validation failures.
+constexpr int admission_past_stale_clock = 7101;
 
 // Also usable immediately before releasing a result after asynchronous work.
 td::Status validate_admission_proof_times(ton::UnixTime trusted_host_now, ton::UnixTime master_utime,

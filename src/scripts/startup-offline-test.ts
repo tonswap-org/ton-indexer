@@ -16,6 +16,7 @@ import { releaseDatabaseSchema } from '../releaseState';
 import { readLedgerCatalog, RELEASE_IDENTITY_DDL } from '../ledger/schemaReadiness';
 import type { LedgerSqlPool } from '../ledger/store';
 
+const currentTime = Math.floor(Date.now() / 1_000);
 async function database(manifestHash: string) {
   const db = new PGlite(), schema = releaseDatabaseSchema(manifestHash);
   await db.exec(`CREATE SCHEMA ${schema}; SET search_path=${schema}; ${RELEASE_IDENTITY_DDL}; ${readFileSync(resolve(__dirname, '../../sql/ledger.sql'), 'utf8')}`);
@@ -45,7 +46,7 @@ async function main() {
     snapshotPath: undefined, snapshotOnExit: false, snapshotAutosaveEnabled: false, diskGuardPath: directory,
     liteserverPool: poolPath, blockPollMs: 100, rateLimitEnabled: false,
     perpsAdmissionArtifacts: { binaryPath: '/synthetic/pinned-binary', binarySha256: 'a'.repeat(64), configPath: '/synthetic/pinned-config', configSha256: 'b'.repeat(64) } };
-  const head = proofBlock(100, 1_700_000_000, -1);
+  const head = proofBlock(100, currentTime, -1);
   const peer = new FakeLiteEngine(async req => {
     if (req.kind === 'liteServer.getMasterchainInfoExt') return masterAnswer(head);
     if (req.kind === 'liteServer.runSmcMethod') return { id: req.id, shardblk: head.id, exitCode: 0,

@@ -73,9 +73,10 @@ td::Status initialize_admission_vm() {
   return status.clone();
 }
 
-td::Status validate_admission_readiness(const tonlib_api::ton_blockIdExt& accepted,
+namespace {
+td::Status validate_admission_readiness_identity(const tonlib_api::ton_blockIdExt& accepted,
   const tonlib_api::blocks_header& header, const tonlib_api::raw_fullAccountState& account,
-  td::Slice expected_code_hash, ton::UnixTime host_now) {
+  td::Slice expected_code_hash) {
   auto same = [&](const tonlib_api::ton_blockIdExt* id) {
     return id && id->workchain_ == accepted.workchain_ && id->shard_ == accepted.shard_ &&
       id->seqno_ == accepted.seqno_ && id->root_hash_ == accepted.root_hash_ && id->file_hash_ == accepted.file_hash_;
@@ -97,8 +98,54 @@ td::Status validate_admission_readiness(const tonlib_api::ton_blockIdExt& accept
   TRY_RESULT(code,vm::std_boc_deserialize(account.code_));
   if (code.is_null() || code->get_hash().as_slice() != expected_code_hash)
     return td::Status::Error("ADMISSION_READINESS: qualified engine code differs");
+  return td::Status::OK();
+}
+}  // namespace
+
+td::Status validate_admission_readiness(const tonlib_api::ton_blockIdExt& accepted,
+  const tonlib_api::blocks_header& header, const tonlib_api::raw_fullAccountState& account,
+  td::Slice expected_code_hash, ton::UnixTime host_now) {
+  TRY_STATUS(validate_admission_readiness_identity(accepted, header, account, expected_code_hash));
   return validate_admission_proof_times(host_now,static_cast<ton::UnixTime>(header.gen_utime_),
                                       static_cast<ton::UnixTime>(account.sync_utime_));
+}
+
+td::Result<tonlib_api::object_ptr<tonlib_api::smc_verifiedAdmissionReady>>
+authenticate_admission_startup(const AdmissionStartupReads& reads, td::Slice expected_code_hash) {
+  const auto deadline = [&]() {
+    return reads.within_deadline() ? td::Status::OK()
+        : td::Status::Error("ADMISSION_READINESS: original startup deadline exceeded");
+  };
+  // One shared bound includes transport failures and stale authenticated rounds.
+  for (unsigned round = 1; round <= 3; ++round) {
+    TRY_STATUS(deadline());
+    auto synced = reads.sync();
+    TRY_STATUS(deadline());
+    if (synced.is_error()) {
+      if (round < 3 && synced.error().message().str().find("LITE_SERVER_NETWORK") == 0) continue;
+      return synced.move_as_error();
+    }
+    auto accepted = synced.move_as_ok();
+    if (!accepted) return td::Status::Error("ADMISSION_READINESS: missing accepted master");
+    TRY_RESULT(header, reads.header(*accepted));
+    TRY_STATUS(deadline());
+    TRY_RESULT(account, reads.account(*accepted));
+    TRY_STATUS(deadline());
+    if (!header || !account) return td::Status::Error("ADMISSION_READINESS: missing verified state");
+    TRY_STATUS(validate_admission_readiness_identity(*accepted, *header, *account, expected_code_hash));
+    const auto now = reads.host_now();
+    const auto master_time = static_cast<ton::UnixTime>(header->gen_utime_);
+    const auto shard_time = static_cast<ton::UnixTime>(account->sync_utime_);
+    auto status = validate_admission_proof_times(now, master_time, shard_time);
+    reads.observe_clock(round, accepted->seqno_, now, master_time, shard_time, status);
+    TRY_STATUS(deadline());
+    if (status.is_ok()) {
+      return tonlib_api::make_object<tonlib_api::smc_verifiedAdmissionReady>(
+          std::move(accepted), master_time, shard_time, expected_code_hash.str());
+    }
+    if (status.code() != admission_past_stale_clock || round == 3) return std::move(status);
+  }
+  return td::Status::Error("ADMISSION_READINESS: startup rounds exhausted");
 }
 
 td::Result<VerifiedAdmissionVmResult> execute_verified_admission(

@@ -15,6 +15,7 @@ import { MemoryStore } from '../store/memoryStore';
 import { loadOpcodes } from '../utils/opcodes';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 
+const currentTime = Math.floor(Date.now() / 1_000);
 const address = `0:${'1'.repeat(64)}`;
 const cell = beginCell().storeUint(7, 8).endCell();
 const boc = cell.toBoc().toString('base64');
@@ -31,7 +32,7 @@ const batch = (queriedAt = Date.now()): FreshReadBatch => ({ network: 'testnet',
   results: [{ kind: 'account', address, state: state() }, { kind: 'getter', address, exitCode: 0, stack: [] }] });
 const stub = (readBatch?: () => Promise<FreshReadBatch>): ChainSource => fakeChainSource({ network: 'testnet',
   ...(readBatch ? { read: async () => { const batch = await readBatch();
-    return { head: { ...batch.readContext.head, utime: 1_700_000_101 }, results: batch.results }; } } : {}) });
+    return { head: { ...batch.readContext.head, utime: currentTime + 1 }, results: batch.results }; } } : {}) });
 const makeService = (source: ChainSource) => {
   const config = { ...loadConfig(), network: 'testnet' as const };
   const store = new MemoryStore(config);
@@ -41,12 +42,12 @@ const makeService = (source: ChainSource) => {
 
 async function liteCases() {
   let wrongBlock = false;
-  const master = proofBlock(101, 1_700_000_101, -1), shard = proofBlock(80, 1_700_000_100);
+  const master = proofBlock(101, currentTime + 1, -1), shard = proofBlock(80, currentTime);
   const engine = new FakeLiteEngine(async request => {
     if (request.kind === 'liteServer.getMasterchainInfoExt') return masterAnswer(master);
-    if (request.kind === 'liteServer.getAccountState') return { id: wrongBlock ? proofBlock(100, 1_700_000_100, -1).id : request.id,
+    if (request.kind === 'liteServer.getAccountState') return { id: wrongBlock ? proofBlock(100, currentTime, -1).id : request.id,
       shardblk: shard.id, state: Buffer.alloc(0), proof: shard.proof, shardProof: Buffer.alloc(0) };
-    if (request.kind === 'liteServer.runSmcMethod') return { id: wrongBlock ? proofBlock(100, 1_700_000_100, -1).id : request.id,
+    if (request.kind === 'liteServer.runSmcMethod') return { id: wrongBlock ? proofBlock(100, currentTime, -1).id : request.id,
       shardblk: shard.id, exitCode: 17, result: serializeTuple([{ type: 'int', value: BigInt(request.id.seqno) }]).toBoc() };
     throw Error('unexpected wire request');
   });
@@ -56,7 +57,7 @@ async function liteCases() {
   try {
     const first = await source.read(calls);
     assert.equal(first.head.seqno, 101);
-    assert.equal(first.head.utime, 1_700_000_101, 'Canonical block time is retained separately from request time');
+    assert.equal(first.head.utime, currentTime + 1, 'Canonical block time is retained separately from request time');
     assert.equal(first.results[0].kind === 'account' && first.results[0].state.balance, '0');
     assert.equal(first.results[1].kind === 'getter' && first.results[1].stack[0].type === 'int' && first.results[1].stack[0].value, 101n);
     assert.equal(first.results[1].kind === 'getter' && first.results[1].exitCode, 17, 'VM denial is a result, never transport fallback');

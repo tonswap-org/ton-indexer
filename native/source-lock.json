@@ -187,8 +187,8 @@
     {
       "path": "tonlib/ADMISSION.md",
       "operation": "add",
-      "sha256": "6f115ad2a1602806590301120bbf2161be0fdb4c7380dbec5a5f063a34c7d324",
-      "bytes": 3941,
+      "sha256": "c4925df198fd24a1c2a767c2b1cdf9fdc65acc733d77b61d89445523c3d6a179",
+      "bytes": 4701,
       "mode": 420
     },
     {
@@ -306,43 +306,43 @@
     {
       "path": "tonlib/test/verified-admission-vm.cpp",
       "operation": "add",
-      "sha256": "24373c7de062afc95e500492344710467fcc7358cbf3412d1ee83f71314ad751",
-      "bytes": 9987,
+      "sha256": "6792ac65da67a72396f4a6785bf01cf26a3a4b27c9f3b6a7cb94176ae217462a",
+      "bytes": 17555,
       "mode": 420
     },
     {
       "path": "tonlib/tonlib/VerifiedAdmissionProof.cpp",
       "operation": "add",
-      "sha256": "a89a2dbe82898f8d194cd9d6097eb46fac95824e4c5c02a72f0ce6c76a82e3fc",
-      "bytes": 5695,
+      "sha256": "3fd9cf99edc6b0bccecc0b84be530e6574ff5e89342f312827708f18216c7783",
+      "bytes": 5923,
       "mode": 420
     },
     {
       "path": "tonlib/tonlib/VerifiedAdmissionProof.h",
       "operation": "add",
-      "sha256": "6269ee20947d4e09a1d5c21cf3abf07c63bc0e1c8e802850028c6f1cfcdeeb66",
-      "bytes": 1593,
+      "sha256": "6cb334aac50906dc3c020a6be0c62c017030988931ef92569b4eb0bb13b59ae0",
+      "bytes": 1793,
       "mode": 420
     },
     {
       "path": "tonlib/tonlib/VerifiedAdmissionVm.cpp",
       "operation": "add",
-      "sha256": "d96c729ca1777419769d03301a1c19d482ef1de8c1de5e165ebdf5c780522a42",
-      "bytes": 11810,
+      "sha256": "9ad70876c4118baa568037fd51f25df9f8c494ffaaff272e3e66cb2198c4ec39",
+      "bytes": 14187,
       "mode": 420
     },
     {
       "path": "tonlib/tonlib/VerifiedAdmissionVm.h",
       "operation": "add",
-      "sha256": "0d5f4c558d88b846eee4aedfe6a4a77d56c26d4be904d24940938f0f9b0e0a0e",
-      "bytes": 1370,
+      "sha256": "597d72727a2958e14b1439f49400d83f2e6cc68b650c6e3a7a1888e3434a0aeb",
+      "bytes": 2521,
       "mode": 420
     },
     {
       "path": "tonlib/tonlib/admission-worker.cpp",
       "operation": "add",
-      "sha256": "45e6e329a7125ceac77e31c23e9f3d72f61f7cb440fa1eb625e136e20dca3ddf",
-      "bytes": 12002,
+      "sha256": "6f033a8bee4000d2568c0d9c6a19bf72d86bc2d9b3bfbd7a35bd18726ecda31e",
+      "bytes": 12353,
       "mode": 420
     }
   ],

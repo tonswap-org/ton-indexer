@@ -17,6 +17,10 @@ export function errorDiagnostic(error: unknown, depth = 0): Record<string, unkno
   return {
     name: text(error.name, 80), message: text(error.message, 1024),
     ...(error.cause === undefined ? {} : { cause: errorDiagnostic(error.cause, depth + 1) }),
+    ...(error instanceof AggregateError ? {
+      errors: error.errors.slice(0, 4).map((cause) => errorDiagnostic(cause, depth + 1)),
+      ...(error.errors.length > 4 ? { errorsTruncated: true } : {}),
+    } : {}),
     ...(error instanceof BoundedLiteQueryError ? {
       attempts: error.attempts.slice(0, 8).map((attempt) => ({
         endpointIndex: attempt.endpointIndex, error: errorDiagnostic(attempt.cause, depth + 1),

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, linkSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildRuntimeManifestBundle, hashRegistry, parseCanonicalReleaseManifest, readCanonicalReleaseManifest } from '../config/releaseManifest';
@@ -137,5 +137,49 @@ try {
   assert.throws(() => readCanonicalReleaseManifest(duplicate, 'testnet'), /duplicate object key/);
   const race = writeManifest('race.json'), replacement = writeManifest('replacement.json');
   assert.throws(() => readCanonicalReleaseManifest(race, 'testnet', { afterOpen: () => renameSync(replacement, race) }), /single-link|changed during/);
+  for (const phase of ['afterOpen', 'afterRead'] as const) {
+    const siblings = join(root, `siblings-${phase}`); mkdirSync(siblings, { mode: 0o700 });
+    const manifestPath = join(siblings, 'manifest.json');
+    writeFileSync(manifestPath, readFileSync(path), { mode: 0o600 });
+    const temporary = join(siblings, 'snapshot.tmp'), snapshot = join(siblings, 'snapshot.json');
+    const readWith = (change: () => void) => readCanonicalReleaseManifest(manifestPath, 'testnet', { [phase]: change });
+    assert.equal(readWith(() => writeFileSync(temporary, '{}')).manifestHash, fixture.manifestHash,
+      `${phase}: an unrelated sibling creation cannot retire the current manifest`);
+    assert.equal(readWith(() => renameSync(temporary, snapshot)).manifestHash, fixture.manifestHash,
+      `${phase}: an unrelated snapshot rename cannot retire the current manifest`);
+    assert.equal(readWith(() => unlinkSync(snapshot)).manifestHash, fixture.manifestHash,
+      `${phase}: an unrelated sibling deletion cannot retire the current manifest`);
+    assert.equal(readWith(() => mkdirSync(join(siblings, 'other-state'))).manifestHash, fixture.manifestHash,
+      `${phase}: an unrelated subdirectory cannot change manifest authority`);
+
+    const parent = join(root, `parent-${phase}`); mkdirSync(parent, { mode: 0o700 });
+    const protectedPath = join(parent, 'manifest.json');
+    const bytes = readFileSync(path); writeFileSync(protectedPath, bytes, { mode: 0o600 });
+    assert.throws(() => readCanonicalReleaseManifest(protectedPath, 'testnet', {
+      [phase]: () => chmodSync(parent, 0o770),
+    }), /not group\/other-writable/, `${phase}: unsafe parent permissions remain rejected`);
+    chmodSync(parent, 0o700);
+    assert.throws(() => readCanonicalReleaseManifest(protectedPath, 'testnet', {
+      [phase]: () => chmodSync(parent, 0o750),
+    }), /parent changed during/, `${phase}: changed parent authority remains rejected even when its new mode is safe`);
+    chmodSync(parent, 0o700);
+    const moved = join(root, `moved-parent-${phase}`);
+    assert.throws(() => readCanonicalReleaseManifest(protectedPath, 'testnet', {
+      [phase]: () => { renameSync(parent, moved); symlinkSync(moved, parent, 'dir'); },
+    }), /non-symlink/, `${phase}: a parent symlink substitution remains rejected`);
+    unlinkSync(parent); renameSync(moved, parent);
+    assert.throws(() => readCanonicalReleaseManifest(protectedPath, 'testnet', {
+      [phase]: () => { renameSync(parent, moved); mkdirSync(parent, { mode: 0o700 }); writeFileSync(protectedPath, bytes, { mode: 0o600 }); },
+    }), /changed during/, `${phase}: a replacement directory with identical manifest content remains rejected`);
+
+    const mutation = writeManifest(`mutation-${phase}.json`);
+    assert.throws(() => readCanonicalReleaseManifest(mutation, 'testnet', {
+      [phase]: () => writeFileSync(mutation, Buffer.concat([readFileSync(mutation), Buffer.from(' ')])),
+    }), /changed during/, `${phase}: an in-place manifest mutation remains rejected`);
+    const swapped = writeManifest(`swapped-${phase}.json`), substitute = writeManifest(`substitute-${phase}.json`);
+    assert.throws(() => readCanonicalReleaseManifest(swapped, 'testnet', {
+      [phase]: () => renameSync(substitute, swapped),
+    }), /single-link|changed during/, `${phase}: an identical manifest file replacement remains rejected`);
+  }
   process.stdout.write('runtime release manifest producer fixture, identities and derived bindings passed\n');
 } finally { rmSync(root, { recursive: true, force: true }); }
