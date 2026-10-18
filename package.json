@@ -34,7 +34,7 @@
     "test:ledger:native-funding": "tsx src/scripts/ledger-native-funding-test.ts && tsx src/scripts/ledger-native-risk-vault-test.ts",
     "test:ledger:perps-direct-fee": "tsx src/scripts/perps-direct-fee-qualification-test.ts && tsx src/scripts/perps-direct-fee-state-test.ts",
     "test:runtime-manifest": "tsx src/scripts/runtime-manifest-test.ts && tsx src/scripts/runtime-t3-binding-test.ts",
-    "test:capture-build": "tsx src/scripts/capture-build-test.ts",
+    "test:capture-build": "tsx src/scripts/capture-build-test.ts && tsx src/scripts/current-capture-build-test.ts",
     "test:ledger:readiness": "npm run build && tsx src/scripts/ledger-readiness-test.ts",
     "test:ledger:wire": "tsx src/scripts/ledger-wire-summary-test.ts",
     "test:current-orders": "tsx src/scripts/current-order-runtime-test.ts && tsx src/scripts/current-release-routes-test.ts",

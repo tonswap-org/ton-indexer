@@ -273,7 +273,11 @@ queue transition; never count two allocations as a second user payment or accept
 an old one-record/immediate-dispatch layout.
 
 Capture qualification uses retained pure-build manifests and per-target Tolk
-import closures (`src/scripts/capture-build.ts`), not a union of producer sources.
+import closures, not a union of producer sources. `src/scripts/capture-build.ts`
+retains the old verifier; `current-capture-build.ts` independently qualifies 1.5
+virtual opcode/vendor closures, original manifests/artifacts and completion receipts.
+Never route a current capture through an old manifest or reconstruct missing producer
+history.
 Authenticate every executed/embedded compiled identity and its original bytes;
 keep transaction BOCs, state commitments and historical rejection fixtures intact.
 Never import removed native scripts/release helpers, trust transient build output,
