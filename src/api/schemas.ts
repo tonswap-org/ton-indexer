@@ -47,14 +47,6 @@ export const debugQuerySchema = {
   },
 };
 
-export const volIndexSnapshotQuerySchema = {
-  type: 'object',
-  properties: {
-    pool: { type: 'string' },
-    route_ids: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 703 },
-  },
-};
-
 export const governanceSnapshotQuerySchema = {
   type: 'object',
   properties: {
@@ -62,25 +54,5 @@ export const governanceSnapshotQuerySchema = {
     start_id: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' },
     max_scan: { type: 'integer', minimum: 1, maximum: 64 },
     max_misses: { type: 'integer', minimum: 1, maximum: 8 },
-  },
-};
-
-export const farmsSnapshotQuerySchema = {
-  type: 'object', additionalProperties: false,
-  properties: {
-    owner: { type: 'string' },
-    start_id: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' },
-    limit: { type: 'integer', minimum: 1, maximum: 64 },
-  },
-};
-
-export const coverSnapshotQuerySchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    owner: { type: 'string' },
-    after_slot: { type: 'integer', minimum: 0, maximum: 1024 },
-    limit: { type: 'integer', minimum: 1, maximum: 40 },
-    revision: { type: 'string', pattern: '^(0|[1-9][0-9]{0,19})$' },
   },
 };

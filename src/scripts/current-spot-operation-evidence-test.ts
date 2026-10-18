@@ -69,7 +69,13 @@ export function spotEvidenceFixtureAdapter(manifest: RuntimeReleaseManifest, acc
       assert.equal(observed.length, 1); assert([0, 1].includes(observed[0].exitCode));
       const native = new TupleReader(parseTuple(orderCell(observed[0].resultBoc)));
       const balance = native.readBigNumber(), owner = native.readAddress().toRawString(), master = native.readAddress().toRawString(), walletCode = native.readCell();
-      assert.equal(native.remaining, 0); assert.equal(digest(walletCode), token.walletCodeHash); assert.equal(master, token.root);
+      assert.equal(native.remaining, 0);
+      // Several approved masters may share one wallet implementation. Only the
+      // original getter's exact master/code pair enters the synthetic fallback
+      // map; an unlisted public root must use its actual captured getters.
+      const paired = manifest.tokens.find(t => t.root === master && t.walletCodeHash === digest(walletCode));
+      if (!paired) continue;
+      assert.equal(digest(code), paired.walletCodeHash);
       wallets.set(address, { balance, owner, master, code: walletCode }); continue;
     }
     if (digest(code) === manifest.templates.T3Wallet) {

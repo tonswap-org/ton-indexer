@@ -5,6 +5,7 @@ import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import { LedgerService } from '../ledger/service';
 import { DlmmMarketService } from '../ledger/marketService';
 import { PostgresMarketStore } from '../ledger/marketStore';
+import type { CurrentDlmmMarketProjection } from '../ledger/currentDlmmMarketTypes';
 import { registerLedgerRoutes } from '../ledger/routes';
 import { registerMarketLedgerRoutes } from '../ledger/marketRoutes';
 import { registerLedgerReadinessRoute } from '../ledger/readiness';
@@ -50,10 +51,12 @@ export function createLedgerRuntime(deps: RuntimeDeps, options: {
         optionCodeHashes: bindings.optionCodeHashes, currentOptionsBinding: bindings.currentOptionsBinding, launchpadCodeHashes: bindings.launchpadCodeHashes,
         launchpadControllers: bindings.launchpadControllers, t3Hub: bindings.t3Hub, t3Root: bindings.t3Hub, t3RedemptionBinding,
         perpsEngine: registry.PerpsEngine, perpsEngineCodeHash: bindings.perpsEngineCodeHash,
+        currentPerpsBinding: bindings.currentPerpsBinding,
+        currentDlmmBinding: bindings.currentDlmmBinding, currentLaunchpadBinding: bindings.currentLaunchpadBinding,
         maxWatchedAccounts: config.ledgerMaxWatchedAccounts, maxPagesPerSync: config.ledgerMaxPagesPerSync,
         maxRelatedAccounts: config.ledgerMaxRelatedAccounts,
       });
-      market = new DlmmMarketService(ledger, source, new PostgresMarketStore(candidate), bindings.marketBindings, logger, config.ledgerMaxRelatedAccounts, new PostgresMarketStore(readCandidate));
+      market = new DlmmMarketService(ledger, source, new PostgresMarketStore<CurrentDlmmMarketProjection>(candidate, 'dlmm-market-ledger-v2'), bindings.currentMarketBindings, logger, config.ledgerMaxRelatedAccounts, new PostgresMarketStore<CurrentDlmmMarketProjection>(readCandidate, 'dlmm-market-ledger-v2'));
       pool = candidate; readPool = readCandidate; candidate = undefined; readCandidate = undefined; status = 'ready';
       ledger.start(); market.start(); logger.info('durable ledger ready');
       const size = () => {

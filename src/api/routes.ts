@@ -15,13 +15,10 @@ import { RateLimiter, rateLimitKey } from './rateLimit';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from './validation';
 import {
   addressParamsSchema,
-  coverSnapshotQuerySchema,
   debugQuerySchema,
-  farmsSnapshotQuerySchema,
   governanceSnapshotQuerySchema,
   marketCandleParamsSchema,
   marketCandleQuerySchema,
-  volIndexSnapshotQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
@@ -41,7 +38,20 @@ import { OrderPageError, type CurrentOrdersRuntime } from '../runtime/ordersRunt
 import { readT3OperationRequest, T3EvidenceError } from '../runtime/t3OperationRequest';
 import { readT3WalletClaimRequest } from '../runtime/t3WalletClaimEvidence';
 import { readAccountStorage } from '../runtime/accountStorage';
+import { readPoolOperationRequest } from '../runtime/poolOperationEvidence';
+import { readPoolWalletClaimRequest } from '../runtime/poolWalletClaimEvidence';
+import { readLaunchpadWalletClaimRequest } from '../runtime/launchpadWalletClaimEvidence';
+import { readLaunchpadOwedArchiveRequest } from '../runtime/launchpadOwedArchiveEvidence';
+import { readLaunchpadHolderRecoveryRequest } from '../runtime/launchpadHolderRecoveryEvidence';
+import { readLaunchpadHolderProofSessionRequest } from '../runtime/launchpadHolderProofSession';
+import { readLaunchpadSalesRequest } from '../runtime/launchpadSalesEvidence';
+import { readPerpsOperationRequest } from '../runtime/perpsOperationEvidence';
+import { readPerpsWalletClaimRequest } from '../runtime/perpsWalletClaimEvidence';
+import { readWalletTransferEvidenceRequest } from '../runtime/walletTransferEvidence';
+import { readLaunchpadTokenRequest } from '../runtime/launchpadTokenEvidence';
+import { readLaunchpadOperationRequest } from '../runtime/launchpadOperationEvidence';
 import { readOptionsOperationRequest } from '../runtime/optionsOperationEvidence';
+import { readFaucetProofSessionRequest } from '../runtime/t3ProofSession';
 import { readFaucetRecoveryRequest } from '../runtime/faucetRecoveryEvidence';
 import { readOptionsWalletClaimRequest } from '../runtime/optionsWalletClaimEvidence';
 import { readFaucetOperationRequest } from '../runtime/faucetOperationEvidence';
@@ -275,7 +285,7 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
   installReleaseIdentity(app, config.network, registryMetadata);
@@ -362,8 +372,21 @@ export const registerRoutes = (
       ...(freshReads && runtime.orders?.orderWalletClaimEvidence ? { orderWalletClaimEvidence: '/api/indexer/v1/spot/order-wallet-claim-evidence' } : {}),
       ...(freshReads ? { accountStorage: '/api/indexer/v1/account-storage' } : {}),
       ...(freshReads && runtime.orders?.spotOperationEvidence ? { spotOperationEvidence: '/api/indexer/v1/spot/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.poolOperationEvidence ? { poolOperationEvidence: '/api/indexer/v1/pools/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.poolWalletClaimEvidence ? { poolWalletClaimEvidence: '/api/indexer/v1/pools/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadTokenEvidence ? { launchpadTokenEvidence: '/api/indexer/v1/launchpad/token-evidence' } : {}),
+      ...(freshReads && runtime.orders?.perpsOperationEvidence ? { perpsOperationEvidence: '/api/indexer/v1/perps/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.perpsWalletClaimEvidence ? { perpsWalletClaimEvidence: '/api/indexer/v1/perps/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.walletTransferEvidence ? { walletTransferEvidence: '/api/indexer/v1/wallet/transfers/evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadWalletClaimEvidence ? { launchpadWalletClaimEvidence: '/api/indexer/v1/launchpad/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadOwedArchiveEvidence ? { launchpadOwedArchiveEvidence: '/api/indexer/v1/launchpad/owed-archive-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadHolderRecoveryEvidence ? { launchpadHolderRecoveryEvidence: '/api/indexer/v1/launchpad/holder-recovery-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadHolderProofSession ? { launchpadHolderProofSession: '/api/indexer/v1/launchpad/holder-proof-session' } : {}),
+      ...(freshReads && runtime.orders?.launchpadSales ? { launchpadSales: '/api/indexer/v1/launchpad/sales' } : {}),
+      ...(freshReads && runtime.orders?.launchpadOperationEvidence ? { launchpadOperationEvidence: '/api/indexer/v1/launchpad/operation-evidence' } : {}),
       ...(freshReads && runtime.orders?.optionsOperationEvidence ? { optionsOperationEvidence: '/api/indexer/v1/options/operation-evidence' } : {}),
       ...(freshReads && runtime.orders?.optionsWalletClaimEvidence ? { optionsWalletClaimEvidence: '/api/indexer/v1/options/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.faucetProofSession ? { faucetProofSession: '/api/indexer/v1/t3/faucet-proof-session' } : {}),
       ...(freshReads && runtime.orders?.faucetRecoveryEvidence ? { faucetRecoveryEvidence: '/api/indexer/v1/faucet/recovery-evidence' } : {}),
       ...(freshReads && runtime.orders?.faucetOperationEvidence ? { faucetOperationEvidence: '/api/indexer/v1/faucet/operation-evidence' } : {}),
       marketCandles: '/api/indexer/v1/markets/{market}/candles'
@@ -418,6 +441,173 @@ export const registerRoutes = (
 
   app.get('/api/indexer/v1/service-info', async () => serviceInfo);
 
+  app.post('/api/indexer/v1/pools/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.poolOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPoolOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.poolOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Pool evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Pool evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/pools/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.poolWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPoolWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.poolWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Pool evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Pool evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    }
+  });
+  app.get('/api/indexer/v1/launchpad/sales', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadSales) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad discovery is unavailable.');
+    try {
+      const parsed = readLaunchpadSalesRequest(request.query, nativeRuntime);
+      return await runtime.orders.launchpadSales(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad discovery unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad discovery is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad discovery is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/perps/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.perpsOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Perps operation evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPerpsOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.perpsOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Perps operation evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Perps operation evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Perps operation evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/perps/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.perpsWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Perps wallet-claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPerpsWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.perpsWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Perps wallet-claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Perps wallet-claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Perps wallet-claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/wallet/transfers/evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.walletTransferEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current wallet transfer evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readWalletTransferEvidenceRequest(request.body, nativeRuntime);
+      return await runtime.orders.walletTransferEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current wallet transfer evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current wallet transfer evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current wallet transfer evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/token-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadTokenEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current creator-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadTokenRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadTokenEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current creator-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current creator-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current creator-token evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad wallet-claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad wallet-claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad wallet-claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad wallet-claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/holder-proof-session', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadHolderProofSession) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder proof session evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadHolderProofSessionRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadHolderProofSession(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad holder proof session evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad holder proof session evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder proof session evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/holder-recovery-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadHolderRecoveryEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder recovery evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadHolderRecoveryRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadHolderRecoveryEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad holder recovery evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad holder recovery evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder recovery evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/owed-archive-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadOwedArchiveEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad owed-archive evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadOwedArchiveRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadOwedArchiveEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad owed-archive evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad owed-archive evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad owed-archive evidence is unavailable.');
+    }
+  });
   app.post('/api/indexer/v1/options/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
     reply.header('cache-control', 'no-store');
     if (!nativeRuntime || !runtime.orders?.optionsOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current options evidence is unavailable.');
@@ -458,6 +648,20 @@ export const registerRoutes = (
       runtime.logger?.warn('current faucet recovery evidence unavailable', { error: errorDiagnostic(error) });
       if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current faucet recovery evidence is unavailable.' });
       return sendError(reply, 503, 'upstream_unavailable', 'Current faucet recovery evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/t3/faucet-proof-session', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.faucetProofSession) return sendError(reply, 503, 'upstream_unavailable', 'Current faucet proof session is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readFaucetProofSessionRequest(request.body, nativeRuntime);
+      return await runtime.orders.faucetProofSession(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current faucet proof session unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current faucet proof session is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current faucet proof session is unavailable.');
     }
   });
   app.post('/api/indexer/v1/options/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
@@ -838,39 +1042,6 @@ export const registerRoutes = (
   );
 
   app.get(
-    '/api/indexer/v1/vol-index/:volIndex/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { volIndex: { type: 'string' } }, required: ['volIndex'] },
-        querystring: volIndexSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const volIndex = (request.params as { volIndex: string }).volIndex;
-      if (!isValidAddress(volIndex)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid VolIndex address');
-      }
-
-      const query = request.query as { pool?: string; route_ids?: string };
-      const pool = query.pool?.trim() ? query.pool.trim() : undefined;
-      if (pool && !isValidAddress(pool)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid pool address');
-      }
-      const routeIds = query.route_ids?.split(',').map((value) => Number(value));
-      if (routeIds?.some(id => !Number.isSafeInteger(id) || id < 0 || id > 0xffffffff)) return sendError(reply, 400, 'bad_request', 'Invalid route ID.');
-
-      try {
-        return await service.getVolIndexSnapshot(volIndex, {
-          sourcePool: pool,
-          routeIds
-        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
-      } catch (error) {
-        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'vol-index snapshot request failed' });
-      }
-    }
-  );
-
-  app.get(
     '/api/indexer/v1/governance/:voting/snapshot',
     {
       schema: {
@@ -916,60 +1087,6 @@ export const registerRoutes = (
         }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
       } catch (error) {
         return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'governance snapshot request failed' });
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/pools/:pool/farms',
-    { schema: { params: { type: 'object', properties: { pool: { type: 'string' } }, required: ['pool'] },
-      querystring: farmsSnapshotQuerySchema } },
-    async (request, reply) => {
-      const pool = (request.params as { pool: string }).pool;
-      const query = request.query as { owner?: string; start_id?: string; limit?: number };
-      if (!isValidAddress(pool) || (query.owner !== undefined && !isValidAddress(query.owner))) {
-        return sendError(reply, 400, 'invalid_address', 'invalid pool or owner address');
-      }
-      if (query.start_id !== undefined && BigInt(query.start_id) >= (1n << 64n)) {
-        return sendError(reply, 400, 'bad_request', 'campaign start ID exceeds uint64');
-      }
-      try {
-        return await service.getFarmSnapshot(pool, { owner: query.owner, startId: query.start_id, limit: query.limit }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
-      } catch (error) {
-        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'native DLMM farming snapshot unavailable' });
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/cover/:manager/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { manager: { type: 'string' } }, required: ['manager'] },
-        querystring: coverSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const manager = (request.params as { manager: string }).manager;
-      if (!isValidAddress(manager)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid cover manager address');
-      }
-
-      const query = request.query as { owner?: string; after_slot?: number; limit?: number; revision?: string };
-      const owner = query.owner?.trim() ? query.owner.trim() : undefined;
-      if (owner && !isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-
-      try {
-        return await service.getCoverSnapshot(manager, {
-          owner,
-          afterSlot: query.after_slot,
-          limit: query.limit,
-          revision: query.revision
-        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
-      } catch (error) {
-        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'cover snapshot request failed' });
       }
     }
   );

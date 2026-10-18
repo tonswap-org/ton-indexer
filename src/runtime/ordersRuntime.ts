@@ -20,6 +20,19 @@ import { collectOptionsOperationEvidence, type CurrentOptionsOperationEvidence, 
 import { collectFaucetOperationEvidence, type CurrentFaucetOperationEvidence, type readFaucetOperationRequest } from './faucetOperationEvidence';
 import { collectOptionsWalletClaimEvidence, type CurrentOptionsWalletClaimEvidence, type readOptionsWalletClaimRequest } from './optionsWalletClaimEvidence';
 import { collectFaucetRecoveryEvidence, type CurrentFaucetRecoveryEvidence, type readFaucetRecoveryRequest } from './faucetRecoveryEvidence';
+import { collectFaucetProofSession, type FaucetProofSessionEvidence, type readFaucetProofSessionRequest } from './t3ProofSession';
+import { collectLaunchpadOperationEvidence, type CurrentLaunchpadOperationEvidence, type readLaunchpadOperationRequest } from './launchpadOperationEvidence';
+import { collectLaunchpadSalesEvidence, type CurrentLaunchpadSalesEvidence, type CurrentLaunchpadSalesRequest } from './launchpadSalesEvidence';
+import { collectPoolOperationEvidence, type CurrentPoolOperationEvidence, type readPoolOperationRequest } from './poolOperationEvidence';
+import { collectPoolWalletClaimEvidence, type CurrentPoolWalletClaimEvidence, type readPoolWalletClaimRequest } from './poolWalletClaimEvidence';
+import { collectLaunchpadTokenEvidence, type CurrentLaunchpadTokenEvidence, type readLaunchpadTokenRequest } from './launchpadTokenEvidence';
+import { collectPerpsOperationEvidence, type CurrentPerpsOperationEvidence, type readPerpsOperationRequest } from './perpsOperationEvidence';
+import { collectPerpsWalletClaimEvidence, type CurrentPerpsWalletClaimEvidence, type readPerpsWalletClaimRequest } from './perpsWalletClaimEvidence';
+import { collectWalletTransferEvidence, type CurrentWalletTransferEvidence, type readWalletTransferEvidenceRequest } from './walletTransferEvidence';
+import { collectLaunchpadWalletClaimEvidence, type CurrentLaunchpadWalletClaimEvidence, type readLaunchpadWalletClaimRequest } from './launchpadWalletClaimEvidence';
+import { collectLaunchpadOwedArchiveEvidence, type CurrentLaunchpadOwedArchiveEvidence, type CurrentLaunchpadOwedArchiveRequest } from './launchpadOwedArchiveEvidence';
+import { collectLaunchpadHolderRecoveryEvidence, type CurrentLaunchpadHolderRecoveryEvidence, type readLaunchpadHolderRecoveryRequest } from './launchpadHolderRecoveryEvidence';
+import { collectLaunchpadHolderProofSession, type LaunchpadHolderProofSessionEvidence, type readLaunchpadHolderProofSessionRequest } from './launchpadHolderProofSession';
 import { ProductEvidenceError } from './productEvidence';
 
 export class OrderPageError extends Error {
@@ -32,9 +45,22 @@ export type CurrentOrdersRuntime = { start(): void; stop(): Promise<void>; statu
   operationEvidence(request: ReturnType<typeof readT3OperationRequest>, signal?: AbortSignal): Promise<CurrentT3OperationEvidence>;
   walletClaimEvidence(request: ReturnType<typeof readT3WalletClaimRequest>, signal?: AbortSignal): Promise<CurrentT3WalletClaimEvidence>;
   orderWalletClaimEvidence(request: ReturnType<typeof readOrderWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentOrderWalletClaimEvidence>;
+  poolOperationEvidence(request: ReturnType<typeof readPoolOperationRequest>, signal?: AbortSignal): Promise<CurrentPoolOperationEvidence>;
+  poolWalletClaimEvidence(request: ReturnType<typeof readPoolWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentPoolWalletClaimEvidence>;
+  launchpadTokenEvidence(request: ReturnType<typeof readLaunchpadTokenRequest>, signal?: AbortSignal): Promise<CurrentLaunchpadTokenEvidence>;
+  perpsOperationEvidence(request: ReturnType<typeof readPerpsOperationRequest>, signal?: AbortSignal): Promise<CurrentPerpsOperationEvidence>;
+  perpsWalletClaimEvidence(request: ReturnType<typeof readPerpsWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentPerpsWalletClaimEvidence>;
+  walletTransferEvidence(request: ReturnType<typeof readWalletTransferEvidenceRequest>, signal?: AbortSignal): Promise<CurrentWalletTransferEvidence>;
+  launchpadWalletClaimEvidence(request: ReturnType<typeof readLaunchpadWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentLaunchpadWalletClaimEvidence>;
+  launchpadOwedArchiveEvidence(request: CurrentLaunchpadOwedArchiveRequest, signal?: AbortSignal): Promise<CurrentLaunchpadOwedArchiveEvidence>;
+  launchpadHolderRecoveryEvidence(request: ReturnType<typeof readLaunchpadHolderRecoveryRequest>, signal?: AbortSignal): Promise<CurrentLaunchpadHolderRecoveryEvidence>;
+  launchpadHolderProofSession(request: ReturnType<typeof readLaunchpadHolderProofSessionRequest>, signal?: AbortSignal): Promise<LaunchpadHolderProofSessionEvidence>;
+  launchpadSales(request: CurrentLaunchpadSalesRequest, signal?: AbortSignal): Promise<CurrentLaunchpadSalesEvidence>;
+  launchpadOperationEvidence(request: ReturnType<typeof readLaunchpadOperationRequest>, signal?: AbortSignal): Promise<CurrentLaunchpadOperationEvidence>;
   optionsOperationEvidence(request: ReturnType<typeof readOptionsOperationRequest>, signal?: AbortSignal): Promise<CurrentOptionsOperationEvidence>;
   faucetOperationEvidence(request: ReturnType<typeof readFaucetOperationRequest>, signal?: AbortSignal): Promise<CurrentFaucetOperationEvidence>;
   optionsWalletClaimEvidence(request: ReturnType<typeof readOptionsWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentOptionsWalletClaimEvidence>;
+  faucetProofSession(request: ReturnType<typeof readFaucetProofSessionRequest>, signal?: AbortSignal): Promise<FaucetProofSessionEvidence>;
   faucetRecoveryEvidence(request: ReturnType<typeof readFaucetRecoveryRequest>, signal?: AbortSignal): Promise<CurrentFaucetRecoveryEvidence>;
   spotOperationEvidence(request: ParsedSpotOperationRequest, signal?: AbortSignal): Promise<CurrentSpotOperationEvidence> };
 function cursorSnapshot(cursor: string): string {
@@ -138,12 +164,64 @@ export function createOrdersRuntime(deps: RuntimeDeps, options: {
       return evidence((store, active) => collectSpotOperationEvidence(native, source, store, request, active),
         () => new SpotEvidenceError(503, 'upstream_unavailable'), signal);
     },
+    poolOperationEvidence(request, signal) {
+      return evidence((store, active) => collectPoolOperationEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    poolWalletClaimEvidence(request, signal) {
+      return evidence((store, active) => collectPoolWalletClaimEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    launchpadTokenEvidence(request, signal) {
+      return evidence((store, active) => collectLaunchpadTokenEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    perpsOperationEvidence(request, signal) {
+      return evidence((store, active) => collectPerpsOperationEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    perpsWalletClaimEvidence(request, signal) {
+      return evidence((store, active) => collectPerpsWalletClaimEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    walletTransferEvidence(request, signal) {
+      return evidence((store, active) => collectWalletTransferEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    launchpadWalletClaimEvidence(request, signal) {
+      return evidence((store, active) => collectLaunchpadWalletClaimEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    launchpadOwedArchiveEvidence(request, signal) {
+      return evidence((store, active) => collectLaunchpadOwedArchiveEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    launchpadHolderRecoveryEvidence(request, signal) {
+      return evidence((store, active) => collectLaunchpadHolderRecoveryEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    launchpadHolderProofSession(request, signal) {
+      return evidence((store, active) => collectLaunchpadHolderProofSession(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    launchpadSales(request, signal) {
+      return evidence((store, active) => collectLaunchpadSalesEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    launchpadOperationEvidence(request, signal) {
+      return evidence((store, active) => collectLaunchpadOperationEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
     optionsOperationEvidence(request, signal) {
       return evidence((store, active) => collectOptionsOperationEvidence(native, source, store, request, active),
         () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
     },
     optionsWalletClaimEvidence(request, signal) {
       return evidence((store, active) => collectOptionsWalletClaimEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    faucetProofSession(request, signal) {
+      return evidence((store, active) => collectFaucetProofSession(native, source, store, request, active),
         () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
     },
     faucetRecoveryEvidence(request, signal) {

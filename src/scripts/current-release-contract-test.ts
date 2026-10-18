@@ -27,6 +27,27 @@ async function main() {
   const synthetic = parseCanonicalReleaseManifest(runtimeManifestFixture(), 'testnet');
   for (const parsed of [native, synthetic]) {
     const bundle = buildRuntimeManifestBundle(parsed.runtime);
+    const bindings = deriveRuntimeManifestBindings(parsed.runtime), perps = bindings.currentPerpsBinding;
+    assert.equal(bindings.currentLedgerDecodersQualified, false, 'one product binding does not remove the global qualification fence');
+    assert.equal(perps.network, parsed.runtime.network.slice(4));
+    assert.equal(perps.releaseId, parsed.runtime.releaseId); assert.equal(perps.manifestHash, parsed.manifestHash);
+    for (const [key, role] of [['engine', 'PerpsEngine'], ['riskVault', 'RiskVault'], ['governance', 'Governance'],
+      ['feeSink', 'FeeRouter'], ['treasury', 'Treasury'], ['t3Root', 'T3Hub']] as const)
+      assert.equal(perps.perps[key].toRawString(), parsed.runtime.contracts[role]!.address);
+    assert.equal(perps.perps.engineHash, parsed.runtime.contracts.PerpsEngine!.codeHash);
+    assert.equal(perps.riskVaultHash, parsed.runtime.contracts.RiskVault!.codeHash);
+    assert.equal(perps.perps.t3MasterHash, parsed.runtime.contracts.T3Hub!.codeHash);
+    assert.equal(perps.perps.t3WalletHash, parsed.runtime.templates.T3Wallet);
+    assert.equal(perps.proofCodeHash, parsed.runtime.templates.T3RecoveryProof);
+    assert.equal(perps.perps.poolHash, parsed.runtime.templates.DlmmPool);
+    assert.deepEqual([...perps.perps.markets].map(([id, pool]) => [id, pool.toRawString()]),
+      parsed.runtime.perpsMarkets.map(market => [market.marketId, market.pool]));
+    assert.deepEqual(bindings.currentLaunchpadBinding.manifest, parsed.runtime);
+    assert.deepEqual(bindings.currentDlmmBinding.release, parsed.runtime);
+    assert.deepEqual(bindings.currentDlmmBinding.pools, parsed.runtime.spotMarkets.map(market => ({ pool: market.pool, market,
+      t3: parsed.runtime.tokens.find(token => token.symbol === 'T3'), x: parsed.runtime.tokens.find(token => token.symbol === market.symbol) })));
+    assert.deepEqual(bindings.currentMarketBindings, bindings.currentDlmmBinding.pools.map(pool => ({ ...pool,
+      schema: 'current-dlmm-market-binding-v1', network: parsed.runtime.network.slice(4), release: parsed.runtime })));
     const network = parsed.runtime.network.slice(4) as Config['network'];
     const app = Fastify(); let work = 0;
     // Match the API runtime's early preflight hook order.

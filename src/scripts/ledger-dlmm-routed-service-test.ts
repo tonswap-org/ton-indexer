@@ -26,7 +26,7 @@ async function main() {
     for (const changed of [{ ...binding, router: null }, { ...binding, routerCodeHash: null }, { ...binding, routerCodeHash: 'current' }])
         assert.throws(() => validateMarketBindings([changed], 'localnet'));
     const db = new PGlite(), pool = { query: async (sql: string, args?: any[]) => args === undefined ? (await db.exec(sql)).at(-1) ?? { rows: [] } : db.query(sql, args), connect: async () => pool, end: async () => db.close() } as unknown as LedgerSqlPool;
-    const store = new PostgresLedgerStore(pool), market = new PostgresMarketStore(pool);
+    const store = new PostgresLedgerStore(pool), market = new PostgresMarketStore(pool, 'dlmm-market-ledger-v1');
     await store.initialize();
     const opcodes = loadOpcodes(), calls = new Set<string>();
     for (const account of new Set<string>(f.transactions.map((t: any) => t.account))) {

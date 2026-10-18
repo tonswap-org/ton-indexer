@@ -1,4 +1,14 @@
-import { activeOrderAccount, orderShard } from '../orders/evidence';
+import { currentDlmmOrderCandidate } from './currentDlmmOrderDiscovery';
+import { readCurrentDlmmOrderCreations } from './currentDlmmOrderProof';
+import { discoverCurrentLaunchpad, discoverCurrentLaunchpadSupplies } from './currentLaunchpadDiscovery';
+import { LAUNCH_OP } from './currentLaunchpadState';
+import { readLaunchpadProjectToken } from '../runtime/launchpadEvidenceState';
+import { createJettonWalletReader } from '../data/jettonWallet';
+import { assertPoolIdentity } from '../runtime/spotOperationEvidence';
+import { verifySpotPoolData } from './currentDlmmPhysical';
+import { verifyFrozenProductHistory } from '../runtime/productEvidence';
+import { readBoundCurrentPerpsEngine, decodeNativePerpsRiskState } from './currentPerpsProof';
+import { activeOrderAccount, orderShard, verifyOrderTransaction } from '../orders/evidence';
 import { decodeOptionFactory, decodeOptionVault, decodeOptionManager, optionChildAddress } from './currentOptionsState';
 import { archiveBindingKey } from './publication';
 import type { OwnerCycle, RefreshDependency } from './cycle';
@@ -13,10 +23,9 @@ import type { LedgerLaunchpadCodeHashes } from "./bindings";
 import { readFixedSaleState } from "./launchpadState";
 import { readBondingSaleState } from "./launchpadBondingState";
 import { readAuctionSaleState } from "./launchpadAuctionState";
-import { readPerpsState } from "./perpsState";
-import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress, discoverPerpsPeers } from "./perpsWire";
+import { perpsWalletAddress } from "./perpsWire";
 import { type LedgerT3Hub } from "./t3";
-import { readCurrentT3Hub } from "./currentT3State";
+import { readCurrentT3Hub, readCurrentT3Wallet } from "./currentT3State";
 import { t3Delivery } from "./currentT3Wire";
 import { optionBuyForward, type LedgerOptionFactory } from "./options";
 import { optionExercise, optionVaultPayout } from "./optionLifecycleWire";
@@ -86,6 +95,9 @@ export class LedgerGraphBuilder {
     private launchpadControllers: string[] = [],
     private configuredMarketBindings: DlmmMarketBinding[] = [],
     private currentOptionsBinding?: import("./currentOptionsProof").NativeOptionProofBinding,
+    private currentPerpsBinding?: import("./currentPerpsProof").NativePerpsProofBinding,
+    private currentDlmmBinding?: import("./currentDlmmPhysical").CurrentDlmmConfigBinding,
+    private currentLaunchpadBinding?: import("./currentLaunchpadProof").CurrentLaunchpadBinding,
   ) {}
   async build(owner: string, generation: string, cycle: OwnerCycle) {
     const chains = new Map<string, LedgerChain>(),
@@ -291,7 +303,7 @@ export class LedgerGraphBuilder {
     }
     if (launchpadCandidates.size > this.maxAccounts)
       issues.add("launchpad_discovery_limit_reached");
-    for (const sale of [...launchpadCandidates].slice(0, this.maxAccounts)) {
+    for (const sale of (this.currentLaunchpadBinding?[]:[...launchpadCandidates]).slice(0, this.maxAccounts)) {
       bindings[`launchpad:${sale}`] = false;
       if (knownLaunchpadControllers.has(sale)) await load(sale, "counterparty");
       if (!this.launchpadCodeHashes) continue;
@@ -373,6 +385,7 @@ export class LedgerGraphBuilder {
       }
     }
     for (const candidate of candidates) {
+      if(this.currentDlmmBinding?.pools.some(p=>p.pool===candidate))continue;
       bindings[`pool:${candidate}`] = false;
       const binding = routedBindings.get(candidate);
       // A configured deployment supplies discovery identity; historical code,
@@ -414,7 +427,7 @@ export class LedgerGraphBuilder {
       }
     }
     await inspectOwned();
-    if (configuredOptionFactory && optionsRelevant) {
+    if (configuredOptionFactory && optionsRelevant && !this.currentOptionsBinding) {
       bindings[`options:${configuredOptionFactory}`] = false;
       try {
         const config = await source.runGetMethod(
@@ -596,86 +609,48 @@ export class LedgerGraphBuilder {
         throw error;
       }
     };
-    if (this.perpsEngine && references(addr(this.perpsEngine))) {
-      bindings[`perps:${this.perpsEngine}`] = false;
-      const engineAddress = addr(this.perpsEngine);
-      if (!engineAddress || !this.t3Root || !this.perpsEngineCodeHash) {
-        issues.add("perps_engine_code_binding_unconfigured");
-      } else {
-        try {
-          await load(engineAddress, "counterparty");
-          const current = await source.getAccountState(engineAddress);
-          if (
-            !current.codeBoc ||
-            !current.dataBoc ||
-            Cell.fromBase64(current.codeBoc).hash().toString("hex") !==
-              this.perpsEngineCodeHash
-          )
-            throw Error("code");
-          const state = readPerpsState(current.dataBoc, this.perpsEngineCodeHash);
-          if (state.root !== addr(this.t3Root)) throw Error("root");
-          const ownerAddress = perpsWalletAddress(
-            state.walletCode,
-            state.root,
-            owner,
-          );
-          const engineWallet = perpsWalletAddress(
-            state.walletCode,
-            state.root,
-            engineAddress,
-          );
-          for (const [address, expectedOwner] of [
-            [ownerAddress, owner],
-            [engineWallet, engineAddress],
-          ]) {
-            const identity = await wallet(
-              address,
-              expectedOwner === owner ? "owned_jetton_wallet" : "counterparty",
-            );
-            const account = await source.getAccountState(address);
-            if (
-              identity?.master !== state.root ||
-              identity.owner !== expectedOwner ||
-              !account.codeBoc ||
-              Cell.fromBase64(account.codeBoc).hash().toString("hex") !==
-                state.walletCode.hash().toString("hex")
-            )
-              throw Error("wallet");
-          }
-          perpsEngines.set(engineAddress, {
-            address: engineAddress,
-            root: state.root,
-            codeHash: this.perpsEngineCodeHash,
-            walletCodeHash: state.walletCode.hash().toString("hex"),
-            ownerWallet: ownerAddress,
-            engineWallet,
-          });
-          // Oracle callbacks execute OPEN/CLOS after the original transaction.
-          // Retain the actual pool chain, including a failed PRPQ delivery, so
-          // the projector can prove the original request-to-callback edge.
-          const oraclePools = new Set<string>();
-          for (const transaction of chains.get(engineAddress)?.transactions ?? []) {
-            for (const message of transaction.outMessages) {
-              const request = perpsOracleMessage(message), destination = addr(message.destination);
-              if (request?.opcode === PERPS_ORACLE_PULL && request.owner === owner && addr(message.source) === engineAddress && destination)
-                oraclePools.add(destination);
-            }
-          }
-          await Promise.all([...oraclePools].sort().map(pool => load(pool, 'counterparty')));
-          let discovered: ReturnType<typeof discoverPerpsPeers> | undefined;
-          try { discovered = discoverPerpsPeers(chains.get(engineAddress)?.transactions ?? [], engineAddress, engineWallet); }
-          catch { issues.add('perps_range_protocol_account_limit'); }
-          if (discovered) {
-            await Promise.all([...discovered.peers].sort().map(peer => load(peer, 'counterparty')));
-            await Promise.all([...discovered.custodyOwners].sort().map(async party => {
-              await discoverWallet(state.root, party, 'counterparty', 'perps_engine_or_custody_identity_unverified');
-            }));
-          }
-          bindings[`perps:${this.perpsEngine}`] = !issues.has('perps_engine_or_custody_identity_unverified');
-        } catch {
-          issues.add("perps_engine_or_custody_identity_unverified");
+    let currentPerpsBinding: import('./currentPerpsProof').NativePerpsProofBinding | undefined;
+    if (this.currentPerpsBinding && references(this.currentPerpsBinding.perps.engine.toRawString())) {
+      const b=this.currentPerpsBinding,p=b.perps,engine=p.engine.toRawString(),risk=p.riskVault.toRawString(),root=p.t3Root.toRawString(),key=`current-perps:${engine}`;
+      bindings[key]=false;
+      try {
+        const active=async(address:string,pin:string)=>{const state=await source.getAccountState(address);if(!state.shardAccountBoc)throw Error('Original current Perps account unavailable');return activeOrderAccount(orderShard(state.shardAccountBoc,address).shard,pin);};
+        const state=readBoundCurrentPerpsEngine((await active(engine,p.engineHash)).data,b);
+        await load(engine,'counterparty');await load(risk,'counterparty');
+        const originalHistory=async(account:string)=>{
+          const chain=chains.get(account);if(!chain?.historyComplete||!chain.atBoundary)throw Error('Complete frozen history unavailable');
+          return Promise.all(chain.transactions.map(async raw=>{
+            if(!raw.rawBoc||!raw.prevTransactionLt||!raw.prevTransactionHash)throw Error('Frozen original unavailable');
+            const before=await stateAt(account,raw.prevTransactionLt,raw.prevTransactionHash),after=await stateAt(account,raw.lt,raw.hash);
+            if(!before?.state.shardAccountBoc||!after?.state.shardAccountBoc)throw Error('Frozen boundary unavailable');
+            return {evidence:{account,transactionBoc:raw.rawBoc,beforeShardAccountBoc:before.state.shardAccountBoc,afterShardAccountBoc:after.state.shardAccountBoc}};
+          }));
+        };
+        const pinnedData=async(account:string,pin:string)=>{
+          const current=await source.getAccountState(account);if(!current.shardAccountBoc)throw Error('Original current state unavailable');
+          const shard=orderShard(current.shardAccountBoc,account).shard;
+          if(shard.account?.storage.state.type==='active')return activeOrderAccount(shard,pin).data;
+          const rows=await originalHistory(account);verifyFrozenProductHistory(rows,shard,pin);
+          // The complete original chain ties the frozen StateInit commitment to
+          // this exact last active state. It is identity evidence, not a getter.
+          const last=rows.map(r=>verifyOrderTransaction(r.evidence)).sort((a,b)=>a.tx.lt<b.tx.lt?-1:1).flatMap(r=>[r.before,r.after]).filter(a=>a.account?.storage.state.type==='active').at(-1);
+          if(!last)throw Error('Frozen code identity unavailable');return activeOrderAccount(last,pin).data;
+        };
+        const riskWallet=decodeNativePerpsRiskState(await pinnedData(risk,b.riskVaultHash),b).slots.get(0)?.wallet?.toRawString()??null;
+        for(const pool of state.book.markets.values()) {await active(pool.pool.toRawString(),p.poolHash);await load(pool.pool.toRawString(),'counterparty');}
+        for(const [party,expected] of [[owner,null],[engine,state.ledger.slots.get(0)?.wallet?.toRawString()??null],[risk,riskWallet]] as const){
+          const selected=await this.identities.reader.identity(root,party,options),walletKey=`wallet:${party}:${root}`;
+          bindings[walletKey]=false;
+          if(selected.walletCode.hash().toString('hex')!==p.t3WalletHash||expected&&selected.wallet!==expected)throw Error('Current Perps wallet identity');
+          await load(selected.wallet,party===owner?'owned_jetton_wallet':'counterparty');
+          const storage=readCurrentT3Wallet(await pinnedData(selected.wallet,p.t3WalletHash));
+          if(storage.owner!==party||storage.master!==root||storage.proofCodeHash!==b.proofCodeHash)throw Error('Current Perps wallet storage identity');
+          wallets.set(selected.wallet,{kind:'jetton',id:`${this.network}:jetton:${root}`,master:root,owner:party,wallet:selected.wallet,decimals:9,symbol:'T3'});bindings[walletKey]=true;
         }
-      }
+        currentPerpsBinding=b;bindings[key]=true;
+      }catch{issues.add('perps_current_discovery_unavailable');}
+    } else if(this.perpsEngine&&references(addr(this.perpsEngine))) {
+      bindings[`current-perps:${this.perpsEngine}`]=false;issues.add('perps_current_release_binding_unconfigured');
     }
     // Routed payments settle across the Router, pool, and physical wallets.
     // Discover these endpoints from exact configured historical contract states,
@@ -717,6 +692,77 @@ export class LedgerGraphBuilder {
       for (const account of [...needed].sort()) {
         await load(account, account === owner ? "owner" : "counterparty");
         await wallet(account, "counterparty");
+      }
+    }
+    let currentDlmmBinding: import('./currentDlmmPhysical').CurrentDlmmProofBinding|undefined;
+    if(this.currentDlmmBinding){
+      const configured=this.currentDlmmBinding,qualified:import('./currentDlmmPhysical').CurrentDlmmProofBinding['pools']=[];
+      const orderCandidates=new Map<string,ReturnType<typeof currentDlmmOrderCandidate>>(),orderFactory=configured.release.contracts.SpotOrderFactory;
+      const requests=(chains.get(owner)?.transactions??[]).flatMap(t=>t.outMessages).filter(m=>!m.bounced&&addr(m.destination)===orderFactory?.address&&opcode(m)===0x4f435254);
+      const orderKey=orderFactory?`current-dlmm-orders:${orderFactory.address}`:null;
+      if(orderFactory&&requests.length){
+        bindings[orderKey!]=false;
+        try{
+          const current=await source.getAccountState(orderFactory.address);if(!current.shardAccountBoc)throw Error('Original current order factory unavailable');
+          const state=activeOrderAccount(orderShard(current.shardAccountBoc,orderFactory.address).shard,orderFactory.codeHash),data=state.data.beginParse(),code=data.loadRef();data.loadUintBig(64);data.endParse();
+          for(const message of requests){if(!message.body)continue;try{const candidate=currentDlmmOrderCandidate(Cell.fromBase64(message.body),owner,configured,code);orderCandidates.set(candidate.order,candidate);}catch{/* A rejected malformed request supplies no child authority. */}}
+          if(orderCandidates.size>this.maxAccounts)throw Error('Current order discovery bound');
+          if(orderCandidates.size){await load(orderFactory.address,'counterparty');for(const candidate of orderCandidates.values())await load(candidate.order,'counterparty');}
+          else bindings[orderKey!]=true;
+        }catch{issues.add('dlmm_current_order_discovery_unavailable');}
+      }
+      for(const pool of configured.pools){
+        if(!references(pool.pool)&&![...orderCandidates.values()].some(c=>c.pool===pool.pool))continue;
+        const key=`current-dlmm:${pool.pool}`;bindings[key]=false;
+        try{
+          const account=await source.getAccountState(pool.pool);if(!account.shardAccountBoc)throw Error('Original current pool unavailable');
+          const active=activeOrderAccount(orderShard(account.shardAccountBoc,pool.pool).shard,configured.release.templates.DlmmPool);
+          await assertPoolIdentity(configured.release,this.source,cycle.boundary,pool.market,cycle.signal);
+          await load(pool.pool,'pool');
+          const selected:import('./currentDlmmPhysical').CurrentDlmmWallet[]=[];
+          for(const party of [owner,pool.pool])for(const token of [pool.t3,pool.x]){
+            const identity=await this.identities.reader.identity(token.root,party,options);
+            if(identity.walletCode.hash().toString('hex')!==token.walletCodeHash)throw Error('Current DLMM wallet pin');
+            selected.push({address:identity.wallet,owner:party,root:token.root,codeHash:token.walletCodeHash});
+            wallets.set(identity.wallet,{kind:'jetton',id:`${this.network}:jetton:${token.root}`,master:token.root,owner:party,wallet:identity.wallet,decimals:token.decimals,symbol:token.symbol});
+            await load(identity.wallet,party===owner?'owned_jetton_wallet':'counterparty');bindings[`wallet:${party}:${token.root}`]=true;
+          }
+          verifySpotPoolData(active.data,{identity:{...pool,release:configured.release,inSide:0},wallets:{poolPay:selected.find(w=>w.owner===pool.pool&&w.root===pool.t3.root)!,poolReceive:selected.find(w=>w.owner===pool.pool&&w.root===pool.x.root)!}});
+          pools.set(pool.pool,{address:pool.pool,tokenT:pool.t3.root,tokenX:pool.x.root,codeHash:configured.release.templates.DlmmPool});
+          qualified.push({...pool,wallets:selected});bindings[key]=true;
+        }catch{issues.add('dlmm_current_discovery_unavailable');}
+      }
+      currentDlmmBinding={release:configured.release,pools:qualified};
+      if(orderFactory&&orderCandidates.size){
+        try{
+          const originals:import('../orders/evidence').OrderTransactionEvidence[]=[];
+          for(const account of [owner,orderFactory.address,...orderCandidates.keys()]){
+            const chain=chains.get(account);if(!chain?.atBoundary)throw Error('Order original interval unavailable');
+            if(orderCandidates.has(account)&&!chain.historyComplete)throw Error('Complete current order history unavailable');
+            for(const raw of chain.transactions){
+              // Only the owner's original factory dispatches authorize child discovery.
+              // Unrelated owner history supplies no additional order authority.
+              if(account===owner&&!raw.outMessages.some(m=>!m.bounced&&addr(m.destination)===orderFactory.address&&opcode(m)===0x4f435254))continue;
+              if(originals.length>=10000)throw Error('Order original history bound');
+              if(!raw.rawBoc||!raw.prevTransactionLt||!raw.prevTransactionHash)throw Error('Original order transaction unavailable');
+              const before=await stateAt(account,raw.prevTransactionLt,raw.prevTransactionHash),after=await stateAt(account,raw.lt,raw.hash);
+              if(!before?.state.shardAccountBoc||!after?.state.shardAccountBoc)throw Error('Original order boundary unavailable');
+              originals.push({account,transactionBoc:raw.rawBoc,beforeShardAccountBoc:before.state.shardAccountBoc,afterShardAccountBoc:after.state.shardAccountBoc});
+            }
+          }
+          const orders=readCurrentDlmmOrderCreations(owner,currentDlmmBinding,originals);
+          for(const candidate of orderCandidates.values()){
+            const order=orders.find(o=>o.order===candidate.order);if(!order)throw Error('Original factory/child creation unavailable');
+            const pool=qualified.find(p=>p.pool===order.pool),token=pool?.[order.terms.sellIndex===0?'t3':'x'];if(!pool||!token)throw Error('Current order pool unavailable');
+            const selected=await this.identities.reader.identity(token.root,order.order,options);if(selected.walletCode.hash().toString('hex')!==token.walletCodeHash)throw Error('Current order wallet pin');
+            const key=`wallet:${order.order}:${token.root}`;bindings[key]=false;await load(selected.wallet,'counterparty');
+            const chain=chains.get(selected.wallet);if(!chain?.atBoundary||!chain.historyComplete)throw Error('Complete order input-wallet history unavailable');
+            pool.wallets.push({address:selected.wallet,owner:order.order,root:token.root,codeHash:token.walletCodeHash});
+            wallets.set(selected.wallet,{kind:'jetton',id:`${this.network}:jetton:${token.root}`,master:token.root,owner:order.order,wallet:selected.wallet,decimals:token.decimals,symbol:token.symbol});bindings[key]=true;
+            if(order.terms.executor)await load(order.terms.executor.toRawString(),'counterparty');
+          }
+          bindings[orderKey!]=true;
+        }catch{issues.add('dlmm_current_order_discovery_unavailable');}
       }
     }
     let currentOptionsBinding: import('./currentOptionsProof').NativeOptionProofBinding | undefined;
@@ -763,6 +809,38 @@ export class LedgerGraphBuilder {
         currentOptionsBinding = b; bindings[key] = true;
       } catch { issues.add('option_current_discovery_unavailable'); }
     }
+    let currentLaunchpadBinding:import('./currentLaunchpadProof').CurrentLaunchpadBinding|undefined;
+    if(this.currentLaunchpadBinding){
+      const b=this.currentLaunchpadBinding,m=b.manifest,factory=m.contracts.SaleFactory!,candidates=new Set<string>(),supplies=new Set<string>();
+      const launchOps=new Set<number>([...Object.values(LAUNCH_OP),0x434c4d41,0x4a52434d]);
+      for(const chain of chains.values())if(chain.account===owner||wallets.get(chain.account)?.owner===owner)for(const tx of chain.transactions)for(const message of [tx.inMessage,...tx.outMessages]){
+        if(!message||message.bounced)continue;
+        try{
+          const transfer=tokenWire(message),direct=message.body?Cell.fromBase64(message.body):null,body=transfer?.op===TRANSFER?transfer.forward:direct;
+          if(body&&body.bits.length>=32&&launchOps.has(body.beginParse().preloadUint(32))){const target=transfer?.op===TRANSFER?transfer.owner:addr(message.destination);if(target&&target!==factory.address)candidates.add(target);}
+          else if(transfer?.op===TRANSFER&&transfer.owner&&transfer.forward.bits.length===0&&transfer.forward.refs.length===0)supplies.add(transfer.owner);
+        }catch{/* Only decoded current commands choose dependencies. */}
+      }
+      if(supplies.size)try{
+        const found=await discoverCurrentLaunchpadSupplies([...supplies],b,async account=>{const current=await source.getAccountState(account);if(!current.shardAccountBoc)throw Error('Current recipient identity unavailable');return orderShard(current.shardAccountBoc,account).shard;},this.maxAccounts);
+        for(const account of found)candidates.add(account);
+      }catch{issues.add('launchpad_current_discovery_unavailable');}
+      if(candidates.size){const key=`current-launchpad:${factory.address}`;bindings[key]=false;
+        try{
+          const read=async(account:string)=>{await load(account,'counterparty');const current=await source.getAccountState(account);if(!current.shardAccountBoc)throw Error('Original current Launchpad account unavailable');return orderShard(current.shardAccountBoc,account).shard;};
+          const found=await discoverCurrentLaunchpad(owner,[...candidates],b,read,this.maxAccounts);
+          for(const account of found.accounts)await load(account,'counterparty');
+          const tokens=new Map<string,{root:string;masterCodeHash:string;walletCodeHash:string;decimals:number;symbol?:string}>();
+          for(const root of new Set(found.walletOwners.map(w=>w.root))){const known=m.tokens.find(t=>t.root===root);tokens.set(root,known??await readLaunchpadProjectToken(m,this.source,root,cycle.boundary,cycle.signal));}
+          const reader=createJettonWalletReader({source:this.source,tokens:[...tokens.values()].map(t=>({master:t.root,masterCodeHash:t.masterCodeHash,walletCodeHash:t.walletCodeHash}))});
+          for(const pair of found.walletOwners){const token=tokens.get(pair.root)!,selected=await reader.identity(pair.root,pair.owner,options);if(selected.walletCode.hash().toString('hex')!==token.walletCodeHash)throw Error('Current Launchpad wallet pin');
+            wallets.set(selected.wallet,{kind:'jetton',id:`${this.network}:jetton:${pair.root}`,master:pair.root,owner:pair.owner,wallet:selected.wallet,decimals:token.decimals,...(token.symbol?{symbol:token.symbol}:{})});
+            await load(selected.wallet,pair.owner===owner?'owned_jetton_wallet':'counterparty');bindings[`wallet:${pair.owner}:${pair.root}`]=true;
+          }
+          currentLaunchpadBinding={...b,discoveredChildren:found.children};bindings[key]=true;
+        }catch{issues.add('launchpad_current_discovery_unavailable');}
+      }
+    }
     // Product discovery catches transport/qualification failures locally. A
     // failed durable history read must still abort the whole projection.
     if (buildFailure) throw buildFailure;
@@ -777,6 +855,9 @@ export class LedgerGraphBuilder {
       marketBindings,
       optionFactories,
       currentOptionsBinding,
+      currentPerpsBinding,
+      currentDlmmBinding,
+      currentLaunchpadBinding,
       launchpadSales,
       launchpadControllers: [...knownLaunchpadControllers],
       optionControllers: [

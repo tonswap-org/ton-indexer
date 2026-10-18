@@ -66,6 +66,9 @@ async function main() {
     const account = await source.getAccountState(address, { at });
     assert.equal(account.anchor!.genUtime, currentTime - 1);
     assert.equal(account.anchor!.shardBlock.seqno, 80);
+    assert.deepEqual(account.sourceMasterchain, at);
+    assert.notEqual(account.sourceMasterchain, at, 'Account source context cannot alias the caller head');
+    assert.equal(account.sourceMasterchain!.seqno, 100, 'Masterchain context is independent of shard sequence');
     assert.equal(account.balance, '0');
     const batch = await source.read([{ kind: 'account', address }, { kind: 'getter', address, method: 'x', args: [] }], { at });
     assert.deepEqual(batch.head, at);

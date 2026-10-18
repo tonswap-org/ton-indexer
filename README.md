@@ -300,7 +300,7 @@ Other SDK block/header/shard caches are bounded to 256 entries. Run
 `npm run test:fresh-read`, `npx tsx src/scripts/lite-account-cache-test.ts` and
 `npx tsx src/scripts/chain-source-test.ts` for these boundaries.
 
-The source does not retain completed getters. `SnapshotReader` shares active loads and permits completed reuse only when a caller explicitly supplies an age limit, optionally also requiring an unchanged exact account transaction pointer read at the current head. A reused value retains its original `asOfSeqno`. Farms and volatility-index reads never enable reuse because their values depend on chain time. Timed-out or abandoned work cannot publish into a later request, and there is no stale-success response mode.
+The source does not retain completed getters. `SnapshotReader` shares active loads and permits completed reuse only when a caller explicitly supplies an age limit, optionally also requiring an unchanged exact account transaction pointer read at the current head. A reused value retains its original `asOfSeqno`. Time-dependent values must not enable completed reuse. Timed-out or abandoned work cannot publish into a later request, and there is no stale-success response mode.
 
 REST request errors use the flat body: `{ "error": "safe explanation", "code": "machine_code" }`. Validation uses 400, unknown or removed paths use 404, unsupported content types use 415, limiting uses 429, unavailable reads use 503/`upstream_unavailable`, timed-out reads use 504/`upstream_timeout`, and unknown internal errors use 500. Native admission keeps its separate typed errors. All errors are `no-store`; 429, 503 and 504 include `Retry-After`, exposed through CORS. Operational `/health` retains its component-status document even when its HTTP status is 503. Request disconnects cancel remaining work. Route budgets are five seconds for getters, balances and JSON-RPC, eighteen seconds for `readFresh`, and ten seconds for product snapshots.
 
@@ -805,17 +805,8 @@ Current routes include:
 - `GET /api/indexer/v1/markets/{market}/candles?market_address={pool}&asset_symbol=TOKEN&quote_symbol=T3&interval=1m`
 - `GET /api/indexer/v1/ledger/readiness`
 
-- `GET /api/indexer/v1/vol-index/{vol_index}/snapshot?pool={pool}&route_ids={job_ids}` — current
-  snapshots require the exact seven-field config, ten-field state and three-field route getters.
-  `route_ids` accepts at most 64 positive uint32 IDs; malformed selectors fail instead of being
-  dropped or truncated.
 - `GET /api/indexer/v1/governance/{voting}/snapshot?owner={addr}&max_scan=20&max_misses=2`
   - Governance pages additionally accept `start_id` (positive uint64 string) and return `next_start_id` plus `coverage` (`rangeKnown`, `pageComplete`, `scanComplete`, `nextProposalId`, `dataHash`, `issues`). The current Voting storage counter bounds proposal discovery; unsupported storage or failed getters remain incomplete, retain the same page cursor, and never imply that proposals are absent. `max_misses` no longer truncates governance pages. Run `npm run test:governance` for pagination, later proposals and transient-hole coverage; this also runs before the default test suite.
-- `GET /api/indexer/v1/pools/{pool}/farms?owner={address}&start_id=1&limit=20`
-- `GET /api/indexer/v1/cover/{manager}/snapshot?owner={addr}&max_scan=20&max_misses=2` — policy
-  IDs remain exact uint64 strings throughout scanning. The current 19-field policy includes
-  `coveredNotional`, `lastVolatilityTimestamp` and `lastVolatilityRequestHash`; shifted 18-field
-  responses are rejected.
 - `GET /api/indexer/v1/contracts`
 - `GET /api/indexer/v1/service-info`
 - `GET /api/indexer/v1/stream/balances?address={addr}` (Server-Sent Events stream)
@@ -1253,7 +1244,7 @@ reusing earlier projections.
 
 ### Native DLMM farming observations
 
-Farming campaigns live in DLMM pool storage. The pool-scoped endpoint reads a complete bounded page, accepts exact uint64 campaign cursors, and optionally includes owner shares, accrued rewards, and the last settlement ID. Rewards and shares remain atomic decimal strings. Missing or malformed getters produce an explicit error, never an empty successful farm list. These are current observations across getters, not a historical atomic snapshot. Claimed amounts are committed payouts; only the matching durable settlement proves wallet delivery. Run `npm run test:farms` for parser, pagination, and route checks.
+Current farming uses the pool's `get_farm`, `get_farm_pending` and `get_next_farm_id` getters through the normal exact-head `readFresh` or `runGetMethod` transport. There is no dedicated farm snapshot endpoint. Cover, volatility-index and old farm snapshot routes return 404 and are absent from OpenAPI. Current operation and ledger proofs independently require original state and physical payout evidence; getter values alone do not prove wallet delivery. The retired tuple decoders and their positive test aliases are not part of the current runtime; retained original fixture evidence remains unchanged.
 
 
 ### Durable owner-event discovery
@@ -1716,7 +1707,7 @@ authentication, deadlines, resource limits and one-attempt execution are unchang
 The admission suite covers original failure preservation, exact exit status,
 stderr boundaries, same-chunk protocol failures and throwing diagnostic sinks.
 
-Perps economic qualification uses only the current isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Run `npx tsx src/scripts/ledger-perps-test.ts`, `npx tsx src/scripts/perps-counterparty-economics-test.ts`, `npx tsx src/scripts/perps-risk-admission-test.ts`, and `npx tsx src/scripts/perps-oracle-state-test.ts`, followed by the complete `npm run test:ledger`.
+The retained historical Perps economic fixtures use the isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Those earlier ABI fixtures are retained as historical evidence. The fresh PxStorage release is qualified by `npm run test:ledger:perps`, followed by the complete `npm run test:ledger`.
 
 The current engine extras also retain future market risk-policy commitments as
 an exact uint32-to-referenced-cell dictionary after the collectors and T3
@@ -1799,7 +1790,11 @@ post-fill marginal price. The values come from the same authenticated archives
 as the participant delta; participant balances cannot replace global supply.
 Run `npm run test:ledger:launchpad` to verify all three
 current model captures and their independent wallet/state evidence.
-# Current Perps fixture qualification
+# Historical Perps fixture qualification
+
+This section records the retained earlier ABI producer and its evidence format.
+It does not qualify the fresh PxStorage release or supply its current commands.
+The current source-locked 18-test/66-capture qualification is described below.
 
 Perps ledger fixtures preserve original local VM transactions and account state
 commitments; they are not evidence of a live testnet deployment. Capture through
@@ -1916,6 +1911,64 @@ recovery. A separate physical grant graph establishes receipt of tokens. Native
 certificate sessions additionally require authenticated original chain anchors;
 fixture proofs and synthetic sandbox heads cannot provide that authority.
 
+
+`POST /api/indexer/v1/t3/faucet-proof-session` accepts the exact original T3 faucet
+claim, immutable nonce, installed proof-code BOC and optional retained full
+masterchain anchor. It returns authenticated account/shard/masterchain proof
+cells for one bounded native verifier step, at most four original transactions,
+and an explicit current `asOf` distinct from the immutable session `anchor`.
+Long histories resume from the on-chain cursor. The endpoint shares the live
+request gate, 192 KiB request/8 MiB response limits and exact release header;
+it never submits a transaction. Run `npm run test:current-faucet-proof-session`.
+
+`POST /api/indexer/v1/launchpad/operation-evidence` accepts current creation,
+contribution/supply, sale, LP, vesting and owed-claim bodies with the exact owner
+TON wallet dispatch. Current factory code pins derive canonical children;
+reviewed asset entries must match installed token/code families. Original linked
+transactions retain every causal creator, fee, LP and vesting leg within the
+shared product bounds. `GET /api/indexer/v1/launchpad/sales` requires the installed
+`factory` and `limit` from 1 to 50; optional `cursorLt` and `cursorHash` must appear
+together. The inclusive cursor names the next original factory transaction.
+Complete coverage means this scanned page has no gaps; only a verified history
+end returns null `nextCursor`. Browser verification independently checks executed
+creation announcements and canonical child state. Run
+`npm run test:current-launchpad-evidence` and the original native capture checks.
+
+`POST /api/indexer/v1/pools/operation-evidence` accepts current one-bin liquidity
+adds, farm creation/actions, bounded removal and owed claims. Its original owner
+dispatch and release pool identity bind the physical graph. The same saved
+request at `/api/indexer/v1/pools/wallet-claim-evidence` selects only causal failed
+pool-owned T3 attempts, retaining original recipient and current sparse witnesses.
+Either requested side is supported because an operation may produce both assets.
+Membership is recovery authority; actual recipient credit still requires the
+independent operation graph. Both endpoints preserve explicit bounds and gaps.
+
+`POST /api/indexer/v1/launchpad/token-evidence` accepts the original creator mint
+and StateInit with its resolved owner TON wallet dispatch. The installed V21
+minter/wallet pair, canonical initial root and same-head wallet getter restrict
+the complete original root/wallet histories and causal mint graph. The browser
+independently checks actual initial credit or an exact bounced supply reversal.
+The endpoint shares product work/byte limits, release header and no-cache policy.
+Run `npm run test:current-launchpad-token` and original native capture checks.
+
+`POST /api/indexer/v1/perps/operation-evidence` accepts current open, increase,
+margin, close and funding requests with the exact owner TON dispatch. The current
+engine/RiskVault layouts, installed peers/market pools and canonical T3 wallets
+bind complete product histories and original message links. Explicit recipient
+intervals retain later retry credits from the same current head.
+`POST /api/indexer/v1/perps/wallet-claim-evidence` uses the same saved request and
+returns at most three server-derived engine, RiskVault and owner wallet groups.
+Each sparse proof retains its original causal debit and immutable transfer terms;
+aggregate limits are 10,000 history rows, 32 records, 32 failures and 8 MiB.
+The global ordinary-ledger qualification fence is unchanged. Run
+`npm run test:current-perps-evidence` and original native execution/recovery checks.
+
+`POST /api/indexer/v1/wallet/transfers/evidence` binds a manifest token transfer to
+its original owner dispatch and canonical sender/recipient wallets. It returns
+original account boundaries and complete current-to-dispatch intervals within
+the shared product limits. Browser verification independently proves the debit
+and credit; an accepted transfer command is insufficient.
+
 Public project-token reads authenticate the original current master and exact
 `get_jetton_data` at one head. Only the installed `JettonV21Minter`/
 `JettonV21Wallet` pair or the separate stablecoin minter/wallet pair is accepted.
@@ -1923,3 +1976,110 @@ Known manifest roots retain their exact pair and precision. Explicit bounded
 on-chain decimals are required; remote metadata and implicit precision do not
 authorize token funding. The TS master must match the mandatory V21 minter pin.
 Run `npm run test:current-project-token` and `npm run test:runtime-manifest`.
+
+Current Launchpad archive discovery uses `POST /api/indexer/v1/launchpad/owed-archive-evidence` with the exact release and canonical sale identity, owner and slot. Only the current Sale contract implements CLMA. The collector reconstructs every original archive append and consumption through genesis-linked history, verifies current root/count/total/frontier and `get_owed_archive`, then returns unconsumed owner witnesses and original append transactions. The shared live gate remains20 seconds. Large histories progress through request-driven slices of at most64 newly verified boundaries and8 seconds of slice work. Until genesis and all transitions are verified, the endpoint returns retryable503, with no partial archive or ready witness. Retrying the same request resumes durable immutable boundary facts; current account/getter reads are always performed at the new exact head. Release/decoder identity, original transaction hashes and before/after account hashes isolate reuse across restarts, concurrent requests, advancing anchors and forks. The owning release schema retains checkpoints linked by foreign key to their original evidence; there is no background reconstruction loop or completed current-result cache. Coverage stays incomplete on a missing transition, more than32 candidates,10000 history rows or8MiB. Run `npm run test:current-launchpad-owed-archive`; native capture checks take absolute complete/request directories and a new durable output path via `test:current-launchpad-owed-archive:capture`. A witness does not prove physical payout.
+
+
+Archive persistence and orchestration checks use the canonical SQL through
+`npm run test:current-launchpad-owed-archive`. The overflow capture runner
+`npm run test:current-launchpad-owed-overflow:capture -- <absolute-model-directory> <new-absolute-output.json>`
+executes every request through the unchanged20-second gate and reopens an
+append-only checkpoint journal next to the output between requests. It qualifies
+original native append/consume/append-after-consumption under a synthetic source
+and head, independently of PostgreSQL persistence checks; it is not public chain
+or deployment qualification. Preserve the output and complete journal together.
+Current Perps manifest bindings carry exact engine, RiskVault, proof and market
+identities into the ledger. The global product qualification fence remains closed
+until each product's current native ledger acceptance is complete.
+
+Current Perps business projection accepts only the PxStorage six-operation wire,
+exact manifest engine/RiskVault/pool/T3 pins, original owner dispatch and
+authenticated before/after cells. Independent integer arithmetic checks margin,
+entry principal, 2N reserve, remaining entitlement, signed funding, fees and
+unpaid loss; overlapping position facts never create spendable cash. Original
+source debit and recipient credit separately prove T3 cash, including sparse
+retry and whole owed recovery. Bounded range uses the same decoder; frozen
+identities require complete original StateInit-linked history. Missing originals,
+payout or coverage remain incomplete. Run `npm run test:ledger:perps` for
+`ledger-current-perps-test.ts`, `current-perps-economics-test.ts`,
+`ledger-current-perps-range-test.ts` and the retained generic range/retry/recovery
+tests. The fresh source-locked native producer passed 18 tests with 66 default/x6
+captures; the portable originals and receipt remain unchanged. Sandbox heads do
+not qualify public deployment. `currentLedgerDecodersQualified` remains false
+until all current business-decoder gates are independently accepted. The earlier
+Perps ABI positive tests remain historical evidence, outside the ordinary gate.
+
+
+Current Launchpad business projection binds the original owner command to exact
+factory-derived Sale, LP and Vesting children and independent historical account
+boundaries. Empty-forward supply discovery authenticates the canonical child;
+current discovery hints never replace original financial evidence. Missing child
+originals preserve an unresolved current intent with unknown identity fields.
+Project token master boundaries participate in coverage, so incomplete master
+history cannot confirm settlement. Failed-sale claims use the original paid
+amount and separately proved T3 cash to classify refunds. Holder and archived
+owed recovery require their exact original command, witness and physical payout;
+archive accounting does not fabricate complete ordinary ledger history.
+
+Run `npm run test:ledger:launchpad` for the current native business, discovery,
+holder, recovery and archive suites. The portable v2 corpus retains 44 unchanged
+native capture files, all 180 source files and the passing producer receipt.
+All eight worlds qualify the actual discovery graph from exact same-head current
+account envelopes and canonical getters, including explicit original cold-wallet
+states. Sandbox heads do not qualify a public deployment. The global current
+ledger qualification fence remains in place until all product gates pass.
+
+
+Fresh market observations use `dlmm-market-ledger-v2` and the current Pool/T3/X
+bindings derived from the release manifest. Each token keeps its own reviewed
+master/wallet family. The current service dispatches only the current graph and
+projector and refuses historical v1 publications. The store requires an explicit schema at construction and rejects mismatched
+publication, head and page metadata before invoking a decoder. Archived evidence
+tests explicitly select v1; no current request falls back to that decoder.
+
+A v2 observation independently verifies original owner dispatch, physical input
+and recipient credit, exact pool reserve/fee changes and historical token
+precision. `settlementMode: physical-credit` makes `finalizedUtime` the actual
+recipient credit time; it does not invent a retired acknowledgement/finalizer.
+Missing original cash or precision remains incomplete. Publication and page reads
+reverify original economics and exact dependency coverage. Immutable generation,
+scoped cursor, compare-and-publish and transactional rollback rules remain intact.
+Run `src/scripts/ledger-current-dlmm-market-test.ts` and
+`src/scripts/current-market-store-test.ts` for native economics and embedded
+PostgreSQL persistence; synthetic archive/head adapters are not public consensus
+qualification. Keep the global ledger fence until the full current suite and
+native release qualification are accepted.
+
+
+Current DLMM business qualification uses exact current Pool/SpotOrderFactory/SpotOrder
+storage and per-token T3, V21 or vendor-stablecoin families. Original owner
+dispatches, factory/child initialization, pool state changes and separate wallet
+debit/credit boundaries authorize economics. Pool LP shares and fee allocations
+are accounting components, never additional cash; ordinary projections check
+all token movements for duplication. Order funding, consumed input, physical
+outputs and returned custody remain separate. Discovery retains the full owner
+chain while selecting only exact OCRT dispatches as child-creation authority.
+
+Run `npm run test:ledger:market`, `npm run test:ledger:liquidity` and
+`npm run test:ledger:orders`. Current native positives replace old DLMM ABI
+positives in these ordinary aliases. The portable originals and limitations are
+documented in `src/scripts/fixtures/current-dlmm-native/README.md`. Protected
+Order-input-wallet retry and never-funded cancellation do not yet qualify as
+positive financial completion in this business corpus; missing physical evidence
+remains unresolved. Keep the global current-decoder qualification fence.
+
+Market precision retains the configured source's original `sourceMasterchain`
+context and the exact execution account envelope plus independent shard anchor.
+The persisted after-root context must equal the execution masterchain identity;
+the before-root context must be the explicitly requested preceding masterchain
+sequence. Use canonical signed-decimal shard IDs and verify tagged-shard account
+membership; shard and masterchain sequence numbers are independent. Original
+root LT/hash must remain unchanged across the bracket. Old cached states lacking
+source context are refreshed from the configured source, never repaired locally.
+Missing context stays unresolved. This retained source binding is not a standalone
+consensus proof. Current native test brackets remain explicitly synthetic.
+
+Bound identity reads before RPC, original graphs to 10,000 transactions/64 MiB,
+and each execution proof including its account envelope to 256 transactions/8 MiB.
+Each token's retained precision archive has a separate 8 MiB pre-parse budget.
+Limits and missing boundaries yield explicit incomplete coverage.

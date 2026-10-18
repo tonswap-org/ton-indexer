@@ -1,4 +1,4 @@
-import { Cell, loadMessage } from '@ton/core';
+import { beginCell, Cell, loadMessage, storeShardAccount, storeStateInit, type ShardAccount } from '@ton/core';
 import type { ChainHead, ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
 import { activeOrderAccount, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
@@ -20,7 +20,7 @@ export function productUint(value: unknown, bits: number, positive = false): big
 export function productAddress(value: unknown): string {
   requireProduct(typeof value === 'string' && /^0:[0-9a-f]{64}$/.test(value) && value !== `0:${'0'.repeat(64)}`); return value;
 }
-export function productCell(boc: unknown, hash: unknown): Cell {
+export function productCell(boc: unknown, hash: unknown, maxCells = 128): Cell {
   requireProduct(typeof boc === 'string' && boc.length > 0 && boc.length <= 128 * 1024
     && typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash));
   const bytes = Buffer.from(boc, 'base64'); requireProduct(bytes.toString('base64') === boc);
@@ -29,7 +29,7 @@ export function productCell(boc: unknown, hash: unknown): Cell {
   requireProduct([false, true].some(idx => [false, true].some(crc32 => root.toBoc({ idx, crc32 }).equals(bytes))));
   const pending = [root], visited = new Set<string>();
   while (pending.length) { const cell = pending.pop()!, id = cell.hash().toString('hex'); if (visited.has(id)) continue;
-    visited.add(id); requireProduct(!cell.isExotic && visited.size <= 128); pending.push(...cell.refs); }
+    visited.add(id); requireProduct(!cell.isExotic && visited.size <= maxCells); pending.push(...cell.refs); }
   return root;
 }
 export type ProductDispatch = { lt: string; hash: string; valueNano: string };
@@ -41,13 +41,36 @@ export function productDispatch(value: unknown): ProductDispatch {
 }
 export type ProductPhysicalGraph = { coverage: { complete: boolean; gaps: PhysicalGap[] }; transactions: OrderTransactionEvidence[] };
 
+/** Frozen current product identity is established only by its complete original
+ * chain and the exact native StateInit commitment, never by an old state getter. */
+export function verifyFrozenProductHistory(rows: readonly Pick<PhysicalBoundary, 'evidence'>[], current: ShardAccount, pin: string) {
+  const sorted = rows.map(row => ({ evidence: row.evidence, ...verifyOrderTransaction(row.evidence) })).sort((a,b) => a.tx.lt < b.tx.lt ? -1 : 1);
+  const unavailable = () => { throw new ProductEvidenceError(503,'upstream_unavailable'); };
+  if (!sorted.length || sorted[0].tx.prevTransactionLt !== 0n || sorted[0].tx.prevTransactionHash !== 0n || current.account?.storage.state.type !== 'frozen') return unavailable();
+  const account = current.account.addr.toRawString();
+  for (let index=0; index<sorted.length; index++) {
+    const row=sorted[index],previous=sorted[index-1];
+    if (row.evidence.account!==account || previous && (row.tx.prevTransactionLt!==previous.tx.lt || row.tx.prevTransactionHash!==BigInt('0x'+previous.hash)
+      || !Cell.fromBase64(row.evidence.beforeShardAccountBoc).equals(Cell.fromBase64(previous.evidence.afterShardAccountBoc)))) unavailable();
+  }
+  if (!beginCell().store(storeShardAccount(current)).endCell().equals(Cell.fromBase64(sorted.at(-1)!.evidence.afterShardAccountBoc))) unavailable();
+  let commitment: bigint | null = null;
+  for (let index=0; index<sorted.length; index++) for (const [side,shard] of [sorted[index].before,sorted[index].after].entries()) {
+    const state = shard.account?.storage.state;
+    if (state?.type === 'active') { activeOrderAccount(shard,pin); commitment=BigInt('0x'+beginCell().store(storeStateInit(state.state)).endCell().hash().toString('hex')); }
+    else if (state?.type === 'frozen') { if (commitment === null || state.stateHash !== commitment) throw new ProductEvidenceError(503,'upstream_unavailable'); }
+    else if (index !== 0 || side !== 0 || shard.lastTransactionLt !== 0n) throw new ProductEvidenceError(503,'upstream_unavailable');
+  }
+  if (commitment === null || current.account.storage.state.stateHash !== commitment) throw new ProductEvidenceError(503,'upstream_unavailable');
+}
+
 /** Transport original physical boundaries only. Current product code pins and
  * the exact resolved owner dispatch restrict the graph; browser verification
  * still decides business acceptance and actual independent token delivery. */
 export async function collectProductPhysicalGraph(source: ChainSource, store: PhysicalEvidenceStore, head: ChainHead,
   input: { owner: string; target: string; body: Cell; dispatch: ProductDispatch; pins: ReadonlyMap<string, string>;
-    completeAccounts: readonly string[]; reader?: ReturnType<typeof createPhysicalEvidenceReader>;
-    onCausal?: (row: PhysicalBoundary) => void }, signal?: AbortSignal): Promise<ProductPhysicalGraph> {
+    completeAccounts: readonly string[]; includeAccounts?: readonly string[]; reader?: ReturnType<typeof createPhysicalEvidenceReader>;
+    onCausal?: (row: PhysicalBoundary) => void; allowFrozenPins?: ReadonlySet<string> }, signal?: AbortSignal): Promise<ProductPhysicalGraph> {
   const limits = PRODUCT_EVIDENCE_LIMITS, reader = input.reader ?? createPhysicalEvidenceReader(source, store, head, { signal, newTransactions: limits.newTransactions });
   const gaps: PhysicalGap[] = [], histories = new Map<string, PhysicalBoundary[]>(), selected = new Map<string, PhysicalBoundary>();
   let remaining = limits.history - 1, edges = 0;
@@ -70,7 +93,9 @@ export async function collectProductPhysicalGraph(source: ChainSource, store: Ph
     if (remaining <= 0) { gaps.push({ code: 'history_transaction_limit', account }); return []; }
     try {
       const state = await reader.current(account), pin = input.pins.get(account);
-      if (pin) activeOrderAccount(orderShard(state.shardAccountBoc!, account).shard, pin);
+      const currentShard = orderShard(state.shardAccountBoc!, account).shard;
+      const frozen = currentShard.account?.storage.state.type === 'frozen' && input.allowFrozenPins?.has(account) && input.completeAccounts.includes(account);
+      if (pin && !frozen) activeOrderAccount(currentShard, pin);
       // Product/source-wallet histories are complete from initialization. A
       // causal recipient/GRAM-return account only needs its uninterrupted
       // current-to-dispatch interval; unrelated older owner activity is not a
@@ -78,6 +103,7 @@ export async function collectProductPhysicalGraph(source: ChainSource, store: Ph
       const result = await reader.history(account, state, remaining, input.completeAccounts.includes(account) ? undefined
         : row => tx(row).tx.prevTransactionLt < BigInt(input.dispatch.lt)); remaining -= result.rows.length;
       gaps.push(...result.gaps); if (!result.complete) gaps.push({ code: 'complete_history_unavailable', account });
+      if (pin && frozen) { if (!result.complete) throw new ProductEvidenceError(503, 'upstream_unavailable'); verifyFrozenProductHistory(result.rows, currentShard, pin); }
       if (pin) for (const row of result.rows) for (const shard of [tx(row).before, tx(row).after]) {
         if (shard.account?.storage.state.type === 'active') activeOrderAccount(shard, pin);
       }
@@ -100,7 +126,9 @@ export async function collectProductPhysicalGraph(source: ChainSource, store: Ph
   });
   if (!tx(dispatch).succeeded || sent.length !== 1) { gaps.push({ code: 'original_owner_dispatch_mismatch', account: input.owner, lt: input.dispatch.lt }); return finish(); }
   add(dispatch);
-  for (const account of new Set(input.completeAccounts)) for (const row of await history(account)) add(row);
+  // Explicit recipient intervals retain later retry credits without demanding
+  // unrelated lifetime history. Their current-to-dispatch chain remains exact.
+  for (const account of new Set([...input.completeAccounts, ...(input.includeAccounts ?? [])])) for (const row of await history(account)) add(row);
   const targetHistory = await history(input.target), exactMessage = messageHash(sent[0]);
   const origins = targetHistory.filter(row => tx(row).tx.lt > tx(dispatch).tx.lt && tx(row).incoming
     && messageHash(tx(row).incoming!) === exactMessage);

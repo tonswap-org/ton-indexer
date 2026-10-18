@@ -893,19 +893,7 @@ const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
 const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () => {
   let calls = 0;
   const service = {
-    async getVolIndexSnapshot() {
-      calls += 1;
-      return {};
-    },
     async getGovernanceSnapshot() {
-      calls += 1;
-      return {};
-    },
-    async getFarmSnapshot() {
-      calls += 1;
-      return {};
-    },
-    async getCoverSnapshot() {
       calls += 1;
       return {};
     },
@@ -914,15 +902,6 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
   registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
-
-
-  const invalidVolIndexPool = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/vol-index/${validAddress}/snapshot?pool=not-an-address`,
-  });
-  assert.equal(invalidVolIndexPool.statusCode, 400);
-  assert.equal(invalidVolIndexPool.json().code, 'invalid_address');
-
   const invalidGovernanceOwner = await app.inject({
     method: 'GET',
     url: `/api/indexer/v1/governance/${validAddress}/snapshot?owner=not-an-address`,
@@ -930,21 +909,18 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
   assert.equal(invalidGovernanceOwner.statusCode, 400);
   assert.equal(invalidGovernanceOwner.json().code, 'invalid_address');
 
-  const invalidFarmPool = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/pools/not-an-address/farms',
-  });
-  assert.equal(invalidFarmPool.statusCode, 400);
-  assert.equal(invalidFarmPool.json().code, 'invalid_address');
-
-
-
-  const invalidCoverOwner = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/cover/${validAddress}/snapshot?owner=not-an-address`,
-  });
-  assert.equal(invalidCoverOwner.statusCode, 400);
-  assert.equal(invalidCoverOwner.json().code, 'invalid_address');
+  for (const url of [
+    `/api/indexer/v1/vol-index/${validAddress}/snapshot`,
+    `/api/indexer/v1/vol-index/${validAddress}/snapshot?pool=not-an-address`,
+    `/api/indexer/v1/pools/${validAddress}/farms`,
+    '/api/indexer/v1/pools/not-an-address/farms',
+    `/api/indexer/v1/cover/${validAddress}/snapshot`,
+    `/api/indexer/v1/cover/${validAddress}/snapshot?owner=not-an-address`,
+  ]) {
+    const retired = await app.inject({ method: 'GET', url });
+    assert.equal(retired.statusCode, 404, url);
+    assert.deepEqual(retired.json(), { error: 'The requested resource was not found.', code: 'not_found' });
+  }
   assert.equal(calls, 0);
   await app.close();
 };

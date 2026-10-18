@@ -112,13 +112,16 @@ export async function decodeT3(input: ProjectionInput, nodes: Node[], flows: Flo
                 for (const deposit of deposits) {
                     const credit = deposit.credit;
                     basket[deposit.slot] = String(credit.amount);
+                    const route = binding.reserveRoutes.find(route => route.slot === deposit.slot);
+                    if (!route)
+                        continue;
                     for (const f of flows) {
-                        if (!f.confirmed || f.sourceAsset.owner !== credit.owner || f.recipient.account !== binding.reserveRoutes[deposit.slot].vault || BigInt(f.recipient.raw.lt) !== deposit.key || f.wire.amountRaw !== String(credit.amount) || f.wire.queryId !== String(credit.queryId) || !f.wire.forward.equals(credit.intent))
+                        if (!f.confirmed || f.sourceAsset.owner !== credit.owner || f.recipient.account !== route.vault || BigInt(f.recipient.raw.lt) !== deposit.key || f.wire.amountRaw !== String(credit.amount) || f.wire.queryId !== String(credit.queryId) || !f.wire.forward.equals(credit.intent))
                             continue;
                         const notifyIndex = f.recipient.raw.outMessages.findIndex(m => addr(m.destination) === hub.address && tokenWire(m)?.op === NOTIFY), notify = notifyIndex < 0 ? null : receiptFor(f.recipient, notifyIndex);
                         if (!credit.certified && (!notify || !ok(notify)))
                             continue;
-                        if (!await currentT3ReserveDelta(input, f.source, binding.reserveRoutes[deposit.slot], credit.owner, -credit.amount) || !await currentT3ReserveDelta(input, f.recipient, binding.reserveRoutes[deposit.slot], hub.address, credit.amount))
+                        if (!await currentT3ReserveDelta(input, f.source, route, credit.owner, -credit.amount) || !await currentT3ReserveDelta(input, f.recipient, route, hub.address, credit.amount))
                             continue;
                         if (deposit.slot === receipt.slot && deposit.key === receipt.key) {
                             requestBodyHash = bodyCell(f.source.raw.inMessage)?.hash().toString('hex') ?? null;
@@ -129,7 +132,7 @@ export async function decodeT3(input: ProjectionInput, nodes: Node[], flows: Flo
                         ns.push(f.source, f.recipient, ...(notify ? [notify] : []));
                         anchor ??= f.source;
                         for (const movement of f.source.event?.movements ?? [])
-                            if (movement.direction === 'out' && movement.asset.master === binding.reserveRoutes[deposit.slot].root && movement.amountRaw === String(credit.amount))
+                            if (movement.direction === 'out' && movement.asset.master === route.root && movement.amountRaw === String(credit.amount))
                                 movement.purpose = 't3_collateral';
                         break;
                     }
@@ -189,8 +192,8 @@ export async function decodeT3(input: ProjectionInput, nodes: Node[], flows: Flo
                     if (!dispatch)
                         continue;
                     for (const [i, m] of dispatch.raw.outMessages.entries()) {
-                        const command = tokenWire(m), id = command ? w.t3PayoutIdentity(command.forward) : null, source = receiptFor(dispatch, i), route = binding.reserveRoutes[slot];
-                        if (!command || command.op !== TRANSFER || !id || !source || source.account !== route.vault || id.domain !== (receipt.kind === 'burn' ? 1 : 0) || id.slot !== receipt.slot || id.key !== receipt.key || id.output !== slot || id.attempt !== leg.attempt || command.amountRaw !== String(leg.amount) || command.owner !== leg.recipient || command.queryId !== queryId || leg.status !== 0)
+                        const command = tokenWire(m), id = command ? w.t3PayoutIdentity(command.forward) : null, source = receiptFor(dispatch, i), route = binding.reserveRoutes.find(route => route.slot === slot);
+                        if (!route || !command || command.op !== TRANSFER || !id || !source || source.account !== route.vault || id.domain !== (receipt.kind === 'burn' ? 1 : 0) || id.slot !== receipt.slot || id.key !== receipt.key || id.output !== slot || id.attempt !== leg.attempt || command.amountRaw !== String(leg.amount) || command.owner !== leg.recipient || command.queryId !== queryId || leg.status !== 0)
                             continue;
                         for (const f of flows) {
                             if (!f.confirmed || f.source.id !== source.id || f.recipientAsset.owner !== leg.recipient || f.recipientAsset.master !== route.root || f.wire.amountRaw !== String(leg.amount) || f.wire.queryId !== queryId || !await currentT3ReserveDelta(input, f.source, route, hub.address, -leg.amount) || !await currentT3ReserveDelta(input, f.recipient, route, leg.recipient, leg.amount))

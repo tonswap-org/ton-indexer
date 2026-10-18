@@ -30,7 +30,7 @@ function pinnedAccount(address: string, state: AccountStateResponse, hash: strin
 const budgetWidths = [['senderGas', 32], ['walletBounceGas', 32], ['burnWalletGas', 32], ['smallPayloadCells', 16],
   ['largeWalletGas', 32], ['largeSenderGas', 32], ['rentSeconds', 32], ['rentBits', 32], ['rentCells', 16],
   ['initBits', 32], ['initCells', 16], ['initCopies', 8], ['transferBits', 16], ['transferCells', 8], ['transferCopies', 8]] as const;
-async function assertPoolIdentity(manifest: RuntimeReleaseManifest, source: ChainSource, head: ChainHead,
+export async function assertPoolIdentity(manifest: RuntimeReleaseManifest, source: ChainSource, head: ChainHead,
   market: RuntimeReleaseManifest['spotMarkets'][number], signal?: AbortSignal) {
   const x = manifest.tokens.find(token => token.symbol === market.symbol), t3 = manifest.tokens.find(token => token.symbol === 'T3');
   if (!x || !t3) throw unavailable();

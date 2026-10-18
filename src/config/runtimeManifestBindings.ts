@@ -1,4 +1,8 @@
 import { currentOptionsBindingFromManifest, type NativeOptionProofBinding } from '../ledger/currentOptionsProof';
+import { currentPerpsBindingFromManifest, type NativePerpsProofBinding } from '../ledger/currentPerpsProof';
+import { currentDlmmBindingFromManifest, type CurrentDlmmConfigBinding } from '../ledger/currentDlmmPhysical';
+import { currentDlmmMarketBindingsFromManifest, type CurrentDlmmMarketBinding } from '../ledger/currentDlmmMarketTypes';
+import { currentLaunchpadBindingFromManifest, type CurrentLaunchpadBinding } from '../ledger/currentLaunchpadProof';
 import type { Network } from './index';
 import type { RuntimeReleaseManifest, JettonWalletBudget } from './runtimeManifest';
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
@@ -15,6 +19,10 @@ export type RuntimeManifestBindings = {
   currentSpotMarkets: CurrentSpotMarketBinding[];
   currentLedgerDecodersQualified: false;
   currentOptionsBinding: NativeOptionProofBinding;
+  currentPerpsBinding: NativePerpsProofBinding;
+  currentDlmmBinding: CurrentDlmmConfigBinding;
+  currentMarketBindings: CurrentDlmmMarketBinding[];
+  currentLaunchpadBinding: CurrentLaunchpadBinding;
   walletTemplateCodeHash: string | null;
   dlmmRegistry?: string;
   optionFactory?: string;
@@ -48,6 +56,10 @@ export function deriveRuntimeManifestBindings(manifest: RuntimeReleaseManifest):
     // This intermediate fence is removed only with current decoder qualification.
     currentLedgerDecodersQualified: false,
     currentOptionsBinding: currentOptionsBindingFromManifest(manifest),
+    currentPerpsBinding: currentPerpsBindingFromManifest(manifest),
+    currentDlmmBinding: currentDlmmBindingFromManifest(manifest),
+    currentMarketBindings: currentDlmmMarketBindingsFromManifest(manifest),
+    currentLaunchpadBinding: currentLaunchpadBindingFromManifest(manifest),
     walletTemplateCodeHash: null, marketBindings: [], launchpadControllers: [],
     t3Hub: contracts.T3Hub?.address,
     optionFactory: contracts.OptionFactory?.address, optionVault: contracts.OptionVault?.address,

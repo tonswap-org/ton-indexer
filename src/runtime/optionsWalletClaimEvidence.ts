@@ -9,7 +9,7 @@ import { t3Attempt, t3Delivery } from '../ledger/currentT3Wire';
 import { activeOrderAccount, orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { boundaryState, boundaryTransaction, canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
 import { readOptionsOperationRequest, readOptionsEvidenceContext, type CurrentOptionsEvidenceRequest } from './optionsOperationEvidence';
-import { collectProductPhysicalGraph, ProductEvidenceError } from './productEvidence';
+import { collectProductPhysicalGraph, ProductEvidenceError, PRODUCT_EVIDENCE_LIMITS } from './productEvidence';
 export const OPTIONS_WALLET_CLAIM_LIMITS = Object.freeze({ history: 10000, candidates: 32, failures: 32, bytes: 8 * 1024 * 1024, newTransactions: 64 });
 export const readOptionsWalletClaimRequest = readOptionsOperationRequest;
 type Claims = Omit<Extract<CurrentT3WalletClaimsResult, { status: 'ok' }>, 'status' | 'wallet' | 'owner' | 'records'> & {
@@ -59,7 +59,9 @@ export async function collectOptionsWalletClaimEvidence(manifest: RuntimeRelease
   const graph = await collectProductPhysicalGraph(source, store, head, { owner: request.owner, target: parsed.target, body: parsed.body,
     dispatch: request.dispatch, pins, completeAccounts, reader, onCausal: row => causal.push(row) }, signal);
   gaps.push(...graph.coverage.gaps); if (!graph.coverage.complete) return finish();
-  const history = await reader.history(wallet.address, currentState, limits.history - graph.transactions.length);
+  // The graph can inspect unselected recipient rows; reserve its entire bounded
+  // history allowance rather than counting only returned envelopes.
+  const history = await reader.history(wallet.address, currentState, limits.history - PRODUCT_EVIDENCE_LIMITS.history);
   gaps.push(...history.gaps); if (!history.complete) { gaps.push({ code: 'wallet_history_incomplete', account: wallet.address }); return finish(); }
   const states = new Map<string, ReturnType<typeof boundaryState>>(), key = (account: string, lt: string, hash: string) => `${account}:${lt}:${canonicalLedgerHash(hash)}`;
   for (const row of history.rows) for (const boc of [row.evidence.beforeShardAccountBoc, row.evidence.afterShardAccountBoc]) {

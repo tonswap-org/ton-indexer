@@ -231,6 +231,19 @@ CREATE TABLE IF NOT EXISTS current_transaction_evidence (
   containing_seqno bigint NOT NULL CHECK (containing_seqno >= 0),
   PRIMARY KEY (manifest_hash, account, lt, hash)
 );
+-- Verified decoder facts retain their original immutable transaction authority.
+-- Scope includes release, exact contract identity and decoder format/version.
+-- There is no partial/current answer, mutable cursor or background job here.
+CREATE TABLE IF NOT EXISTS current_archive_checkpoints (
+  manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  scope text NOT NULL CHECK (scope ~ '^[0-9a-f]{64}$'),
+  account text NOT NULL CHECK (account ~ '^0:[0-9a-f]{64}$'),
+  lt numeric(20,0) NOT NULL CHECK (lt > 0),
+  hash text NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
+  checkpoint jsonb NOT NULL,
+  PRIMARY KEY (manifest_hash, scope, account, lt, hash),
+  FOREIGN KEY (manifest_hash, account, lt, hash) REFERENCES current_transaction_evidence(manifest_hash, account, lt, hash)
+);
 CREATE TABLE IF NOT EXISTS current_order_snapshots (
   manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
   snapshot_id text NOT NULL CHECK (snapshot_id ~ '^[0-9a-f]{64}$'),

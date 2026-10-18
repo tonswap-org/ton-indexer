@@ -376,61 +376,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
           required: ['address', 'network', 'balance_raw', 'shard_block', 'shard_utime'],
         },
-        VolIndexConfigResponse: {
-          type: 'object',
-          properties: {
-            seriesManager: { type: ['string', 'null'] },
-            oracle: { type: ['string', 'null'] },
-            automation: { type: ['string', 'null'] },
-            coverManager: { type: ['string', 'null'] },
-            minLiquidityBps: { type: ['string', 'null'] },
-            staleSeconds: { type: ['string', 'null'] },
-            emaAlphaBps: { type: ['string', 'null'] },
-          },
-        },
-        VolIndexStateResponse: {
-          type: 'object',
-          properties: {
-            impliedVolBps: { type: ['string', 'null'] },
-            realizedVolBps: { type: ['string', 'null'] },
-            varianceSpeedBps: { type: ['string', 'null'] },
-            sampleCount: { type: ['string', 'null'] },
-            eligibleSeries: { type: ['string', 'null'] },
-            lastPremiumTs: { type: ['string', 'null'] },
-            lastRealizedTs: { type: ['string', 'null'] },
-            lastPublishTs: { type: ['string', 'null'] },
-            lastSamplePrice: { type: ['string', 'null'] },
-            lastSampleTs: { type: ['string', 'null'] },
-          },
-        },
-        VolIndexRouteResponse: {
-          type: 'object',
-          properties: {
-            exists: { type: 'boolean' },
-            sourcePool: { type: ['string', 'null'] },
-            coverPolicyId: { type: ['string', 'null'] },
-          },
-          required: ['exists'],
-        },
-        VolIndexSnapshotResponse: {
-          type: 'object',
-          properties: {
-            vol_index: { type: 'string' },
-            config: { oneOf: [{ $ref: '#/components/schemas/VolIndexConfigResponse' }, { type: 'null' }] },
-            state: { oneOf: [{ $ref: '#/components/schemas/VolIndexStateResponse' }, { type: 'null' }] },
-            pool: { type: ['string', 'null'] },
-            pool_state: { oneOf: [{ $ref: '#/components/schemas/VolIndexStateResponse' }, { type: 'null' }] },
-            route_ids: { type: 'array', items: { type: 'integer' } },
-            routes: {
-              type: 'object',
-              additionalProperties: { $ref: '#/components/schemas/VolIndexRouteResponse' },
-            },
-            source: { type: 'string' },
-            network: { type: 'string' },
-            updated_at: { type: 'integer' },
-          },
-          required: ['vol_index', 'route_ids', 'routes', 'source', 'network', 'updated_at'],
-        },
         GovernanceLockResponse: {
           type: 'object',
           properties: {
@@ -487,106 +432,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             updated_at: { type: 'integer' },
           },
           required: ['voting', 'proposal_count', 'scanned', 'start_id', 'next_start_id', 'coverage', 'proposals', 'source', 'network', 'updated_at'],
-        },
-        FarmSnapshotRecordResponse: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' }, sponsor: { type: 'string' }, binId: { type: 'integer' },
-            rewardSide: { type: 'integer', enum: [0, 1] },
-            ...Object.fromEntries(['totalReward', 'startTime', 'endTime', 'totalStaked', 'allocatedReward', 'claimedReward', 'refundedReward', 'cancelledAt'].map(key => [key, { type: 'string' }])),
-            user: { type: ['object', 'null'], properties: Object.fromEntries(['shares', 'claimable', 'claimed', 'lastSettlementId'].map(key => [key, { type: 'string' }])) },
-          },
-          required: ['id', 'sponsor', 'binId', 'rewardSide', 'totalReward', 'startTime', 'endTime', 'totalStaked', 'allocatedReward', 'claimedReward', 'refundedReward', 'cancelledAt', 'user'],
-        },
-        FarmSnapshotResponse: {
-          type: 'object',
-          properties: {
-            pool: { type: 'string' }, owner: { type: ['string', 'null'] },
-            config: { type: 'object', properties: {
-              version: { type: 'integer', const: 1 },
-              ...Object.fromEntries(['nextCampaignId', 'maxDuration', 'escrowT', 'escrowX'].map(key => [key, { type: 'string' }])),
-            }, required: ['version', 'nextCampaignId', 'maxDuration', 'escrowT', 'escrowX'] },
-            start_id: { type: 'string' }, next_start_id: { type: ['string', 'null'] },
-            campaigns: { type: 'array', items: { $ref: '#/components/schemas/FarmSnapshotRecordResponse' } },
-            source: { type: 'string' }, network: { type: 'string' }, updated_at: { type: 'integer' },
-          },
-          required: ['pool', 'owner', 'config', 'start_id', 'next_start_id', 'campaigns', 'source', 'network', 'updated_at'],
-        },
-        CoverStateResponse: {
-          type: 'object',
-          properties: {
-            totalPolicies: { type: ['string', 'null'] },
-            activePolicies: { type: ['string', 'null'] },
-            breachingPolicies: { type: ['string', 'null'] },
-            claimablePolicies: { type: ['string', 'null'] },
-            claimedPolicies: { type: ['string', 'null'] },
-            nextWakeTimestamp: { type: ['string', 'null'] },
-            lastSender: { type: ['string', 'null'] },
-            lastJobId: { type: ['string', 'null'] },
-            lastWork: { type: ['string', 'null'] },
-            lastTimestamp: { type: ['string', 'null'] },
-            lastProcessed: { type: ['string', 'null'] },
-            lastRemaining: { type: ['string', 'null'] },
-            vault: { type: ['string', 'null'] },
-            governance: { type: ['string', 'null'] },
-            riskVault: { type: ['string', 'null'] },
-            riskBucketId: { type: ['string', 'null'] },
-          },
-        },
-        CoverPolicyResponse: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            owner: { type: ['string', 'null'] },
-            pool: { type: ['string', 'null'] },
-            lowerBound: { type: ['string', 'null'] },
-            upperBound: { type: ['string', 'null'] },
-            payout: { type: ['string', 'null'] },
-            coveredNotional: { type: ['string', 'null'] },
-            windowSeconds: { type: ['string', 'null'] },
-            requiredObservations: { type: ['string', 'null'] },
-            breachStart: { type: ['string', 'null'] },
-            breachSeconds: { type: ['string', 'null'] },
-            lastObservation: { type: ['string', 'null'] },
-            lastHealthyObservation: { type: ['string', 'null'] },
-            breachObservations: { type: ['string', 'null'] },
-            lastVolatilityTimestamp: { type: ['string', 'null'] },
-            lastVolatilityRequestHash: { type: ['string', 'null'] },
-            status: { type: ['string', 'null'] },
-            riskVault: { type: ['string', 'null'] },
-            riskBucketId: { type: ['string', 'null'] },
-            startsAt: { type: ['string', 'null'] },
-            expiresAt: { type: ['string', 'null'] },
-            graceEndsAt: { type: ['string', 'null'] },
-            riskPositionKey: { type: ['string', 'null'] },
-            closeReason: { type: ['string', 'null'] },
-            closeQueryId: { type: ['string', 'null'] },
-            closeRequester: { type: ['string', 'null'] },
-            exitNativeEscrow: { type: ['string', 'null'] },
-            premiumFinal: { type: 'boolean' },
-          },
-          required: ['id'],
-        },
-        CoverSnapshotResponse: {
-          type: 'object',
-          properties: {
-            manager: { type: 'string' },
-            owner: { type: ['string', 'null'] },
-            enabled: { type: ['boolean', 'null'] },
-            state: {
-              oneOf: [{ $ref: '#/components/schemas/CoverStateResponse' }, { type: 'null' }],
-            },
-            policy_count: { type: 'integer' },
-            scanned: { type: 'integer' },
-            live_revision: { type: 'string' },
-            next_after_slot: { type: ['integer', 'null'], minimum: 1, maximum: 1024 },
-            page_complete: { type: 'boolean', const: true },
-            policies: { type: 'array', items: { $ref: '#/components/schemas/CoverPolicyResponse' } },
-            source: { type: 'string' },
-            network: { type: 'string' },
-            updated_at: { type: 'integer' },
-          },
-          required: ['manager', 'policy_count', 'scanned', 'policies', 'source', 'network', 'updated_at'],
         },
         SnapshotResponse: {
           type: 'object',
@@ -846,27 +691,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
         },
       },
-      '/api/indexer/v1/vol-index/{volIndex}/snapshot': {
-        get: {
-          summary: 'VolIndex snapshot',
-          parameters: [
-            { name: 'volIndex', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'pool', in: 'query', schema: { type: 'string' } },
-            { name: 'route_ids', in: 'query', description: 'Comma-separated positive uint32 route IDs; at most 64 entries.',
-              schema: { type: 'string', pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$', maxLength: 703 } },
-          ],
-          responses: {
-            200: {
-              description: 'VolIndex snapshot response',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/VolIndexSnapshotResponse' } } },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
       '/api/indexer/v1/governance/{voting}/snapshot': {
         get: {
           summary: 'Governance snapshot',
@@ -882,46 +706,6 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
               description: 'Governance snapshot response',
               content: {
                 'application/json': { schema: { $ref: '#/components/schemas/GovernanceSnapshotResponse' } },
-              },
-            },
-            400: {
-              description: 'Bad request',
-              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-            },
-          },
-        },
-      },
-      '/api/indexer/v1/pools/{pool}/farms': {
-        get: {
-          summary: 'Native DLMM pool farming campaigns',
-          description: 'Current bounded on-chain observations. Amounts and IDs are atomic decimal strings. claimedReward records committed payouts; inspect the original settlement before asserting delivery.',
-          parameters: [
-            { name: 'pool', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'owner', in: 'query', schema: { type: 'string' } },
-            { name: 'start_id', in: 'query', schema: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
-          ],
-          responses: {
-            200: { description: 'Complete campaign page', content: { 'application/json': { schema: { $ref: '#/components/schemas/FarmSnapshotResponse' } } } },
-            400: { description: 'Invalid request or unavailable/malformed on-chain state', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
-          },
-        },
-      },
-      '/api/indexer/v1/cover/{manager}/snapshot': {
-        get: {
-          summary: 'Cover manager snapshot',
-          parameters: [
-            { name: 'manager', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'owner', in: 'query', schema: { type: 'string' } },
-            { name: 'after_slot', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 1024 } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 40 } },
-            { name: 'revision', in: 'query', schema: { type: 'string' } },
-          ],
-          responses: {
-            200: {
-              description: 'Cover snapshot response',
-              content: {
-                'application/json': { schema: { $ref: '#/components/schemas/CoverSnapshotResponse' } },
               },
             },
             400: {

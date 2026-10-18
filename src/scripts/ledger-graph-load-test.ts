@@ -10,6 +10,7 @@ import type { RawTransaction } from '../data/dataSource';
 import { fakeChainSource } from './support/fakeChainSource';
 import { fixtureHead } from './support/chainFixture';
 import { loadOpcodes } from '../utils/opcodes';
+import { currentT3Fixture } from './support/currentT3Fixture';
 
 const addr = (n: number) => `0:${n.toString(16).padStart(64, '0')}`, hash = Buffer.alloc(32, 1).toString('base64');
 async function main() {
@@ -64,8 +65,8 @@ async function main() {
     assert.deepEqual([...graph.chains.keys()], [...graph.chains.keys()].sort(), 'parallel discovery has stable final order');
     assert.deepEqual(graph.boundary, cycle.boundary);
 
-    // Concrete owner evidence makes T3 relevant; failed routes must leave an
-    // explicit unresolved binding instead of silently removing its decoder.
+    // A configured current T3 identity remains explicitly unresolved when its
+    // release binding or pinned account read is unavailable.
     const relevant = randomUUID(), request = { ...raw, outMessages: [{ source: owner, destination: hub, op: 0, value: '0' }] };
     await store.begin('testnet', owner, relevant, { lt: '1', hash });
     // Immutable raw rows deliberately cannot be overwritten. This graph-only
@@ -73,14 +74,25 @@ async function main() {
     const ownerStore = { pool: store.pool, rawHistory: async (generation: string) => generation === relevant
       ? [{ account: owner, raw: request }] : store.rawHistory(generation) } as unknown as PostgresLedgerStore;
     await store.pool.query('UPDATE ledger_runs SET source_complete=true WHERE generation=$1', [relevant]);
-    let getters = 0;
-    const unavailable = fakeChainSource({ runGetMethod: async (_account, method, _args, options) => {
-      assert.deepEqual(options?.at, cycle.boundary); assert.equal(options?.signal, cycle.signal); assert.equal(method, 'vault_routes'); getters++; throw Error('offline');
+    let reads = 0;
+    const current = currentT3Fixture();
+    const unavailable = fakeChainSource({ getAccountState: async (account, options) => {
+      assert.equal(account, current.hub);
+      assert.deepEqual(options?.at, cycle.boundary); assert.equal(options?.signal, cycle.signal); reads++; throw Error('offline');
     } });
     const failed = await new LedgerGraphBuilder('testnet', unavailable, ownerStore, [], undefined, identities, refresh,
       256, undefined, hub, roots[0]).build(owner, relevant, cycle);
-    assert.equal(getters, 1); assert.equal(failed.bindings[`t3:${hub}`], false);
-    assert(failed.issues.includes('t3_hub_identity_or_custody_unresolved'));
+    assert.equal(reads, 0, 'Missing release binding never invokes an obsolete discovery getter');
+    assert.equal(failed.bindings[`t3:${hub}`], false);
+    assert(failed.issues.includes('t3_hub_identity_or_reserve_unresolved'));
+    // The network label only scopes this synthetic source/store harness; no
+    // native execution or deployment qualification is asserted by this failure.
+    const binding = { ...current.binding, network: 'testnet' as const };
+    const unreadable = await new LedgerGraphBuilder('testnet', unavailable, ownerStore, [], undefined, identities, refresh,
+      256, undefined, current.hub, current.hub, undefined, undefined, undefined, undefined, binding).build(owner, relevant, cycle);
+    assert.equal(reads, 1, 'Current identity discovery reads the original account at the cycle boundary');
+    assert.equal(unreadable.bindings[`t3:${current.hub}`], false);
+    assert(unreadable.issues.includes('t3_hub_identity_or_reserve_unresolved'));
     console.log('graph loads retain stored chains on refresh failure; empty/unreadable wallet distinction, product relevance, pinned getters and bounded deterministic parallelism passed');
   } finally { await db.close(); }
   await archiveCache();

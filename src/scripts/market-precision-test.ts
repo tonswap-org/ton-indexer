@@ -85,7 +85,7 @@ async function graphAndStorage(){
    (p:typeof result)=>{p.observations[0].assetPrecision.input.root=binding.tokenX;},
    (p:typeof result)=>{delete (p.observations[0] as Partial<typeof p.observations[0]>).assetPrecision;},
   ]){const altered=structuredClone(result);mutate(altered);assert.throws(()=>validateMarketProjection(altered));}
-  const market=new PostgresMarketStore(pool);await market.publish(result,null);const page=await market.page('localnet',binding.pool);assert.equal(page.observations.length,5);assert.equal(page.observations[0].assetPrecision.input.status,'resolved');
+  const market=new PostgresMarketStore(pool, 'dlmm-market-ledger-v1');await market.publish(result,null);const page=await market.page('localnet',binding.pool);assert.equal(page.observations.length,5);assert.equal(page.observations[0].assetPrecision.input.status,'resolved');
   const before=reads.length;await new DlmmMarketGraphBuilder(ledger,source).build(binding);assert.equal(reads.length,before,'archived root cells are durable and reused by a new graph builder');
   const unchanged=JSON.stringify(page.observations);const editedPage=await market.page('localnet',binding.pool);editedPage.observations[0].assetPrecision.input.archive!.before.state.dataBoc='bad';assert.equal(JSON.stringify((await market.page('localnet',binding.pool)).observations),unchanged,'returned precision cannot mutate immutable stored observation');
   const unavailable=projectDlmmMarket(binding,graph.nodes.map(n=>({...n,assetPrecision:undefined})),graph.dependencies);assert.equal(unavailable.observations.length,5);assert.equal(unavailable.observations[0].assetPrecision.input.status,'unresolved');

@@ -95,6 +95,12 @@ async function main() {
       assert.ok(Cell.fromBase64(replay.replayBoundary!.beforeShardAccountBoc).equals(before ?? empty));
       assert.equal(replay.anchor!.shardBlock.rootHashHex, afterShard.id.rootHash.toString('hex'));
       assert.equal(replay.anchor!.genUtime, now);
+      const containingContext = { workchain: -1, shard: afterMaster.id.shard, seqno: 101,
+        rootHashHex: afterMaster.id.rootHash.toString('hex'), fileHashHex: afterMaster.id.fileHash.toString('hex'), utime: now };
+      assert.deepEqual(replay.sourceMasterchain, containingContext, 'Replay retains authenticated containing masterchain identity');
+      const historical = await source.getAccountStateAtSeqno(address.toRawString(), 101);
+      assert.deepEqual(historical.sourceMasterchain, containingContext, 'Historical account read retains the requested masterchain identity');
+      assert.equal(historical.anchor!.shardBlock.seqno, 71, 'Masterchain context is not a shard sequence alias');
       mode = 'unbound-block';
       await assert.rejects(source.getAccountStateAtTransaction(address.toRawString(), example.input.cursor, 101));
     } finally { await source.close(); }

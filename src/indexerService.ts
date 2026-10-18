@@ -1,8 +1,6 @@
-import { readCoverPolicyPage, type CoverPageOptions, type CoverPolicySnapshot } from './utils/cover';
 import { readOriginalTransactionEvidence, originalTransactionToToncenter } from './data/transactionEvidence';
 import { AdmissionExecutor } from './data/admission/nativePool';
 import { AdmissionError, AdmissionExecution, isAdmissionMethod } from './data/admission/protocol';
-import { readDlmmFarmSnapshot, type DlmmFarmSnapshot, type DlmmFarmSnapshotOptions } from './utils/dlmmFarming';
 import { Address, Cell, TupleItem, beginCell, parseTuple, serializeTuple } from '@ton/core';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
@@ -303,7 +301,6 @@ const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 30_000;
 const GOVERNANCE_MAX_SCAN_DEFAULT = 20;
 const GOVERNANCE_MAX_SCAN_LIMIT = 64;
 const GOVERNANCE_SCAN_BATCH_SIZE = 5;
-const COVER_SNAPSHOT_CACHE_TTL_MS = 30_000;
 
 const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
 
@@ -343,86 +340,6 @@ type GovernanceSnapshotResponse = {
   next_start_id: string | null;
   coverage: { rangeKnown: boolean; pageComplete: boolean; scanComplete: boolean; nextProposalId: string | null; dataHash: string | null; issues: string[] };
   proposals: GovernanceProposalSnapshot[];
-  source: 'lite';
-  network: Network;
-  updated_at: number;
-};
-
-type FarmSnapshotResponse = DlmmFarmSnapshot & { source: 'lite'; network: Network; updated_at: number };
-
-type CoverStateSnapshot = {
-  totalPolicies: string | null;
-  activePolicies: string | null;
-  breachingPolicies: string | null;
-  claimablePolicies: string | null;
-  claimedPolicies: string | null;
-  nextWakeTimestamp: string | null;
-  lastSender: string | null;
-  lastJobId: string | null;
-  lastWork: string | null;
-  lastTimestamp: string | null;
-  lastProcessed: string | null;
-  lastRemaining: string | null;
-  vault: string | null;
-  governance: string | null;
-  riskVault: string | null;
-  riskBucketId: string | null;
-};
-
-
-type CoverSnapshotResponse = {
-  manager: string;
-  owner: string | null;
-  enabled: boolean | null;
-  state: CoverStateSnapshot | null;
-  policy_count: number;
-  scanned: number;
-  policies: CoverPolicySnapshot[];
-  live_revision: string;
-  next_after_slot: number | null;
-  page_complete: true;
-  source: 'lite';
-  network: Network;
-  updated_at: number;
-};
-
-type VolIndexConfigSnapshot = {
-  seriesManager: string | null;
-  oracle: string | null;
-  automation: string | null;
-  coverManager: string | null;
-  minLiquidityBps: string | null;
-  staleSeconds: string | null;
-  emaAlphaBps: string | null;
-};
-
-type VolIndexStateSnapshot = {
-  impliedVolBps: string | null;
-  realizedVolBps: string | null;
-  varianceSpeedBps: string | null;
-  sampleCount: string | null;
-  eligibleSeries: string | null;
-  lastPremiumTs: string | null;
-  lastRealizedTs: string | null;
-  lastPublishTs: string | null;
-  lastSamplePrice: string | null;
-  lastSampleTs: string | null;
-};
-
-type VolIndexRouteSnapshot = {
-  exists: boolean;
-  sourcePool: string | null;
-  coverPolicyId: string | null;
-};
-
-type VolIndexSnapshotResponse = {
-  vol_index: string;
-  config: VolIndexConfigSnapshot | null;
-  state: VolIndexStateSnapshot | null;
-  pool: string | null;
-  pool_state: VolIndexStateSnapshot | null;
-  route_ids: number[];
-  routes: Record<string, VolIndexRouteSnapshot>;
   source: 'lite';
   network: Network;
   updated_at: number;
@@ -690,99 +607,6 @@ export class IndexerService {
     };
   }
 
-  private parseVolIndexState(stack: TupleItem[]): VolIndexStateSnapshot | null {
-    if (stack.length !== 10) return null;
-    return {
-      impliedVolBps: tupleItemBigIntString(stack[0]),
-      realizedVolBps: tupleItemBigIntString(stack[1]),
-      varianceSpeedBps: tupleItemBigIntString(stack[2]),
-      sampleCount: tupleItemBigIntString(stack[3]),
-      eligibleSeries: tupleItemBigIntString(stack[4]),
-      lastPremiumTs: tupleItemBigIntString(stack[5]),
-      lastRealizedTs: tupleItemBigIntString(stack[6]),
-      lastPublishTs: tupleItemBigIntString(stack[7]),
-      lastSamplePrice: tupleItemBigIntString(stack[8]),
-      lastSampleTs: tupleItemBigIntString(stack[9])
-    };
-  }
-
-  async getVolIndexSnapshot(
-    volIndexAddress: string,
-    options: { sourcePool?: string | null; routeIds?: number[] } = {}, readOptions: ServiceReadOptions = {}
-  ): Promise<VolIndexSnapshotResponse> {
-    const normalizedVolIndex = normalizeAddress(volIndexAddress);
-    const normalizedPool = options.sourcePool?.trim() ? normalizeAddress(options.sourcePool) : null;
-    const requestedRouteIds = options.routeIds ?? [];
-    if (requestedRouteIds.length > 64 || requestedRouteIds.some((value) =>
-      !Number.isInteger(value) || value < 1 || value > 0xffffffff)) {
-      throw new Error('route_ids must contain at most 64 positive uint32 integers');
-    }
-    const routeIds = Array.from(new Set(requestedRouteIds));
-
-    return this.readSnapshot({ key: JSON.stringify(['vol', normalizedVolIndex, normalizedPool, routeIds]),
-      deadlineMs: 10_000, signal: readOptions.signal, load: async ({head, signal}) => {
-      const getter = this.pinnedGetter(head, signal);
-    const [configRes, stateRes, poolStateRes] = await Promise.all([
-      getter(normalizedVolIndex, 'vol_index_config', []),
-      getter(normalizedVolIndex, 'vol_index_state', []),
-      normalizedPool
-        ? getter(normalizedVolIndex, 'vol_index_pool_state', [
-            { type: 'slice', cell: beginCell().storeAddress(Address.parse(normalizedPool)).endCell() }
-          ])
-        : Promise.resolve(null)
-    ]);
-
-    if (!configRes && !stateRes && !poolStateRes) {
-      throw new Error('VolIndex snapshot is unavailable from the configured data source.');
-    }
-
-    const config =
-      configRes?.exitCode === 0 && configRes.stack.length === 7
-        ? {
-            seriesManager: tupleItemAddress(configRes.stack[0]),
-            oracle: tupleItemAddress(configRes.stack[1]),
-            automation: tupleItemAddress(configRes.stack[2]),
-            coverManager: tupleItemAddress(configRes.stack[3]),
-            minLiquidityBps: tupleItemBigIntString(configRes.stack[4]),
-            staleSeconds: tupleItemBigIntString(configRes.stack[5]),
-            emaAlphaBps: tupleItemBigIntString(configRes.stack[6])
-          }
-        : null;
-
-    const state = stateRes?.exitCode === 0 ? this.parseVolIndexState(stateRes.stack) : null;
-    const poolState = poolStateRes?.exitCode === 0 ? this.parseVolIndexState(poolStateRes.stack) : null;
-    const routes: Record<string, VolIndexRouteSnapshot> = {};
-    const loadedRouteIds: number[] = [];
-
-    for (const routeId of routeIds) {
-      const routeRes = await getter(normalizedVolIndex, 'vol_index_route', [
-        { type: 'int', value: BigInt(routeId) }
-      ]);
-      if (!routeRes || routeRes.exitCode !== 0 || routeRes.stack.length !== 3) continue;
-      const stack = routeRes.stack;
-      routes[String(routeId)] = {
-        exists: tupleItemBool(stack[0]),
-        sourcePool: tupleItemAddress(stack[1]),
-        coverPolicyId: tupleItemBigIntString(stack[2])
-      };
-      loadedRouteIds.push(routeId);
-    }
-
-    return {
-      vol_index: normalizedVolIndex,
-      config,
-      state,
-      pool: normalizedPool,
-      pool_state: poolState,
-      route_ids: loadedRouteIds,
-      routes,
-      source: 'lite' as const,
-      network: this.network,
-      updated_at: Math.floor(Date.now() / 1000)
-    };
-    }});
-  }
-
   async getGovernanceSnapshot(
     votingAddress: string,
     options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number; startId?: string | number } = {}, readOptions: ServiceReadOptions = {}
@@ -900,72 +724,6 @@ export class IndexerService {
           scanComplete: issues.length === 0 && Boolean(range) && lastId + 1n >= range!.nextProposalId,
           nextProposalId: range?.nextProposalId.toString() ?? null, dataHash: range?.dataHash ?? null, issues },
         proposals,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000)
-      };
-    }});
-  }
-
-  async getFarmSnapshot(poolAddress: string, options: DlmmFarmSnapshotOptions = {}, readOptions: ServiceReadOptions = {}): Promise<FarmSnapshotResponse> {
-    const pool = Address.parse(poolAddress).toRawString();
-    return this.readSnapshot({ key: JSON.stringify(['farm', pool, options]), deadlineMs: 10_000, signal: readOptions.signal,
-      load: async ({head, signal}) => {
-        const getter = this.pinnedGetter(head, signal);
-        const snapshot = await readDlmmFarmSnapshot(pool, options, (method, args) => getter(pool, method, args));
-        return { ...snapshot, source: 'lite' as const, network: this.network, updated_at: Math.floor(Date.now() / 1000) };
-      } });
-  }
-
-  async getCoverSnapshot(
-    managerAddress: string,
-    options: CoverPageOptions = {}, readOptions: ServiceReadOptions = {}
-  ): Promise<CoverSnapshotResponse> {
-    const normalizedManager = normalizeAddress(managerAddress);
-    const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
-    const cacheKey = [normalizedManager, normalizedOwner ?? '', options.limit ?? 40, options.afterSlot ?? 0, options.revision ?? ''].join('|');
-
-    return this.readSnapshot({ key: 'getCoverSnapshot|' + cacheKey, deadlineMs: 10_000, signal: readOptions.signal,
-      reuse: { account: normalizedManager, maxAgeMs: COVER_SNAPSHOT_CACHE_TTL_MS }, load: async ({head, signal}) => {
-      const getter = this.pinnedGetter(head, signal);
-      const [stateRes, enabledRes] = await Promise.all([
-        getter(normalizedManager, 'get_state', []),
-        getter(normalizedManager, 'registry_enabled', [])
-      ]);
-
-      const state =
-        stateRes?.exitCode === 0 && stateRes.stack.length === 16
-          ? {
-              totalPolicies: tupleItemBigIntString(stateRes.stack[0]),
-              activePolicies: tupleItemBigIntString(stateRes.stack[1]),
-              breachingPolicies: tupleItemBigIntString(stateRes.stack[2]),
-              claimablePolicies: tupleItemBigIntString(stateRes.stack[3]),
-              claimedPolicies: tupleItemBigIntString(stateRes.stack[4]),
-              nextWakeTimestamp: tupleItemBigIntString(stateRes.stack[5]),
-              lastSender: tupleItemAddress(stateRes.stack[6]),
-              lastJobId: tupleItemBigIntString(stateRes.stack[7]),
-              lastWork: tupleItemBigIntString(stateRes.stack[8]),
-              lastTimestamp: tupleItemBigIntString(stateRes.stack[9]),
-              lastProcessed: tupleItemBigIntString(stateRes.stack[10]),
-              lastRemaining: tupleItemBigIntString(stateRes.stack[11]),
-              vault: tupleItemAddress(stateRes.stack[12]),
-              governance: tupleItemAddress(stateRes.stack[13]),
-              riskVault: tupleItemAddress(stateRes.stack[14]),
-              riskBucketId: tupleItemBigIntString(stateRes.stack[15])
-            }
-          : null;
-      const enabled = enabledRes?.exitCode === 0 ? tupleItemBool(enabledRes.stack[0]) : null;
-      const page = await readCoverPolicyPage({ ...options, owner: normalizedOwner },
-        (method, args) => getter(normalizedManager, method, args));
-
-      const source = 'lite' as const;
-      return {
-        manager: normalizedManager,
-        owner: normalizedOwner,
-        enabled,
-        state,
-        policy_count: page.policies.length,
-        ...page,
         source,
         network: this.network,
         updated_at: Math.floor(Date.now() / 1000)

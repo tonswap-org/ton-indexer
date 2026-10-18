@@ -133,7 +133,8 @@ async function main() {
       ['GET', '/api/indexer/v1/accounts/owner/balance'], ['GET', '/api/indexer/v1/accounts/owner/assets'],
       ['GET', '/api/indexer/v1/stream'], ['GET', '/api/indexer/v1/jettons/root/transfer/owner/payload'],
       ['GET', '/api/indexer/v1/perps/engine/snapshot'], ['GET', '/api/indexer/v1/options/factory/snapshot'],
-      ['POST', '/api/indexer/v1/defi/snapshot'], ['POST', '/api/indexer/v1/runGetMethods'], ['GET', '/api/indexer/v1/accounts/owner/swaps'],
+      ['GET', '/api/indexer/v1/cover/manager/snapshot'], ['GET', '/api/indexer/v1/vol-index/volIndex/snapshot'],
+      ['GET', '/api/indexer/v1/pools/pool/farms'], ['POST', '/api/indexer/v1/defi/snapshot'], ['POST', '/api/indexer/v1/runGetMethods'], ['GET', '/api/indexer/v1/accounts/owner/swaps'],
     ] as const;
     for (const [method, url] of retired) {
       const response = await app.inject({method, url}); assert.equal(response.statusCode, 404, url);
@@ -146,7 +147,7 @@ async function main() {
       ['POST','/api/indexer/v1/readFresh'],['POST','/api/indexer/v1/runGetMethod'],['GET','/api/indexer/v1/accounts/:addr/balances'],
       ['GET','/api/indexer/v1/stream/balances'],['GET','/api/indexer/v1/accounts/:addr/txs'],['GET','/api/indexer/v1/accounts/:addr/state'],
       ['GET','/api/indexer/v1/markets/:market/candles'],['GET','/api/indexer/v1/governance/:voting/snapshot'],
-      ['GET','/api/indexer/v1/cover/:manager/snapshot'],['GET','/api/indexer/v1/vol-index/:volIndex/snapshot'],['POST','/api/indexer/v1/dlmm/pools/snapshot'],
+      ['POST','/api/indexer/v1/dlmm/pools/snapshot'],
       ['GET','/api/indexer/v1/service-info'],['GET','/api/indexer/v1/health'],['POST','/jsonRPC'],['POST','/api/v2/jsonRPC'],
     ] as const) assert(app.hasRoute({method, url}), `${method} ${url} must remain registered`);
     await app.close();

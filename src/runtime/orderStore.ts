@@ -2,6 +2,7 @@ import type { LedgerSqlPool } from '../ledger/store';
 import { orderHash, orderJson, type OrderRelease } from '../orders/discovery';
 import { verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { pageOpenOrders, type OpenOrderSnapshot } from '../orders/openOrders';
+import { ARCHIVE_CHECKPOINT_BYTES, validateArchiveCheckpoint, type ArchiveBoundaryCheckpoint, type ArchiveCheckpointStore } from './archiveCheckpoint';
 
 export interface OrderStore {
   evidence(account: string, lt: string, hash: string): Promise<OrderTransactionEvidence | null>;
@@ -12,8 +13,34 @@ export interface OrderStore {
 }
 /** Release namespace and full manifest hash both bind persisted evidence. Only
  * immutable original transaction boundaries are reused across current reads. */
-export class PostgresOrderStore implements OrderStore {
+export class PostgresOrderStore implements OrderStore, ArchiveCheckpointStore {
   constructor(private pool: LedgerSqlPool, private release: OrderRelease) {}
+  async archiveCheckpoints(scope: string, account: string): Promise<ArchiveBoundaryCheckpoint[]> {
+    // One MVCC statement binds the size decision to its returned payload. Two
+    // statements permit concurrent immutable inserts to bypass the pre-load cap.
+    const result = await this.pool.query(`WITH bounds AS MATERIALIZED (
+      SELECT count(*) AS count,coalesce(sum(octet_length(checkpoint::text)),0) AS bytes
+      FROM current_archive_checkpoints WHERE manifest_hash=$1 AND scope=$2 AND account=$3)
+      SELECT count::text AS count,bytes::text AS bytes,
+        CASE WHEN count<=10000 AND bytes<=$4 THEN (
+          SELECT coalesce(jsonb_agg(checkpoint ORDER BY lt,hash),'[]'::jsonb)
+          FROM current_archive_checkpoints WHERE manifest_hash=$1 AND scope=$2 AND account=$3
+        ) ELSE NULL END AS checkpoints FROM bounds`, [this.release.manifestHash, scope, account, ARCHIVE_CHECKPOINT_BYTES]);
+    const row = result.rows[0];
+    if (BigInt(String(row?.count)) > 10000n || BigInt(String(row?.bytes)) > BigInt(ARCHIVE_CHECKPOINT_BYTES) || !Array.isArray(row?.checkpoints))
+      throw Error('Archive checkpoint history/byte limit');
+    return row.checkpoints.map((checkpoint: ArchiveBoundaryCheckpoint) => validateArchiveCheckpoint(checkpoint));
+  }
+  async retainArchiveCheckpoint(value: ArchiveBoundaryCheckpoint): Promise<void> {
+    validateArchiveCheckpoint(value);
+    await this.pool.query(`INSERT INTO current_archive_checkpoints(manifest_hash,scope,account,lt,hash,checkpoint)
+      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(manifest_hash,scope,account,lt,hash) DO NOTHING`,
+      [this.release.manifestHash, value.scope, value.account, value.lt, value.hash, value]);
+    const retained = await this.pool.query(`SELECT checkpoint FROM current_archive_checkpoints
+      WHERE manifest_hash=$1 AND scope=$2 AND account=$3 AND lt=$4 AND hash=$5`,
+      [this.release.manifestHash, value.scope, value.account, value.lt, value.hash]);
+    if (orderJson(retained.rows[0]?.checkpoint) !== orderJson(value)) throw Error('Immutable archive checkpoint conflict');
+  }
   async evidence(account: string, lt: string, hash: string): Promise<OrderTransactionEvidence | null> {
     return (await this.evidenceBoundary(account, lt, hash))?.evidence ?? null;
   }

@@ -62,6 +62,9 @@ export class LedgerService {
       marketBindings?: import("./marketTypes").DlmmMarketBinding[];
       optionFactory?: string;
       optionVault?: string;
+      currentDlmmBinding?: import("./currentDlmmPhysical").CurrentDlmmConfigBinding;
+      currentLaunchpadBinding?: import("./currentLaunchpadProof").CurrentLaunchpadBinding;
+      currentPerpsBinding?: import("./currentPerpsProof").NativePerpsProofBinding;
       currentOptionsBinding?: import("./currentOptionsProof").NativeOptionProofBinding;
       optionCodeHashes?: import("./bindings").LedgerOptionsCodeHashes;
       launchpadCodeHashes?: import("./bindings").LedgerLaunchpadCodeHashes;
@@ -284,7 +287,7 @@ export class LedgerService {
           this.options.jettonRoots ?? [], this.options.dlmmRegistry, this.identities, createRefreshDependency(deps),
           this.options.maxRelatedAccounts ?? 256, this.options.optionFactory, this.options.t3Hub, this.options.t3Root,
           this.options.perpsEngine, this.options.perpsEngineCodeHash, this.options.optionVault, this.options.optionCodeHashes,
-          this.options.t3RedemptionBinding, this.options.launchpadCodeHashes, this.options.launchpadControllers, this.options.marketBindings, this.options.currentOptionsBinding);
+          this.options.t3RedemptionBinding, this.options.launchpadCodeHashes, this.options.launchpadControllers, this.options.marketBindings, this.options.currentOptionsBinding, this.options.currentPerpsBinding, this.options.currentDlmmBinding, this.options.currentLaunchpadBinding);
         const graph = await builder.build(account, generation, cycle);
         timings.graphMs = performance.now() - phase;
         phase = performance.now();

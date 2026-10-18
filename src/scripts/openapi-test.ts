@@ -26,10 +26,7 @@ assert.deepEqual(spec.components.schemas.LedgerReadiness.properties.build.requir
 assert.ok(spec.components.schemas.LedgerEvent.properties.movements);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs'].get.responses[503]);
 assert.ok(spec.paths['/api/indexer/v1/markets/{market}/candles']);
-assert.ok(spec.paths['/api/indexer/v1/vol-index/{volIndex}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/governance/{voting}/snapshot']);
-assert.ok(spec.paths['/api/indexer/v1/pools/{pool}/farms']);
-assert.ok(spec.paths['/api/indexer/v1/cover/{manager}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/openapi.json']);
 assert.equal('security' in spec.paths['/api/indexer/v1/runGetMethod'].post, false);
 assert.deepEqual(spec.paths['/api/indexer/v1/metrics'].get.security, [{ AdminToken: [] }, { AdminBearer: [] }]);
@@ -69,14 +66,14 @@ for (const route of Object.values(spec.paths) as any[]) for (const operation of 
   for (const status of [429,503,504]) assert(operation.responses[status].headers['Retry-After']);
 }
 for (const retired of ['/accounts/{addr}/balance','/accounts/{addr}/assets','/accounts/{addr}/swaps', '/stream',
-  '/jettons/{jetton}/transfer/{owner}/payload','/perps/{engine}/snapshot','/options/{factory}/snapshot','/defi/snapshot','/runGetMethods']) {
+  '/jettons/{jetton}/transfer/{owner}/payload','/perps/{engine}/snapshot','/options/{factory}/snapshot','/defi/snapshot','/runGetMethods',
+  '/cover/{manager}/snapshot','/vol-index/{volIndex}/snapshot','/pools/{pool}/farms']) {
   assert.equal(`/api/indexer/v1${retired}` in spec.paths, false, retired);
 }
-const coverStateProps = spec.components?.schemas?.CoverStateResponse?.properties ?? {};
-assert.ok('governance' in coverStateProps);
-const coverPolicyProps = spec.components?.schemas?.CoverPolicyResponse?.properties ?? {};
-for (const field of ['coveredNotional', 'lastVolatilityTimestamp', 'lastVolatilityRequestHash', 'startsAt', 'expiresAt', 'graceEndsAt', 'riskPositionKey', 'closeReason', 'closeQueryId', 'closeRequester', 'premiumFinal', 'exitNativeEscrow']) {
-  assert.ok(field in coverPolicyProps);
+for (const retired of ['VolIndexConfigResponse', 'VolIndexStateResponse', 'VolIndexRouteResponse',
+  'VolIndexSnapshotResponse', 'FarmSnapshotRecordResponse', 'FarmSnapshotResponse', 'CoverStateResponse',
+  'CoverPolicyResponse', 'CoverSnapshotResponse']) {
+  assert.equal(retired in spec.components.schemas, false, retired);
 }
 for (const retired of ['clmmFactory', 'clmmPoolHashHigh', 'clmmPoolHashLow', 'marketKind', 'kindConfig']) {
   assert.equal(JSON.stringify(spec).includes(retired), false, `${retired} must remain outside the first-release OpenAPI surface`);

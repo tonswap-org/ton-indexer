@@ -1,5 +1,8 @@
 import { routingEvidenceRefs } from './routedEvidence';
+import type { CurrentDlmmMarketProjection, CurrentDlmmMarketObservation, CurrentDlmmMarketCandidate } from './currentDlmmMarketTypes';
+import { validateCurrentDlmmMarketProjection, validateCurrentDlmmMarketObservation, validateCurrentDlmmMarketCandidate } from './currentDlmmMarketProjection';
 import { validateHistoricalJettonPrecision } from './jettonPrecision';
+import { verifyCurrentT3Transaction } from './currentDlmmPhysical';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -13,9 +16,11 @@ export class MarketCursorError extends Error {}
 export class MarketPublicationConflict extends Error {}
 export type MarketGeneration = { generation: string; fingerprint: string; publishedAt: string };
 export type MarketQuery = { from?: number; to?: number; limit?: number; cursor?: string; generation?: string };
-export type MarketCoverage = MarketGeneration & Omit<MarketProjection, 'observations' | 'candidates'> & { candidateCounts: Record<MarketCandidate['status'], number>; totalObservations: number };
-export type MarketPage = { network: Network; pool: string; observations: MarketObservation[]; nextCursor: string | null; coverage: MarketCoverage | null };
-export type MarketCandidatePage = { network: Network; pool: string; candidates: MarketCandidate[]; nextCursor: string | null; coverage: MarketCoverage | null };
+export type StoredMarketProjection = MarketProjection | CurrentDlmmMarketProjection;
+type CoverageMetadata<P extends StoredMarketProjection> = P extends StoredMarketProjection ? Omit<P, 'observations' | 'candidates'> & { candidateCounts: Record<MarketCandidate['status'], number>; totalObservations: number } : never;
+export type MarketCoverage<P extends StoredMarketProjection = MarketProjection> = MarketGeneration & CoverageMetadata<P>;
+export type MarketPage<P extends StoredMarketProjection = MarketProjection> = { network: Network; pool: string; observations: P['observations']; nextCursor: string | null; coverage: MarketCoverage<P> | null };
+export type MarketCandidatePage<P extends StoredMarketProjection = MarketProjection> = { network: Network; pool: string; candidates: P['candidates']; nextCursor: string | null; coverage: MarketCoverage<P> | null };
 type Cursor = { schema: 'dlmm-market-cursor-v1'; kind: 'observations' | 'candidates'; network: Network; pool: string; generation: string; from: number | null; to: number | null; utime: number; id: string };
 const RAW = /^(?:0|-1):[a-f0-9]{64}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -189,18 +194,28 @@ function stable(value: unknown): unknown {
   if(value && typeof value==='object') return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,stable(v)]));
   return value;
 }
-/** Validate canonical physical evidence; this does not replace the on-chain projector. */
-export function validateMarketProjection(value: MarketProjection): void {
-  object(value,['schema','binding','dependencies','observations','candidates','issues','historyComplete'],'projection');
-  if(value.schema!=='dlmm-market-ledger-v1' || typeof value.historyComplete!=='boolean') invalid('schema'); binding(value.binding);
-  strings(value.issues,'issues'); array(value.dependencies,'dependencies'); const dependencies=new Map<string,MarketDependency>();
-  for(const dep of value.dependencies) {
+function dependencyCoverage(values: MarketDependency[], pool: string, historyComplete: boolean) {
+  array(values,'dependencies'); const dependencies=new Map<string,MarketDependency>();
+  for(const dep of values) {
     object(dep,['account','generation','historyComplete','headLt','headHash','checkedThrough'],'dependency'); address(dep.account,'dependency account');
     if(typeof dep.generation!=='string' || !UUID.test(dep.generation) || typeof dep.historyComplete!=='boolean') invalid('dependency generation');
     atomic(dep.headLt,'dependency LT',false,UINT64_MAX); hash(dep.headHash,'dependency head'); if(dep.headLt==='0' && dep.headHash!=='0'.repeat(64)) invalid('empty dependency head'); iso(dep.checkedThrough,'dependency checked through');
     if(dependencies.has(dep.account)) invalid('duplicate dependency'); dependencies.set(dep.account,dep);
   }
-  if(!dependencies.has(value.binding.pool) || value.historyComplete && value.dependencies.some(dep=>!dep.historyComplete)) invalid('dependency coverage');
+  if(!dependencies.has(pool) || historyComplete && values.some(dep=>!dep.historyComplete)) invalid('dependency coverage');
+  return dependencies;
+}
+/** Validate canonical physical evidence; this does not replace the on-chain projector. */
+export function validateMarketProjection(value: StoredMarketProjection): void {
+  if (value?.schema === 'dlmm-market-ledger-v2') {
+    strings(value.issues,'issues'); dependencyCoverage(value.dependencies,value.binding.pool,value.historyComplete);
+    array(value.observations,'observations'); array(value.candidates,'candidates');
+    for(const candidate of value.candidates) { ref(candidate.acceptance,'candidate acceptance'); strings(candidate.issues,'candidate issues'); }
+    validateCurrentDlmmMarketProjection(value); return;
+  }
+  object(value,['schema','binding','dependencies','observations','candidates','issues','historyComplete'],'projection');
+  if(value.schema!=='dlmm-market-ledger-v1' || typeof value.historyComplete!=='boolean') invalid('schema'); binding(value.binding);
+  strings(value.issues,'issues'); const dependencies=dependencyCoverage(value.dependencies,value.binding.pool,value.historyComplete);
   array(value.observations,'observations'); const observations=new Map<string,MarketObservation>(),acceptances=new Set<string>();
   for(const o of value.observations) { observation(o,value.binding); if(observations.has(o.id) || acceptances.has(refId(o.acceptance))) invalid('duplicate observation'); observations.set(o.id,o); acceptances.add(refId(o.acceptance));
     const refs=[o.acceptance,o.input.request,o.input.debit,o.input.credit,...o.input.boundaries.map(b=>b.transaction),o.allocation.transaction,...o.fees.map(f=>f.transaction),...routingEvidenceRefs(o.routing),...o.settlements.flatMap(s=>[s.request,s.debit,s.credit,s.acknowledged,s.walletFinalized,s.poolFinalized,...s.boundaries.map(b=>b.transaction)])];
@@ -219,13 +234,13 @@ export function validateMarketProjection(value: MarketProjection): void {
   if(observed.size!==observations.size) invalid('unlinked observation');
   if(value.historyComplete && (value.issues.length || value.candidates.some(c=>c.status==='unresolved'))) invalid('incomplete history claimed complete');
 }
-function canonicalProjection(input: MarketProjection): MarketProjection {
+function canonicalProjection<P extends StoredMarketProjection>(input: P): P {
   const value=structuredClone(input); validateMarketProjection(value);
   value.dependencies.sort((a,b)=>a.account.localeCompare(b.account)); value.observations.sort((a,b)=>a.id.localeCompare(b.id)); value.candidates.sort((a,b)=>a.id.localeCompare(b.id)); value.issues.sort();
   for(const c of value.candidates) c.issues.sort();
-  return stable(value) as MarketProjection;
+  return stable(value) as P;
 }
-export function marketProjectionFingerprint(projection: MarketProjection): string { return createHash('sha256').update(JSON.stringify(canonicalProjection(projection))).digest('hex'); }
+export function marketProjectionFingerprint(projection: StoredMarketProjection): string { return createHash('sha256').update(JSON.stringify(canonicalProjection(projection))).digest('hex'); }
 function queryContext(network: Network,pool: string,query: MarketQuery) {
   if(!['mainnet','testnet','localnet'].includes(network) || !RAW.test(pool)) throw new MarketCursorError('Invalid market identity');
   for(const n of [query.from,query.to]) if(n!==undefined && (!Number.isSafeInteger(n) || n<0 || n>253402300799)) throw new MarketCursorError('Invalid market time range');
@@ -243,8 +258,11 @@ function parseCursor(encoded: string): Cursor {
   } catch { throw new MarketCursorError('Invalid market cursor'); }
 }
 
-export class PostgresMarketStore {
-  constructor(readonly pool: LedgerSqlPool) {}
+export class PostgresMarketStore<P extends StoredMarketProjection = MarketProjection> {
+  constructor(readonly pool: LedgerSqlPool, readonly schema: P['schema']) {
+    if(schema!=='dlmm-market-ledger-v1' && schema!=='dlmm-market-ledger-v2') invalid('admitted schema');
+  }
+  private requireSchema(schema: unknown) { if(schema!==this.schema) invalid('stored/publication schema differs from admitted schema'); }
   async initialize() {
     const client=await this.pool.connect();
     try { await client.query("SELECT pg_advisory_lock(hashtextextended('tonswap:ledger:schema',0))"); await client.query(readFileSync(resolve(__dirname,'../../sql/ledger.sql'),'utf8')); }
@@ -252,10 +270,12 @@ export class PostgresMarketStore {
   }
   async current(network: Network,pool: string): Promise<MarketGeneration|null> {
     queryContext(network,pool,{});
-    const row=(await this.pool.query(`SELECT g.generation,g.fingerprint,g.published_at FROM market_heads h JOIN market_generations g ON g.generation=h.current_generation AND g.network=h.network AND g.pool=h.pool WHERE h.network=$1 AND h.pool=$2`,[network,pool])).rows[0];
+    const row=(await this.pool.query(`SELECT g.generation,g.fingerprint,g.published_at,g.metadata->>'schema' AS schema FROM market_heads h JOIN market_generations g ON g.generation=h.current_generation AND g.network=h.network AND g.pool=h.pool WHERE h.network=$1 AND h.pool=$2`,[network,pool])).rows[0];
+    if(row) this.requireSchema(row.schema);
     return row ? {generation:row.generation,fingerprint:row.fingerprint,publishedAt:new Date(row.published_at).toISOString()} : null;
   }
-  async publish(input: MarketProjection,expectedCurrentGeneration: string|null): Promise<MarketGeneration & {reused:boolean}> {
+  async publish(input: P,expectedCurrentGeneration: string|null): Promise<MarketGeneration & {reused:boolean}> {
+    this.requireSchema(input?.schema);
     const projection=canonicalProjection(input), fingerprint=marketProjectionFingerprint(projection),{network,pool}=projection.binding;
     if(expectedCurrentGeneration!==null && !UUID.test(expectedCurrentGeneration)) throw new MarketPublicationConflict('Invalid expected market generation');
     const client=await this.pool.connect();
@@ -263,8 +283,12 @@ export class PostgresMarketStore {
       await client.query('BEGIN');
       await client.query('INSERT INTO market_heads(network,pool) VALUES($1,$2) ON CONFLICT DO NOTHING',[network,pool]);
       const head=(await client.query('SELECT current_generation FROM market_heads WHERE network=$1 AND pool=$2 FOR UPDATE',[network,pool])).rows[0];
-      const prior=(await client.query('SELECT generation,fingerprint,published_at FROM market_generations WHERE network=$1 AND pool=$2 AND fingerprint=$3',[network,pool,fingerprint])).rows[0];
-      if(prior) { await client.query('COMMIT'); return {generation:prior.generation,fingerprint:prior.fingerprint,publishedAt:new Date(prior.published_at).toISOString(),reused:true}; }
+      if(head.current_generation!==null) {
+        const priorHead=(await client.query("SELECT metadata->>'schema' AS schema FROM market_generations WHERE generation=$1 AND network=$2 AND pool=$3",[head.current_generation,network,pool])).rows[0];
+        this.requireSchema(priorHead?.schema);
+      }
+      const prior=(await client.query("SELECT generation,fingerprint,published_at,metadata->>'schema' AS schema FROM market_generations WHERE network=$1 AND pool=$2 AND fingerprint=$3",[network,pool,fingerprint])).rows[0];
+      if(prior) { this.requireSchema(prior.schema); await client.query('COMMIT'); return {generation:prior.generation,fingerprint:prior.fingerprint,publishedAt:new Date(prior.published_at).toISOString(),reused:true}; }
       if(head.current_generation!==expectedCurrentGeneration) throw new MarketPublicationConflict('Market generation changed during projection');
       const generation=randomUUID();
       const {observations,candidates,...rest}=projection;
@@ -277,28 +301,29 @@ export class PostgresMarketStore {
       return {generation,fingerprint,publishedAt:new Date(row.published_at).toISOString(),reused:false};
     } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release?.(); }
   }
-  async page(network:Network,pool:string,query:MarketQuery={}):Promise<MarketPage> {
+  async page(network:Network,pool:string,query:MarketQuery={}):Promise<MarketPage<P>> {
     const page=await this.records('observations',network,pool,query);
-    return {network,pool,observations:page.items as MarketObservation[],nextCursor:page.nextCursor,coverage:page.coverage};
+    return {network,pool,observations:page.items as P['observations'],nextCursor:page.nextCursor,coverage:page.coverage};
   }
-  async candidatesPage(network:Network,pool:string,query:MarketQuery={}):Promise<MarketCandidatePage> {
+  async candidatesPage(network:Network,pool:string,query:MarketQuery={}):Promise<MarketCandidatePage<P>> {
     const page=await this.records('candidates',network,pool,query);
-    return {network,pool,candidates:page.items as MarketCandidate[],nextCursor:page.nextCursor,coverage:page.coverage};
+    return {network,pool,candidates:page.items as P['candidates'],nextCursor:page.nextCursor,coverage:page.coverage};
   }
-  private async records(kind:Cursor['kind'],network:Network,pool:string,query:MarketQuery):Promise<{items:(MarketObservation|MarketCandidate)[];nextCursor:string|null;coverage:MarketCoverage|null}> {
+  private async records(kind:Cursor['kind'],network:Network,pool:string,query:MarketQuery):Promise<{items:(MarketObservation|CurrentDlmmMarketObservation|MarketCandidate)[];nextCursor:string|null;coverage:MarketCoverage<P>|null}> {
     queryContext(network,pool,query); const cursor=query.cursor!==undefined?parseCursor(query.cursor):null; const from=query.from??null,to=query.to??null;
     if(cursor && (cursor.kind!==kind || cursor.network!==network || cursor.pool!==pool || cursor.from!==from || cursor.to!==to || query.generation!==undefined && query.generation!==cursor.generation)) throw new MarketCursorError('Market cursor query mismatch');
     const generation=cursor?.generation??query.generation??(await this.current(network,pool))?.generation;
     if(!generation) return {items:[],nextCursor:null,coverage:null};
     const row=(await this.pool.query('SELECT metadata,fingerprint,published_at FROM market_generations WHERE generation=$1 AND network=$2 AND pool=$3',[generation,network,pool])).rows[0];
     if(!row) throw new MarketCursorError('Market generation not found');
+    this.requireSchema(row.metadata?.schema);
     object(row.metadata,['schema','binding','dependencies','issues','historyComplete','totalObservations','candidateCounts'],'stored metadata');
-    binding(row.metadata.binding as DlmmMarketBinding);
-    const metadata=row.metadata as Omit<MarketCoverage,keyof MarketGeneration>;
-    if(metadata.binding.network!==network || metadata.binding.pool!==pool || metadata.schema!=='dlmm-market-ledger-v1' || typeof metadata.historyComplete!=='boolean' || !HASH.test(row.fingerprint)) invalid('stored metadata');
-    strings(metadata.issues,'stored issues'); array(metadata.dependencies,'stored dependencies');
+    const metadata=row.metadata as CoverageMetadata<StoredMarketProjection>;
+    if(metadata.binding.network!==network || metadata.binding.pool!==pool || !['dlmm-market-ledger-v1','dlmm-market-ledger-v2'].includes(metadata.schema) || typeof metadata.historyComplete!=='boolean' || !HASH.test(row.fingerprint)) invalid('stored metadata');
+    strings(metadata.issues,'stored issues'); const dependencies=dependencyCoverage(metadata.dependencies,pool,metadata.historyComplete);
     // Reuse canonical admission for coverage even when this page contains no rows.
-    validateMarketProjection({schema:metadata.schema,binding:metadata.binding,dependencies:metadata.dependencies,issues:metadata.issues,historyComplete:metadata.historyComplete,observations:[],candidates:[]});
+    const {candidateCounts: _counts,totalObservations: _total,...projectionMetadata}=metadata;
+    validateMarketProjection({...projectionMetadata,observations:[],candidates:[]} as StoredMarketProjection);
     object(metadata.candidateCounts,['settled','refunded','unresolved'],'stored counts');
     if([metadata.totalObservations,...Object.values(metadata.candidateCounts)].some(v=>!Number.isSafeInteger(v)||v<0) || metadata.candidateCounts.settled!==metadata.totalObservations || metadata.historyComplete && metadata.candidateCounts.unresolved!==0) invalid('stored counts');
     const table=kind==='observations'?'market_observations':'market_candidates';
@@ -310,17 +335,31 @@ export class PostgresMarketStore {
     }
     const limit=query.limit??100;
     const records=(await this.pool.query(`SELECT ${item} AS item FROM ${table} WHERE generation=$1 AND ($2::bigint IS NULL OR execution_utime >= $2) AND ($3::bigint IS NULL OR execution_utime < $3) AND ($4::bigint IS NULL OR (execution_utime,${identity})<($4::bigint,$5::text)) ORDER BY execution_utime DESC,${identity} DESC LIMIT $6`,[generation,from,to,cursor?.utime??null,cursor?.id??null,limit+1])).rows;
-    const items=records.slice(0,limit).map(r=>r.item as MarketObservation|MarketCandidate);
+    const items=records.slice(0,limit).map(r=>r.item as MarketObservation|CurrentDlmmMarketObservation|MarketCandidate);
     // Reading a page never upgrades malformed stored evidence into an observation.
     for(const item of items) {
-      if(kind==='observations') observation(item as MarketObservation,metadata.binding);
+      if(kind==='observations') {
+        if(metadata.schema==='dlmm-market-ledger-v2') validateCurrentDlmmMarketObservation(item as CurrentDlmmMarketObservation,metadata.binding);
+        else observation(item as MarketObservation,metadata.binding);
+      }
       else {
+        if(metadata.schema==='dlmm-market-ledger-v2') {
+          const candidate=item as CurrentDlmmMarketCandidate; ref(candidate.acceptance,'stored candidate'); strings(candidate.issues,'stored candidate issues');
+          validateCurrentDlmmMarketCandidate(candidate,metadata.binding);
+        } else {
         const c=item as MarketCandidate; object(c,['id','acceptance','status','issues','observationId'],'stored candidate'); ref(c.acceptance,'stored candidate'); strings(c.issues,'stored candidate issues');
         if(c.acceptance.account!==pool || c.id!==observationId(network,c.acceptance) || !['settled','refunded','unresolved'].includes(c.status) || c.status==='settled' && (c.observationId!==c.id || c.issues.length!==0) || c.status!=='settled' && c.observationId!==null || c.status==='unresolved' && !c.issues.length) invalid('stored candidate');
+        }
+      }
+      if(metadata.schema==='dlmm-market-ledger-v2') {
+        // Stored proof is reverified independently and cannot outrun its immutable source coverage.
+        const current=item as CurrentDlmmMarketObservation|CurrentDlmmMarketCandidate;
+        const refs=[current.acceptance,...(current.proof?.transactions??[]).map(original=>{const t=verifyCurrentT3Transaction(original);return {account:t.account,lt:String(t.tx.lt),hash:t.hash,utime:t.tx.now};})];
+        for(const r of refs) { const dep=dependencies.get(r.account); if(!dep || BigInt(r.lt)>BigInt(dep.headLt) || r.lt===dep.headLt && r.hash!==dep.headHash || r.utime*1000>Date.parse(dep.checkedThrough)) invalid('stored evidence outside dependency coverage'); }
       }
     }
     const last=items.at(-1),utime=last && ('executionUtime' in last?last.executionUtime:last.acceptance.utime);
     const nextCursor=records.length>limit && last ? Buffer.from(JSON.stringify({schema:'dlmm-market-cursor-v1',kind,network,pool,generation,from,to,utime:utime!,id:last.id} satisfies Cursor)).toString('base64url') : null;
-    return {items,nextCursor,coverage:{...metadata,generation,fingerprint:row.fingerprint,publishedAt:new Date(row.published_at).toISOString()}};
+    return {items,nextCursor,coverage:{...metadata,generation,fingerprint:row.fingerprint,publishedAt:new Date(row.published_at).toISOString()} as unknown as MarketCoverage<P>};
   }
 }

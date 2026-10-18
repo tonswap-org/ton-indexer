@@ -74,7 +74,8 @@ async function main() {
   assert(refCount > 20);
   const docs = buildDocsHtml('mount-test-nonce', r1);
   assert(docs.includes('href="/api/indexer/v1/openapi.json"'));
-  assert(docs.includes('value="/api/indexer/v1/cover/{manager}/snapshot"'));
+  assert(docs.includes('value="/api/indexer/v1/governance/{voting}/snapshot"'));
+  for (const retired of ['/cover/', '/vol-index/', '/pools/{pool}/farms']) assert(!docs.includes(retired));
   assert(docs.includes('<script nonce="mount-test-nonce">'));
   for (const indexer of [r1, r2, `${r1}/`]) {
     const app = Fastify();

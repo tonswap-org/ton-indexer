@@ -1,3 +1,6 @@
+import { projectCurrentLaunchpad } from './currentLaunchpadProjection';
+import { projectCurrentDlmm } from './currentDlmmProjection';
+import { projectCurrentPerps } from './currentPerpsProjection';
 import { CURRENT_OPTIONS_USER_OPS } from './currentOptions';
 import { projectCurrentOptions, type CurrentOptionLedgerOperation } from './currentOptionsProjection';
 import {
@@ -104,6 +107,9 @@ export type LedgerPool = {
   codeHash: string;
 };
 export type ProjectionInput = {
+  currentDlmmBinding?: import("./currentDlmmPhysical").CurrentDlmmProofBinding;
+  currentLaunchpadBinding?: import("./currentLaunchpadProof").CurrentLaunchpadBinding;
+  currentPerpsBinding?: import("./currentPerpsProof").NativePerpsProofBinding;
   currentOptionsBinding?: import("./currentOptionsProof").NativeOptionProofBinding;
   network: Network;
   owner: string;
@@ -399,7 +405,7 @@ export async function projectOwnerLedger(
     }
   type Operation = {
     anchor: Node;
-    kind: "swap" | "lp_deposit" | "lp_withdraw" | "lp_fee_collect";
+    kind: "swap" | "lp_deposit" | "lp_withdraw" | "lp_fee_collect" | "dlmm_operation" | "launchpad_operation";
     settlement?: LedgerEvent["settlement"];
     pool?: string;
     queryId?: string;
@@ -506,6 +512,7 @@ export async function projectOwnerLedger(
     routedCandidates.set(node.id,{operation,flow});operations.push(operation);usedFlows.add(flow.id);
   }
   for (const pool of pools.values()) {
+    if(input.currentDlmmBinding?.pools.some(p=>p.pool===pool.address))continue;
     const poolNodes = nodes.filter((n) => n.account === pool.address);
     let swapProof: ReturnType<typeof createDlmmProofGraph> | null = null;
     const swapGraph = async () => {
@@ -842,21 +849,35 @@ export async function projectOwnerLedger(
     }
     operations.push(...currentOptions);
   }
-  const perpsResults = await decodePerps(
-    input,
-    nodes,
-    flows,
-    receiptFor,
-    attach,
-  );
-  operations.push(...perpsResults.operations);
-  for (const id of perpsResults.usedFlows) usedFlows.add(id);
+  const currentDlmm = await projectCurrentDlmm(input,nodes,attach);
+  if(currentDlmm.length){
+    const owned=new Set(currentDlmm.flatMap(o=>o.evidence.map(r=>`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for(let i=operations.length-1;i>=0;i--){const op=operations[i];if(op.kind==='transfer'&&op.settlement?.protocol==='t3'&&op.evidence.every(r=>owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)))operations.splice(i,1);}
+    operations.push(...currentDlmm);
+  }
+  const currentPerps = await projectCurrentPerps(input, nodes, attach);
+  if (currentPerps.length) {
+    const owned = new Set(currentPerps.flatMap(o => o.evidence.map(r => `${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for (let i = operations.length - 1; i >= 0; i--) {
+      const op = operations[i];
+      if (op.kind === 'transfer' && op.settlement?.protocol === 't3' && op.evidence.every(r => owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`))) operations.splice(i, 1);
+    }
+    operations.push(...currentPerps);
+  }
+  const currentLaunchpad=await projectCurrentLaunchpad(input,nodes,attach);
+  if(currentLaunchpad.length){
+    const owned=new Set(currentLaunchpad.flatMap(o=>o.evidence.map(r=>`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for(let i=operations.length-1;i>=0;i--){const op=operations[i];if(op.kind==='transfer'&&op.settlement?.protocol==='t3'&&op.evidence.every(r=>owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)))operations.splice(i,1);}
+    operations.push(...currentLaunchpad);
+  }
+  if(!input.currentLaunchpadBinding){
   const participationResults = await decodeLaunchpadContributions(input, nodes, flows, receiptFor, attach);
   operations.push(...participationResults.operations);
   for (const id of participationResults.usedFlows) usedFlows.add(id);
   const launchpadResults = await decodeLaunchpadRefunds(input, nodes, flows, receiptFor, attach);
   operations.push(...launchpadResults.operations);
   for (const id of launchpadResults.usedFlows) usedFlows.add(id);
+  }
   // Retain unmatched exact receipt evidence, including unknown asset amounts.
   // Discard a notification only when its exact emitting wallet transaction is
   // represented by a verified credit or root mint, never merely by the same query ID.

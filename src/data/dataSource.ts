@@ -173,6 +173,9 @@ export const transactionPageReachesHistoryStart = (
 
 export type AccountStateResponse = {
   anchor?: AccountAnchor;
+  /** Exact authenticated masterchain boundary used for this account read or
+   * containing its replayed transaction. Shard sequence numbers are independent. */
+  sourceMasterchain?: ChainHead;
   /** Original authenticated ShardAccount envelope, with its hash-bound Account
    * reference expanded. Absent accounts have no dictionary envelope. */
   shardAccountBoc?: string;
@@ -206,6 +209,13 @@ export type TonBlockIdExt = {
 export type ChainHead = TonBlockIdExt & { utime: number };
 export type AccountAnchor = { shardBlock: TonBlockIdExt; genUtime: number };
 export type ReadOptions = { signal?: AbortSignal; at?: ChainHead };
+/** Original lite-server proofs. Consumers verify these cells again; the labels
+ * alone do not establish an account or masterchain commitment. */
+export type RecoveryProofAnchor = {
+  account: string; head: ChainHead; shardBlock: TonBlockIdExt;
+  masterchainProofBoc: string; accountProofBoc: string; accountBoc: string; shardAccountBoc: string;
+};
+export type RecoveryProofHistory = { head: ChainHead; anchor: ChainHead; blockBoc: string; stateBoc: string };
 export class ChainReadError extends Error {
   constructor(readonly code: 'upstream_timeout' | 'upstream_unavailable', options?: ErrorOptions) {
     super(code === 'upstream_timeout' ? 'Chain read deadline exceeded.' : 'Chain read unavailable.', options);
@@ -218,6 +228,8 @@ export interface ChainSource {
   read(calls: import('./freshRead').FreshReadCall[], options?: ReadOptions): Promise<{ head: ChainHead; results: import('./freshRead').FreshReadResult[] }>;
   getConfig(options?: ReadOptions): Promise<{ head: ChainHead; configBoc: string }>;
   getAccountState(address: string, options?: ReadOptions): Promise<AccountStateResponse>;
+  getRecoveryProofAnchor?(address: string, options?: ReadOptions): Promise<RecoveryProofAnchor>;
+  getRecoveryProofHistory?(anchor: ChainHead, options?: ReadOptions): Promise<RecoveryProofHistory>;
   runGetMethod(address: string, method: string, args?: TupleItem[], options?: ReadOptions): Promise<{ exitCode: number; stack: TupleItem[] }>;
   getAccountStateAtSeqno(address: string, seqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
   getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;

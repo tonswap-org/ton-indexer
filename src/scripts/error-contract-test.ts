@@ -25,7 +25,7 @@ async function main() {
     mode='down';const unavailable=await call();assert.equal(unavailable.statusCode,503);assert.equal(unavailable.json().code,'upstream_unavailable');
     const admission=await call('open_order_preflight');assert.equal(admission.statusCode,502);assert.equal(admission.json().code,'admission_invalid_proof');
     const unknown=await app.inject({url:'/api/indexer/private/missing',headers:{origin:'https://test.tonswap.org'}});assert.equal(unknown.statusCode,404);
-    const schema=await app.inject({url:`/api/indexer/v1/pools/${addr}/farms?limit=broken`,headers:{origin:'https://test.tonswap.org'}});assert.equal(schema.statusCode,400);
+    const schema=await app.inject({url:`/api/indexer/v1/governance/${addr}/snapshot?max_scan=broken`,headers:{origin:'https://test.tonswap.org'}});assert.equal(schema.statusCode,400);
     const malformed=await app.inject({method:'POST',url:'/api/indexer/v1/runGetMethod',headers:{origin:'https://test.tonswap.org','content-type':'application/json'},payload:'{'});assert.equal(malformed.statusCode,400);
     const ledger=await app.inject({url:'/fixture-ledger',headers:{origin:'https://test.tonswap.org'}});assert.equal(ledger.statusCode,503);
     for(const response of [timed,unavailable,admission,unknown,schema,malformed,ledger]){

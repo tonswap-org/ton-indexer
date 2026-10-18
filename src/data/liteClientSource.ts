@@ -28,7 +28,9 @@ import {
   RawTransaction,
   ChainReadError, type ChainSource, type ChainHead, type ReadOptions,
   TransactionCursor,
+  type RecoveryProofAnchor, type RecoveryProofHistory,
 } from './dataSource';
+import { validateRecoveryProofHistory } from './t3ProofBundle';
 import {
   MAX_HISTORICAL_REPLAY_TRANSACTIONS, replayHistoricalAccount, replayBlockContext,
   verifiedReplayBlock, type HistoricalReplayStep,
@@ -253,6 +255,55 @@ export class LiteClientDataSource implements ChainSource {
         this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, () => this.readAccountStateAtBlock(normalized, liteBlock(head), head)));
     });
   }
+
+  async getRecoveryProofAnchor(address: string, options: ReadOptions = {}): Promise<RecoveryProofAnchor> {
+    return this.scope(options, async signal => {
+      const head = { ...(options.at ?? await this.head({ signal })) }, parsed = Address.parse(address);
+      if (parsed.workChain !== 0) throw new Error('Recovery proofs require a basechain account.');
+      return this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, async () => {
+        const selected = await this.lookupMasterchainBlock(head.seqno);
+        assertBlockId(selected.id, liteBlock(head), 'Recovery selected masterchain block');
+        const state = await this.call(client => client.getAccountStateRaw(parsed, liteBlock(head)));
+        const exact = provenShardAccount(state, head, parsed);
+        if (!exact) throw new Error('Recovery account is absent.');
+        const id = state.shardBlock;
+        return { account: parsed.toRawString(), head, shardBlock: { workchain: id.workchain, shard: id.shard,
+          seqno: id.seqno, rootHashHex: id.rootHash.toString('hex'), fileHashHex: id.fileHash.toString('hex') },
+          masterchainProofBoc: state.shardProof.toString('base64'), accountProofBoc: state.proof.toString('base64'),
+          accountBoc: state.raw.toString('base64'), shardAccountBoc: exact.toBoc().toString('base64') };
+      });
+    });
+  }
+
+  async getRecoveryProofHistory(anchor: ChainHead, options: ReadOptions = {}): Promise<RecoveryProofHistory> {
+    return this.scope(options, async signal => {
+      const head = { ...(options.at ?? await this.head({ signal })) };
+      if (anchor.seqno >= head.seqno) throw new Error('Recovery historical anchor is not earlier than the current head.');
+      return this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, async () => {
+        const selected = await this.lookupMasterchainBlock(head.seqno);
+        assertBlockId(selected.id, liteBlock(head), 'Recovery current masterchain block');
+        const old = await this.lookupMasterchainBlock(anchor.seqno);
+        assertBlockId(old.id, liteBlock(anchor), 'Recovery historical masterchain block');
+        const response = await this.queryLite(() => this.client.engine.query(Functions.liteServer_getBlockProof, {
+          kind: 'liteServer.getBlockProof', mode: 1,
+          knownBlock: { kind: 'tonNode.blockIdExt', ...liteBlock(head) },
+          targetBlock: { kind: 'tonNode.blockIdExt', ...liteBlock(anchor) },
+        }));
+        assertBlockId(response.from, liteBlock(head), 'Recovery history source');
+        assertBlockId(response.to, liteBlock(anchor), 'Recovery history target');
+        if (!response.complete || response.steps.length !== 1 || response.steps[0].kind !== 'liteServer.blockLinkBack') {
+          throw new Error('Direct original prev_blocks path is unavailable.');
+        }
+        const link = response.steps[0];
+        assertBlockId(link.from, liteBlock(head), 'Recovery history link source');
+        assertBlockId(link.to, liteBlock(anchor), 'Recovery history link target');
+        const [block] = proofRoots(link.proof, 1), [state] = proofRoots(link.stateProof, 1);
+        const result = { head, anchor: { ...anchor }, blockBoc: block.toBoc().toString('base64'), stateBoc: state.toBoc().toString('base64') };
+        validateRecoveryProofHistory(result);
+        return result;
+      });
+    });
+  }
   async read(calls: FreshReadCall[], options: ReadOptions = {}) {
     return this.scope(options, async signal => {
       const head = options.at ?? await this.head({ signal });
@@ -349,7 +400,7 @@ export class LiteClientDataSource implements ChainSource {
     const state = await replayHistoricalAccount({ address: parsed, cursor, predecessor, steps });
     const final = selected.at(-1)!;
     const genUtime = blockHeaderTime(steps.at(-1)!.block, final.blockId);
-    return Object.freeze({ ...state, anchor: { shardBlock: { workchain: final.blockId.workchain, shard: final.blockId.shard,
+    return Object.freeze({ ...state, sourceMasterchain: Object.freeze({ ...containingHead }), anchor: { shardBlock: { workchain: final.blockId.workchain, shard: final.blockId.shard,
       seqno: final.blockId.seqno, rootHashHex: final.blockId.rootHash.toString('hex'), fileHashHex: final.blockId.fileHash.toString('hex') }, genUtime } });
   }
 
@@ -377,6 +428,7 @@ export class LiteClientDataSource implements ChainSource {
     const dataCell = activeState?.data ?? null;
     return {
       anchor,
+      sourceMasterchain: Object.freeze({ ...head }),
       balance: account?.storage.balance.coins.toString() ?? '0',
       shardAccountBoc: exact?.toBoc().toString('base64'),
       ...(exact === null ? { provenAbsent: true as const } : {}),

@@ -1,0 +1,33 @@
+import { Address, beginCell, Cell } from '@ton/core';
+import { decodeSwap, decodeSwapEvent, decodeSwapResult, readCurrentDlmmPool, SwapStatus } from './currentDlmmState';
+import { currentT3ActiveState, decodeSpotTokenTransfer, verifyCurrentT3Transaction, verifySpotMessageLink, verifySpotPoolBoundary, verifySpotTokenDelivery, type CurrentT3Transaction, type CurrentT3TransactionEvidence, type SpotProofBinding } from './currentDlmmPhysical';
+export type CurrentDlmmSwapRequest={kind:'swap';owner:string;pool:string;side:0|1;queryId:string;amountRaw:string;sourceWallet:string;bodyBoc:string;bodyHash:string;valueNano:string;createdAt:number;dispatch:{lt:string;hash:string;valueNano:string}};
+export type CurrentDlmmSwapProof={status:'delivered'|'refunded'|'pending'|'unavailable';poolTransactionHash?:string;inputDebitHash?:string;inputCreditHash?:string;outputDebitHash?:string;outputCreditHash?:string;amountOutRaw?:string;grossFeeT3Raw?:string;protocolFeeT3Raw?:string;pendingOutRaw?:string};
+const maybe=<T>(f:()=>T)=>{try{return f();}catch{return null;}};
+const one=<T>(a:T[])=>a.length===1?a[0]:null;
+function need(v:unknown,why:string):asserts v{if(!v)throw Error(`Current DLMM swap: ${why}`);}
+function input(t:CurrentT3Transaction,from:string){const m=t.tx.inMessage;need(m?.info.type==='internal'&&!m.info.bounced&&m.info.src.toRawString()===from,'input');return m;}
+function either(s:ReturnType<Cell['beginParse']>){if(s.loadBit()){const c=s.loadRef();s.endParse();return c;}return beginCell().storeSlice(s).endCell();}
+/** Fresh SWP3 execution with original owner dispatch, committed reserves and
+ * independently linked physical wallets. Fee components are allocations of
+ * the input/reserves; they never create another user cash payment. */
+export function inspectCurrentDlmmSwap(p:CurrentDlmmSwapRequest,b:SpotProofBinding,evidence:readonly CurrentT3TransactionEvidence[]):CurrentDlmmSwapProof{try{
+ const txs=evidence.map(verifyCurrentT3Transaction),w=b.wallets,body=Cell.fromBase64(p.bodyBoc);
+ need(txs.length<=256&&new Set(txs.map(t=>t.hash)).size===txs.length&&p.pool===b.identity.pool&&p.side===b.identity.inSide&&p.sourceWallet===w.pay.address&&body.hash().toString('hex')===p.bodyHash,'binding');
+ const origin=one(txs.filter(t=>t.account===p.owner&&t.hash===p.dispatch.hash&&String(t.tx.lt)===p.dispatch.lt&&t.succeeded));if(!origin)return{status:'pending'};
+ const source=one(txs.filter(t=>t.account===p.sourceWallet&&t.succeeded&&verifySpotMessageLink(origin,t)&&maybe(()=>{const m=input(t,p.owner);return m.body.equals(body)&&m.info.type==='internal'&&String(m.info.value.coins)===p.valueNano;})===true));if(!source)return{status:'pending'};
+ const request=decodeSpotTokenTransfer(body),swap=decodeSwap(request.payload);need(swap&&String(request.query)===p.queryId&&String(request.amount)===p.amountRaw&&request.owner===p.pool&&request.response===p.owner&&!request.custom&&request.forwardValue>0n&&swap.recipient.equals(Address.parse(p.owner))&&swap.refundTo.equals(Address.parse(p.owner))&&!swap.notifyOrigin&&swap.fwdGram===0n&&swap.refundFwdGram===0n&&!swap.fwdPayload,'reviewed direct terms');
+ const credit=one(txs.filter(t=>maybe(()=>{verifySpotTokenDelivery(source,t,request,w.pay,w.poolPay,b);return true;})===true));if(!credit)return{status:'pending'};
+ const base={inputDebitHash:source.hash,inputCreditHash:credit.hash};
+ const pool=one(txs.filter(t=>t.account===p.pool&&t.succeeded&&verifySpotMessageLink(credit,t)&&maybe(()=>{const s=input(t,credit.account).body.beginParse();need(s.loadUint(32)===0x7362d09c&&s.loadUintBig(64)===request.query&&s.loadCoins()===request.amount&&s.loadAddress().toRawString()===p.owner&&either(s).equals(request.payload),'notification');verifySpotPoolBoundary(t,b);return true;})===true));if(!pool)return{status:'pending',...base};
+ const event=one(pool.tx.outMessages.values().flatMap(m=>{const e=m.info.type==='external-out'?decodeSwapEvent(m.body):null;return e&&String(e.queryId)===p.queryId&&e.origin.toRawString()===p.owner&&e.inSide===p.side&&e.amountIn===request.amount?[e]:[];}));if(!event)return{status:'pending',...base};
+ const before=readCurrentDlmmPool(currentT3ActiveState(pool.before,b.identity.release.templates.DlmmPool).data,p.pool),after=readCurrentDlmmPool(currentT3ActiveState(pool.after,b.identity.release.templates.DlmmPool).data,p.pool),refund=event.status!==SwapStatus.EXECUTED;
+ if(!refund){need(event.reason===0&&event.amountOut>=swap.minOut&&event.grossFeeT3>=event.protocolFeeT3&&after.protocolFeesT3-before.protocolFeesT3===event.protocolFeeT3,'fees');need(after.reserveT-before.reserveT===(p.side===0?request.amount-event.protocolFeeT3:-event.amountOut-event.protocolFeeT3)&&after.reserveX-before.reserveX===(p.side===0?-event.amountOut:request.amount),'reserve conservation');}
+ else need(event.reason!==0&&event.amountOut===0n&&after.reserveT===before.reserveT&&after.reserveX===before.reserveX&&after.protocolFeesT3===before.protocolFeesT3,'atomic refund');
+ const state={...base,poolTransactionHash:pool.hash,amountOutRaw:String(event.amountOut),grossFeeT3Raw:String(event.grossFeeT3),protocolFeeT3Raw:String(event.protocolFeeT3)},amount=refund?request.amount:event.amountOut;
+ if(event.status===SwapStatus.INPUT_OWED)return{status:'pending',...state,pendingOutRaw:String(amount)};
+ const from=refund?w.poolPay:w.poolReceive,to=refund?w.pay:w.receive;
+ const candidates=txs.filter(t=>t.account===from.address&&t.succeeded&&verifySpotMessageLink(pool,t)).flatMap(debit=>{const transfer=maybe(()=>{const r=decodeSpotTokenTransfer(input(debit,p.pool).body);need(r.query===request.query&&r.amount===amount&&r.owner===p.owner&&r.response===p.owner&&!r.custom&&r.forwardValue===0n,'payout terms');if(event.status===SwapStatus.REFUND_PLAIN)need(r.payload.bits.length===0&&r.payload.refs.length===0,'plain refund');else{const outcome=decodeSwapResult(r.payload);need(outcome&&outcome.queryId===request.query&&outcome.origin.toRawString()===p.owner&&outcome.status===(refund?1:0)&&outcome.reason===event.reason&&outcome.amountIn===request.amount&&outcome.amountOut===event.amountOut&&!outcome.user,'SWR3 receipt');}return r;});return transfer?[{debit,transfer}]:[];});
+ const paid=candidates.flatMap(({debit,transfer})=>txs.filter(t=>maybe(()=>{verifySpotTokenDelivery(debit,t,transfer,from,to,b);return true;})===true).map(credit=>({debit,credit}))),payment=one(paid);
+ return payment?{status:refund?'refunded':'delivered',...state,outputDebitHash:payment.debit.hash,outputCreditHash:payment.credit.hash,pendingOutRaw:'0'}:{status:'pending',...state,pendingOutRaw:String(amount)};
+}catch{return{status:'unavailable'};}}

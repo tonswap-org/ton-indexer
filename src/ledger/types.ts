@@ -199,6 +199,8 @@ export type LedgerEvent = {
     | "t3_mint"
     | "t3_redeem"
     | "perps_operation"
+    | "dlmm_operation"
+    | "launchpad_operation"
     | "launchpad_refund"
     | "launchpad_participation";
   totalFeesRaw: string | null;
@@ -222,6 +224,8 @@ export type LedgerEvent = {
       | "t3_mint"
       | "t3_redeem"
       | "perps_operation"
+      | "dlmm_operation"
+      | "launchpad_operation"
       | "launchpad_refund"
       | "launchpad_participation";
     dlmmSwap?: {
@@ -234,6 +238,9 @@ export type LedgerEvent = {
     dlmmLiquidity?: DlmmLiquidityMetadata;
     launchpad?: import("./launchpad").LaunchpadRefundMetadata;
     launchpadParticipation?: import("./launchpadContributions").LaunchpadParticipationMetadata;
+    currentPerps?: import("./currentPerps").CurrentPerpsEconomics;
+    currentDlmm?: import("./currentDlmmEconomics").CurrentDlmmEconomics;
+    currentLaunchpad?: import("./currentLaunchpad").CurrentLaunchpadEconomics;
     currentOptions?: import("./currentOptions").CurrentOptionsEconomics;
     optionLifecycle?: import("./optionLifecycle").OptionLifecycleMetadata;
     perps?: {

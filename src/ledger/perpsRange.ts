@@ -1,21 +1,19 @@
+import { collectCurrentPerpsRange } from './currentPerpsRange';
 import { randomUUID, createHash } from 'node:crypto';
-import { Cell } from '@ton/core';
 import type { Network } from '../models';
 import type { ChainSource, RawTransaction, AccountStateResponse } from '../data/dataSource';
 import { transactionPageIsLinkedInclusiveSegment, transactionPageReachesHistoryStart } from '../data/dataSource';
 import type { OpcodeSets } from '../utils/opcodes';
-import { canonicalLedgerAddress, canonicalLedgerHash } from './normalize';
+import { canonicalLedgerHash } from './normalize';
 import { PostgresLedgerStore, LedgerCursorError, validProjectionScope } from './store';
-import type { LedgerAsset, LedgerEvent, LedgerPage, LedgerQuery, LedgerRangeCoverage } from './types';
+import type { LedgerEvent, LedgerPage, LedgerQuery, LedgerRangeCoverage } from './types';
 import { projectOwnerLedger, type LedgerChain } from './project';
-import { readPerpsState } from './perpsState';
-import { qualifyPerpsRangeWallet } from './perpsRangeWallet';
-import { PERPS_ORACLE_PULL, perpsOracleMessage, perpsWalletAddress, discoverPerpsPeers, PERPS_PROTOCOL_PEER_LIMIT } from './perpsWire';
 import { findTransactionState, type LedgerStateSnapshot } from './archive';
 import type { Logger } from '../utils/logger';
 
+const PERPS_PROTOCOL_PEER_LIMIT = 32;
 type Bounds = { fromUtime: number; toUtime: number };
-type Options = { readStore?: PostgresLedgerStore; t3Root?: string; perpsEngine?: string; perpsEngineCodeHash?: string };
+type Options = { currentPerpsBinding?: import("./currentPerpsProof").NativePerpsProofBinding; readStore?: PostgresLedgerStore; t3Root?: string; perpsEngine?: string; perpsEngineCodeHash?: string };
 type RangeSnapshot = { schema: 'perps-range-v3'; masterSeqno: number; masterTimestamp: number;
   observedAt: string; projection: Awaited<ReturnType<typeof projectOwnerLedger>>;
   oraclePools: string[]; protocolPeers: string[];
@@ -79,7 +77,7 @@ export class PerpsRangeService {
   private readonly binding: string;
   constructor(private network: Network, private store: PostgresLedgerStore, private source: ChainSource,
     private opcodes: OpcodeSets, private options: Options, private logger?: Logger) {
-    this.binding = digest({ network, engine: options.perpsEngine, root: options.t3Root, code: options.perpsEngineCodeHash, decoder: 'perps-range-v3' });
+    this.binding = digest({ network, engine: options.perpsEngine, root: options.t3Root, code: options.perpsEngineCodeHash, release: options.currentPerpsBinding?.manifestHash, decoder: 'current-perps-range-v1' });
   }
   /** Resume durable work at startup and without any client continuing to poll. */
   async start(onError: () => void = () => undefined) {
@@ -258,62 +256,8 @@ export class PerpsRangeService {
           await this.store.pool.query("UPDATE ledger_perps_ranges SET status='pending',error_code='perps_range_head_not_ready',retry_after=now()+backoff_seconds*interval '1 second',backoff_seconds=LEAST(300,backoff_seconds*2) WHERE generation=$1", [generation]);
           return;
         }
-        const { perpsEngine, perpsEngineCodeHash, t3Root } = this.options;
-        if (!perpsEngine || !perpsEngineCodeHash || !t3Root) throw Error('perps_range_binding_unconfigured');
-        const engine = canonicalLedgerAddress(perpsEngine), owner = row.account;
-        const current = await this.source.getAccountStateAtSeqno(engine, master.seqno);
-        if (!current.codeBoc || !current.dataBoc || Cell.fromBase64(current.codeBoc).hash().toString('hex') !== perpsEngineCodeHash)
-          throw Error('perps_range_engine_identity_unverified');
-        const parsed = readPerpsState(current.dataBoc, perpsEngineCodeHash);
-        if (parsed.root !== canonicalLedgerAddress(t3Root)) throw Error('perps_range_root_identity_unverified');
-        const ownerWallet = perpsWalletAddress(parsed.walletCode, parsed.root, owner), engineWallet = perpsWalletAddress(parsed.walletCode, parsed.root, engine);
-        const accounts = [owner, ownerWallet, engine, engineWallet];
-        if (new Set(accounts).size !== 4) throw Error('perps_range_account_identity_conflict');
-        const states = await Promise.all(accounts.map(a => a === engine ? current : this.source.getAccountStateAtSeqno(a, master.seqno)));
-        const wallets = new Map<string, LedgerAsset>();
-        for (const [i, expectedOwner] of [[1, owner], [3, engine]] as const) {
-          wallets.set(accounts[i], qualifyPerpsRangeWallet(this.network, accounts[i], expectedOwner,
-            parsed.root, parsed.walletCode, states[i]));
-        }
-        const observedAt = new Date().toISOString(), budget = { pages: 128, deadline: Date.now() + 120_000 };
-        const chains = new Map<string, RangeSnapshot['chains'][number]>();
-        for (let i = 0; i < accounts.length; i++) {
-          const captured = await capturePerpsRangeChain(this.source, accounts[i], states[i], bounds, budget);
-          chains.set(accounts[i], { account: accounts[i], generation, role: i === 0 ? 'owner' : i === 1 ? 'owned_jetton_wallet' : 'counterparty',
-            historyComplete: false, verifiedRange: bounds, checkedAt: new Date(master.utime * 1000).toISOString(), ...captured,
-            headLt: states[i].lastTxLt ?? null, headHash: states[i].lastTxHash ? canonicalLedgerHash(states[i].lastTxHash!) : null });
-        }
-        const oraclePools = new Set<string>();
-        for (const transaction of chains.get(engine)?.transactions ?? []) for (const message of transaction.outMessages) {
-          const request = perpsOracleMessage(message);
-          if (request?.opcode !== PERPS_ORACLE_PULL || !message.source || !message.destination ||
-              canonicalLedgerAddress(message.source) !== engine) continue;
-          oraclePools.add(canonicalLedgerAddress(message.destination));
-        }
-        if (oraclePools.size > 128) throw Error('perps_range_oracle_account_limit');
-        const { peers, custodyOwners } = discoverPerpsPeers(chains.get(engine)?.transactions ?? [], engine, engineWallet);
-        const custody = new Map<string, string>();
-        for (const custodyOwner of custodyOwners) {
-          const wallet = perpsWalletAddress(parsed.walletCode, parsed.root, custodyOwner);
-          if (accounts.includes(custodyOwner) || accounts.includes(wallet) || peers.has(wallet) || oraclePools.has(wallet))
-            throw Error('perps_range_account_identity_conflict');
-          custody.set(wallet, custodyOwner);
-        }
-        const protocolPeers = new Set([...peers, ...custody.keys()].filter(peer => !accounts.includes(peer) && !oraclePools.has(peer)));
-        for (const peer of new Set([...oraclePools, ...protocolPeers])) {
-          if (chains.has(peer)) continue;
-          if (Date.now() > budget.deadline) throw Error('perps_range_capacity_exceeded');
-          const state = await this.source.getAccountStateAtSeqno(peer, master.seqno);
-          const custodyOwner = custody.get(peer);
-          // A never-created wallet is honest absent custody, not an arbitrary
-          // identity. Active wallets must match the engine-pinned current code.
-          if (custodyOwner && state.accountState !== 'uninitialized')
-            wallets.set(peer, qualifyPerpsRangeWallet(this.network, peer, custodyOwner, parsed.root, parsed.walletCode, state));
-          const captured = await capturePerpsRangeChain(this.source, peer, state, bounds, budget);
-          chains.set(peer, { account: peer, generation, role: 'counterparty', historyComplete: false, verifiedRange: bounds,
-            checkedAt: new Date(master.utime * 1000).toISOString(), ...captured,
-            headLt: state.lastTxLt ?? null, headHash: state.lastTxHash ? canonicalLedgerHash(state.lastTxHash) : null });
-        }
+        const binding=this.options.currentPerpsBinding;if(!binding)throw Error('perps_range_binding_unconfigured');
+        const owner=row.account,observedAt=new Date().toISOString(),budget={pages:128,deadline:Date.now()+120_000};
         // Reuse exact positive boundary reads across before/after proofs, and
         // never move beyond the masterchain head captured for this interval.
         const boundaryReads = new Map<string, Promise<AccountStateResponse>>();
@@ -339,12 +283,9 @@ export class PerpsRangeService {
           if (state) await this.store.pool.query('INSERT INTO ledger_account_states(network,account,lt,hash,snapshot) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING', [...params, JSON.stringify(state)]);
           return state;
         };
-        const projection = await projectOwnerLedger({ network: this.network, owner, opcodes: this.opcodes, chains, wallets, pools: new Map(), stateAt,
-          perpsEngines: new Map([[engine, { address: engine, root: parsed.root, codeHash: perpsEngineCodeHash, walletCodeHash: parsed.walletCode.hash().toString('hex'), ownerWallet, engineWallet }]]) });
-        projection.events = projection.events.filter(e => e.kind === 'perps_operation' || e.settlement?.protocol === 'perps')
-          .sort((a, b) => BigInt(a.lt) === BigInt(b.lt) ? b.hash.localeCompare(a.hash) : BigInt(a.lt) > BigInt(b.lt) ? -1 : 1);
-        const snapshot: RangeSnapshot = { schema: 'perps-range-v3', masterSeqno: master.seqno, masterTimestamp: master.utime, observedAt,
-          oraclePools: [...oraclePools].filter(pool => !accounts.includes(pool)), protocolPeers: [...protocolPeers], projection, chains: [...chains.values()] };
+        const collected=await collectCurrentPerpsRange({network:this.network,owner,generation,source:this.source,head:master,binding,bounds,opcodes:this.opcodes,stateAt,capture:(account,state,bounds)=>capturePerpsRangeChain(this.source,account,state,bounds,budget)});
+        const projection=collected.projection;
+        const snapshot:RangeSnapshot={schema:'perps-range-v3',masterSeqno:master.seqno,masterTimestamp:master.utime,observedAt,...collected};
         // Exact chain coverage may still lack archive state needed to decode an
         // operation. Publish that honest snapshot, then permit a new generation
         // after backoff; existing cursors keep the original snapshot unchanged.
