@@ -555,3 +555,11 @@ cold-wallet identity, not an unknown-state fallback. Require exactly three slots
 the slot2 optional flag and master-selected address; unknown, frozen, noncanonical
 or indebted wallets remain unavailable. Run the source-bound basket collector's
 positive/negative binding cases and `runtime-t3-binding-test.ts` after changes.
+
+Current whole-order settlement and Order-wallet claim requests must retain every
+resolved factory creation attempt in `creations` (exact OCRT body/value/LT/hash,
+1–256 unique cursors). A successful later initialization does not erase an
+earlier rejected creation or a duplicate first hop. Collect original factory
+history through the winner and every selected cursor, plus full pre-init child
+history; keep missing evidence incomplete under the existing aggregate bounds.
+Run the native expired-order collector, strict request/API and OpenAPI gates.
