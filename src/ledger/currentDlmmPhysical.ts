@@ -7,7 +7,7 @@ import { readCurrentDlmmPool, decodeDlmmBudget as decodeJettonWalletBudget, dlmm
 export type CurrentDlmmWallet={address:string;owner:string;root:string;codeHash:string};
 export type CurrentDlmmPoolConfig={pool:string;market:RuntimeReleaseManifest['spotMarkets'][number];t3:RuntimeReleaseManifest['tokens'][number];x:RuntimeReleaseManifest['tokens'][number]};
 export type CurrentDlmmConfigBinding={release:RuntimeReleaseManifest;pools:CurrentDlmmPoolConfig[]};
-export type CurrentDlmmProofBinding={release:RuntimeReleaseManifest;pools:Array<CurrentDlmmPoolConfig&{wallets:CurrentDlmmWallet[]}>};
+export type CurrentDlmmProofBinding={release:RuntimeReleaseManifest;orderWalletAbsences?:import('./currentDlmmOrderAbsence').CurrentOrderWalletAbsence[];pools:Array<CurrentDlmmPoolConfig&{wallets:CurrentDlmmWallet[]}>};
 export function currentDlmmBindingFromManifest(release:RuntimeReleaseManifest):CurrentDlmmConfigBinding{
  const t3=release.tokens.find(t=>t.symbol==='T3'),hub=release.contracts.T3Hub;if(!hub||!t3||t3.root!==hub.address||t3.masterCodeHash!==hub.codeHash||t3.walletCodeHash!==release.templates.T3Wallet)throw Error('Current DLMM T3 pin');
  return{release,pools:release.spotMarkets.map(market=>{const x=release.tokens.find(t=>t.symbol===market.symbol);if(!x||x.decimals!==market.xDecimals||!(x.masterCodeHash===release.templates.JettonV21Minter&&x.walletCodeHash===release.templates.JettonV21Wallet||x.masterCodeHash===release.vendor.stablecoin.minter.codeHash&&x.walletCodeHash===release.vendor.stablecoin.wallet.codeHash))throw Error('Current DLMM token family');return{pool:market.pool,market,t3,x};})};

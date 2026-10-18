@@ -1,3 +1,4 @@
+import { currentOrderWalletAbsent } from './currentDlmmOrderAbsence';
 import { currentDlmmOrderCandidate } from './currentDlmmOrderDiscovery';
 import { ownerConnectedProtocolNodes, currentProtocolPins } from './currentProtocolEvents';
 import { readCurrentDlmmOrderCreations } from './currentDlmmOrderProof';
@@ -758,6 +759,10 @@ export class LedgerGraphBuilder {
             const selected=await this.identities.reader.identity(token.root,order.order,options);if(selected.walletCode.hash().toString('hex')!==token.walletCodeHash)throw Error('Current order wallet pin');
             const key=`wallet:${order.order}:${token.root}`;bindings[key]=false;await load(selected.wallet,'counterparty');
             const chain=chains.get(selected.wallet);if(!chain?.atBoundary||!chain.historyComplete)throw Error('Complete order input-wallet history unavailable');
+            const walletCurrent=await source.getAccountState(selected.wallet);
+            const absence={address:selected.wallet,boundary:cycle.boundary,state:walletCurrent};
+            if(currentOrderWalletAbsent(absence,selected.wallet))(currentDlmmBinding.orderWalletAbsences??=[]).push(absence);
+            else if(!chain.transactions.length)throw Error('Authenticated current order wallet absence unavailable');
             pool.wallets.push({address:selected.wallet,owner:order.order,root:token.root,codeHash:token.walletCodeHash});
             wallets.set(selected.wallet,{kind:'jetton',id:`${this.network}:jetton:${token.root}`,master:token.root,owner:order.order,wallet:selected.wallet,decimals:token.decimals,symbol:token.symbol});bindings[key]=true;
             if(order.terms.executor)await load(order.terms.executor.toRawString(),'counterparty');

@@ -1,0 +1,82 @@
+{
+  "schema": "order-ledger-native-run-v1",
+  "command": [
+    "/opt/homebrew/opt/node@22/bin/node",
+    "./node_modules/vitest/vitest.mjs",
+    "--configLoader",
+    "runner",
+    "run",
+    "tests/wire/currentOrderLedgerRecovery.native.test.ts",
+    "--maxWorkers=1",
+    "--no-file-parallelism"
+  ],
+  "cwd": "/Users/mtakemiya/dev/tonswap/tonswap_web/.local/worktrees/order-ledger-recovery/tonswap_web",
+  "startedAt": "2026-10-18T10:36:46.421546+00:00",
+  "completedAt": "2026-10-18T10:37:16.206009+00:00",
+  "exitCode": 0,
+  "sourceLockSha256": "53c85fda4f9f399a9b8affdd4c9c89ab49ddadb47cafdb785ab8de65b735e9b2",
+  "changedSources": [],
+  "outputs": [
+    {
+      "path": "captures/order-0-failed-first-leg-default.json",
+      "bytes": 22541809,
+      "sha256": "7c008269bc9e152607d3090064e86588fd74c8dc9f4d9d3bfce2c9e89d0a5b34"
+    },
+    {
+      "path": "captures/order-0-failed-first-leg-x6.json",
+      "bytes": 22543932,
+      "sha256": "f764ffffbef42df354fd5408be3c022b0f217afe52ab97dba259dbdc4e63bc15"
+    },
+    {
+      "path": "captures/order-0-failed-owner-refund-default.json",
+      "bytes": 17383293,
+      "sha256": "56c0cf81adf47f4b62bfcd7ab02f6e973788b7dc6199de73244bb91ca3f9ab21"
+    },
+    {
+      "path": "captures/order-0-failed-owner-refund-x6.json",
+      "bytes": 17384866,
+      "sha256": "b4f70528806cb8cba014cd7dfa6bc6a70f29bb12eaa1c48ecddab92dc647ceb6"
+    },
+    {
+      "path": "captures/order-0-never-funded-cancelled-default.json",
+      "bytes": 6630815,
+      "sha256": "84b1f95f917678b6ad2b540fa5b09f52fa6784421d8803ad527ec15fbc389ba6"
+    },
+    {
+      "path": "captures/order-0-never-funded-cancelled-x6.json",
+      "bytes": 6631429,
+      "sha256": "11ec6290a129de17996eb2cfee73e1535a4d1a982e5c8b8d2d5558bd0a9fc533"
+    },
+    {
+      "path": "captures/order-0-never-funded-expired-default.json",
+      "bytes": 8056341,
+      "sha256": "91acc3fcd6e5fece6ce1039cb1910c6eaaf30da9eb30cd7a2ff6e47b9e08bd28"
+    },
+    {
+      "path": "captures/order-0-never-funded-expired-x6.json",
+      "bytes": 8057004,
+      "sha256": "acce749175bec260769dcb537ffb8bd9e6a6d324f34fdd7bbb97673b4dcfb149"
+    },
+    {
+      "path": "captures/order-1-never-funded-cancelled-default.json",
+      "bytes": 10025513,
+      "sha256": "f60cfcffd8b666898f571999348e634d09d651f90d353e10cab034bbda11442e"
+    },
+    {
+      "path": "captures/order-1-never-funded-cancelled-x6.json",
+      "bytes": 10026255,
+      "sha256": "ac16003f5dda0cc00266640449c4fee3bcada28f73fb6099c7b24c5190de8216"
+    },
+    {
+      "path": "captures/order-1-never-funded-expired-default.json",
+      "bytes": 11344117,
+      "sha256": "e7eeb76891f66a15484b97e617bd33880d6a22969a791cfbb64d28cf0a065dd3"
+    },
+    {
+      "path": "captures/order-1-never-funded-expired-x6.json",
+      "bytes": 11344910,
+      "sha256": "4a7ceef9f630e1bd25b2ba1cd337c29d3b0e445f4aca432a174612f5b4ac865e"
+    }
+  ],
+  "logSha256": "69b7a43ea8a913c27dad4cc58d39d353b23a16be72d899c0a458536d44400eb8"
+}

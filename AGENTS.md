@@ -477,10 +477,16 @@ chain while selecting only exact OCRT dispatches as child-creation authority.
 Run `npm run test:ledger:market`, `npm run test:ledger:liquidity` and
 `npm run test:ledger:orders`. Current native positives replace old DLMM ABI
 positives in these ordinary aliases. The portable originals and limitations are
-documented in `src/scripts/fixtures/current-dlmm-native/README.md`. Protected
-Order-input-wallet retry and never-funded cancellation do not yet qualify as
-positive financial completion in this business corpus; missing physical evidence
-remains unresolved; current decoder qualification does not authorize these gaps.
+documented in `src/scripts/fixtures/current-dlmm-native/README.md` and
+`src/scripts/fixtures/current-order-recovery-native/README.md`. Never-funded
+cancel/expiry requires original close/withdrawal/bounce evidence and authenticated
+same-head absence or an exact empty account envelope retaining its actual cursor.
+Protected Order-input recovery requires original debit, failed recipient/rich
+bounce, exact MARK witnesses, closed-order owner dispatch, zero-delta RETRY and
+actual later owner credit. The original debit is never counted twice.
+Certificate-only or missing-original recovery remains unresolved; a certificate
+or SENT status is not cash. The source-locked production-Hub corpus tests both
+fee profiles and ordinary projection/discovery without claiming public consensus.
 
 Market precision retains the configured source's original `sourceMasterchain`
 context and the exact execution account envelope plus independent shard anchor.

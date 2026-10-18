@@ -1,0 +1,11 @@
+{
+  "schema": "tonswap-current-order-recovery-fixture-v1",
+  "inventorySha256": "f5dd61270745936da6e86a5b3cc802019e3b6e262e68a671a45f5287cff37ee6",
+  "sourceArchive": {
+    "file": "source-bytes.json.gz",
+    "sha256": "cb30aebda95d7a48cd6f77800a3f9692d71a31ade6b2cef3e61f0f3d055bc17c",
+    "files": 412
+  },
+  "producerCommit": "d05e2822ce763b817313bf0c0b4862b1af46aa01",
+  "scope": "Original production-Hub native sandbox evidence. No public consensus, deployment, or installed dependency byte qualification is claimed."
+}
