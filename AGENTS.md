@@ -17,8 +17,8 @@ T3 discovery authenticates current hub storage and per-reserve canonical TEP-74
 wallet getters at one head. The hub is the token master; no separate root or
 receiver ABI is supported. An optional undiscovered KUSD slot does not block the
 core pair. Observed code never enrolls a new decoder. Current receipt candidates
-are not physical payout evidence. Keep the runtime qualification fence until the
-fresh capture and original-source closure checks pass.
+are not physical payout evidence. Current native capture and original-source
+closure checks qualify only the implemented current decoders.
 
 The portable current T3 hub/recovery cases retain their exact original 1.5
 manifest and source/artifact closure. `currentT3Fixture` must authenticate both
@@ -52,8 +52,8 @@ mandatory, unique `orderKeeper: { address }` identity; obsolete tuning fields an
 null are invalid. Public indexer
 mounts are exactly `/api/indexer`; responses and optional request fences bind
 `x-tonswap-release` to that manifest hash. Historical product qualification notes
-below do not authorize old decoders for the fresh native release. Keep the runtime
-qualification fence until each current product has its own accepted evidence.
+below do not authorize old decoders for the fresh native release. Current product
+bindings are qualified by their accepted original-source and native evidence.
 
 Current open-order discovery uses original authenticated factory and child
 transaction boundaries plus exact same-head account envelopes. Durable snapshots
@@ -372,7 +372,7 @@ nextCursor requires a verified zero predecessor. Pool operations use listed
 release pools or exact current factory-derived public PoolId with approved token
 families; current sparse T3 claims must link to the saved operation's causal
 original debit. Native captures qualify these seams independently of the old
-business decoders and the global ledger fence. Run current Launchpad/Pool request,
+business decoders. Run current Launchpad/Pool request,
 API and complete native capture checks before declaring them qualified.
 
 Current Perps transport decodes only PxStorage and current RiskVault layouts,
@@ -412,8 +412,8 @@ payout or coverage remain incomplete. Run `npm run test:ledger:perps` for
 `ledger-current-perps-range-test.ts` and the retained generic range/retry/recovery
 tests. The fresh source-locked native producer passed 18 tests with 66 default/x6
 captures; the portable originals and receipt remain unchanged. Sandbox heads do
-not qualify public deployment. `currentLedgerDecodersQualified` remains false
-until all current business-decoder gates are independently accepted. The earlier
+not qualify public deployment. The accepted current business-decoder gates
+authorize only their exact original-evidence rules. The earlier
 Perps ABI positive tests remain historical evidence, outside the ordinary gate.
 
 
@@ -433,8 +433,8 @@ holder, recovery and archive suites. The portable v2 corpus retains 44 unchanged
 native capture files, all 180 source files and the passing producer receipt.
 All eight worlds qualify the actual discovery graph from exact same-head current
 account envelopes and canonical getters, including explicit original cold-wallet
-states. Sandbox heads do not qualify a public deployment. The global current
-ledger qualification fence remains in place until all product gates pass.
+states. Sandbox heads do not qualify a public deployment; canonical storage,
+current live identities and native admission remain separate gates.
 
 
 Fresh market observations use `dlmm-market-ledger-v2` and the current Pool/T3/X
@@ -454,8 +454,8 @@ scoped cursor, compare-and-publish and transactional rollback rules remain intac
 Run `src/scripts/ledger-current-dlmm-market-test.ts` and
 `src/scripts/current-market-store-test.ts` for native economics and embedded
 PostgreSQL persistence; synthetic archive/head adapters are not public consensus
-qualification. Keep the global ledger fence until the full current suite and
-native release qualification are accepted.
+qualification. Run the full current suite and separately require native release
+qualification before public activation.
 
 Current runtime excludes the retired Cover, volatility-index and old farm tuple
 snapshot endpoints and decoders. These routes return 404. Current pool farming
@@ -480,7 +480,7 @@ positives in these ordinary aliases. The portable originals and limitations are
 documented in `src/scripts/fixtures/current-dlmm-native/README.md`. Protected
 Order-input-wallet retry and never-funded cancellation do not yet qualify as
 positive financial completion in this business corpus; missing physical evidence
-remains unresolved. Keep the global current-decoder qualification fence.
+remains unresolved; current decoder qualification does not authorize these gaps.
 
 Market precision retains the configured source's original `sourceMasterchain`
 context and the exact execution account envelope plus independent shard anchor.
@@ -497,3 +497,25 @@ Bound identity reads before RPC, original graphs to 10,000 transactions/64 MiB,
 and each execution proof including its account envelope to 256 transactions/8 MiB.
 Each token's retained precision archive has a separate 8 MiB pre-parse budget.
 Limits and missing boundaries yield explicit incomplete coverage.
+
+Current runtime qualification is exercised by `src/scripts/current-ledger-bootstrap-test.ts`
+through the actual derived binding, canonical SQL/catalog, separate worker/read
+pools, current v2 market construction and drained shutdown. Its explicit false
+binding allocates no pool. PGlite and synthetic fixture transport do not establish
+public consensus, PostgreSQL restart isolation or deployed native admission. Run
+`npm test` after changing these boundaries; final ledger qualification and web
+activation remain separate release receipts.
+
+The process head accepts valid network-bound monotonic blocks regardless of wall
+clock age. Only unpinned current read batches require a block at most 30 seconds
+old and at most five seconds ahead with a consistent peer clock, checked both
+before dispatch and at completion. A valid stale answer may try another peer
+within the existing bounds but never opens that peer's circuit. Explicit-block
+reads retain their original boundary during a chain stall or host clock skew.
+
+Current Perps generic warning removal recognizes only its current PX/oracle/risk
+and T3 custody vocabulary within a decoded operation. It never replaces original
+transaction, historical state or cash verification; unknown grouped messages
+retain their warnings. Run the current Perps suite and full ledger suite after
+changing this rule. The bounded-range retry test must explicitly complete and
+release held collectors before pool shutdown; early event-loop drain is failure.

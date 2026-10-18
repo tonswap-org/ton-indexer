@@ -23,6 +23,15 @@ export class BoundedLiteQueryError extends Error {
   }
 }
 
+/** A valid peer answer that this caller cannot use, such as a wall-clock-stale
+ * head for an unpinned current read. Validation may throw it to ask another peer
+ * within the same bounded attempts. It is never a peer failure: like any valid
+ * answer it keeps the peer healthy and its circuit closed, and this query does
+ * not ask the same peer again. */
+export class UnusableLiteAnswer extends Error {
+  constructor(cause: unknown) { super('Liteserver answer cannot serve this read', { cause }); this.name = 'UnusableLiteAnswer'; }
+}
+
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => { cleanup(); reject(signal.reason ?? cancelled()); };
@@ -182,6 +191,8 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
     const signal = AbortSignal.any([deadlineController.signal, this.shutdown.signal, ...(args.signal ? [args.signal] : [])]);
     const failures: { endpointIndex: number; cause: unknown }[] = [];
     const used = new Set<number>();
+    // Peers whose valid answer this caller could not use; repeating them cannot help.
+    const answered = new Set<number>();
     let attempts = 0;
     let hedged = false;
     let timedOut = false;
@@ -203,14 +214,20 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
       let ok = false;
       try {
         const value = await abortable(this.engines[index].query(f, req, { timeout, awaitSeqno: args.awaitSeqno, signal: attemptSignal } as LiteQueryOptions), attemptSignal);
-        args.validate?.(value, index);
+        let unusable: UnusableLiteAnswer | undefined;
+        try { args.validate?.(value, index); }
+        catch (cause) { if (!(cause instanceof UnusableLiteAnswer)) throw cause; unusable = cause; }
         ok = true;
         const latency = performance.now() - start;
         state.latencyMs = state.latencyMs === null ? latency : state.latencyMs * 0.75 + latency * 0.25;
         state.failures = 0; state.until = 0;
+        if (unusable) throw unusable;
         return value;
       } catch (cause) {
-        if (attemptSignal.reason !== hedgeCancelled && !signal.aborted) {
+        if (cause instanceof UnusableLiteAnswer) {
+          answered.add(index);
+          if (!signal.aborted) failures.push({ endpointIndex: index, cause });
+        } else if (attemptSignal.reason !== hedgeCancelled && !signal.aborted) {
           state.failures++;
           if (state.failures >= 2) state.until = performance.now() + Math.min(60_000, 2_000 * 2 ** Math.min(state.failures - 2, 5));
           failures.push({ endpointIndex: index, cause });
@@ -225,8 +242,12 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
     try {
       while (!signal.aborted && attempts < maxAttempts && Math.floor(deadline - performance.now()) >= 1) {
         let available = this.candidates(used);
-        if (!available.length && used.size) { used.clear(); available = this.candidates(used); }
+        if (!available.length && used.size) {
+          used.clear(); for (const index of answered) used.add(index);
+          available = this.candidates(used);
+        }
         if (!available.length) {
+          if (answered.size) break;
           if (!attempts && performance.now() - started >= 250) break;
           if (attempts && this.health().every(peer => !peer.ready || peer.open)) break;
           await abortable(new Promise<void>(resolve => {

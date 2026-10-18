@@ -17,7 +17,7 @@ export type RuntimeManifestBindings = {
   network: Network;
   jettonRoots: Array<{ master: string; symbol: string; decimals: number; masterCodeHash: string; walletCodeHash: string }>;
   currentSpotMarkets: CurrentSpotMarketBinding[];
-  currentLedgerDecodersQualified: false;
+  currentLedgerDecodersQualified: boolean;
   currentOptionsBinding: NativeOptionProofBinding;
   currentPerpsBinding: NativePerpsProofBinding;
   currentDlmmBinding: CurrentDlmmConfigBinding;
@@ -52,9 +52,9 @@ export function deriveRuntimeManifestBindings(manifest: RuntimeReleaseManifest):
     jettonRoots: manifest.tokens.map(token => ({ master: token.root, symbol: token.symbol, decimals: token.decimals,
       masterCodeHash: token.masterCodeHash, walletCodeHash: token.walletCodeHash })),
     currentSpotMarkets,
-    // The previous JTW1/T3Root/DexRouter ledger must not receive fresh code pins.
-    // This intermediate fence is removed only with current decoder qualification.
-    currentLedgerDecodersQualified: false,
+    // Current product gates authenticate original source, economics and physical cash.
+    // Canonical storage, exact live identities and native admission remain required.
+    currentLedgerDecodersQualified: true,
     currentOptionsBinding: currentOptionsBindingFromManifest(manifest),
     currentPerpsBinding: currentPerpsBindingFromManifest(manifest),
     currentDlmmBinding: currentDlmmBindingFromManifest(manifest),

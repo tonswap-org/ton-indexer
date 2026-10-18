@@ -5,7 +5,6 @@ import { FakeLiteEngine, masterAnswer, proofBlock } from './support/fakeLiteEngi
 import { errorDiagnostic, type Logger } from '../utils/logger';
 import { BoundedLiteQueryError } from '../data/boundedLiteEngine';
 
-const currentTime = Math.floor(Date.now() / 1_000);
 async function main() {
   const upstream = new Error('Timeout');
   const error = new Error('Liteserver query failed after 3 attempts', { cause: upstream });
@@ -36,7 +35,7 @@ async function main() {
   // Failure is a typed public boundary; operational evidence remains bounded.
   const warnings: { message: string; detail?: Record<string, unknown> }[] = [];
   const logger: Logger = { info() {}, debug() {}, error() {}, warn(message, detail) { warnings.push({ message, detail }); } };
-  const block = proofBlock(100, currentTime, -1);
+  const block = proofBlock(100, 1_700_000_100, -1);
   let fails = true;
   const peers = [0, 1].map(() => new FakeLiteEngine(async request => {
     if (request.kind === 'liteServer.getMasterchainInfoExt') return masterAnswer(block);

@@ -6,7 +6,7 @@ import { ChainReadError, type ChainHead } from '../data/dataSource';
 import { HeadTracker } from '../data/headTracker';
 import { FakeLiteEngine, masterAnswer, proofBlock, proofMasterchain } from './support/fakeLiteEngine';
 
-const currentTime = Math.floor(Date.now() / 1_000);
+const currentTime = 1_700_000_100;
 const logger = { info() {}, debug() {}, error() {}, warn() {} };
 const address = `0:${'a'.repeat(64)}`;
 const shard = proofBlock(80, currentTime - 1), mc = proofMasterchain(100, currentTime, shard);

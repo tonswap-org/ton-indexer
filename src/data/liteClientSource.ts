@@ -12,10 +12,9 @@ import {
 } from '@ton/core';
 import { provenShardAccount, provenConfig, proofRoots } from './liteProof';
 import { LiteClient, type LiteEngine } from 'ton-lite-client';
-import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError } from './boundedLiteEngine';
+import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError, UnusableLiteAnswer } from './boundedLiteEngine';
 import type { LiteserverPeer } from './liteserverPool';
 import { HeadTracker } from './headTracker';
-import { assertFreshHeadTime } from './freshHead';
 import { createLiteClientCache } from './liteAccountCache';
 import { readAccountAnchor, blockHeaderTime } from './accountAnchor';
 import { executeFreshCalls, freshMasterchainBlock,
@@ -145,15 +144,26 @@ export class LiteClientDataSource implements ChainSource {
       current.promise.then(value => finish(undefined, value), error => finish(error));
     });
   }
-  async head(options: { signal?: AbortSignal } = {}): Promise<ChainHead> {
+  /** A valid monotonic head remains usable for explicit-block reads even when
+   * current reads must wait for a fresh block or a consistent host clock. */
+  async head(options: { signal?: AbortSignal; current?: boolean } = {}): Promise<ChainHead> {
+    const current = options.current === true;
     return this.scope(options, async signal => {
       const cached = this.heads.fresh();
-      if (cached) return cached;
-      return this.shared('head', signal, async signal => {
+      if (cached && (!current || this.heads.isCurrent(cached))) return cached;
+      return this.shared(current ? 'head:current' : 'head', signal, async signal => {
+        let accepted: ChainHead | undefined;
         await this.ensure().query(Functions.liteServer_getMasterchainInfoExt, { kind: 'liteServer.getMasterchainInfoExt', mode: 0 }, {
-          signal, awaitSeqno: this.heads.current()?.seqno, validate: candidate => { this.heads.accept(candidate as Parameters<HeadTracker['accept']>[0]); },
+          signal, awaitSeqno: this.heads.current()?.seqno, validate: candidate => {
+            const head = this.heads.accept(candidate as Parameters<HeadTracker['accept']>[0]);
+            if (current) {
+              try { this.heads.assertCurrent(head); }
+              catch (cause) { throw new UnusableLiteAnswer(cause); }
+            }
+            accepted = head;
+          },
         });
-        return this.heads.current()!;
+        return accepted!;
       });
     });
   }
@@ -306,7 +316,7 @@ export class LiteClientDataSource implements ChainSource {
   }
   async read(calls: FreshReadCall[], options: ReadOptions = {}) {
     return this.scope(options, async signal => {
-      const head = options.at ?? await this.head({ signal });
+      const head = options.at ?? await this.head({ signal, current: true });
       const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
         if (ownedSignal.aborted) throw new ChainReadError('upstream_timeout');
         const address = Address.parse(call.address).toRawString();
@@ -315,7 +325,7 @@ export class LiteClientDataSource implements ChainSource {
       }, signal);
       // Unpinned reads are current preflight batches. Explicit historical/cycle
       // boundaries retain their original block identity without wall-time reuse.
-      if (!options.at) assertFreshHeadTime(head.utime);
+      if (!options.at) this.heads.assertCurrent(head);
       return { head, results };
     }, 18_000);
   }

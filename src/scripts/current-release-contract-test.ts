@@ -28,7 +28,7 @@ async function main() {
   for (const parsed of [native, synthetic]) {
     const bundle = buildRuntimeManifestBundle(parsed.runtime);
     const bindings = deriveRuntimeManifestBindings(parsed.runtime), perps = bindings.currentPerpsBinding;
-    assert.equal(bindings.currentLedgerDecodersQualified, false, 'one product binding does not remove the global qualification fence');
+    assert.equal(bindings.currentLedgerDecodersQualified, true, 'current native product decoders are qualified');
     assert.equal(perps.network, parsed.runtime.network.slice(4));
     assert.equal(perps.releaseId, parsed.runtime.releaseId); assert.equal(perps.manifestHash, parsed.manifestHash);
     for (const [key, role] of [['engine', 'PerpsEngine'], ['riskVault', 'RiskVault'], ['governance', 'Governance'],
@@ -113,10 +113,10 @@ async function main() {
   let allocated = 0;
   const deps = { config: { network: 'testnet', databaseUrl: 'postgres://localhost/owned-test-only' },
     manifest: { ...bundle.metadata, runtime: synthetic.runtime }, registry: bundle.contracts,
-    bindings: deriveRuntimeManifestBindings(synthetic.runtime), logger } as unknown as RuntimeDeps;
+    bindings: { ...deriveRuntimeManifestBindings(synthetic.runtime), currentLedgerDecodersQualified: false }, logger } as unknown as RuntimeDeps;
   const ledger = createLedgerRuntime(deps, { poolFactory: async () => { allocated++; throw Error('not expected'); } });
   ledger.start(); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(allocated, 0, 'unqualified old ledger decoders cannot allocate a release database');
+  assert.equal(allocated, 0, 'explicitly unqualified ledger bindings cannot allocate a release database');
   assert.equal(ledger.status(), 'unavailable'); assert.equal(ledger.readPool(), undefined); await ledger.stop();
   assert.throws(() => createAdmissionRuntime(deps), /qualified testnet admission runtime and exact artifact pins/,
     'the current engine still requires native admission artifacts');

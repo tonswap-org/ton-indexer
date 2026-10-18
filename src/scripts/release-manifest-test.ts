@@ -45,13 +45,13 @@ try {
   assert.deepEqual(native.runtime.orderKeeper, { address: '0:6e99eb37460359d88a06cc351a874e619c6f78c6773671cd1490173e64d1bba5' });
   assert.equal(nativeBindings.jettonRoots[0].walletCodeHash, native.runtime.templates.T3Wallet);
   assert.equal(nativeBindings.perpsEngine, native.runtime.contracts.PerpsEngine!.address);
-  assert.equal(nativeBindings.currentLedgerDecodersQualified, false);
+  assert.equal(nativeBindings.currentLedgerDecodersQualified, true);
   assert.equal(nativeBindings.optionCodeHashes, undefined);
   assert.equal(nativeBindings.currentOptionsBinding.options.factory.toRawString(), native.runtime.contracts.OptionFactory!.address);
   assert.equal(nativeBindings.currentOptionsBinding.options.vaultHash, native.runtime.contracts.OptionVault!.codeHash);
   assert.equal(nativeBindings.currentOptionsBinding.proofCodeHash, native.runtime.templates.T3RecoveryProof);
   assert.equal(nativeBindings.currentOptionsBinding.manifestHash, native.runtime.manifestHash);
-  assert.equal(nativeBindings.currentLedgerDecodersQualified, false);
+  assert.equal(nativeBindings.currentLedgerDecodersQualified, true);
   if (process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE) {
     const current = readCanonicalReleaseManifest(process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE, 'localnet');
     assert.equal(deriveRuntimeManifestBindings(current.runtime).t3Hub, current.runtime.contracts.T3Hub!.address);
@@ -132,7 +132,7 @@ try {
   assert.equal(bound.currentSpotMarkets[0].tokenT.walletCodeHash, fixture.templates.T3Wallet);
   assert.equal(parsed.spotMarkets.find(spot => spot.assetSymbol === 'USDT')!.tokenWalletCodeHash, bound.currentSpotMarkets[0].tokenX.walletCodeHash);
   assert.equal(parsed.spotMarkets[0].quoteWalletCodeHash, fixture.templates.T3Wallet);
-  assert.equal(bound.currentLedgerDecodersQualified, false, 'discovery must not authorize the previous business-state decoders');
+  assert.equal(bound.currentLedgerDecodersQualified, true, 'the qualified current product set does not enroll previous business-state decoders');
   assert.deepEqual(bound.marketBindings, []);
   for (const key of ['optionCodeHashes', 'launchpadCodeHashes', 't3CodeHashes', 't3RedemptionBinding'])
     assert.equal((bound as any)[key], undefined);

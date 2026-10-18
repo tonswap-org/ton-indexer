@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { currentPerpsProjectionFixture,currentPerpsGraphFixture } from './support/currentPerpsFixture';
 import { projectOwnerLedger } from '../ledger/project';
 import { verifyOrderTransaction } from '../orders/evidence';
-import { Address } from '@ton/core';
+import { Address, beginCell } from '@ton/core';
 import type { NativePerpsProofBinding } from '../ledger/currentPerpsProof';
 import { decodeCurrentPerpsOperations } from '../ledger/currentPerps';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
@@ -37,12 +37,28 @@ async function main(){
    const total=(direction:string)=>financial.filter(m=>m.direction===direction).reduce((n,m)=>n+BigInt(m.amountRaw??'0'),0n).toString();
    assert.equal(total('in'),e.paidOutRaw,`${file}: physical payout exactly once`);assert.equal(total('out'),e.paidInRaw,`${file}: physical collateral exactly once`);
    assert.equal(event.settlement!.status,e.pendingOutRaw==='0'&&e.outcome!=='unresolved'?'confirmed':'incomplete',`${file}: ${event.issues}`);
+   if(event.settlement!.status==='confirmed')assert.deepEqual(event.issues.filter(issue=>['settlement_not_decoded','related_account_coverage_unverified'].includes(issue)),[],`${file}: proven current messages lose generic warnings`);
    assert(!event.issues.includes('multiple_protocol_operations_grouped'),`${file}: grouped operations`);assert(!event.movements.some(m=>m.asset.kind==='perps_balance'),'Position accounting is not another owner asset');checks++;
    if(['open','profit-settleRetry-close'].includes(name)){
     const graph=await currentPerpsGraphFixture(input);assert(graph.currentPerpsBinding,`${file}: ${graph.issues}`);assert.equal(graph.bindings[`current-perps:${c.request.engine}`],true);checks++;
     const unavailable=await currentPerpsGraphFixture(input,{missingAccount:c.request.riskVault});assert(!unavailable.currentPerpsBinding);assert(unavailable.issues.includes('perps_current_discovery_unavailable'));checks++;
    }
    if(name==='open'){
+    // Keep the same fully qualified current binding and readable native peers as
+    // the positive graph above; only the owner's activity is absent.
+    const inactive={...input,chains:new Map(input.chains)};
+    inactive.chains.set(input.owner,{...input.chains.get(input.owner)!,transactions:[]});
+    const irrelevant=await currentPerpsGraphFixture(inactive);
+    assert(!irrelevant.chains.has(c.request.engine)&&!irrelevant.currentPerpsBinding,'A configured current engine is not loaded without owner relevance');
+    assert(!irrelevant.issues.includes('perps_current_discovery_unavailable'),'No failed peer read substitutes for the relevance check');checks++;
+    const unknown=currentPerpsProjectionFixture({...c,binding:b});
+    const dispatch=unknown.chains.get(input.owner)!.transactions.find(tx=>tx.lt===c.request.dispatch.lt)!;
+    dispatch.outMessages.push({source:input.owner,destination:c.request.engine,value:'0',createdLt:'999999999999',op:0xdeadbeef,
+      body:beginCell().storeUint(0xdeadbeef,32).endCell().toBoc().toString('base64')});
+    const untrusted=await projectOwnerLedger(unknown);
+    assert(!untrusted.events.some(event=>event.settlement?.currentPerps?.dispatch.hash===c.request.dispatch.hash&&event.settlement?.status==='confirmed'),'A changed original dispatch cannot reuse the native proof');
+    const unknownEvent=untrusted.events.find(candidate=>candidate.id===event.id);
+    assert(unknownEvent&&['settlement_not_decoded','related_account_coverage_unverified'].every(issue=>unknownEvent.issues.includes(issue)),'Unknown grouped owner messages keep both generic warnings');checks++;
     const missing=await projectOwnerLedger({...input,stateAt:async()=>null});assert(!missing.events.some(e=>e.settlement?.currentPerps&&e.settlement.status==='confirmed'));checks++;
     const noT3=await projectOwnerLedger({...input,t3Hubs:new Map()});assert(!noT3.events.some(e=>e.settlement?.currentPerps&&e.settlement.status==='confirmed'));checks++;
     const bounded=await currentPerpsGraphFixture(input,{maxAccounts:1});assert(bounded.issues.includes('related_account_limit_reached'));checks++;

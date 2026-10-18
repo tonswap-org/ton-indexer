@@ -12,7 +12,7 @@ import { decodeLaunchpadRefunds, type LaunchpadRefundOperation } from "./launchp
 import { decodeLaunchpadContributions, type LaunchpadParticipationOperation } from "./launchpadContributions";
 import type { LedgerLaunchpadSale } from "./launchpadModels";
 import { readLaunchpadRequests } from "./launchpadRequests";
-import { PERPS_USER_OPS } from "./perpsWire";
+import { PERPS_OP } from "./currentPerpsState";
 import {
   decodeOptionExercises,
   type OptionLifecycleOperation,
@@ -27,7 +27,7 @@ import {
   OPTION_NATIVE_REFUND,
 } from "./optionLifecycleWire";
 import { decodeT3, type LedgerT3Hub, type T3LedgerOperation } from "./t3";
-import { CURRENT_T3_OPS, T3_MINT, T3_PAIR, T3_SWAP, T3_HUB_PAYOUT } from "./currentT3Wire";
+import { CURRENT_T3_OPS, T3_MINT, T3_PAIR, T3_SWAP, T3_HUB_PAYOUT, T3_WALLET_DELIVERY, t3Attempt } from "./currentT3Wire";
 import {
   decodeOptionPurchases,
   type LedgerOptionFactory,
@@ -35,7 +35,7 @@ import {
 } from "./options";
 import { createHash } from "node:crypto";
 import { Cell } from "@ton/core";
-import type { RawTransaction } from "../data/dataSource";
+import type { RawMessage, RawTransaction } from "../data/dataSource";
 import type { Network } from "../models";
 import { classifyTransaction } from "../utils/txClassifier";
 import { createDlmmProofGraph } from "./dlmmProof";
@@ -175,6 +175,37 @@ const basicIssues = new Set([
   "related_account_coverage_unverified",
   "transaction_not_decoded",
 ]);
+// Vocabulary only: the original transaction/state/cash verifier must separately
+// confirm the operation. These current oracle, risk and custody messages do not
+// authorize settlement by opcode or make an unknown grouped message disappear.
+const currentPerpsMessages = new Set<number>([
+  ...Object.values(PERPS_OP), ...CURRENT_T3_OPS,
+  0x4f515259, 0x4f524553, // OQRY / ORES
+  0x52565447, 0x52565441, 0x52565354, 0x52565348, // RVTG / RVTA / RVST / RVSH
+  0x434c4d4a, // independently verified aggregate owed claim
+]);
+function knownCurrentPerpsMessage(message: RawMessage): boolean {
+  if (currentPerpsMessages.has(businessOpcode(message)!)) return true;
+  // A failed delivery can be followed by a separately proved successful retry.
+  // Recognize only its full current VM bounce, never a prefix or foreign body.
+  try {
+    const cell = bodyCell(message);
+    if (!message.bounced || !cell || cell.isExotic || ![73, 137].includes(cell.bits.length) || cell.refs.length !== 2) return false;
+    const s = cell.beginParse();
+    if (s.loadUint(32) !== 0xfffffffe) return false;
+    const original = s.loadRef(), infoCell = s.loadRef();
+    if (original.isExotic || infoCell.isExotic) return false;
+    const info = infoCell.beginParse();
+    info.loadCoins(); if (info.loadBit()) info.loadRef();
+    info.loadUintBig(64); info.loadUint(32); info.endParse();
+    s.loadUint(8); s.loadInt(32);
+    if (s.loadBit()) { s.loadUint(32); s.loadUint(32); } s.endParse();
+    const body = original.beginParse();
+    if (body.loadUint(32) !== T3_WALLET_DELIVERY) return false;
+    t3Attempt(body.loadRef()); body.endParse();
+    return true;
+  } catch { return false; }
+}
 
 export async function projectOwnerLedger(
   input: ProjectionInput,
@@ -938,8 +969,8 @@ export async function projectOwnerLedger(
           (groupOps.some(op => op.kind === 'option_operation') &&
             (CURRENT_OPTIONS_USER_OPS.has(businessOpcode(msg)!) || CURRENT_T3_OPS.has(businessOpcode(msg)!) || (msg.bounced === true && opcode(msg) === 0xfffffffe))) ||
           (groupOps.some((op) => op.kind === "launchpad_refund") && opcode(msg) === 0x434c414d) ||
-          (groupOps.some((op) => op.kind === "perps_operation") &&
-            PERPS_USER_OPS.has(opcode(msg)!)) ||
+          (groupOps.some((op) => op.settlement?.currentPerps) &&
+            knownCurrentPerpsMessage(msg)) ||
           (groupOps.some(
             (op) => op.settlement?.protocol === "t3",
           ) &&

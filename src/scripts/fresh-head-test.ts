@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { mock } from 'node:test';
 import { ChainReadError } from '../data/dataSource';
+import { FreshReadUnavailableError } from '../data/freshRead';
 import { HeadTracker } from '../data/headTracker';
 import { assertFreshHeadTime, assertFreshLiteHeadTime } from '../data/freshHead';
 import { createLiteChainSource } from '../data/liteClientSource';
-import { FakeLiteEngine, masterAnswer, proofBlock } from './support/fakeLiteEngine';
+import { FakeLiteEngine, masterAnswer, proofBlock, proofMasterchain } from './support/fakeLiteEngine';
 
 const logger = { info() {}, debug() {}, error() {}, warn() {} };
 const address = `0:${'1'.repeat(64)}`;
@@ -30,11 +31,24 @@ function timeAndIdentity() {
   assert.throws(() => { accepted.seqno = 1; });
   assert.throws(() => tracker.accept(masterAnswer(proofBlock(99, now, -1))), ChainReadError);
   assert.throws(() => tracker.accept(masterAnswer(proofBlock(100, now + 1, -1))), ChainReadError);
-  assert.throws(() => tracker.accept(masterAnswer(proofBlock(101, now - 31, -1))), ChainReadError);
+  assert.throws(() => tracker.accept(masterAnswer(proofBlock(101, now - 31, -1))), ChainReadError, 'A later block cannot have an earlier time');
   assert.equal(tracker.current()?.seqno, 100, 'Rejected peers cannot replace the authenticated process head');
+  tracker.assertCurrent(accepted);
   const clock = mock.method(Date, 'now', () => (now + 31) * 1_000);
-  try { assert.equal(tracker.fresh(), null, 'Expired block time cannot be reused as current'); }
-  finally { clock.mock.restore(); }
+  try {
+    assert.equal(tracker.fresh(), null, 'The reuse window measures observation age');
+    assert.throws(() => tracker.assertCurrent(accepted), FreshReadUnavailableError, 'Expired block time is not current');
+  } finally { clock.mock.restore(); }
+
+  // Wall-clock age is not head validity; only current reads check it.
+  const stalled = new HeadTracker('testnet');
+  const old = stalled.accept({ ...masterAnswer(proofBlock(100, now - 60, -1)), now });
+  assert.equal(old.seqno, 100, 'A 60 s old block is a valid process head');
+  assert.throws(() => stalled.assertCurrent(old), FreshReadUnavailableError);
+  const skewed = stalled.accept({ ...masterAnswer(proofBlock(101, now, -1)), now: now + 45 });
+  assert.equal(stalled.current(), skewed, 'A peer clock 45 s off still supplies a valid monotonic head');
+  assert.throws(() => stalled.assertCurrent(skewed), FreshReadUnavailableError, 'An inconsistent peer clock is not current');
+  assert.throws(() => stalled.assertCurrent({ ...skewed }), FreshReadUnavailableError, 'Only a head observed by this tracker can be current');
 }
 
 async function boundedPeerSelection() {
@@ -95,8 +109,74 @@ async function concurrentBoundary() {
   } finally { release(); clock.mock.restore(); await source.close(); }
 }
 
+const unavailable = (error: unknown) => error instanceof ChainReadError && error.code === 'upstream_unavailable';
+const dispatchedGetters = (peer: FakeLiteEngine) => peer.requests.filter(row => row.request.kind === 'liteServer.runSmcMethod').length;
+const headQueries = (peer: FakeLiteEngine) => peer.requests.filter(row => row.request.kind === 'liteServer.getMasterchainInfoExt').length;
+
+/** Wall-clock freshness belongs to unpinned current reads. A testnet stall or a
+ * skewed host clock must neither refuse a valid head nor fail its peer. */
+async function staleOrSkewedHeadServesExplicitBlocks() {
+  for (const [label, blockTime, hostAhead] of [
+    ['testnet stall: newest block 60 s old, peer clock correct', now - 60, 0],
+    ['host clock 45 s ahead of chain and peer', now, 45],
+    ['both: newest block 60 s old and host clock 45 s ahead', now - 60, 45],
+  ] as const) {
+    const shard = proofBlock(80, blockTime - 1), master = proofMasterchain(100, blockTime, shard);
+    let wall = (now + hostAhead) * 1_000;
+    const clock = mock.method(Date, 'now', () => wall);
+    const peer = new FakeLiteEngine(async request => {
+      if (request.kind === 'liteServer.getMasterchainInfoExt') return { ...masterAnswer(master), now };
+      if (request.kind === 'liteServer.getAccountState')
+        return { id: request.id, shardblk: shard.id, state: Buffer.alloc(0), proof: shard.proof, shardProof: master.proof };
+      return getter(request);
+    });
+    const source = sourceFor(peer);
+    const healthy = () => assert.deepEqual(source.health().peers.map(row => [row.failures, row.open]), [[0, false]],
+      `${label}: wall-clock staleness is never a peer failure or an open circuit`);
+    try {
+      const head = await source.head();
+      assert.equal(head.seqno, 100, `${label}: any valid monotonic head is the process head`);
+      wall += 2_000;
+      assert.equal((await source.head()).seqno, 100, `${label}: later head polls keep succeeding`);
+      healthy();
+      const account = await source.getAccountState(address, { at: head });
+      assert.equal(account.anchor!.shardBlock.seqno, 80, `${label}: an explicit-block account read is served`);
+      const pinned = await source.read(calls, { at: head });
+      assert.equal(pinned.head, head);
+      assert.equal(pinned.results[0].kind === 'getter' && pinned.results[0].exitCode, 17, `${label}: an explicit-block batch is served`);
+      const before = dispatchedGetters(peer), heads = headQueries(peer);
+      await assert.rejects(source.read(calls), unavailable, `${label}: an unpinned current read is still refused`);
+      assert.equal(dispatchedGetters(peer), before, `${label}: a stale current read dispatches no financial read`);
+      assert.equal(headQueries(peer), heads + 1, `${label}: one bounded query does not repeat a valid stale answer`);
+      healthy();
+      assert.equal((await source.getAccountState(address, { at: head })).balance, '0', `${label}: a refused current read leaves pinned reads working`);
+      assert.equal((await source.read(calls, { at: head })).head, head);
+      healthy();
+    } finally { clock.mock.restore(); await source.close(); }
+  }
+}
+
+/** A current read still reaches a fresh peer when the preferred peer lags in wall time. */
+async function stalePeerSkippedWithoutFault() {
+  const lagging = new FakeLiteEngine(async request => request.kind === 'liteServer.getMasterchainInfoExt'
+    ? { ...masterAnswer(proofBlock(100, now - 60, -1)), now } : getter(request));
+  const current = new FakeLiteEngine(async request => request.kind === 'liteServer.getMasterchainInfoExt'
+    ? masterAnswer(proofBlock(101, now, -1)) : getter(request));
+  const source = sourceFor(lagging, current);
+  try {
+    const result = await source.read(calls);
+    assert.equal(result.head.seqno, 101, 'A wall-clock-stale answer asks another peer within the same bounded query');
+    assert.equal(headQueries(lagging), 1, 'The stale peer is asked once');
+    assert.equal(dispatchedGetters(lagging) + dispatchedGetters(current), 1);
+    assert.deepEqual(source.health().peers.map(row => [row.failures, row.open]), [[0, false], [0, false]],
+      'A stale but valid answer is not a peer failure');
+  } finally { await source.close(); }
+}
+
 async function main() {
   timeAndIdentity(); await boundedPeerSelection(); await currentAtCompletion(); await concurrentBoundary();
+  await staleOrSkewedHeadServesExplicitBlocks(); await stalePeerSkippedWithoutFault();
   console.log('fresh process head: clock bounds, peer rejection, causal floor and concurrent pinned boundaries passed');
+  console.log('fresh process head: a stalled chain or skewed clock serves explicit blocks, refuses unpinned current reads and fails no peer');
 }
 void main().catch(error => { console.error(error); process.exitCode = 1; });

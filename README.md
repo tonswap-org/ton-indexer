@@ -33,7 +33,7 @@ produce coverage gaps. Immutable snapshots survive restarts, and late workers
 cannot replace a newer publication. No current account or getter result is cached.
 Use `INDEXER_DATABASE_URL` and the ordinary `npm run build`; the canonical database
 catalog includes the orders tables. This adds no readiness success keys and does
-not bypass native admission or the current product-decoder qualification fence.
+not bypass native admission or canonical storage and live-identity checks.
 
 `GET /api/indexer/v1/config-prices?masterchainSeqno=N&blockRootHash=HEX` authenticates
 config parameters 18, 21 and 25 at the same current masterchain boundary used by
@@ -85,7 +85,7 @@ a limit never produces a truncated complete response. Requests exceeding 192 KiB
 are rejected. Original immutable boundaries and their authenticated containing
 sequence numbers share the release-scoped physical store with order discovery;
 current hub, wallet and configuration reads remain fresh. These runtime limits
-do not certify the native capture set or remove the ordinary ledger decoder fence.
+do not certify native captures or public deployment readiness.
 
 `POST /api/indexer/v1/spot/order-wallet-claim-evidence` accepts the exact
 `order-settlement` request for an order whose input is T3. It authenticates the
@@ -148,8 +148,8 @@ qualify a live release. Run `npm run test:current-order-settlement:capture --
 matrix covers both directions, three-slice completion, cancellation, partial
 execution, refusal/refund, unfunded cancellation, expiry and ten-slice completion.
 The ten-slice graphs fit the bounds; longer histories or repeated failures may
-remain explicitly incomplete. This does not qualify unbounded recovery or remove
-the ordinary ledger decoder fence.
+remain explicitly incomplete. This does not qualify unbounded recovery or
+public deployment readiness.
 
 Run `npm run test:current-release` for manifest, wallet, header and API checks and
 `npm run test:current-orders` for durable publication and endpoint checks. Run
@@ -569,8 +569,8 @@ does not claim every historic LP event can be resolved by all providers.
 Current Options ledger operations use the release-pinned `OptionFactory`,
 `OptionVault`, `OptionSeriesManager`, Shout/Outperformance child templates, T3
 wallet and recovery-proof code. `currentOptionsBinding` is separate from the
-retired factory/position layout. The global ledger qualification fence stays in
-place until all current product decoders are qualified.
+retired factory/position layout. Current decoder qualification never supplies
+missing original state or physical cash evidence.
 
 The ledger infers OVBY/OVFD, OSWW, FEXC/OFEX and slot0 CLMJ requests from the
 owner's original outgoing messages. It authenticates each original transaction
@@ -646,7 +646,7 @@ original producer receipts and their passing logs, including each target's full
 Tolk import closure and virtual opcode/vendor inputs. Historical TypeScript
 producer-source locks and compiler-binary locks were not recorded and are not
 claimed. This source qualification does not authenticate public consensus or
-remove the runtime fence; all current product and release gates remain required.
+qualify a public deployment; all current product and release gates remain required.
 Run the dependency-refresh, boundary and platform-contract tests
 after changing the shared native mint publication fixture.
 
@@ -890,7 +890,7 @@ static registry, registry sync, secondary pin source or registry parity check. T
 
 Every API response, including validation errors, preflight and ledger readiness, carries `x-tonswap-release` with the bound manifest hash. A request may supply the same header. A different hash returns HTTP 409 with `cache-control: no-store` before route work; an unavailable binding returns HTTP 503. CORS allows and exposes this header, including when custom header lists are configured.
 
-During the fresh contract port, discovery identities do not authorize older business-state decoders. The runtime refuses ledger initialization before allocating a database while `currentLedgerDecodersQualified` is false; ledger readiness remains unavailable. The product ledger descriptions below require current decoder qualification before they can be accepted for this release. Unlisted token roots remain unqualified.
+Current source and native evidence qualify the implemented T3, Options, Perps, DLMM, Orders and Launchpad decoders. `deriveRuntimeManifestBindings` marks that current decoder set qualified; it never enrolls older business-state readers. An explicitly false binding still refuses ledger initialization before allocating a database. Canonical SQL/catalog, release namespace, compiled-build identity and live T3 reserve authentication remain mandatory. Unlisted token roots remain unqualified.
 Reserve wallet custody still requires exact on-chain identity and archive
 evidence. Native perps admission artifacts and chain/genesis authentication
 remain required. Deployed identities do not establish fresh oracle depth, mint
@@ -1990,7 +1990,7 @@ intervals retain later retry credits from the same current head.
 returns at most three server-derived engine, RiskVault and owner wallet groups.
 Each sparse proof retains its original causal debit and immutable transfer terms;
 aggregate limits are 10,000 history rows, 32 records, 32 failures and 8 MiB.
-The global ordinary-ledger qualification fence is unchanged. Run
+This evidence does not qualify public deployment or missing history. Run
 `npm run test:current-perps-evidence` and original native execution/recovery checks.
 
 `POST /api/indexer/v1/wallet/transfers/evidence` binds a manifest token transfer to
@@ -2019,8 +2019,8 @@ original native append/consume/append-after-consumption under a synthetic source
 and head, independently of PostgreSQL persistence checks; it is not public chain
 or deployment qualification. Preserve the output and complete journal together.
 Current Perps manifest bindings carry exact engine, RiskVault, proof and market
-identities into the ledger. The global product qualification fence remains closed
-until each product's current native ledger acceptance is complete.
+identities into the ledger. Each product uses its qualified current decoder and
+refuses missing original evidence independently.
 
 Current Perps business projection accepts only the PxStorage six-operation wire,
 exact manifest engine/RiskVault/pool/T3 pins, original owner dispatch and
@@ -2035,8 +2035,8 @@ payout or coverage remain incomplete. Run `npm run test:ledger:perps` for
 `ledger-current-perps-range-test.ts` and the retained generic range/retry/recovery
 tests. The fresh source-locked native producer passed 18 tests with 66 default/x6
 captures; the portable originals and receipt remain unchanged. Sandbox heads do
-not qualify public deployment. `currentLedgerDecodersQualified` remains false
-until all current business-decoder gates are independently accepted. The earlier
+not qualify public deployment. The accepted current business-decoder gates
+authorize only their exact original-evidence rules. The earlier
 Perps ABI positive tests remain historical evidence, outside the ordinary gate.
 
 
@@ -2056,8 +2056,8 @@ holder, recovery and archive suites. The portable v2 corpus retains 44 unchanged
 native capture files, all 180 source files and the passing producer receipt.
 All eight worlds qualify the actual discovery graph from exact same-head current
 account envelopes and canonical getters, including explicit original cold-wallet
-states. Sandbox heads do not qualify a public deployment. The global current
-ledger qualification fence remains in place until all product gates pass.
+states. Sandbox heads do not qualify a public deployment; canonical storage,
+current live identities and native admission remain separate gates.
 
 
 Fresh market observations use `dlmm-market-ledger-v2` and the current Pool/T3/X
@@ -2077,8 +2077,8 @@ scoped cursor, compare-and-publish and transactional rollback rules remain intac
 Run `src/scripts/ledger-current-dlmm-market-test.ts` and
 `src/scripts/current-market-store-test.ts` for native economics and embedded
 PostgreSQL persistence; synthetic archive/head adapters are not public consensus
-qualification. Keep the global ledger fence until the full current suite and
-native release qualification are accepted.
+qualification. Run the full current suite and separately require native release
+qualification before public activation.
 
 
 Current DLMM business qualification uses exact current Pool/SpotOrderFactory/SpotOrder
@@ -2096,7 +2096,7 @@ positives in these ordinary aliases. The portable originals and limitations are
 documented in `src/scripts/fixtures/current-dlmm-native/README.md`. Protected
 Order-input-wallet retry and never-funded cancellation do not yet qualify as
 positive financial completion in this business corpus; missing physical evidence
-remains unresolved. Keep the global current-decoder qualification fence.
+remains unresolved; current decoder qualification does not authorize these gaps.
 
 Market precision retains the configured source's original `sourceMasterchain`
 context and the exact execution account envelope plus independent shard anchor.
@@ -2113,3 +2113,26 @@ Bound identity reads before RPC, original graphs to 10,000 transactions/64 MiB,
 and each execution proof including its account envelope to 256 transactions/8 MiB.
 Each token's retained precision archive has a separate 8 MiB pre-parse budget.
 Limits and missing boundaries yield explicit incomplete coverage.
+
+Current runtime qualification is exercised by `src/scripts/current-ledger-bootstrap-test.ts`
+through the actual derived binding, canonical SQL/catalog, separate worker/read
+pools, current v2 market construction and drained shutdown. Its explicit false
+binding allocates no pool. PGlite and synthetic fixture transport do not establish
+public consensus, PostgreSQL restart isolation or deployed native admission. Run
+`npm test` after changing these boundaries; final ledger qualification and web
+activation remain separate release receipts.
+
+The process head accepts valid network-bound monotonic blocks regardless of wall
+clock age. Only unpinned current read batches require a block at most 30 seconds
+old and at most five seconds ahead with a consistent peer clock, checked both
+before dispatch and at completion. A valid stale answer may try another peer
+within the existing bounds but never opens that peer's circuit. Explicit-block
+reads retain their original boundary during a chain stall or host clock skew.
+
+Confirmed current Perps operations recognize the PX, oracle, RiskVault and T3
+custody message vocabulary when removing generic undecoded warnings. Original
+transaction/state/economics and physical cash checks still establish settlement;
+unknown grouped messages retain the warnings. The retained current native Perps
+suite checks both cases. The bounded-range retry test also requires explicit
+completion and releases held collectors before closing its pool, so abandoned
+cleanup cannot silently exit successfully.

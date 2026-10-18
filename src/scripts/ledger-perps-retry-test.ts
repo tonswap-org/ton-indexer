@@ -6,7 +6,9 @@ import { Pool } from 'pg';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import { PerpsRangeService } from '../ledger/perpsRange';
 import { loadOpcodes } from '../utils/opcodes';
+import { exitGuard } from './support/exitGuard';
 
+const guard = exitGuard('ledger-perps-retry-test');
 
 /** The optional native run uses an isolated schema on an explicitly selected
  * loopback database, proving independent-connection admission and worker locks. */
@@ -29,6 +31,11 @@ async function main() {
   const source = fixtureChainSource({ head: async () => { sourceCalls++; throw Error('temporary provider outage'); } });
   const options = { perpsEngine: `0:${'2'.repeat(64)}`, t3Root: `0:${'3'.repeat(64)}`, perpsEngineCodeHash: '4'.repeat(64) };
   const services: PerpsRangeService[] = [];
+  // Collectors that a check holds open, and direct collections the services do
+  // not track. Cleanup stops the services, releases the held work and waits for
+  // it before closing the pool, so a failed check reaches the catch instead of
+  // an event loop that drains with exit code 0.
+  const blocked: Array<() => void> = [], direct: Promise<unknown>[] = [];
   const service = async () => {
     const value = new PerpsRangeService('localnet', store, source, loadOpcodes(), options);
     // Admit deterministically; invoke the public collector explicitly below.
@@ -109,12 +116,14 @@ async function main() {
       let rejectRead!: (error: Error) => void;
       let entered!: () => void;
       const readEntered = new Promise<void>(resolve => { entered = resolve; });
-      const heldSource = fixtureChainSource({ head: async () => { sourceCalls++; entered(); return new Promise((_resolve, reject) => { rejectRead = reject; }); } });
+      const heldSource = fixtureChainSource({ head: async () => { sourceCalls++; entered(); return new Promise((_resolve, reject) => {
+        rejectRead = reject; blocked.push(() => reject(Error('released by cleanup'))); }); } });
       const workers = [0, 1].map(() => new PerpsRangeService('localnet', store, heldSource, loadOpcodes(), options));
       services.push(...workers);
       const generation = page.coverage.generation!;
       const beforeReads = sourceCalls;
       const firstWorker = workers[0].collect(generation);
+      direct.push(firstWorker);
       await readEntered;
       const secondWorker = await workers[1].collect(generation);
       assert.equal(secondWorker, false);
@@ -207,7 +216,7 @@ async function main() {
     await sql.query('DELETE FROM ledger_perps_ranges');
     const priority = await service(), queued: string[]=[], releases:Array<()=>void>=[];
     const pages=[];for(let index=0;index<4;index++)pages.push(await priority.page(`queue-${index}`,bounds));
-    priority.collect = async generation => {queued.push(generation);await new Promise<void>(resolve=>releases.push(resolve));return true;};
+    priority.collect = async generation => {queued.push(generation);await new Promise<void>(resolve=>{releases.push(resolve);blocked.push(resolve);});return true;};
     (priority as any).stopped=false;
     (priority as any).schedule(pages[0].coverage.generation);(priority as any).schedule(pages[1].coverage.generation);
     (priority as any).schedule(pages[2].coverage.generation);
@@ -225,9 +234,12 @@ async function main() {
     assert((await isolated.page('isolated-reader',bounds)).coverage.generation,'range page/admission use read pool while worker pool is exhausted');
     console.log('PASS bounded-range API read/admission pool isolation');
   } finally {
-    await Promise.all(services.map(value => value.stop()));
+    const stopping = Promise.all(services.map(value => value.stop()));
+    for (const release of blocked.splice(0)) release();
+    await stopping;
+    await Promise.allSettled(direct);
     await sql.end();
     if (admin) { await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+main().then(() => guard.done(), error => { console.error(error); process.exitCode = 1; });

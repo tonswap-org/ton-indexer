@@ -6,7 +6,7 @@ import { performance } from 'node:perf_hooks';
 import type { ADNLClientTCP } from 'adnl';
 import { Codecs } from 'ton-lite-client/dist/schema';
 import { TLReadBuffer, TLWriteBuffer, type TLFunction } from 'ton-tl';
-import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError } from '../data/boundedLiteEngine';
+import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError, UnusableLiteAnswer } from '../data/boundedLiteEngine';
 import { ChainReadError } from '../data/dataSource';
 import { FakeLiteEngine } from './support/fakeLiteEngine';
 
@@ -91,6 +91,24 @@ async function main() {
     controller.abort(); await settled; await delay(0);
     assert.equal(primary.active + secondary.active, 0);
   } finally { controller.abort(); limited.close(); }
+
+  const staleAnswer = new FakeLiteEngine(async () => 5);
+  const usableAnswer = new FakeLiteEngine(async () => 6);
+  const choosy = new BoundedLiteEngine([staleAnswer, usableAnswer]);
+  const onlyUsable = (value: unknown) => { if (value === 5) throw new UnusableLiteAnswer(new Error('stale for this caller')); };
+  try {
+    assert.equal(await choosy.query(method, {}, { validate: onlyUsable }), 6, 'an unusable answer asks another peer');
+    usableAnswer.ready = false;
+    const before = staleAnswer.requests.length;
+    await assert.rejects(choosy.query(method, {}, { validate: onlyUsable }), BoundedLiteQueryError);
+    assert.equal(staleAnswer.requests.length, before + 1, 'one query never repeats a valid unusable answer');
+    await assert.rejects(choosy.query(method, {}, { validate: onlyUsable }), BoundedLiteQueryError);
+    assert.deepEqual(choosy.health().map(row => [row.failures, row.open]), [[0, false], [0, false]],
+      'an unusable answer is never a peer failure and never opens a circuit');
+    assert.equal(await choosy.query(method, {}), 5, 'the peer keeps serving callers that can use its answer');
+    await assert.rejects(choosy.query(method, {}, { validate: () => { throw new Error('invalid answer'); } }), BoundedLiteQueryError);
+    assert.ok(choosy.health()[0].failures > 0, 'an invalid answer remains a peer failure');
+  } finally { choosy.close(); }
 
   const uncertain = new FakeLiteEngine(async () => { throw new Error('connection lost after write'); });
   const duplicate = new FakeLiteEngine(async () => 1);
