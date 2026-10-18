@@ -154,7 +154,7 @@ async function main() {
     const orderClaim = orderSettlementSpotOperationRequestFixture().request, orderClaimPath = '/api/indexer/v1/spot/order-wallet-claim-evidence';
     const orderClaimed = await app.inject({ method: 'POST', url: orderClaimPath, payload: orderClaim }); check(orderClaimed, 200);
     assert.equal(orderClaimed.json().request.order, orderClaim.order); assert.equal(orderClaimed.json().request.fundingBodyHash, orderClaim.funding!.bodyHash);
-    const otherInput = { ...orderCreateSpotOperationRequestFixture(true).request, kind: 'order-settlement', funding: null };
+    const otherInput = orderSettlementSpotOperationRequestFixture(false, true).request;
     for (const payload of [t3, orderCreateSpotOperationRequestFixture().request, directSpotOperationRequestFixture().request, otherInput, { ...orderClaim, extra: 1 }])
       check(await app.inject({ method: 'POST', url: orderClaimPath, payload }), 400, 'bad_request');
     check(await app.inject({ method: 'POST', url: orderClaimPath + '?unexpected=1', payload: orderClaim }), 400, 'bad_request');

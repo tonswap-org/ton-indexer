@@ -2210,3 +2210,14 @@ The ordinary, current-release and current-T3 evidence gates include the portable
 paired-mint and reserve-swap collector corpus. Numeric logger recovery tests retain
 owned filler descriptors so unrelated runtime closes cannot change the tested
 descriptor identity. Run `npx tsx src/scripts/logger-enospc-test.ts` after changes.
+
+Current whole-order evidence requires `creations`, the exact 1–256 unique factory
+first-hop cursors with original OCRT body and value for every retained create,
+repair and expired recovery request. The collector walks through the successful
+initialization and every selected factory attempt, retaining rejected/duplicate
+originals and pre-initialization child history. Missing originals are incomplete,
+never inferred rejection or successful refund. The normal current Spot/order
+gates run `current-order-expired-evidence-test.ts`: all eight source-bound native
+expiry cases at default/x6, both sides and both possible initialization winners.
+The retained original sandbox bytes and synthetic read adapter do not qualify
+public consensus or authorize deployment.

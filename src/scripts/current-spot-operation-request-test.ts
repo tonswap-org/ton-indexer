@@ -73,11 +73,13 @@ export function orderCreateSpotOperationRequestFixture(reverse = false) {
   return { request, manifest, market, terms, termsCell };
 }
 
-export function orderSettlementSpotOperationRequestFixture(funded = true) {
-  const created = orderCreateSpotOperationRequestFixture(), owner = created.request.owner;
+export function orderSettlementSpotOperationRequestFixture(funded = true, reverse = false) {
+  const created = orderCreateSpotOperationRequestFixture(reverse), owner = created.request.owner;
   const body = transferCell({ op: 0x0f8a7ea5, queryId: 43n, amount: created.terms.amountIn, destination: Address.parse(created.request.order),
     response: Address.parse(owner), custom: null, forward: 0n, payload: Cell.EMPTY });
-  const request: CurrentOrderSettlementSpotRequest = { ...created.request, kind: 'order-settlement', funding: funded ? {
+  const creation = beginCell().storeUint(0x4f435254, 32).storeUint(1, 64).storeUint(BigInt(created.request.nonce), 64).storeRef(created.termsCell).endCell();
+  const request: CurrentOrderSettlementSpotRequest = { ...created.request, kind: 'order-settlement',
+    creations: [{ valueNano: '1000', ...encoded(creation), lt: '5', hash: 'b'.repeat(64) }], funding: funded ? {
     sourceWallet: runtimeAddress(701), valueNano: '1000', ...encoded(body), lt: '10', hash: 'a'.repeat(64),
   } : null };
   return { ...created, request, body };
@@ -212,6 +214,13 @@ function main() {
     assert('fundingBody' in parsed); assert.deepEqual(parsed.request, f.request);
     assert.equal(parsed.fundingBody?.hash().toString('hex') ?? null, f.request.funding?.bodyHash ?? null);
     bad({ ...f.request, funding: undefined }, f.manifest); bad({ ...f.request, extra: 1 }, f.manifest);
+    for (const creations of [undefined, null, [], [f.request.creations[0], f.request.creations[0]], Array(257).fill(f.request.creations[0])])
+      bad({ ...f.request, creations }, f.manifest);
+    for (const changes of [{ valueNano: '0' }, { lt: '0' }, { lt: '01' }, { hash: 'A'.repeat(64) }, { bodyHash: '0'.repeat(64) }, { extra: 1 }])
+      bad({ ...f.request, creations: [{ ...f.request.creations[0], ...changes }] }, f.manifest);
+    for (const body of [Cell.EMPTY, beginCell().storeUint(0x4f435254, 32).storeUint(1, 64).storeUint(1, 64).storeRef(f.termsCell).endCell(),
+      beginCell().storeUint(0x4f435254, 32).storeUint(1, 64).storeUint(0, 64).storeRef(orderTermsToCell({ ...f.terms, recipient: Address.parse(runtimeAddress(999)) })).endCell()])
+      bad({ ...f.request, creations: [{ ...f.request.creations[0], ...encoded(body) }] }, f.manifest);
     if (!f.request.funding) continue;
     for (const changes of [{ sourceWallet: 'bad' }, { valueNano: '0' }, { lt: '0' }, { lt: '01' }, { lt: (1n << 64n).toString() },
       { hash: 'A'.repeat(64) }, { hash: 'a'.repeat(63) }, { bodyHash: '0'.repeat(64) }, { extra: 1 }])

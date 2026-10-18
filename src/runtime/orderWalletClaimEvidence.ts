@@ -115,9 +115,24 @@ export async function collectOrderWalletClaimEvidence(manifest: RuntimeReleaseMa
   });
   if (!child) { gaps.push({ code: 'original_initialization_unobserved', account: request.order }); return finish(); }
   const emits = (row: PhysicalBoundary) => [...tx(row).outgoing.values()].some(message => sameMessage(message, tx(child).incoming!));
-  const factoryHistory = await history(request.factory, factoryState, emits), origin = factoryHistory.rows.find(emits);
+  const retained = new Set(request.creations.map(c => `${c.lt}:${c.hash}`)); let foundInitialization = false;
+  const factoryHistory = await history(request.factory, factoryState, row => {
+    const original = tx(row); retained.delete(`${original.tx.lt}:${original.hash}`);
+    foundInitialization ||= emits(row); return foundInitialization && retained.size === 0;
+  }), origin = factoryHistory.rows.find(emits);
   gaps.push(...factoryHistory.gaps);
   if (!origin || !factoryHistory.complete) { gaps.push({ code: 'original_creation_unobserved', account: request.factory }); return finish(); }
+  for (const [index, attempt] of request.creations.entries()) {
+    const row = factoryHistory.rows.find(row => tx(row).tx.lt.toString() === attempt.lt && tx(row).hash === attempt.hash);
+    const input = row && tx(row).tx.inMessage;
+    try {
+      if (!row || input?.info.type !== 'internal' || input.info.bounced || input.info.src.toRawString() !== request.owner
+        || input.info.value.coins.toString() !== attempt.valueNano || !input.body.equals(parsed.creationBodies[index])) throw unavailable();
+      for (const boundary of [tx(row).before, tx(row).after])
+        if (!activeOrderAccount(boundary, manifest.contracts.SpotOrderFactory!.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+    } catch { gaps.push({ code: 'original_creation_dispatch_unobserved', account: request.factory, lt: attempt.lt }); }
+  }
+  if (gaps.length) return finish();
   try {
     const f = tx(origin), c = tx(child), message = f.tx.inMessage;
     if (!f.succeeded || message?.info.type !== 'internal' || message.info.bounced || message.info.src.toRawString() !== request.owner) throw unavailable();

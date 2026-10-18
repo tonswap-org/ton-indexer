@@ -11,7 +11,7 @@ import { readOrderWalletClaimRequest, collectOrderWalletClaimEvidence } from '..
 import type { CurrentOrderSettlementSpotRequest } from '../runtime/spotOperationRequest';
 import { verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { t3Attempt, t3PathRoot } from '../ledger/currentT3Wire';
-import { scopedSpotEvidenceManifest, spotEvidenceFixtureAdapter } from './current-spot-operation-evidence-test';
+import { originalOrderCreations, scopedSpotEvidenceManifest, spotEvidenceFixtureAdapter } from './current-spot-operation-evidence-test';
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 async function main() {
@@ -33,7 +33,7 @@ async function main() {
       manifest.orderKeeper = { address: c.keeper }; manifest.manifestHash = hashReleaseManifest(manifest);
       const request: CurrentOrderSettlementSpotRequest = { kind: 'order-settlement', network: 'localnet', releaseId: manifest.releaseId,
         manifestHash: manifest.manifestHash, owner: c.owner, factory: c.factory, order: c.order, nonce: c.nonce, pool: c.pool.address,
-        inputRoot: c.tokens[c.side].root, termsBoc: c.termsBoc, termsHash: Cell.fromBase64(c.termsBoc).hash().toString('hex'), funding: c.funding };
+        inputRoot: c.tokens[c.side].root, termsBoc: c.termsBoc, termsHash: Cell.fromBase64(c.termsBoc).hash().toString('hex'), funding: c.funding, creations: originalOrderCreations(rows, c.factory, c.owner, c.nonce) };
       if (c.side !== 0) { assert.throws(() => readOrderWalletClaimRequest(request, manifest), { status: 400 }); continue; }
       if (!c.funding) continue; // An uncreated input wallet has no claim history.
       tested++; Date.now = () => c.now * 1000;

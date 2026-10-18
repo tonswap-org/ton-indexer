@@ -9,7 +9,7 @@ import { boundaryState } from '../runtime/physicalEvidence';
 import { collectSpotOperationEvidence } from '../runtime/spotOperationEvidence';
 import { readSpotOperationRequest, type CurrentOrderSettlementSpotRequest } from '../runtime/spotOperationRequest';
 import { verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
-import { scopedSpotEvidenceManifest, spotEvidenceFixtureAdapter } from './current-spot-operation-evidence-test';
+import { originalOrderCreations, scopedSpotEvidenceManifest, spotEvidenceFixtureAdapter } from './current-spot-operation-evidence-test';
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 async function main() {
@@ -36,7 +36,7 @@ async function main() {
       const request: CurrentOrderSettlementSpotRequest = { kind: 'order-settlement', network: 'localnet', releaseId: manifest.releaseId,
         manifestHash: manifest.manifestHash, owner: c.owner, factory: c.factory, order: c.order, nonce: c.nonce,
         pool: c.pool.address, inputRoot: c.tokens[c.side].root, termsBoc: c.termsBoc,
-        termsHash: Cell.fromBase64(c.termsBoc).hash().toString('hex'), funding: c.funding };
+        termsHash: Cell.fromBase64(c.termsBoc).hash().toString('hex'), funding: c.funding, creations: originalOrderCreations(rows, c.factory, c.owner, c.nonce) };
       Date.now = () => c.now * 1000;
       const parsed = readSpotOperationRequest(request, manifest), a = spotEvidenceFixtureAdapter(manifest, c.currentAccounts, rows, c.now, c.getters);
       const response = await collectSpotOperationEvidence(manifest, a.source, a.store, parsed);

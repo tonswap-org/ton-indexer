@@ -178,11 +178,17 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
     const before = tx.before.account?.storage.state;
     return !before || before.type === 'uninit' || before.type === 'active' && !!before.state.data && before.state.data.equals(orderInitialData(Address.parse(request.factory), Address.parse(request.owner), BigInt(request.nonce)));
   };
-  const childHistory = await history(request.order, isInitialization), child = childHistory.find(isInitialization);
+  const childHistory = await history(request.order, request.kind === 'order-settlement' ? undefined : isInitialization), child = childHistory.find(isInitialization);
   if (!child) { gaps.push({ code: 'original_initialization_unobserved', account: request.order }); return finish(response); }
   const incoming = checked(child).incoming!;
   const emitsInitialization = (row: PhysicalBoundary) => checked(row).outgoing.values().some(cell => sameMessage(cell, incoming));
-  const factoryHistory = await history(request.factory, emitsInitialization), origin = factoryHistory.find(emitsInitialization);
+  const retained = new Set(request.kind === 'order-settlement' ? request.creations.map(c => `${c.lt}:${c.hash}`) : []);
+  let foundInitialization = false;
+  const factoryHistory = await history(request.factory, row => {
+    const tx = checked(row); retained.delete(`${tx.tx.lt}:${tx.hash}`);
+    foundInitialization ||= emitsInitialization(row);
+    return foundInitialization && retained.size === 0;
+  }), origin = factoryHistory.find(emitsInitialization);
   if (!origin) { gaps.push({ code: 'original_creation_unobserved', account: request.factory }); return finish(response); }
   try {
     const tx = checked(origin), message = tx.tx.inMessage;
@@ -214,6 +220,20 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
     // events and a closed getter are never a substitute for this whole history.
     const inputHistory = absent.has(settlement.wallets.orderPay) ? [] : await history(settlement.wallets.orderPay);
     const pending = [...childHistory, ...inputHistory, origin], chosen = new Map<string, PhysicalBoundary>();
+    for (const [index, attempt] of request.creations.entries()) {
+      const row = factoryHistory.find(row => checked(row).tx.lt.toString() === attempt.lt && checked(row).hash === attempt.hash);
+      const input = row && checked(row).tx.inMessage;
+      if (row && input?.info.type === 'internal' && !input.info.bounced && input.info.src.toRawString() === request.owner
+        && input.info.value.coins.toString() === attempt.valueNano && 'creationBodies' in creation && input.body.equals(creation.creationBodies[index])) {
+        try {
+          for (const boundary of [checked(row).before, checked(row).after])
+            if (!activeOrderAccount(boundary, factoryPin.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+          pending.push(row);
+          continue;
+        } catch { /* A cursor cannot authorize a different factory implementation. */ }
+      }
+      gaps.push({ code: 'original_creation_dispatch_unobserved', account: request.factory, lt: attempt.lt });
+    }
     if (request.funding) {
       const funding = request.funding, parsedFunding = 'fundingBody' in creation ? creation.fundingBody : null;
       const exactFunding = (row: PhysicalBoundary) => checked(row).tx.lt.toString() === funding.lt && checked(row).hash === funding.hash;

@@ -17,8 +17,9 @@ export type CurrentOrderCreateSpotRequest = RequestIdentity & {
   inputRoot: string; termsBoc: string; termsHash: string;
 };
 export type SpotOrderFunding = { sourceWallet: string; valueNano: string; bodyBoc: string; bodyHash: string; lt: string; hash: string };
+export type SpotOrderCreation = Omit<SpotOrderFunding, 'sourceWallet'>;
 export type CurrentOrderSettlementSpotRequest = Omit<CurrentOrderCreateSpotRequest, 'kind'> & {
-  kind: 'order-settlement'; funding: SpotOrderFunding | null;
+  kind: 'order-settlement'; funding: SpotOrderFunding | null; creations: SpotOrderCreation[];
 };
 export type CurrentSpotRequest = CurrentDirectSpotRequest | CurrentRouteSpotRequest | CurrentOrderCreateSpotRequest | CurrentOrderSettlementSpotRequest;
 type Market = RuntimeReleaseManifest['spotMarkets'][number];
@@ -35,7 +36,7 @@ export type ParsedOrderCreateSpotOperationRequest = {
   request: CurrentOrderCreateSpotRequest; terms: OrderTerms; termsCell: Cell; market: Market; inputToken: Token;
 };
 export type ParsedOrderSettlementSpotOperationRequest = Omit<ParsedOrderCreateSpotOperationRequest, 'request'> & {
-  request: CurrentOrderSettlementSpotRequest; fundingBody: Cell | null;
+  request: CurrentOrderSettlementSpotRequest; fundingBody: Cell | null; creationBodies: Cell[];
 };
 export type ParsedSpotOperationRequest = ParsedDirectSpotOperationRequest | ParsedRouteSpotOperationRequest | ParsedOrderCreateSpotOperationRequest | ParsedOrderSettlementSpotOperationRequest;
 
@@ -89,7 +90,7 @@ export function readSpotOperationRequest(value: unknown, manifest: RuntimeReleas
     const common = ['kind', 'network', 'releaseId', 'manifestHash', 'owner', 'pool'];
     const fields = x.kind === 'direct' || x.kind === 'route'
       ? ['payRoot', 'receiveRoot', 'sourceWallet', 'valueNano', 'bodyBoc', 'bodyHash', ...(x.kind === 'route' ? ['pool2', 'coordinator', 'dispatch'] : [])]
-      : ['factory', 'order', 'nonce', 'inputRoot', 'termsBoc', 'termsHash', ...(x.kind === 'order-settlement' ? ['funding'] : [])];
+      : ['factory', 'order', 'nonce', 'inputRoot', 'termsBoc', 'termsHash', ...(x.kind === 'order-settlement' ? ['funding', 'creations'] : [])];
     requireRequest(Object.keys(x).sort().join() === [...common, ...fields].sort().join());
     if (x.network !== manifest.network.slice(4) || x.releaseId !== manifest.releaseId || x.manifestHash !== manifest.manifestHash)
       throw new SpotEvidenceError(409, 'release_mismatch');
@@ -161,6 +162,23 @@ export function readSpotOperationRequest(value: unknown, manifest: RuntimeReleas
     requireRequest(terms.pool.toRawString() === pool && terms.inputMaster.toRawString() === inputRoot
       && terms.recipient.toRawString() === owner && terms.sellIndex === (inputRoot === t3.root ? 0 : 1));
     if (x.kind === 'order-settlement') {
+      requireRequest(Array.isArray(x.creations) && x.creations.length > 0 && x.creations.length <= 256);
+      const cursors = new Set<string>();
+      const creationBodies = x.creations.map(value => {
+        requireRequest(value && typeof value === 'object' && !Array.isArray(value));
+        const c = value as Record<string, unknown>;
+        requireRequest(Object.keys(c).sort().join() === ['valueNano', 'bodyBoc', 'bodyHash', 'lt', 'hash'].sort().join());
+        uint(c.valueNano, 120, true); uint(c.lt, 64, true);
+        requireRequest(typeof c.hash === 'string' && /^[0-9a-f]{64}$/.test(c.hash));
+        const cursor = `${c.lt}:${c.hash}`; requireRequest(!cursors.has(cursor)); cursors.add(cursor);
+        const cell = originalCell(c.bodyBoc, c.bodyHash), b = cell.beginParse();
+        requireRequest(b.loadUint(32) === 0x4f435254); b.loadUintBig(64);
+        requireRequest(b.loadUintBig(64).toString() === x.nonce);
+        const intent = parseOrderTerms(b.loadRef()); b.endParse();
+        requireRequest(intent.pool.toRawString() === pool && intent.inputMaster.toRawString() === inputRoot
+          && intent.recipient.toRawString() === owner && intent.sellIndex === terms.sellIndex);
+        return cell;
+      });
       let fundingBody: Cell | null = null;
       if (x.funding !== null) {
         requireRequest(x.funding && typeof x.funding === 'object' && !Array.isArray(x.funding));
@@ -175,7 +193,7 @@ export function readSpotOperationRequest(value: unknown, manifest: RuntimeReleas
         if (b.loadBit()) { const payload = b.loadRef(); requireRequest(!payload.isExotic && payload.bits.length === 0 && payload.refs.length === 0); }
         b.endParse();
       }
-      return { request: structuredClone(x) as CurrentOrderSettlementSpotRequest, fundingBody, terms, termsCell, market, inputToken };
+      return { request: structuredClone(x) as CurrentOrderSettlementSpotRequest, fundingBody, creationBodies, terms, termsCell, market, inputToken };
     }
     return { request: structuredClone(x) as CurrentOrderCreateSpotRequest, terms, termsCell, market, inputToken };
   } catch (error) {

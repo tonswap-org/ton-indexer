@@ -11,10 +11,22 @@ import { readCurrentT3Wallet } from '../ledger/currentT3State';
 import { orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { canonicalOrderTerms, orderInitialData, orderTermsToCell, parseOrderTerms } from '../orders/state';
 import { collectSpotOperationEvidence, SPOT_EVIDENCE_LIMITS } from '../runtime/spotOperationEvidence';
-import { readSpotOperationRequest, type CurrentSpotRequest } from '../runtime/spotOperationRequest';
+import { readSpotOperationRequest, type CurrentSpotRequest, type SpotOrderCreation } from '../runtime/spotOperationRequest';
 import { boundaryState, canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore } from '../runtime/physicalEvidence';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 import { fakeChainSource } from './support/fakeChainSource';
+
+export function originalOrderCreations(rows: OrderTransactionEvidence[], factory: string, owner: string, nonce: string): SpotOrderCreation[] {
+  return rows.flatMap(row => {
+    if (row.account !== factory) return [];
+    const verified = verifyOrderTransaction(row), message = verified.tx.inMessage;
+    if (message?.info.type !== 'internal' || message.info.bounced || message.info.src.toRawString() !== owner || message.body.bits.length < 160) return [];
+    const body = message.body.beginParse(); if (body.loadUint(32) !== 0x4f435254) return []; body.loadUintBig(64);
+    if (body.loadUintBig(64).toString() !== nonce) return [];
+    return [{ valueNano: message.info.value.coins.toString(), bodyBoc: message.body.toBoc().toString('base64'),
+      bodyHash: message.body.hash().toString('hex'), lt: verified.tx.lt.toString(), hash: verified.hash }];
+  });
+}
 
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const digest = (cell: Cell) => cell.hash().toString('hex');

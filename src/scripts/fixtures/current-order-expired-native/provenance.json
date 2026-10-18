@@ -1,0 +1,9 @@
+{
+  "schema": "tonswap-order-expired-recovery-fixture-provenance-v1",
+  "producerCommit": "8d90aab389c4964c461e90e1f2bd66ffe293aa87",
+  "originalsSha256": "6344ba030eb6d1c9cebf409f788b7268bf539a5beb7cc2d0d8ffe767a6625d3d",
+  "portableInventorySha256": "a1e496e3b61fe507210eecfff60cc10d8bc9e56ec269bd3eda38482cc4ca46bb",
+  "sourceLockSha256": "118ba2936b82d08d2962ae945238bb9b2bea044c8eec6d8c31f5d31a78380bad",
+  "originalPortablePath": "/Users/mtakemiya/dev/tonswap/tonswap_web/.local/state/order-expired-recovery-native-20261018-v1/run-3/portable",
+  "scope": "Original native sandbox transactions, states and getter answers; synthetic localnet manifest and consensus labels. Both reachable initialization races, sides, default/x6 gas. Full original funding refund with zero execution and no second funding. Complete portable sources/artifacts retained at originalPortablePath; no public-network claim."
+}
