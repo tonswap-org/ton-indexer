@@ -1,0 +1,137 @@
+59 targets, 0 compiled, buildHash 639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d
+  console.info
+    fresh T3 route {
+      callerSpend: '71327941',
+      fee: 'default',
+      forward: '220672628',
+      attached: '224056733',
+      transactions: 16,
+      hop2: '80985918',
+      coordinator: '141549499',
+      gas: '380928',
+      gasFees: '25395217',
+      allFees: '30190375',
+      steps: [
+        { op: 'f8a7ea5', gas: '6327' },
+        { op: '178d4519', gas: '7440' },
+        { op: '7362d09c', gas: '67877' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '64816' },
+        { op: '5433444c', gas: '27828' },
+        { op: '7362d09c', gas: '37399' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '64466' },
+        { op: '5433444c', gas: '27578' },
+        { op: '7362d09c', gas: '62317' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '6327' },
+        { op: '178d4519', gas: '5380' },
+        { op: 'd53276db', gas: '309' }
+      ]
+    }
+
+      at tests/dex/FreshT3Route.spec.ts:50:13
+
+  console.info
+    fresh T3 route {
+      callerSpend: '198303924',
+      fee: 'stress',
+      forward: '666672614',
+      attached: '674756718',
+      transactions: 16,
+      hop2: '277652579',
+      coordinator: '420882823',
+      gas: '380928',
+      gasFees: '152371200',
+      allFees: '157166358',
+      steps: [
+        { op: 'f8a7ea5', gas: '6327' },
+        { op: '178d4519', gas: '7440' },
+        { op: '7362d09c', gas: '67877' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '64816' },
+        { op: '5433444c', gas: '27828' },
+        { op: '7362d09c', gas: '37399' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '64466' },
+        { op: '5433444c', gas: '27578' },
+        { op: '7362d09c', gas: '62317' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '6327' },
+        { op: '178d4519', gas: '5380' },
+        { op: 'd53276db', gas: '309' }
+      ]
+    }
+
+      at tests/dex/FreshT3Route.spec.ts:50:13
+
+  console.info
+    fresh T3 route {
+      callerSpend: '427967566',
+      fee: 'x6',
+      forward: '1324035667',
+      attached: '1344340278',
+      transactions: 16,
+      hop2: '485915467',
+      coordinator: '849296921',
+      gas: '380928',
+      gasFees: '152371254',
+      allFees: '181142225',
+      steps: [
+        { op: 'f8a7ea5', gas: '6327' },
+        { op: '178d4519', gas: '7440' },
+        { op: '7362d09c', gas: '67877' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '64816' },
+        { op: '5433444c', gas: '27828' },
+        { op: '7362d09c', gas: '37399' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '64466' },
+        { op: '5433444c', gas: '27578' },
+        { op: '7362d09c', gas: '62317' },
+        { op: 'd53276db', gas: '309' },
+        { op: 'f8a7ea5', gas: '6327' },
+        { op: '178d4519', gas: '5380' },
+        { op: 'd53276db', gas: '309' }
+      ]
+    }
+
+      at tests/dex/FreshT3Route.spec.ts:50:13
+
+  console.info
+    amount-aware route {
+      callerSpend: '198303924',
+      allFees: '157166358',
+      secondForward: '225652579',
+      coordinatorForward: '368882823',
+      firstForward: '560061614',
+      attached: '568145718'
+    }
+
+      at Object.<anonymous> (tests/dex/FreshT3Route.spec.ts:76:13)
+
+  console.info
+    maximum coordinator request gas false 38295
+
+      at tests/dex/FreshT3Route.spec.ts:126:254
+
+  console.info
+    maximum coordinator request gas true 39439
+
+      at tests/dex/FreshT3Route.spec.ts:126:254
+
+PASS default tests/dex/FreshT3Route.spec.ts (28.5 s)
+  ✓ uses the fresh T3 wallet and exact caller funding through two real pools: default (3584 ms)
+  ✓ uses the fresh T3 wallet and exact caller funding through two real pools: stress (3083 ms)
+  ✓ uses the fresh T3 wallet and exact caller funding through two real pools: x6 (3094 ms)
+  ✓ measures the amount-aware route floor with current pool funding guards (3879 ms)
+  ✓ refunds fresh T3 after a real second-hop notification is delayed beyond its deadline: default (3192 ms)
+  ✓ refunds fresh T3 after a real second-hop notification is delayed beyond its deadline: x6 (3181 ms)
+  ✓ bounds coordinator execution with its complete seven-cell inner request and pending probe false (3452 ms)
+  ✓ bounds coordinator execution with its complete seven-cell inner request and pending probe true (3935 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       8 passed, 8 total
+Snapshots:   0 total
+Time:        28.563 s
+Ran all test suites within paths "tests/dex/FreshT3Route.spec.ts".

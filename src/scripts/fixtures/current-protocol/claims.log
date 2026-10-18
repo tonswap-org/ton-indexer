@@ -1,0 +1,10 @@
+59 targets, 0 compiled, buildHash 639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d
+PASS default tests/system/ReleaseGovernance.spec.ts (120.817 s)
+  ✓ a new TS holder governs all eight surviving areas after actual deployment handoff at default (59491 ms)
+  ✓ a new TS holder governs all eight surviving areas after actual deployment handoff at x6 (60214 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        120.901 s, estimated 123 s
+Ran all test suites within paths "tests/system/ReleaseGovernance.spec.ts".

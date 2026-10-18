@@ -1,0 +1,30 @@
+59 targets, 0 compiled, buildHash 639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d
+  console.info
+    release order settlement lag { refused: false, logicalTime: '4000000' }
+
+      at releaseUserSmoke (tests/helpers/releaseUserSmoke.ts:196:17)
+
+  console.info
+    release order settlement lag { refused: true, logicalTime: '1000000' }
+
+      at releaseUserSmoke (tests/helpers/releaseUserSmoke.ts:196:17)
+
+  console.info
+    release order settlement lag { refused: false, logicalTime: '4000000' }
+
+      at releaseUserSmoke (tests/helpers/releaseUserSmoke.ts:196:17)
+
+  console.info
+    release order settlement lag { refused: true, logicalTime: '1000000' }
+
+      at releaseUserSmoke (tests/helpers/releaseUserSmoke.ts:196:17)
+
+PASS default tests/system/ReleaseUserSmoke.spec.ts (138.56 s)
+  ✓ runs every public product from a non-deployer after handoff at default (68993 ms)
+  ✓ runs every public product from a non-deployer after handoff at x6 (68226 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        138.638 s
+Ran all test suites within paths "tests/system/ReleaseUserSmoke.spec.ts".
