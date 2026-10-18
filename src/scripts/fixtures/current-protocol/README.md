@@ -38,3 +38,10 @@ source lock or compiler-binary lock is invented by the capture verifier.
 
 Run `npm run test:ledger:protocol` from the indexer root. Operational originals
 remain separately retained under the contracts repo's ignored `.local/state`.
+
+The same gate additionally consumes `current-route`'s full production-Hub
+originals. All nine default/stress/x6 success and refund cases join SWE3/RTE3
+through original wallet-message ancestry to one owner dispatch. Missing owner
+or coordinator originals refuse the corresponding downstream observations.
+This separate corpus supplies the complete causal route that the filtered
+`route` producer above cannot supply; lifecycle observations still create no cash.

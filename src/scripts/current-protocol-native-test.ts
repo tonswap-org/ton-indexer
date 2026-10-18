@@ -14,6 +14,7 @@ import { loadOpcodes } from '../utils/opcodes';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 import { currentGovernanceFixture } from './support/currentGovernanceFixture';
 import { currentProtocolFixture } from './support/currentProtocolFixture';
+import { currentRouteFixture } from './support/currentRouteFixture';
 import { fakeChainSource } from './support/fakeChainSource';
 import { fixtureHead } from './support/chainFixture';
 
@@ -101,6 +102,28 @@ async function qualifyRows(role: CurrentProtocolRole, codeHash: string, rows: an
 }
 
 async function main() {
+  // Use the production-Hub route corpus: all three lifecycle events must join
+  // the same original owner dispatch through physical wallet message edges.
+  // Synthetic head/coverage adapters still do not establish public consensus.
+  for (const { file, capture: c } of currentRouteFixture().cases()) {
+    const { input, nodes } = adapt(c.transactions, c.request.owner, 'DlmmPool', c.manifest.templates.DlmmPool, c.request.pool);
+    input.currentProtocolRelease = c.manifest;
+    const facts = await projectCurrentProtocolObservations(input, nodes), all = [...facts.values()].flat();
+    const swaps = all.filter(f => f.name === 'pool-swap'), routes = all.filter(f => f.name === 'route-continuation');
+    assert.equal(swaps.length, c.mode === 'first-refund' ? 1 : 2, `${file}: original pool events`);
+    assert.equal(routes.length, c.mode === 'first-refund' ? 0 : 1, `${file}: original coordinator event`);
+    assert(facts.size === 1 && facts.has(nodes[0].id), `${file}: one original owner dispatch`);
+    assert(all.every(f => f.evidence.at(-1)!.account === c.request.owner && f.evidence.length >= 4));
+    assert.equal((await projectCurrentProtocolObservations(input, nodes.filter(n => n.account !== c.request.owner))).size, 0,
+      `${file}: event query IDs never substitute for the original owner`);
+    if (c.mode !== 'first-refund') {
+      const incomplete = await projectCurrentProtocolObservations(input, nodes.filter(n => n.account !== c.request.coordinator));
+      const remaining = [...incomplete.values()].flat();
+      assert.equal(remaining.filter(f => f.name === 'pool-swap').length, 1);
+      assert(!remaining.some(f => f.name === 'route-continuation'), `${file}: missing continuation cannot join downstream events`);
+    }
+    console.log(file, 'original owner-linked route observations', all.length);
+  }
   const governance = currentGovernanceFixture();
   for (const c of governance.cases) {
     const result = await qualifyRows('Governance', governance.codeHash, c.rows);
