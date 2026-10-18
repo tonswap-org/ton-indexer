@@ -1,0 +1,7 @@
+# Current Order funding before initialization
+
+These eight original native captures come from the maintained `currentOrderDelayedInit.native.test.ts` producer. One real owner wallet external request emits both CREATE and a zero-forward token transfer. The router holds only the original factory-to-order initialization message until the canonical input wallet has physically received funding, then delivers it and executes or partially executes/cancels the order. No account balances or transaction cells are rewritten.
+
+Both sides and normal/x6 fee profiles pass. The source archive retains the unchanged producer, source/virtual/compiler closure, all current 59 target artifacts, passing receipt/log and continuity verification. `currentOrderDelayedInitFixture` checks archive hashes, original file hashes, receipt source/log/output hashes and the maintained current build verifier before returning unchanged original BOCs. Synthetic sandbox heads are not public-consensus or deployment qualification.
+
+Run `node node_modules/tsx/dist/cli.mjs src/scripts/ledger-current-dlmm-order-delayed-init-test.ts`. The regression retains original owner dispatch, canonical child initialization, physical funding/output/refund, fees and full conservation checks. Missing any required original remains unresolved. Cross-account funding-credit versus child-initialization time is not a message-causality constraint.

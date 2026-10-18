@@ -74,7 +74,7 @@
     "test:current-launchpad-wallet-recovery:capture": "tsx src/scripts/current-launchpad-wallet-recovery-capture-test.ts",
     "test:current-public-pool-identity:capture": "tsx src/scripts/current-public-pool-identity-test.ts",
     "test:ledger:perps": "tsx src/scripts/ledger-current-perps-test.ts && tsx src/scripts/current-perps-economics-test.ts && tsx src/scripts/ledger-current-perps-range-test.ts && tsx src/scripts/ledger-perps-range-test.ts && tsx src/scripts/ledger-perps-retry-test.ts && tsx src/scripts/ledger-perps-recovery-test.ts",
-    "test:ledger:orders": "tsx src/scripts/ledger-current-dlmm-order-test.ts && tsx src/scripts/ledger-current-dlmm-order-projection-test.ts && tsx src/scripts/ledger-current-dlmm-order-discovery-test.ts && tsx src/scripts/ledger-current-dlmm-order-absence-test.ts && tsx src/scripts/ledger-current-dlmm-order-recovery-test.ts && tsx src/scripts/ledger-current-dlmm-order-recovery-discovery-test.ts",
+    "test:ledger:orders": "tsx src/scripts/ledger-current-dlmm-order-test.ts && tsx src/scripts/ledger-current-dlmm-order-projection-test.ts && tsx src/scripts/ledger-current-dlmm-order-discovery-test.ts && tsx src/scripts/ledger-current-dlmm-order-absence-test.ts && tsx src/scripts/ledger-current-dlmm-order-recovery-test.ts && tsx src/scripts/ledger-current-dlmm-order-recovery-discovery-test.ts && tsx src/scripts/ledger-current-dlmm-order-delayed-init-test.ts",
     "test:ledger:protocol": "tsx src/scripts/current-protocol-events-test.ts && tsx src/scripts/current-protocol-native-test.ts",
     "test:current-spot-route:capture": "tsx src/scripts/current-spot-route-evidence-test.ts"
   },

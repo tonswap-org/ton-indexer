@@ -2174,3 +2174,9 @@ hops, 64 facts per transaction and 256 facts per projection. Missing authority o
 the observation; financial history and physical transfer qualification stay separate.
 The retained producer map and its limits are in
 `src/scripts/fixtures/current-protocol/README.md`.
+
+Current Order funding may reach its canonical token wallet before the separate
+order child initializes. The decoder still requires original owner CREATE and
+funding messages, canonical initialization and all physical delivery boundaries.
+Run `npx tsx src/scripts/ledger-current-dlmm-order-delayed-init-test.ts` for the
+eight source-bound normal/x6 batch-scheduling and missing-original regressions.
