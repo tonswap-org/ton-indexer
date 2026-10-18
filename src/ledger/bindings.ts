@@ -1,3 +1,4 @@
+import { validJettonWalletProfile } from '../config/runtimeManifest';
 import type { Network } from '../models';
 import { canonicalLedgerAddress } from './normalize';
 import type { DlmmMarketBinding } from './marketTypes';
@@ -18,14 +19,10 @@ export type LedgerLaunchpadCodeHashes = {
 };
 
 export type LedgerT3RedemptionBinding = {
-  network: Network;
-  hub: string;
-  root: string;
-  hubCodeHash: string;
-  rootCodeHash: string;
-  walletCodeHash: string;
-  receiverCodeHash: string;
-  reserveRoutes: Array<{ root: string; vault: string; discovery: string }>;
+  network: Network; hub: string; root: string; governance: string;
+  hubCodeHash: string; walletCodeHash: string; proofCodeHash: string; configHash: string;
+  reserveRoutes: Array<{ slot: number; root: string; vault: string; masterCodeHash: string; walletCodeHash: string; decimals: number; walletStorage: 'stablecoin' | 'jetton-v21';
+    scale: number; lockExit: number; balanceExit: number; profile: import('./currentT3State').CurrentT3Slot }>;
 };
 
 const objectWithKeys = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
@@ -59,16 +56,18 @@ export function validateLaunchpadCodeHashes(value: unknown): LedgerLaunchpadCode
 }
 
 export function validateT3RedemptionBinding(value: unknown, network: Network): LedgerT3RedemptionBinding {
-  const keys = ['network', 'hub', 'root', 'hubCodeHash', 'rootCodeHash', 'walletCodeHash', 'receiverCodeHash', 'reserveRoutes'];
-  const fail = () => Error('T3 redemption binding must be the exact qualified current-network binding, with canonical addresses, four Cell hashes and three distinct reserve routes.');
-  if (!objectWithKeys(value, keys) || value.network !== network || !address(value.hub) || !address(value.root) ||
-    value.hub === value.root || !['hubCodeHash', 'rootCodeHash', 'walletCodeHash', 'receiverCodeHash'].every(key => hash(value[key])) ||
-    !Array.isArray(value.reserveRoutes) || value.reserveRoutes.length !== 3) throw fail();
-  const roots = new Set<string>(), vaults = new Set<string>();
-  for (const route of value.reserveRoutes) {
-    if (!objectWithKeys(route, ['root', 'vault', 'discovery']) || !address(route.root) || !address(route.vault) ||
-      !address(route.discovery) || route.discovery !== route.root || roots.has(route.root) || vaults.has(route.vault)) throw fail();
-    roots.add(route.root); vaults.add(route.vault);
+  const keys=['network','hub','root','governance','hubCodeHash','walletCodeHash','proofCodeHash','configHash','reserveRoutes'];
+  const fail=()=>Error('T3 binding requires the exact current hub/master, immutable config and per-reserve wallet pins.');
+  if(!objectWithKeys(value,keys)||value.network!==network||!address(value.hub)||value.root!==value.hub||!address(value.governance)||
+    !['hubCodeHash','walletCodeHash','proofCodeHash','configHash'].every(k=>hash(value[k]))||!Array.isArray(value.reserveRoutes)||value.reserveRoutes.length!==3) throw fail();
+  const roots=new Set(),vaults=new Set();
+  for(const [slot,r] of value.reserveRoutes.entries()) {
+    if(!objectWithKeys(r,['slot','root','vault','masterCodeHash','walletCodeHash','decimals','walletStorage','scale','lockExit','balanceExit','profile'])||r.slot!==slot||!address(r.root)||!address(r.vault)||roots.has(r.root)||vaults.has(r.vault)||
+      !['stablecoin','jetton-v21'].includes(String(r.walletStorage))||!hash(r.masterCodeHash)||!hash(r.walletCodeHash)||!Number.isInteger(r.decimals)||Number(r.decimals)<0||Number(r.decimals)>9||r.scale!==10**(9-Number(r.decimals))||
+      !['lockExit','balanceExit'].every(k=>Number.isInteger(r[k])&&Number(r[k])>=0&&Number(r[k])<=65535)) throw fail();
+    const p=r.profile as import('./currentT3State').CurrentT3Slot;
+    if(!p||p.master!==r.root||(p.wallet!==r.vault&&!(slot===2&&p.wallet===null))||p.optional!==(slot===2)||!validJettonWalletProfile(p.walletGas,p.walletGram,p.budget))throw fail();
+    roots.add(r.root);vaults.add(r.vault);
   }
   return value as LedgerT3RedemptionBinding;
 }

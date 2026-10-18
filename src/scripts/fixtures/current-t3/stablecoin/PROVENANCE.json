@@ -1,0 +1,53 @@
+{
+  "schema": "tonswap-vendored-cells-v1",
+  "source": {
+    "network": "TON mainnet",
+    "master": "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    "masterRaw": "0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe",
+    "readOn": "2026-10-12",
+    "masterchainSeqno": 98580764,
+    "masterchainRootHash": "e4d50787ee31455be150cebd80b660abe73f868f9f3340161c0dcffd782b39da",
+    "masterchainFileHash": "15e073c6fa242d00970058c9dc4848d7159990e5be8d7841a9e8ae10c95ba30f",
+    "accountLastTransaction": {
+      "lt": "109481699000012",
+      "hash": "574b840e3760248c90260360fab8ce583d7c820c1a3e848cdf7a72f8c19abb53"
+    },
+    "repository": "https://github.com/ton-blockchain/stablecoin-contract",
+    "repositoryPin": "5a3b500267b0bdfc6505a08e5ac661c805cab8b0, named by plan amendment 7. The cells were read from chain state; that the pin compiles to them was not checked.",
+    "license": "MIT; LICENSE copied byte-for-byte from the repository at the pinned commit.",
+    "licenseUrl": "https://raw.githubusercontent.com/ton-blockchain/stablecoin-contract/5a3b500267b0bdfc6505a08e5ac661c805cab8b0/LICENSE",
+    "licenseSha256": "f600c131414b70552efca80f8da027ad8d4a5e0cc76e6140e45181729820fbec"
+  },
+  "identity": [
+    "The account was active at the block above with 1071.855079362 GRAM and the code and data that the files below and this list describe.",
+    "get_jetton_data at that block: total supply 1429976002510000 units, mintable, admin EQBkQP48aUEDg5Y5RRc8SxFHm_C5tNcJDlh3e9pYHC-ZmG2M.",
+    "Its content is TEP-64 on-chain metadata with two entries: uri https://tether.to/usdt-ton.json and decimals 6.",
+    "Its wallet code is an exotic library reference cell (8 bits 0x02, then a 256-bit hash). The hash begins 8f452d7a and ends 3d68, as the wallet code hash of plan amendment 7 does.",
+    "getLibraries returned one cell for that hash, and the representation hash of the cell is that hash.",
+    "Not checked: the document behind the uri (name and symbol), and the issuer's own list of contract addresses. Only toncenter was read."
+  ],
+  "files": {
+    "JettonMinter.code.boc": {
+      "sha256": "107d8c83ec97394964b1413cb8a4c0afe2a8a69639017150ca1077b2a0c78fcb",
+      "cellHash": "18d5b6e780ff0bb451254c2c760d09d6e485638cd1407abb97078752c3c1c9ee",
+      "what": "The code of the master account: 24 cells."
+    },
+    "JettonWallet.code.boc": {
+      "sha256": "b3675b699237150e722ca3106c2d0203aaabd835468e4a29894207cdc58efb3e",
+      "cellHash": "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+      "what": "The library that the master's wallet code cell names: 15 cells. This is the pinned wallet code hash of plan amendment 7."
+    }
+  },
+  "walletLibraryCell": {
+    "bits": "028f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+    "hash": "89468f02c78e570802e39979c8516fc38df07ea76a48357e0536f2ba7b3ee37b",
+    "what": "The wallet code cell that the master stores and puts into every wallet StateInit. The default configuration of the sandbox lists this hash in parameter 45 as precompiled with 1000 gas; the live parameter was not read."
+  },
+  "refetch": [
+    "GET https://toncenter.com/api/v2/getMasterchainInfo gives last.seqno.",
+    "GET https://toncenter.com/api/v2/getAddressInformation?address=<master>&seqno=<seqno> gives code, which is JettonMinter.code.boc as returned, and data.",
+    "POST https://toncenter.com/api/v2/runGetMethod with {address: <master>, method: get_jetton_data, stack: [], seqno: <seqno>} gives the wallet code cell as the fifth stack entry.",
+    "GET https://toncenter.com/api/v2/getLibraries?libraries=<the 256-bit hash of that cell, in hex> gives data, which is JettonWallet.code.boc as returned.",
+    "Compare the representation hashes of the root cells, not the file bytes: one cell has more than one BOC."
+  ]
+}

@@ -22,7 +22,7 @@ import {
   OPTION_NATIVE_REFUND,
 } from "./optionLifecycleWire";
 import { decodeT3, type LedgerT3Hub, type T3LedgerOperation } from "./t3";
-import { T3_OPS, DEPOSIT_NOTE, RECEIVER_PAYOUT } from "./t3Wire";
+import { CURRENT_T3_OPS, T3_MINT, T3_PAIR, T3_SWAP, T3_HUB_PAYOUT } from "./currentT3Wire";
 import {
   decodeOptionPurchases,
   type LedgerOptionFactory,
@@ -905,9 +905,9 @@ export async function projectOwnerLedger(
           (groupOps.some((op) => op.kind === "perps_operation") &&
             PERPS_USER_OPS.has(opcode(msg)!)) ||
           (groupOps.some(
-            (op) => op.kind === "t3_mint" || op.kind === "t3_redeem",
+            (op) => op.settlement?.protocol === "t3",
           ) &&
-            T3_OPS.has(businessOpcode(msg)!)) ||
+            CURRENT_T3_OPS.has(businessOpcode(msg)!)) ||
           (groupOps.length > 0 &&
             [REMOVE, COLLECT, COLLECT_TO, WITHDRAW_COMPLETE].includes(opcode(msg)!)) ||
           (groupOps.some((op) =>
@@ -962,7 +962,7 @@ export async function projectOwnerLedger(
       (flow) =>
         !usedFlows.has(flow.id) &&
         flow.wire.forward.bits.length >= 32 &&
-        [DEPOSIT_NOTE, RECEIVER_PAYOUT].includes(
+        [T3_MINT,T3_PAIR,T3_SWAP,T3_HUB_PAYOUT].includes(
           flow.wire.forward.beginParse().preloadUint(32),
         ),
     );

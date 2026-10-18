@@ -14,7 +14,7 @@ import { loadOpcodes } from '../utils/opcodes';
 import { createLogger } from '../utils/logger';
 import { fixtureChainSource, fixtureHead } from './support/chainFixture';
 import { installFixtureIdentities } from './support/ledgerGraphFixture';
-import { mint } from './ledger-t3-test';
+import { currentT3MintFixture as mint } from './support/currentT3Fixture';
 
 /** SQL/chain/publication integration uses the existing exact mint proof graph.
  * Only product discovery is injected: qualification is separately exercised by
@@ -262,8 +262,13 @@ async function main() {
 
   const resumed = await cycleHarness();
   try {
+    // The retained native owner has 33 transactions. Establish its original
+    // publication first so this vector isolates the dependency's page allowance.
+    await resumed.service.runOwnerCycle(resumed.owner);
+    assert(confirmed(await resumed.page()));
     resumed.controls.pageSize = 1;
     for (let index = 0; index < 25; index++) resumed.f.tx(resumed.hub);
+    await resumed.due();
     await resumed.service.runOwnerCycle(resumed.owner);
     assert((await resumed.page()).coverage.refreshPending!.length > 0);
     const h1 = (await resumed.store.account('localnet', resumed.hub)).latest_generation;

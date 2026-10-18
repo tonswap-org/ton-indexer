@@ -3,7 +3,7 @@ import { Address, beginCell, contractAddress, type TupleItem } from '@ton/core';
 import { PGlite } from '@electric-sql/pglite';
 import { WalletIdentityStore } from '../ledger/identities';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
-import { buildTonswapJettonWalletInitialData } from '../data/jettonAbi';
+
 import { fakeChainSource } from './support/fakeChainSource';
 import { fixtureHead } from './support/chainFixture';
 
@@ -14,7 +14,7 @@ async function main() {
   const store = new PostgresLedgerStore(pool);
   const owner = new Address(0, Buffer.alloc(32, 1)), root = new Address(0, Buffer.alloc(32, 2));
   const code = beginCell().storeUint(1, 8).endCell(), foreign = beginCell().storeUint(2, 8).endCell(), rootCode = beginCell().storeUint(3, 8).endCell();
-  const data = buildTonswapJettonWalletInitialData(owner, root);
+  const data = beginCell().storeCoins(0).storeAddress(owner).storeAddress(root).endCell();
   const wallet = contractAddress(0, { code, data }).toRawString(), impostor = new Address(0, Buffer.alloc(32, 9)).toRawString();
   const foreignOwner = new Address(0, Buffer.alloc(32, 8));
   const deployedForeign = new Address(0, Buffer.alloc(32, 7)).toRawString();
@@ -34,13 +34,13 @@ async function main() {
       if (offline) throw Error('offline');
       if (method === 'get_jetton_data') return { exitCode: 0, stack: [{ type: 'int', value: 0n }, { type: 'int', value: -1n }, { type: 'null' },
         { type: 'cell', cell: beginCell().storeUint(0, 8).storeDict(null).endCell() }, { type: 'cell', cell: foreignDeclared ? foreign : code }] };
-      if (method === 'get_wallet_data') return { exitCode: 0, stack: [{ type: 'int', value: 1n }, addressItem(address === deployedForeign ? foreignOwner : owner), addressItem(root), { type: 'cell', cell: foreign }] };
-      if (method === 'get_wallet_address') return { exitCode: 0, stack: [addressItem(Address.parse(deployedForeign))] };
+      if (method === 'get_wallet_data') return { exitCode: 0, stack: [{ type: 'int', value: 1n }, addressItem(address === deployedForeign ? foreignOwner : owner), addressItem(root), { type: 'cell', cell: address === wallet ? code : foreign }] };
+      if (method === 'get_wallet_address') return { exitCode: 0, stack: [addressItem(Address.parse(foreignDeclared ? deployedForeign : wallet))] };
       throw Error('unexpected getter');
     },
   });
-  const make = () => new WalletIdentityStore({ network: 'testnet', store, source, walletTemplateCodeHash: code.hash().toString('hex'),
-    tokens: [{ master: root.toRawString(), decimals: 6, symbol: 'USD' }] });
+  const make = () => new WalletIdentityStore({ network: 'testnet', store, source,
+    tokens: [{ master: root.toRawString(), masterCodeHash: rootCode.hash().toString('hex'), walletCodeHash: (foreignDeclared ? foreign : code).hash().toString('hex'), decimals: 6, symbol: 'USD' }] });
   try {
     await store.initialize();
     const identities = make();
@@ -61,6 +61,8 @@ async function main() {
     assert.equal(await identities.resolve(impostor, cycle), null, 'foreign account code cannot claim a template root identity');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_wallet_identities')).rows[0].count, 1);
     foreignDeclared = true;
+    assert.equal(await identities.resolve(deployedForeign, cycle), null, 'changed observed root declaration cannot enroll a new wallet implementation');
+    assert.equal(await make().resolve(wallet, cycle), null, 'durable row cannot cross a changed manifest wallet pin');
     const external = await make().resolve(deployedForeign, cycle);
     assert(external, 'a foreign TEP-74 wallet is qualified only by the matching root-declared code/address and getter');
     assert.equal(external.owner, foreignOwner.toRawString());

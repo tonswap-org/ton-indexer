@@ -101,8 +101,6 @@ export function projectionFingerprint(
   // full ledger merely because its observation timestamp changed.
   const fingerprintEvents = structuredClone(projection.events);
   for (const event of fingerprintEvents) {
-    if (event.settlement?.t3?.identityEvidence)
-      event.settlement.t3.identityEvidence.observedAt = "";
     for (const movement of event.movements)
       if (movement.evidence.getter) movement.evidence.getter.observedAt = "";
   }

@@ -11,7 +11,6 @@ type Cursor = { network: Network; account: string; since: string; after: string;
 /** Getter refreshes cannot manufacture a new economic event. */
 export function discoveryFingerprint(source: LedgerEvent): string {
   const event = structuredClone(source);
-  if (event.settlement?.t3?.identityEvidence) event.settlement.t3.identityEvidence.observedAt = '';
   for (const movement of event.movements) if (movement.evidence.getter) movement.evidence.getter.observedAt = '';
   const stable = (value: any): any => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object'
     ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
