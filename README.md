@@ -304,7 +304,9 @@ original boundary and cannot lower the process head. Unpinned preflight batches
 must still be fresh when they finish. The one-second head reuse window remains.
 Failed or cancelled batches abort active siblings and stop queued dispatch;
 transport cancellation removes their owned pending queries. No HTTP fallback is
-present. The SDK account-loader safeguard caps retention at 64 block keys,
+present. A failed `readFresh` logs one warning whose diagnostic keeps bounded
+source causes and attempts without request bodies or stacks; the response
+keeps the fixed public message. The SDK account-loader safeguard caps retention at 64 block keys,
 8 MiB of raw buffers and 65,536 cells; current account reads bypass that loader.
 Other SDK block/header/shard caches are bounded to 256 entries. Run
 `npm run test:fresh-read`, `npx tsx src/scripts/lite-account-cache-test.ts` and
@@ -720,7 +722,11 @@ Release-bound checks fail closed unless the network, release ID,
 canonical manifest path/hash, and allowed browser origin are all pinned. The
 manifest must be a canonical absolute path to a stable, single-link regular
 file in a non-symlink, non-group/other-writable parent. A release-bound check
-also requires the public service to expose the manifest's exact contract
+keeps the parent's device, inode, permissions and ownership stable across the
+read. Unrelated sibling creation, deletion or snapshot renames are permitted;
+the manifest file's full identity and content checks remain strict. Run
+`npx tsx src/scripts/release-manifest-test.ts` and `npm run test:runtime-manifest`
+after changes to these read checks. The public service must expose the manifest's exact contract
 map, the three discovery/root equality pairs, and exactly two complete
 one-minute single-trade candles for each of its three canonical markets:
 ```bash
