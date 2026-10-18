@@ -16,6 +16,11 @@ import { SpotEvidenceError, type ParsedSpotOperationRequest } from './spotOperat
 import { createOperationEvidenceGate } from './operationEvidenceGate';
 import { collectT3WalletClaimEvidence, type CurrentT3WalletClaimEvidence, type readT3WalletClaimRequest } from './t3WalletClaimEvidence';
 import { collectOrderWalletClaimEvidence, type CurrentOrderWalletClaimEvidence, type readOrderWalletClaimRequest } from './orderWalletClaimEvidence';
+import { collectOptionsOperationEvidence, type CurrentOptionsOperationEvidence, type readOptionsOperationRequest } from './optionsOperationEvidence';
+import { collectFaucetOperationEvidence, type CurrentFaucetOperationEvidence, type readFaucetOperationRequest } from './faucetOperationEvidence';
+import { collectOptionsWalletClaimEvidence, type CurrentOptionsWalletClaimEvidence, type readOptionsWalletClaimRequest } from './optionsWalletClaimEvidence';
+import { collectFaucetRecoveryEvidence, type CurrentFaucetRecoveryEvidence, type readFaucetRecoveryRequest } from './faucetRecoveryEvidence';
+import { ProductEvidenceError } from './productEvidence';
 
 export class OrderPageError extends Error {
   constructor(readonly status: 400 | 409 | 503, readonly code: 'invalid_cursor' | 'cursor_mismatch' | 'upstream_unavailable') {
@@ -27,6 +32,10 @@ export type CurrentOrdersRuntime = { start(): void; stop(): Promise<void>; statu
   operationEvidence(request: ReturnType<typeof readT3OperationRequest>, signal?: AbortSignal): Promise<CurrentT3OperationEvidence>;
   walletClaimEvidence(request: ReturnType<typeof readT3WalletClaimRequest>, signal?: AbortSignal): Promise<CurrentT3WalletClaimEvidence>;
   orderWalletClaimEvidence(request: ReturnType<typeof readOrderWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentOrderWalletClaimEvidence>;
+  optionsOperationEvidence(request: ReturnType<typeof readOptionsOperationRequest>, signal?: AbortSignal): Promise<CurrentOptionsOperationEvidence>;
+  faucetOperationEvidence(request: ReturnType<typeof readFaucetOperationRequest>, signal?: AbortSignal): Promise<CurrentFaucetOperationEvidence>;
+  optionsWalletClaimEvidence(request: ReturnType<typeof readOptionsWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentOptionsWalletClaimEvidence>;
+  faucetRecoveryEvidence(request: ReturnType<typeof readFaucetRecoveryRequest>, signal?: AbortSignal): Promise<CurrentFaucetRecoveryEvidence>;
   spotOperationEvidence(request: ParsedSpotOperationRequest, signal?: AbortSignal): Promise<CurrentSpotOperationEvidence> };
 function cursorSnapshot(cursor: string): string {
   try {
@@ -128,6 +137,22 @@ export function createOrdersRuntime(deps: RuntimeDeps, options: {
     spotOperationEvidence(request, signal) {
       return evidence((store, active) => collectSpotOperationEvidence(native, source, store, request, active),
         () => new SpotEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    optionsOperationEvidence(request, signal) {
+      return evidence((store, active) => collectOptionsOperationEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    optionsWalletClaimEvidence(request, signal) {
+      return evidence((store, active) => collectOptionsWalletClaimEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    faucetRecoveryEvidence(request, signal) {
+      return evidence((store, active) => collectFaucetRecoveryEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    faucetOperationEvidence(request, signal) {
+      return evidence((store, active) => collectFaucetOperationEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
     },
   };
 }

@@ -90,5 +90,28 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
     if (!stopped && lt > 0n && rows.length >= limit) gaps.push({ code: 'archive_history_limit', account, lt: lt.toString() });
     return { rows, gaps, complete: gaps.length === 0 && (stopped || (lt === 0n && hash === '0'.repeat(64))) };
   };
-  return { current, history };
+  const exact = async (account: string, lt: string, hash: string): Promise<PhysicalBoundary> => {
+    options.signal?.throwIfAborted();
+    if (!/^[1-9][0-9]*$/.test(lt) || !/^[0-9a-f]{64}$/.test(hash)) throw new ChainReadError('upstream_unavailable');
+    let boundary = await store.evidenceBoundary(account, lt, hash);
+    if (!boundary) {
+      if (remaining <= 0) throw new ChainReadError('upstream_unavailable');
+      remaining--;
+      const cursor = { lt, hash: Buffer.from(hash, 'hex').toString('base64') };
+      const located = await findTransactionState(source, account, cursor, head.seqno, { signal: options.signal });
+      if (!located) throw new ChainReadError('upstream_unavailable');
+      const state = located.state.replayBoundary ? located.state : await source.getAccountStateAtTransaction(account, cursor, located.seqno, { signal: options.signal });
+      if (!state.replayBoundary) throw new ChainReadError('upstream_unavailable');
+      boundary = { evidence: { account, ...state.replayBoundary }, seqno: located.seqno };
+      const verified = verifyOrderTransaction(boundary.evidence);
+      if (String(verified.tx.lt) !== lt || verified.hash !== hash || verified.tx.now > head.utime || boundary.seqno > head.seqno)
+        throw new ChainReadError('upstream_unavailable');
+      await store.retain(boundary.evidence, boundary.seqno);
+    }
+    const verified = verifyOrderTransaction(boundary.evidence);
+    if (boundary.evidence.account !== account || String(verified.tx.lt) !== lt || verified.hash !== hash || verified.tx.now > head.utime || boundary.seqno > head.seqno)
+      throw new ChainReadError('upstream_unavailable');
+    return boundary;
+  };
+  return { current, history, exact };
 }

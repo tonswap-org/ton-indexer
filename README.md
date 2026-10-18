@@ -1860,3 +1860,47 @@ The optional notification, public price and historical FX service is maintained 
 configuration and build. From that directory, run `npm ci` and `npm run verify`;
 follow its README for database migrations and API/worker deployment. The indexer
 build and runtime remain separate from this service.
+
+Current Options and faucet physical evidence use `POST /api/indexer/v1/options/operation-evidence`
+and `POST /api/indexer/v1/faucet/operation-evidence`. Each exact request names its
+original owner TON wallet dispatch LT/hash and emitted value. The endpoint binds
+that outgoing message to the actual target execution, current manifest code pins,
+complete product/token-wallet histories and subsequent physical message links.
+The returned original transaction and before/after ShardAccount BOCs let clients
+independently verify acceptance, custody and actual token delivery. Query IDs,
+receipt events, current balances and a successful dispatch alone do not prove payment.
+
+Options accepts current buy/fund TEP74 intents, writer OSWW, factory FEXC/OFEX,
+and slot0 CLMJ owed claims. Payout `queryId` names the original purchase escrow;
+the OFEX exercise body carries its own query. Owed requests use `seriesId: "0"`
+and null series/sourceWallet/notionalRaw/tokenId. Faucet accepts exact FCLM with
+asset0 T3, asset1 USDT or asset2 TS; the grant and allocated wire come from the
+original faucet execution rather than request-supplied amounts. `createdAt`
+retains the local request timestamp in milliseconds. Dispatch value matches the
+original wire and may be below the saved send budget after wallet fees.
+
+Both routes share the live evidence gate and deadlines. Limits are 16 accounts,
+256 aggregate history/returned transactions, 64 new archive boundaries, 1024
+message edges and 8 MiB. Product/source/recipient token histories must reach
+initialization; causal GRAM-return accounts need their uninterrupted current-to-
+dispatch interval. Any missing history, unmatched message or exceeded limit gives
+explicit incomplete coverage. No completed response cache is used. Run
+`npm run test:current-product-evidence`; the capture commands accept original
+native capture paths and an optional fresh absolute evidence-output path.
+
+Current recovery discovery uses `POST /api/indexer/v1/options/wallet-claim-evidence`
+with the same saved Options operation request. It returns the canonical vault T3
+wallet and current sparse claim/failure witnesses only after full wallet history
+and the original request's causal vault debit authenticate. Each selected record
+retains its original `transferTransaction`; retries preserve recipient and all
+immutable terms. Mark a journal-backed unmarked failure and resolve that operation
+before retrying. The shared work limits remain explicit incomplete coverage.
+
+`POST /api/indexer/v1/faucet/recovery-evidence` accepts the saved faucet claim and
+returns current holder receipt membership or absence, original faucet/source
+accounts and exact source/target failure descriptors. The direct refusal branch
+uses the same positive source and target transaction; a lost holder bounce uses
+the later faucet transaction. These proofs concern inventory and cooldown
+recovery. A separate physical grant graph establishes receipt of tokens. Native
+certificate sessions additionally require authenticated original chain anchors;
+fixture proofs and synthetic sandbox heads cannot provide that authority.

@@ -41,6 +41,11 @@ import { OrderPageError, type CurrentOrdersRuntime } from '../runtime/ordersRunt
 import { readT3OperationRequest, T3EvidenceError } from '../runtime/t3OperationRequest';
 import { readT3WalletClaimRequest } from '../runtime/t3WalletClaimEvidence';
 import { readAccountStorage } from '../runtime/accountStorage';
+import { readOptionsOperationRequest } from '../runtime/optionsOperationEvidence';
+import { readFaucetRecoveryRequest } from '../runtime/faucetRecoveryEvidence';
+import { readOptionsWalletClaimRequest } from '../runtime/optionsWalletClaimEvidence';
+import { readFaucetOperationRequest } from '../runtime/faucetOperationEvidence';
+import { ProductEvidenceError } from '../runtime/productEvidence';
 import { readOrderWalletClaimRequest } from '../runtime/orderWalletClaimEvidence';
 import { readSpotOperationRequest, SpotEvidenceError } from '../runtime/spotOperationRequest';
 import { currentJettonConfigPrices } from '../data/configPrices';
@@ -270,7 +275,7 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
   installReleaseIdentity(app, config.network, registryMetadata);
@@ -357,6 +362,10 @@ export const registerRoutes = (
       ...(freshReads && runtime.orders?.orderWalletClaimEvidence ? { orderWalletClaimEvidence: '/api/indexer/v1/spot/order-wallet-claim-evidence' } : {}),
       ...(freshReads ? { accountStorage: '/api/indexer/v1/account-storage' } : {}),
       ...(freshReads && runtime.orders?.spotOperationEvidence ? { spotOperationEvidence: '/api/indexer/v1/spot/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.optionsOperationEvidence ? { optionsOperationEvidence: '/api/indexer/v1/options/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.optionsWalletClaimEvidence ? { optionsWalletClaimEvidence: '/api/indexer/v1/options/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.faucetRecoveryEvidence ? { faucetRecoveryEvidence: '/api/indexer/v1/faucet/recovery-evidence' } : {}),
+      ...(freshReads && runtime.orders?.faucetOperationEvidence ? { faucetOperationEvidence: '/api/indexer/v1/faucet/operation-evidence' } : {}),
       marketCandles: '/api/indexer/v1/markets/{market}/candles'
     }).map(([name, route]) => [name, publicIndexerPath(indexer, route)])),
     release: {
@@ -409,6 +418,62 @@ export const registerRoutes = (
 
   app.get('/api/indexer/v1/service-info', async () => serviceInfo);
 
+  app.post('/api/indexer/v1/options/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.optionsOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current options evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOptionsOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.optionsOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current options evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current options evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current options evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/faucet/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.faucetOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current faucet evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readFaucetOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.faucetOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current faucet evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current faucet evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current faucet evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/faucet/recovery-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.faucetRecoveryEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current faucet recovery evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readFaucetRecoveryRequest(request.body, nativeRuntime);
+      return await runtime.orders.faucetRecoveryEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current faucet recovery evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current faucet recovery evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current faucet recovery evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/options/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.optionsWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Options wallet claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOptionsWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.optionsWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Options wallet claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Options wallet claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Options wallet claim evidence is unavailable.');
+    }
+  });
   app.post('/api/indexer/v1/t3/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
     reply.header('cache-control', 'no-store');
     if (!nativeRuntime || !runtime.orders?.operationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current T3 evidence is unavailable.');

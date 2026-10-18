@@ -11,11 +11,42 @@ const gap = { type: 'object', required: ['code', 'account'], properties: { code:
 const pinnedAccount = object({ address, codeBoc: { type: 'string' }, dataBoc: { type: 'string' } });
 const spotRequestIdentity = { network: { enum: ['mainnet', 'testnet', 'localnet'] }, releaseId: { type: 'string' }, manifestHash: hash,
   owner: address, pool: address };
+const productRequestIdentity = { network: { enum: ['mainnet', 'testnet', 'localnet'] }, releaseId: { type: 'string' }, manifestHash: hash,
+  owner: address, bodyBoc: { type: 'string', maxLength: 131072 }, bodyHash: hash, valueNano: uint,
+  createdAt: { type: 'integer', minimum: 1, maximum: 9007199254740991, description: 'Original local request creation time in milliseconds' }, dispatch: object({ lt: uint, hash, valueNano: uint }) };
+const nullable = (schema: unknown) => ({ anyOf: [schema, { type: 'null' }] });
+const productEvidence = (schema: string, kinds: string[]) => object({ schema: { const: schema }, ...identity,
+  request: object({ kind: { enum: kinds }, owner: address, bodyHash: hash }),
+  coverage: object({ complete: { type: 'boolean' }, gaps: { type: 'array', maxItems: 256, items: gap } }),
+  transactions: { type: 'array', maxItems: 256, items: object({ account: address, transactionBoc: { type:'string' }, beforeShardAccountBoc:{type:'string'},afterShardAccountBoc:{type:'string'} }) } });
 const spotEvidence = { schema: { const: 'tonswap-spot-operation-evidence-v1' }, ...identity,
   coverage: object({ complete: { type: 'boolean' }, gaps: { type: 'array', maxItems: 256, items: gap } }), pool: pinnedAccount,
   accounts: { type: 'array', maxItems: 16, items: object({ address, shardAccountBoc: { type: 'string' } }) },
   transactions: { type: 'array', maxItems: 256, items: object({ account: address, transactionBoc: { type: 'string' }, beforeShardAccountBoc: { type: 'string' }, afterShardAccountBoc: { type: 'string' } }) } };
 export const currentReleaseSchemas = {
+  CurrentOptionsEvidenceRequest: object({ ...productRequestIdentity, kind: { enum: ['buy','fund','withdraw','payout','owed'] },
+    factory: address, vault: address, series: nullable(address), seriesId: uint, queryId: uint, amountRaw: uint,
+    notionalRaw: nullable(uint), tokenId: nullable(uint), sourceWallet: nullable(address) }),
+  OptionsOperationEvidenceResponse: productEvidence('tonswap-options-operation-evidence-v1', ['buy','fund','withdraw','payout','owed']),
+  CurrentFaucetEvidenceRequest: object({ ...productRequestIdentity, kind: { const:'claim' }, faucet: address, asset:{enum:[0,1,2]},queryId:uint }),
+  FaucetOperationEvidenceResponse: productEvidence('tonswap-faucet-operation-evidence-v1', ['claim']),
+  OptionsWalletClaimEvidenceResponse: object({ schema: { const: 'tonswap-options-wallet-claim-evidence-v1' }, ...identity,
+    request: object({ kind: { enum: ['buy','fund','withdraw','payout','owed'] }, owner: address, bodyHash: hash }),
+    coverage: object({ complete: { type: 'boolean' }, gaps: { type: 'array', items: gap } }), wallet: pinnedAccount,
+    claims: object({ root: hash, count: uint, failureRoot: hash, failureCount: uint,
+      records: { type: 'array', maxItems: 32, items: object({ id: uint, recordBoc: { type: 'string' }, recordHash: hash,
+        proofBoc: { type: 'string' }, failed: { type: 'boolean' }, cancelled: { type: 'boolean' }, attempt: uint,
+        originLt: uint, owner: address, recipient: address, queryId: uint, amountRaw: uint, burn: { const: false },
+        transferTransaction: object({ account: address, transactionBoc: { type: 'string' }, beforeShardAccountBoc: { type: 'string' }, afterShardAccountBoc: { type: 'string' } }) }) },
+      failures: { type: 'array', maxItems: 32, items: object({ index: uint, evidenceBoc: { type: 'string' }, proofBoc: { type: 'string' }, attemptHash: hash }) } }) }),
+  FaucetRecoveryEvidenceResponse: object({ schema: { const:'tonswap-faucet-recovery-evidence-v1' }, ...identity,
+    request: object({ kind: { const:'claim' }, owner: address, bodyHash: hash }),
+    coverage: object({ complete: { type:'boolean' }, gaps: { type:'array', items: gap } }),
+    faucet: nullable(object({ address, shardAccountBoc:{type:'string'} })), sourceWallet: nullable(object({ address, shardAccountBoc:{type:'string'} })),
+    receipts: nullable(object({ root:hash, initialized:{type:'boolean'}, lastKey:uint, count:uint,
+      records:{type:'array',maxItems:32,items:object({key:uint,recordBoc:nullable({type:'string'}),proofBoc:{type:'string'}})} })),
+    sourceFailure: nullable(object({sourceLt:uint,sourceHash:hash,targetWallet:address,targetLt:uint,targetHash:hash,commandBoc:{type:'string'},wire:uint,amountRaw:uint})),
+    transactions:{type:'array',maxItems:256,items:object({account:address,transactionBoc:{type:'string'},beforeShardAccountBoc:{type:'string'},afterShardAccountBoc:{type:'string'}})} }),
   CurrentSpotOrderWalletClaimRequest: object({ ...spotRequestIdentity, kind: { const: 'order-settlement' }, factory: address,
     order: address, nonce: uint, inputRoot: address, termsBoc: { type: 'string', maxLength: 131072 }, termsHash: hash,
     funding: { anyOf: [{ type: 'null' }, object({ sourceWallet: address, valueNano: uint, bodyBoc: { type: 'string', maxLength: 131072 }, bodyHash: hash, lt: uint, hash })] } }),
@@ -81,6 +112,30 @@ const response = (name: string, description: string) => ({ description,
   headers: { 'x-tonswap-release': { schema: hash }, 'Cache-Control': { schema: { const: 'no-store' } } },
   content: { 'application/json': { schema: { $ref: `#/components/schemas/${name}` } } } });
 export const currentReleasePaths = {
+  '/api/indexer/v1/options/operation-evidence': { post: {
+    summary: 'Read original current Options execution and payment evidence',
+    description: 'Read-only. Exact current buy/fund TEP74, OSWW, FEXC/OFEX or slot0 CLMJ request. dispatch identifies the original owner TON wallet transaction and its exact emitted value, not the target first hop. Payout queryId remains the original purchase escrow query; an OFEX exercise query is independently encoded in its body. Owed has seriesId 0 and null series/sourceWallet/notionalRaw/tokenId. Current factory/series and wallet identities, complete bounded original histories and full outgoing-to-incoming message links supply raw physical facts; event/status or dispatch acceptance never proves a cash payment. Browser independently verifies original purchase identity, state transitions and final debit/credit. Maximum 16 accounts, aggregate 256 history/returned transactions, 64 new archive boundaries, 1024 message edges and 8 MiB. Missing evidence or any limit yields explicit incomplete coverage. Shared live request gate and no completed cache.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentOptionsEvidenceRequest'}}}},
+    responses:{200:response('OptionsOperationEvidenceResponse','Original boundaries and explicit coverage'),400:error('Invalid original operation'),409:error('Release mismatch'),413:error('Request exceeds 192 KiB'),503:error('Original evidence unavailable')},
+  } },
+  '/api/indexer/v1/faucet/operation-evidence': { post: {
+    summary:'Read original faucet claim and token delivery evidence',
+    description:'Read-only. Exact FCLM request and original owner TON wallet dispatch bind the operation. Browser derives allocated wire and grant from original pinned faucet boundaries, then independently verifies source wallet debit and recipient wallet credit. Current claimer state or balance delta alone does not certify delivery. Complete bounded original faucet/token-wallet histories and linked outgoing/incoming messages share the Options graph limits, current release/head fence, live request cap and no completed cache.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentFaucetEvidenceRequest'}}}},
+    responses:{200:response('FaucetOperationEvidenceResponse','Original boundaries and explicit coverage'),400:error('Invalid original claim'),409:error('Release mismatch'),413:error('Request exceeds 192 KiB'),503:error('Original evidence unavailable')},
+  } },
+  '/api/indexer/v1/options/wallet-claim-evidence': { post: {
+    summary:'Read current failed vault transfer witnesses for an exact Options operation',
+    description:'Read-only. Accepts the same exact current Options request and owner TON wallet dispatch. Original causal message links bind a successful vault command and actual source debit at originLt; unrelated vault history is never selected by query alone. The canonical vault T3 wallet and complete linked history reconstruct both current sparse trees. Selected non-burn failures retain original recipient and all immutable request terms, with original transferTransaction. An unmarked journal witness requires a resolved mark before retry. Witnesses never prove payment. Shared 64 new archive boundaries, aggregate 10000 history rows, 32 claims/32 failure witnesses, 8 MiB, explicit incomplete coverage and no completed cache.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentOptionsEvidenceRequest'}}}},
+    responses:{200:response('OptionsWalletClaimEvidenceResponse','Current request-bound original vault transfer and sparse witnesses'),400:error('Invalid original Options request'),409:error('Release mismatch'),413:error('Request exceeds 192 KiB'),503:error('Original current evidence unavailable')},
+  } },
+  '/api/indexer/v1/faucet/recovery-evidence': { post: {
+    summary:'Read current faucet holder receipt and original source failure evidence',
+    description:'Read-only. Exact saved FCLM and original owner dispatch select the allocated wire and canonical T3 source command. Complete original faucet/source histories reconstruct every holder receipt root. Returns current receipt membership or absence plus exact original source/target failure boundaries. Direct source refusal uses the same positive source/target transaction; lost holder bounce uses its later original holder transaction. These witnesses recover inventory/cooldown and never certify grant delivery. Proof sessions require separately authenticated original chain anchors. Missing history and work/size limits are explicit incomplete coverage; shared live request cap, 64 new boundaries, 10000 history rows, 32 witnesses and 8 MiB.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentFaucetEvidenceRequest'}}}},
+    responses:{200:response('FaucetRecoveryEvidenceResponse','Current holder receipt witness and exact original source failure'),400:error('Invalid original claim'),409:error('Release mismatch'),413:error('Request exceeds 192 KiB'),503:error('Original current evidence unavailable')},
+  } },
   '/api/indexer/v1/spot/order-wallet-claim-evidence': { post: {
     summary: 'Read current failed transfer witnesses for a closed order T3 input wallet',
     description: 'Read-only. Accepts only the exact current order-settlement request with T3 input. Authenticates the canonical closed order, original factory initialization and immutable terms, original resolved funding and actual input credit, complete order/input-wallet histories and current sparse claim/failure roots. Each selected non-burn claim retains its original transferTransaction at originLt, linked to an exact pinned order outgoing message. Current failure-journal membership may precede the marked failed flag; the client must finish and resolve marking before OWDR retry. No output-delivery success is required and no witness proves cash settlement. Missing history and work/size limits yield explicit incomplete coverage, never truncated-complete results. Maximum 32 claim and 32 failure witnesses, shared live request gate, 8 MiB.',

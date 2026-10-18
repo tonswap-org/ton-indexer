@@ -654,6 +654,9 @@ async function testDatabase() {
           .toString('base64'),
       },
     });
+    // Explicit synthetic per-token identity for this scheduler/projection test;
+    // these cells do not qualify a native product or historical storage decoder.
+    const custodyCode = beginCell().storeUint(0x74657374, 32).endCell();
     const custodySource: FixtureChainSource = fixtureChainSource({ physicalCurrentReads: true,
       ...sourceWithHistory(() => 0),
       getAccountState: async (address) =>
@@ -663,7 +666,7 @@ async function testDatabase() {
               lastTxLt: String(custodyHead),
               lastTxHash: hash(custodyHead),
             }
-          : { balance: '0' },
+          : { balance: '0', ...(address === master ? { accountState: 'active' as const } : {}) },
       getTransactions: async (address, limit, lt) =>
         address === custodyWallet
           ? Array.from({ length: Math.min(limit, Number(lt)) }, (_, i) =>
@@ -705,7 +708,7 @@ async function testDatabase() {
       opcodes,
       createLogger('silent'),
       2,
-      { jettonRoots: [master] }
+      { jettonRoots: [master], tokens: [{ master, masterCodeHash: custodyCode.hash().toString('hex'), walletCodeHash: custodyCode.hash().toString('hex') }] }
     );
     await custody.runOwnerCycle(custodyOwner);
     const custodyFirst = await store.page('testnet', custodyOwner, {

@@ -1,4 +1,4 @@
-import { Address, Cell, beginCell } from '@ton/core';
+import { Address, Cell, CellType, beginCell } from '@ton/core';
 import type { JettonMetadata } from '../models';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 import { ChainReadError, type AccountStateResponse, type ChainSource, type ReadOptions } from './dataSource';
@@ -16,6 +16,9 @@ type Resolved = { root: string; owner: Address; wallet: string; qualified: Quali
 const unavailable = (root: string, wallet: string | null, reason: Extract<JettonWalletRead, { status: 'unavailable' }>['reason']): JettonWalletRead =>
   ({ status: 'unavailable', root, wallet, reason });
 const reason = (error: unknown) => error instanceof ChainReadError && error.code === 'upstream_timeout' ? 'timeout' as const : 'upstream' as const;
+// Native library-reference code has its own exact manifest hash. Pruned and
+// Merkle cells cannot serve as executable code identities.
+const executable = (cell: Cell) => cell.type === CellType.Ordinary || cell.type === CellType.Library;
 
 /** Every qualification, wallet address and balance is read at the same current
  * head. No completed root/getter observation is reused under a later boundary. */
@@ -33,8 +36,8 @@ export function createJettonWalletReader({ source, tokens }: {
     ]);
     const code = cellFromAccountCodeBoc(state.codeBoc);
     const data = isSuccessfulGetterResult(result) ? parseCanonicalJettonRootData(result.stack) : null;
-    if (state.accountState !== 'active' || !code || code.isExotic || code.hash().toString('hex') !== pin.masterCodeHash
-      || !data || data.walletCode.isExotic || data.walletCode.hash().toString('hex') !== pin.walletCodeHash) return null;
+    if (state.accountState !== 'active' || !code || !executable(code) || code.hash().toString('hex') !== pin.masterCodeHash
+      || !data || !executable(data.walletCode) || data.walletCode.hash().toString('hex') !== pin.walletCodeHash) return null;
     return data;
   }
   async function resolve(rootInput: string, owner: Address, options: ReadOptions): Promise<Resolved | JettonWalletRead> {
@@ -66,6 +69,14 @@ export function createJettonWalletReader({ source, tokens }: {
     } catch (error) { return unavailable(root, wallet, reason(error)); }
   }
   return {
+    /** Canonical identity only. A frozen/absent current recipient wallet must
+     * not prevent collecting its original transfer failure or recovery. */
+    async identity(root: string, owner: string, options: ReadOptions = {}) {
+      const pinned = { ...options, at: options.at ?? await source.head(options) };
+      const result = await resolve(root, Address.parse(owner), pinned);
+      if ('status' in result) throw new ChainReadError('upstream_unavailable');
+      return { root: result.root, wallet: result.wallet, walletCode: result.qualified.code };
+    },
     async wallet(root: string, owner: string, options: ReadOptions = {}): Promise<JettonWalletRead> {
       let resolved: Resolved | JettonWalletRead;
       try {

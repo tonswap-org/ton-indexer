@@ -20,7 +20,7 @@ function validSnapshot(snapshot: LedgerStateSnapshot | null, head: LedgerStateSn
     const code = Cell.fromBase64(snapshot.state.codeBoc);
     return !code.isExotic && code.hash().toString('hex') === codeHash;
 }
-class SparseT3Tree {
+export class SparseT3Tree {
     private levels = Array.from({ length: 65 }, () => new Map<bigint, Buffer>());
     private zero: Buffer[] = [beginCell().storeUint(0, 8).endCell().hash()];
     constructor(private domain = 3) {

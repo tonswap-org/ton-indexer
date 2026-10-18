@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { Address, Cell, Dictionary, beginCell, contractAddress, loadMessage, parseTuple, serializeTuple, type TupleItem } from '@ton/core';
+import { Address, Cell, Dictionary, TupleReader, beginCell, contractAddress, loadMessage, parseTuple, serializeTuple, type TupleItem } from '@ton/core';
 import type { AccountStateResponse, ChainHead } from '../data/dataSource';
 import { hashReleaseManifest, type RuntimeReleaseManifest } from '../config/runtimeManifest';
 import { readCurrentT3Wallet } from '../ledger/currentT3State';
@@ -58,8 +58,20 @@ export function spotEvidenceFixtureAdapter(manifest: RuntimeReleaseManifest, acc
   const wallets = new Map<string, { owner: string; master: string; balance: bigint; code: Cell }>();
   for (const [address, state] of states) {
     if (!state.codeBoc || !state.dataBoc) continue;
-    const code = orderCell(state.codeBoc), token = manifest.tokens.find(t => t.walletCodeHash === digest(code));
+    // Original native captures may include unrelated library-reference code.
+    // Identity selection is by the exact release hash; account/transaction
+    // envelopes still require ordinary roots in their own verifier.
+    const roots = Cell.fromBoc(Buffer.from(state.codeBoc, 'base64')); assert.equal(roots.length, 1);
+    const code = roots[0], token = manifest.tokens.find(t => t.walletCodeHash === digest(code));
     if (!token) continue;
+    const observed = getters.filter(g => g.address === address && g.method === 'get_wallet_data');
+    if (observed.length) {
+      assert.equal(observed.length, 1); assert([0, 1].includes(observed[0].exitCode));
+      const native = new TupleReader(parseTuple(orderCell(observed[0].resultBoc)));
+      const balance = native.readBigNumber(), owner = native.readAddress().toRawString(), master = native.readAddress().toRawString(), walletCode = native.readCell();
+      assert.equal(native.remaining, 0); assert.equal(digest(walletCode), token.walletCodeHash); assert.equal(master, token.root);
+      wallets.set(address, { balance, owner, master, code: walletCode }); continue;
+    }
     if (digest(code) === manifest.templates.T3Wallet) {
       const w = readCurrentT3Wallet(state.dataBoc); wallets.set(address, { owner: w.owner, master: w.master, balance: w.balance, code });
     } else {

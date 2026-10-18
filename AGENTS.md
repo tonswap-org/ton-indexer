@@ -305,3 +305,30 @@ Only gate packages start an isolated native PostgreSQL test server. Native secti
 Disk monitoring never deletes operational data. Unknown capacity is critical; low/critical capacity skips snapshot saves and critical health returns 503. Snapshots serialize through the asynchronous writer, use one owned temporary file per target and are awaited during shutdown. Logs and metric series are bounded and expose dropped counts. Runtime metrics include source/database/phase timing, scheduler depth, foreground age, pool wait, first-publication latency and database size; additive concurrent I/O totals need not equal wall-clock phases.
 
 Publish this phase's web first, then switch the indexer within one release window. Keep the old indexer/database available for proxy rollback; the new web stays. No acceptance run or release announcement belongs between those two cutover steps.
+
+
+Current Options/faucet evidence starts at the exact original owner TON wallet
+transaction, never a target first-hop cursor. Verify full outgoing-to-incoming
+message identity, current release pins and complete bounded product/token-wallet
+histories. Retain original transaction and before/after account cells unchanged.
+Current Options permits OVBY/OVFD funding, OSWW, FEXC/OFEX and slot0 CLMJ only;
+CLMJ uses seriesId0 and null series/sourceWallet/notionalRaw/tokenId. Faucet FCLM
+grant amount and allocated wire are facts of the original faucet boundary.
+No event/receipt or current-balance comparison proves payout. These collectors
+share the live gate and aggregate work/byte bounds, preserve explicit incomplete
+coverage and never create a truncated-complete response. Exact manifest-pinned
+library-reference executable code is valid; pruned/Merkle cells are not code
+identity. Run current product parser/API/graph checks and original native capture
+checks; synthetic source/head adapters never qualify a public deployment.
+
+Options wallet-claim discovery reuses the exact saved Options operation request.
+Only original causal vault commands and actual original source debits select
+non-burn failures. Reconstruct complete current claim/failure roots, preserve
+original recipient/WalletDetails, and return exact original transferTransaction.
+Do not select unrelated history by query ID or count a current sparse witness as
+payment. Faucet recovery reconstructs every holder receipt transition from full
+original faucet history and binds release supplyBase; direct refusal targets its
+same positive source transaction, while a lost bounce targets the later holder
+transaction. Raw transaction cells alone do not authenticate proof-session chain
+anchors. Run current release routes, native product/claim/recovery captures and
+missing/wrong-history negatives after modifying these seams.

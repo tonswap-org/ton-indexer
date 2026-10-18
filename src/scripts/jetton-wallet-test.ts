@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { Address, beginCell, type Cell, type TupleItem } from '@ton/core';
+import { Address, beginCell, convertToMerkleProof, type Cell, type TupleItem } from '@ton/core';
 import { createJettonWalletReader } from '../data/jettonWallet';
 import { ChainReadError, type AccountStateResponse, type ReadOptions } from '../data/dataSource';
 import { fakeChainSource } from './support/fakeChainSource';
@@ -109,6 +109,19 @@ async function main() {
   await assert.rejects(reader.wallets([roots[0]], owner.toRawString()), ChainReadError); ownerFailure = false;
   assert.deepEqual(await reader.metadata(roots[0], { at: head }), {});
   assert.throws(() => createJettonWalletReader({ source, tokens: [tokens[0], tokens[0]] }), /pins/);
+  // Current vendor libraries retain the hash of their executable reference;
+  // this is an explicit identity, never permission to accept a partial proof.
+  const ordinary = codes[0], library = beginCell().storeUint(2, 8).storeBuffer(ordinary.hash()).endCell({ exotic: true });
+  codes[0] = library;
+  const libraryReader = createJettonWalletReader({ source, tokens: [{ ...tokens[0], walletCodeHash: library.hash().toString('hex') }] });
+  assert.equal((await libraryReader.wallet(roots[0], owner.toRawString())).status, 'ok');
+  assert.equal((await reader.wallet(roots[0], owner.toRawString())).status, 'unavailable', 'ordinary code pin cannot authorize a different library reference');
+  const identity = await libraryReader.identity(roots[0], owner.toRawString()); assert.equal(identity.wallet, addresses[0]);
+  assert(identity.walletCode.equals(library));
+  codes[0] = convertToMerkleProof(ordinary);
+  const partialReader = createJettonWalletReader({ source, tokens: [{ ...tokens[0], walletCodeHash: codes[0].hash().toString('hex') }] });
+  assert.equal((await partialReader.wallet(roots[0], owner.toRawString())).status, 'unavailable', 'a declared Merkle hash is not executable code');
+  await assert.rejects(partialReader.identity(roots[0], owner.toRawString())); codes[0] = ordinary;
   console.log('Per-token master and wallet qualification, current TEP-74 getters, same-head batches, partial failures and no completed caches passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
