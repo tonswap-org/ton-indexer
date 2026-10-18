@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
-import { beginCell } from '@ton/core';
 import { ChainReadError, type AccountStateResponse, type ChainHead } from '../data/dataSource';
 import { IndexerService } from '../indexerService';
 import { loadConfig } from '../config';
@@ -40,19 +39,6 @@ async function main() {
   let accountSignal:AbortSignal|undefined;
   await assert.rejects(make(fakeChainSource({head:async()=>head,getAccountState:async(_address,options)=>{accountSignal=options?.signal;return new Promise(()=>{});}}))
     .getAccountAnchor(address,{signal:AbortSignal.timeout(15)}),typed('upstream_timeout'));assert(accountSignal!.aborted);
-  const empty=beginCell().endCell();
-  const data=beginCell().storeRef(empty).storeUint(0,256).storeUint(0,64).storeRef(empty).storeCoins(0).storeCoins(0).storeUint(2,64).storeRef(empty).storeRef(empty).endCell().toBoc().toString('base64');
-  let snapshots=0,pointer='1',observedHead=head;
-  const governance=make(fakeChainSource({head:async()=>observedHead,getAccountState:async(_address,options)=>{
-    assert.equal(options?.at,observedHead);return {...state,dataBoc:data,lastTxLt:pointer,lastTxHash:'d'.repeat(64)};
-  },read:async(calls,options)=>{
-    snapshots++;assert.equal(options?.at,observedHead);assert(options?.signal);await delay(5);
-    return {head:observedHead,results:calls.map(call=>({kind:'getter' as const,address:call.address,exitCode:0,stack:Array.from({length:15},(_,i)=>({type:'int' as const,value:i===0?1n:0n}))}))};
-  }}));
-  const values=await Promise.all(Array.from({length:10},()=>governance.getGovernanceSnapshot(address)));
-  assert.equal(snapshots,1);assert(values.every(value=>value.proposal_count===1));
-  observedHead={...head,seqno:102};await governance.getGovernanceSnapshot(address);assert.equal(snapshots,1);
-  pointer='2';await governance.getGovernanceSnapshot(address);assert.equal(snapshots,2);
   const historyStore=new MemoryStore(config);let histories=0;
   const history=new IndexerService(config,historyStore,fakeChainSource({getAccountState:async(_address,options)=>{
     histories++;if(histories===1){accountSignal=options?.signal;return new Promise(()=>{});}return state;
@@ -69,6 +55,6 @@ async function main() {
   const follower=new BlockFollower(config,new MemoryStore(config),fakeChainSource({head:async()=>{polled++;return head;}}),loadOpcodes(),{warn(){},error(){},info(){},debug(){}} as any,followerService,undefined,feed);
   follower.start();listener!({...head,seqno:102});await delay(0);follower.stop();
   assert.equal(polled,0);assert.deepEqual(received.map(value=>value.seqno),[101,102]);assert(unsubscribed);
-  console.log('Service deadlines, retry after hanging work, honest anchors, fresh-read times, snapshot sharing/invalidation, typed errors, health and shared HeadFeed passed.');
+  console.log('Service deadlines, retry after hanging work, honest anchors, fresh-read times, typed errors, health and shared HeadFeed passed.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -11,7 +11,6 @@ import {
   transactionPageReachesHistoryStart
 } from './data/dataSource';
 import { OpcodeSets } from './utils/opcodes';
-import { governanceProposalRange } from './utils/governanceStorage';
 import {
   AccountState,
   HealthStatus,
@@ -297,53 +296,7 @@ const unwrapTupleStack = (stack: TupleItem[]): TupleItem[] => {
 
 const buildSliceCell = (addressRaw: string) => beginCell().storeAddress(Address.parse(addressRaw)).endCell();
 
-const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const GOVERNANCE_MAX_SCAN_DEFAULT = 20;
-const GOVERNANCE_MAX_SCAN_LIMIT = 64;
-const GOVERNANCE_SCAN_BATCH_SIZE = 5;
-
 const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
-
-type GovernanceLockSnapshot = {
-  amount: string | null;
-  unlockTime: string | null;
-  tier: string | null;
-  activatedAt: string | null;
-  weight: string | null;
-};
-
-type GovernanceProposalSnapshot = {
-  id: string;
-  status: string | null;
-  passed: string | null;
-  yesWeight: string | null;
-  noWeight: string | null;
-  abstainWeight: string | null;
-  quorumWeight: string | null;
-  totalWeightSnapshot: string | null;
-  startTime: string | null;
-  minCloseTime: string | null;
-  maxCloseTime: string | null;
-  cooldownEnd: string | null;
-  target: string | null;
-  value: string | null;
-  descriptionHash: string | null;
-};
-
-type GovernanceSnapshotResponse = {
-  voting: string;
-  owner: string | null;
-  lock: GovernanceLockSnapshot | null;
-  proposal_count: number;
-  scanned: number;
-  start_id: string;
-  next_start_id: string | null;
-  coverage: { rangeKnown: boolean; pageComplete: boolean; scanComplete: boolean; nextProposalId: string | null; dataHash: string | null; issues: string[] };
-  proposals: GovernanceProposalSnapshot[];
-  source: 'lite';
-  network: Network;
-  updated_at: number;
-};
 
 type DlmmPoolsSnapshotRequest = {
   t3Root: string;
@@ -605,130 +558,6 @@ export class IndexerService {
         throw new ChainReadError('upstream_unavailable');
       return {exitCode: row.exitCode, stack: row.stack};
     };
-  }
-
-  async getGovernanceSnapshot(
-    votingAddress: string,
-    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number; startId?: string | number } = {}, readOptions: ServiceReadOptions = {}
-  ): Promise<GovernanceSnapshotResponse> {
-    const normalizedVoting = normalizeAddress(votingAddress);
-    const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
-    const maxScan = Math.max(
-      1,
-      Math.min(GOVERNANCE_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? GOVERNANCE_MAX_SCAN_DEFAULT))
-    );
-    const firstId = BigInt(options.startId ?? 1);
-    if (firstId < 1n || firstId >= 1n << 64n) throw new Error('start_id must be a positive uint64');
-    const cacheKey = [normalizedVoting, normalizedOwner ?? '', maxScan, firstId.toString()].join('|');
-
-    return this.readSnapshot({ key: 'getGovernanceSnapshot|' + cacheKey, deadlineMs: 10_000, signal: readOptions.signal,
-      reuse: { account: normalizedVoting, maxAgeMs: GOVERNANCE_SNAPSHOT_CACHE_TTL_MS }, load: async ({head, signal}) => {
-      const getter = this.pinnedGetter(head, signal);
-      // Fetch the persisted monotonic counter. Getter failures are never interpreted as absence.
-      const account = await this.source.getAccountState(normalizedVoting, {at: head, signal});
-      const range = governanceProposalRange(account?.dataBoc);
-      const lastId = range ? (range.nextProposalId - 1n < firstId + BigInt(maxScan) - 1n
-        ? range.nextProposalId - 1n : firstId + BigInt(maxScan) - 1n) : firstId + BigInt(maxScan) - 1n;
-      const issues: string[] = range ? [] : ['governance_range_unavailable'];
-      let lockResponded = false;
-      const lock = await (async (): Promise<GovernanceLockSnapshot | null> => {
-        if (!normalizedOwner) return null;
-        const owner = Address.parse(normalizedOwner);
-        const ownerCell = beginCell().storeAddress(owner).endCell();
-        const lockRes = await getter(normalizedVoting, 'governance_lock', [
-          { type: 'slice', cell: ownerCell }
-        ]);
-        lockResponded = lockRes !== null;
-        if (!lockRes || lockRes.exitCode !== 0) return null;
-        const stack = lockRes.stack;
-        return {
-          amount: tupleItemBigIntString(stack[0]),
-          unlockTime: tupleItemBigIntString(stack[1]),
-          tier: tupleItemBigIntString(stack[2]),
-          activatedAt: tupleItemBigIntString(stack[3]),
-          weight: tupleItemBigIntString(stack[4])
-        };
-      })();
-
-      const proposals: GovernanceProposalSnapshot[] = [];
-      let scanned = 0;
-      let proposalResponded = false;
-      for (let startId = firstId; startId <= lastId; startId += BigInt(GOVERNANCE_SCAN_BATCH_SIZE)) {
-        const endId = lastId < startId + BigInt(GOVERNANCE_SCAN_BATCH_SIZE) - 1n ? lastId : startId + BigInt(GOVERNANCE_SCAN_BATCH_SIZE) - 1n;
-        const batchIds = Array.from({ length: Number(endId - startId + 1n) }, (_, index) => startId + BigInt(index));
-        const batch = await Promise.all(
-          batchIds.map((proposalId) =>
-            getter(normalizedVoting, 'governance_proposal', [
-              { type: 'int', value: BigInt(proposalId) }
-            ])
-          )
-        );
-
-        for (let index = 0; index < batch.length; index += 1) {
-          scanned += 1;
-          const res = batch[index];
-          if (res) {
-            proposalResponded = true;
-          }
-          if (!res || res.exitCode !== 0) {
-            issues.push(`proposal_unavailable:${batchIds[index]}`);
-            continue;
-          }
-          const stack = res.stack;
-          const id = tupleItemBigIntString(stack[0]);
-          if (!id || id !== batchIds[index]!.toString()) {
-            issues.push(`proposal_id_mismatch:${batchIds[index]}`);
-            continue;
-          }
-          proposals.push({
-            id,
-            status: tupleItemBigIntString(stack[1]),
-            passed: tupleItemBigIntString(stack[2]),
-            yesWeight: tupleItemBigIntString(stack[3]),
-            noWeight: tupleItemBigIntString(stack[4]),
-            abstainWeight: tupleItemBigIntString(stack[5]),
-            quorumWeight: tupleItemBigIntString(stack[6]),
-            totalWeightSnapshot: tupleItemBigIntString(stack[7]),
-            startTime: tupleItemBigIntString(stack[8]),
-            minCloseTime: tupleItemBigIntString(stack[9]),
-            maxCloseTime: tupleItemBigIntString(stack[10]),
-            cooldownEnd: tupleItemBigIntString(stack[11]),
-            target: tupleItemAddress(stack[12]),
-            value: tupleItemBigIntString(stack[13]),
-            descriptionHash: tupleItemBigIntString(stack[14])
-          });
-        }
-      }
-
-      if (!proposalResponded && !lockResponded && !range) {
-        throw new Error('Governance snapshot is unavailable from the configured data source.');
-      }
-
-      proposals.sort((left, right) => {
-        const leftId = BigInt(left.id);
-        const rightId = BigInt(right.id);
-        if (leftId === rightId) return 0;
-        return leftId > rightId ? -1 : 1;
-      });
-      const source = 'lite' as const;
-
-      return {
-        voting: normalizedVoting,
-        owner: normalizedOwner,
-        lock,
-        proposal_count: proposals.length,
-        scanned,
-        start_id: firstId.toString(),
-        next_start_id: issues.length ? firstId.toString() : range && lastId + 1n < range.nextProposalId ? (lastId + 1n).toString() : null,
-        coverage: { rangeKnown: Boolean(range), pageComplete: issues.length === 0,
-          scanComplete: issues.length === 0 && Boolean(range) && lastId + 1n >= range!.nextProposalId,
-          nextProposalId: range?.nextProposalId.toString() ?? null, dataHash: range?.dataHash ?? null, issues },
-        proposals,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000)
-      };
-    }});
   }
 
   async getDlmmPoolsSnapshot(request: DlmmPoolsSnapshotRequest, readOptions: ServiceReadOptions = {}): Promise<DlmmPoolsSnapshotResponse> {

@@ -1,0 +1,66 @@
+{
+  "schema": "tonswap-capture-build-v1",
+  "producer": "governance",
+  "suite": "tests/system/ReleaseGovernance.spec.ts",
+  "tolkVersion": "1.5.0",
+  "sandboxVersion": "0.42.0",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d",
+  "targets": {
+    "Governance": {
+      "source": "contracts/governance/governance.tolk",
+      "codeHash": "066334981f9f2a287abcf4e640832d0d136311ec2daffb82900c0f48d3cc7226",
+      "artifact": "build/Governance.boc",
+      "artifactSha256": "744fb4baa9db6c2b3f2b00fd040356da0f4eee9fa7b4ea3bc5029bdfb71d544b",
+      "inputs": {
+        "contracts/generated/op/dlmm.tolk": "38d2b3dad150d47850abe74c0f709673cacace8391877a7d880725d31e315f47",
+        "contracts/generated/op/governance.tolk": "bfa1c2bfa74d49fe9fb0a2addda0f34184706133280ca62ad41b6a45c3d19bca",
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/t3.tolk": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/governance/genesis_types.tolk": "a8a52c854c5cf248b768b4c940940bdcfcfe96f9ec6b5d0a3487150f6d9bb266",
+        "contracts/governance/governance_book.tolk": "9051740db4fd3fa4aa2137f51cd7530feeb6530e670858686624089a94df669b",
+        "contracts/governance/governance_policy.tolk": "fc80f02ad9170666b382510bffd882ed0f1dee11e9e81bee63e2da492eaf0372",
+        "contracts/governance/governance_proposals.tolk": "f65db7f16171dbe051bebdb41f62a7e644651681540c4326f0eb277808585259",
+        "contracts/governance/governance_types.tolk": "00e0b1358df3ba43d510d02dc938819b34258a3644ef9e40fd8973f90941fba7",
+        "contracts/governance/governance.tolk": "2508533e1d90c74f22cd7cf3ac6420b4a0ed95d0c45cad9e0161c7a574af024c",
+        "contracts/shared/governance/policy_types.tolk": "83ec6198840b96eb533727466fc11019fbca703eb2eb3d537a8c08056f0d6d84",
+        "contracts/shared/jetton/jetton_quotes.tolk": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+        "contracts/shared/jetton/jetton_slots.tolk": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+        "contracts/shared/jetton/jetton_sweep.tolk": "8b03f4982c992940be4ef738eccf4e6112120d5627401aea068b031e8099d146",
+        "contracts/shared/jetton/owed_archive.tolk": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/jetton/tep89_codec.tolk": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8"
+      },
+      "inputsSha256": "26832f8a9bc5d69fbe0519b8ec9294c4bcca83d6074b4af45ba8d59ff1c390bb"
+    }
+  },
+  "captures": {
+    "case-01.json": {
+      "executed": [
+        "Governance"
+      ],
+      "embedded": [
+        "Governance"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-02.json": {
+      "executed": [
+        "Governance"
+      ],
+      "embedded": [
+        "Governance"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    }
+  }
+}

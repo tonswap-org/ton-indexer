@@ -119,3 +119,9 @@ serialized field `ihrFee`/`ihr_fee`. It must never be added to native expenses.
 The native funding and native terminal tests cover this boundary. Full current
 Perps/RiskVault journal decoder integration and new deployment qualification
 remain open until their exact sources and original state captures close.
+
+### Current Governance snapshot
+
+The current `/api/indexer/v1/governance/{governance}/snapshot` endpoint is bound to the manifest Governance singleton and code. One fresh head authenticates original active account storage and `get_params` for all three classes. The decoder reads current locks and proposals; it rejects the retired Voting layout. Pages scan at most 64 uint32 IDs against the authenticated monotonic counter. Absent allocated IDs are pruned with unknown removal reason, while IDs at or above the counter were never allocated. The endpoint cannot establish historical completeness or target execution.
+
+Proposal close, delay and expiry follow the current class parameters and chain time, including the strict `now > expiresAt` expiry cutoff. A closed proposal may still need a permissionless advance; queued status is never payment or target execution. Missing original state, mismatched code/head or a failed getter makes the whole page unavailable. Completed snapshots are not reused. The API shape and original native default/x6 qualification are documented in README and OpenAPI.

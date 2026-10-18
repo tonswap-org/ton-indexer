@@ -26,7 +26,7 @@ assert.deepEqual(spec.components.schemas.LedgerReadiness.properties.build.requir
 assert.ok(spec.components.schemas.LedgerEvent.properties.movements);
 assert.ok(spec.paths['/api/indexer/v1/accounts/{addr}/txs'].get.responses[503]);
 assert.ok(spec.paths['/api/indexer/v1/markets/{market}/candles']);
-assert.ok(spec.paths['/api/indexer/v1/governance/{voting}/snapshot']);
+assert.ok(spec.paths['/api/indexer/v1/governance/{governance}/snapshot']);
 assert.ok(spec.paths['/api/indexer/v1/openapi.json']);
 assert.equal('security' in spec.paths['/api/indexer/v1/runGetMethod'].post, false);
 assert.deepEqual(spec.paths['/api/indexer/v1/metrics'].get.security, [{ AdminToken: [] }, { AdminBearer: [] }]);
@@ -106,3 +106,7 @@ function checkCounterpartySchemas(value: unknown): void {
 }
 checkCounterpartySchemas(spec);
 assert(counterpartySchemas > 0);
+
+assert.equal(spec.components.schemas.GovernanceSnapshotResponse.properties.schema.const, 'tonswap-governance-snapshot-v1');
+assert(!('passed' in spec.components.schemas.GovernanceProposalResponse.properties));
+assert.equal(spec.components.schemas.GovernanceSnapshotResponse.properties.page.properties.historyComplete.const, false);

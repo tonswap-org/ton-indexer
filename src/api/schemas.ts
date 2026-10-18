@@ -49,10 +49,10 @@ export const debugQuerySchema = {
 
 export const governanceSnapshotQuerySchema = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     owner: { type: 'string' },
-    start_id: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' },
+    start_id: { type: 'string', pattern: '^[1-9][0-9]{0,9}$' },
     max_scan: { type: 'integer', minimum: 1, maximum: 64 },
-    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
   },
 };

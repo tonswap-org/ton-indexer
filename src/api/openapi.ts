@@ -377,61 +377,45 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           required: ['address', 'network', 'balance_raw', 'shard_block', 'shard_utime'],
         },
         GovernanceLockResponse: {
-          type: 'object',
-          properties: {
-            amount: { type: ['string', 'null'] },
-            unlockTime: { type: ['string', 'null'] },
-            tier: { type: ['string', 'null'] },
-            activatedAt: { type: ['string', 'null'] },
-            weight: { type: ['string', 'null'] },
-          },
+          type: 'object', additionalProperties: false,
+          properties: { amountRaw: { type: 'string' }, ...Object.fromEntries(
+            ['bucket', 'commitUntil', 'prevCommit', 'commitChangedAt', 'voteLock', 'proposal', 'proposeAfter', 'voteMask', 'voteStamp']
+              .map(key => [key, { type: 'integer', minimum: 0 }])) },
+          required: ['amountRaw', 'bucket', 'commitUntil', 'prevCommit', 'commitChangedAt', 'voteLock', 'proposal', 'proposeAfter', 'voteMask', 'voteStamp'],
         },
         GovernanceProposalResponse: {
-          type: 'object',
+          type: 'object', additionalProperties: false,
+          description: 'A currently retained proposal. Status derives from this page’s chain time; queueing and dispatch never prove target execution.',
           properties: {
-            id: { type: 'string' },
-            status: { type: ['string', 'null'] },
-            passed: { type: ['string', 'null'] },
-            yesWeight: { type: ['string', 'null'] },
-            noWeight: { type: ['string', 'null'] },
-            abstainWeight: { type: ['string', 'null'] },
-            quorumWeight: { type: ['string', 'null'] },
-            totalWeightSnapshot: { type: ['string', 'null'] },
-            startTime: { type: ['string', 'null'] },
-            minCloseTime: { type: ['string', 'null'] },
-            maxCloseTime: { type: ['string', 'null'] },
-            cooldownEnd: { type: ['string', 'null'] },
-            target: { type: ['string', 'null'] },
-            value: { type: ['string', 'null'] },
-            descriptionHash: { type: ['string', 'null'] },
+            ...Object.fromEntries(['id', 'proposer', 'valueTotalRaw', 'descriptionHash', 'actionsHash', 'actionsBoc'].map(key => [key, { type: 'string' }])),
+            ...Object.fromEntries(['class', 'slot', 'start', 'decidedAt', 'closeAt', 'eta', 'expiresAt'].map(key => [key, { type: 'integer', minimum: 0 }])),
+            queued: { type: 'boolean' }, status: { type: 'string', enum: ['voting', 'closed', 'queued', 'expired'] },
+            tally: { type: 'object', additionalProperties: false,
+              properties: Object.fromEntries(['quorumRaw', 'participationRaw', 'yesRaw', 'noRaw'].map(key => [key, { type: 'string' }])),
+              required: ['quorumRaw', 'participationRaw', 'yesRaw', 'noRaw'] },
           },
-          required: ['id'],
+          required: ['id', 'proposer', 'class', 'queued', 'slot', 'start', 'decidedAt', 'valueTotalRaw', 'descriptionHash', 'tally', 'closeAt', 'eta', 'expiresAt', 'status', 'actionsHash', 'actionsBoc'],
         },
         GovernanceSnapshotResponse: {
-          type: 'object',
+          type: 'object', additionalProperties: false,
+          description: 'Current manifest/code-bound Governance state at one exact head. Each bounded page establishes current dictionary presence/absence only, never historical outcomes. Serialized actions are capped at 1 MiB and total response at 2 MiB; overflow returns unavailable.',
           properties: {
-            voting: { type: 'string' },
-            owner: { type: ['string', 'null'] },
-            lock: {
-              oneOf: [{ $ref: '#/components/schemas/GovernanceLockResponse' }, { type: 'null' }],
-            },
-            proposal_count: { type: 'integer' },
-            scanned: { type: 'integer' },
-            start_id: { type: 'string' },
-            next_start_id: { type: ['string', 'null'] },
-            coverage: { type: 'object', properties: {
-              rangeKnown: { type: 'boolean' }, pageComplete: { type: 'boolean' }, scanComplete: { type: 'boolean' },
-              nextProposalId: { type: ['string', 'null'] }, dataHash: { type: ['string', 'null'] }, issues: { type: 'array', items: { type: 'string' } },
-            }, required: ['rangeKnown', 'pageComplete', 'scanComplete', 'nextProposalId', 'dataHash', 'issues'] },
-            proposals: {
-              type: 'array',
-              items: { $ref: '#/components/schemas/GovernanceProposalResponse' },
-            },
-            source: { type: 'string' },
-            network: { type: 'string' },
-            updated_at: { type: 'integer' },
+            schema: { type: 'string', const: 'tonswap-governance-snapshot-v1' },
+            ...Object.fromEntries(['releaseId', 'manifestHash', 'network', 'governance', 'codeHash', 'dataHash', 'totalLockedRaw', 'escrowRaw', 'nextProposalId']
+              .map(key => [key, { type: 'string' }])),
+            ...Object.fromEntries(['bucketSeconds', 'phase', 'bootstrapDeadline', 'handoffBucket', 'liveProposalCount'].map(key => [key, { type: 'integer', minimum: 0 }])),
+            asOf: { allOf: [{ $ref: '#/components/schemas/TonBlockId' }, { type: 'object', properties: { utime: { type: 'integer' } }, required: ['utime'] }] },
+            owner: { type: ['string', 'null'] }, supplyBaseRaw: { type: ['string', 'null'] }, genesisTotalRaw: { type: ['string', 'null'] },
+            lock: { oneOf: [{ $ref: '#/components/schemas/GovernanceLockResponse' }, { type: 'null' }] },
+            proposals: { type: 'array', items: { $ref: '#/components/schemas/GovernanceProposalResponse' } },
+            prunedProposalIds: { type: 'array', items: { type: 'string' }, description: 'Allocated IDs absent from the authenticated current dictionary. Removal reason and target execution are unknown.' },
+            page: { type: 'object', additionalProperties: false, properties: {
+              startId: { type: 'string' }, scanned: { type: 'integer', minimum: 0, maximum: 64 }, nextStartId: { type: ['string', 'null'] },
+              complete: { type: 'boolean', const: true }, historyComplete: { type: 'boolean', const: false },
+            }, required: ['startId', 'scanned', 'nextStartId', 'complete', 'historyComplete'] },
           },
-          required: ['voting', 'proposal_count', 'scanned', 'start_id', 'next_start_id', 'coverage', 'proposals', 'source', 'network', 'updated_at'],
+          required: ['schema', 'releaseId', 'manifestHash', 'network', 'governance', 'asOf', 'codeHash', 'dataHash', 'bucketSeconds', 'owner', 'lock', 'phase',
+            'bootstrapDeadline', 'handoffBucket', 'totalLockedRaw', 'supplyBaseRaw', 'genesisTotalRaw', 'escrowRaw', 'nextProposalId', 'liveProposalCount', 'proposals', 'prunedProposalIds', 'page'],
         },
         SnapshotResponse: {
           type: 'object',
@@ -691,15 +675,14 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           },
         },
       },
-      '/api/indexer/v1/governance/{voting}/snapshot': {
+      '/api/indexer/v1/governance/{governance}/snapshot': {
         get: {
-          summary: 'Governance snapshot',
+          summary: 'Current manifest-bound Governance snapshot',
           parameters: [
-            { name: 'voting', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'governance', in: 'path', required: true, schema: { type: 'string' } },
             { name: 'owner', in: 'query', schema: { type: 'string' } },
-            { name: 'start_id', in: 'query', schema: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' } },
+            { name: 'start_id', in: 'query', schema: { type: 'string', pattern: '^[1-9][0-9]{0,9}$' } },
             { name: 'max_scan', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 64 } },
-            { name: 'max_misses', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8 } },
           ],
           responses: {
             200: {
@@ -708,6 +691,8 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
                 'application/json': { schema: { $ref: '#/components/schemas/GovernanceSnapshotResponse' } },
               },
             },
+            503: { description: 'Current binding, original active account, layout or current getter is unavailable.' },
+            504: { description: 'The bounded current snapshot read timed out.' },
             400: {
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },

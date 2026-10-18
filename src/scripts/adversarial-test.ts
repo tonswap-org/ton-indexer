@@ -891,13 +891,7 @@ const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
 };
 
 const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () => {
-  let calls = 0;
-  const service = {
-    async getGovernanceSnapshot() {
-      calls += 1;
-      return {};
-    },
-  };
+  const service = {};
   const app = fastify({ logger: false });
   registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
@@ -921,7 +915,6 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
     assert.equal(retired.statusCode, 404, url);
     assert.deepEqual(retired.json(), { error: 'The requested resource was not found.', code: 'not_found' });
   }
-  assert.equal(calls, 0);
   await app.close();
 };
 

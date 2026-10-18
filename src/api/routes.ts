@@ -58,6 +58,7 @@ import { readFaucetOperationRequest } from '../runtime/faucetOperationEvidence';
 import { ProductEvidenceError } from '../runtime/productEvidence';
 import { readOrderWalletClaimRequest } from '../runtime/orderWalletClaimEvidence';
 import { readSpotOperationRequest, SpotEvidenceError } from '../runtime/spotOperationRequest';
+import { createGovernanceSnapshotReader } from '../runtime/governanceSnapshot';
 import { currentJettonConfigPrices } from '../data/configPrices';
 import { assertFreshHeadTime } from '../data/freshHead';
 
@@ -332,6 +333,7 @@ export const registerRoutes = (
   };
   const { serviceId, publicBaseUrl, freshReads } = resolveServiceMetadata(config, registryMetadata);
   const nativeRuntime = currentNativeRuntime(config.network, registryMetadata);
+  let governanceSnapshot: ReturnType<typeof createGovernanceSnapshotReader> | undefined;
   const indexer = nativeRuntime?.services.indexer;
   const serviceIdentity = {
     serviceId,
@@ -1042,49 +1044,25 @@ export const registerRoutes = (
   );
 
   app.get(
-    '/api/indexer/v1/governance/:voting/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { voting: { type: 'string' } }, required: ['voting'] },
-        querystring: governanceSnapshotQuerySchema
-      }
-    },
+    '/api/indexer/v1/governance/:governance/snapshot',
+    { schema: {
+      params: { type: 'object', properties: { governance: { type: 'string' } }, required: ['governance'] },
+      querystring: governanceSnapshotQuerySchema
+    } },
     async (request, reply) => {
-      const voting = (request.params as { voting: string }).voting;
-      if (!isValidAddress(voting)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid voting address');
-      }
-
-      const query = request.query as {
-        owner?: string;
-        max_scan?: string | number;
-        max_misses?: string | number;
-        start_id?: string;
-      };
-      const owner = query.owner?.trim() ? query.owner.trim() : undefined;
-      if (owner && !isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-      if (query.start_id !== undefined && (!/^\d+$/.test(query.start_id) || BigInt(query.start_id) >= (1n << 64n))) return sendError(reply, 400, 'bad_request', 'Invalid proposal start ID.');
-      const maxScanParsed =
-        typeof query.max_scan === 'number'
-          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
-          : parsePositiveInt(query.max_scan);
-      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
-
-      const maxMissesParsed =
-        typeof query.max_misses === 'number'
-          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
-          : parsePositiveInt(query.max_misses);
-      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
-
+      const governance = (request.params as { governance: string }).governance;
+      if (!isValidAddress(governance)) return sendError(reply, 400, 'invalid_address', 'invalid governance address');
+      const query = request.query as { owner?: string; max_scan?: number; start_id?: string };
+      if (query.owner && !isValidAddress(query.owner)) return sendError(reply, 400, 'invalid_address', 'invalid owner address');
+      if (query.start_id !== undefined && BigInt(query.start_id) > 0xffffffffn)
+        return sendError(reply, 400, 'bad_request', 'Invalid uint32 proposal start ID.');
+      if (!nativeRuntime?.contracts.Governance || !runtime.source) return sendError(reply, 503, 'upstream_unavailable', 'Current Governance snapshot is unavailable.');
+      if (Address.parse(governance).toRawString() !== nativeRuntime!.contracts.Governance!.address)
+        return sendError(reply, 400, 'bad_request', 'Governance differs from the current release.');
       try {
-        return await service.getGovernanceSnapshot(voting, {
-          owner,
-          startId: query.start_id,
-          maxScan,
-          maxConsecutiveMisses
-        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
+        governanceSnapshot ??= createGovernanceSnapshotReader(nativeRuntime, runtime.source);
+        return await governanceSnapshot(governance, { owner: query.owner, startId: query.start_id, maxScan: query.max_scan },
+          requestDeadline(request, ROUTE_DEADLINE_MS.snapshot));
       } catch (error) {
         return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'governance snapshot request failed' });
       }

@@ -519,3 +519,5 @@ transaction, historical state or cash verification; unknown grouped messages
 retain their warnings. Run the current Perps suite and full ledger suite after
 changing this rule. The bounded-range retry test must explicitly complete and
 release held collectors before pool shutdown; early event-loop drain is failure.
+
+Current Governance snapshots admit only the manifest Governance singleton and exact code hash. Authenticate complete original active ShardAccount storage and current class parameters in one pinned-head batch; locks and proposals use the current Governance dictionaries, never retired Voting tuples. Keep uint32 allocation bounds and at most 64 IDs per page, with no completed-response cache for time-derived status. Absent allocated IDs are pruned with unknown terminal outcome; queueing/dispatch never proves target execution. Retain original default/x6 capture producer/source/artifact closure and native timing comparisons. Run `npm run test:governance`, API/OpenAPI/deadline tests and typecheck after changes.
