@@ -1183,7 +1183,7 @@ The focused producer checks run with
 run with `npx tsx src/scripts/ledger-option-factory-state-test.ts`.
 
 Regenerate the canonical cross-service abort fixtures with
-`npx tsx src/scripts/export-option-abort-fixtures.ts ../tonswap-platform/test/fixtures`.
+`npx tsx src/scripts/export-option-abort-fixtures.ts services/platform/test/fixtures`.
 The exporter runs the actual ledger projector over archived-state/message fixtures
 for committed, failed and unobserved deposits, independently pending cash legs,
 existing populated buckets, and complete/pending initial-bounce returns for both
@@ -1877,3 +1877,11 @@ protocol fee leg. A same-wallet beneficiary payout is tied to the fee finalizer
 that advances the Router's source queue. Verify this path with
 `npm run test:ledger:market`; `npm run test:ledger:liquidity` also checks the
 current Pool protection mask and rejection of obsolete metadata.
+
+## Platform service
+
+The optional notification, public price and historical FX service is maintained in
+[`services/platform`](services/platform/README.md). It has its own dependencies,
+configuration and build. From that directory, run `npm ci` and `npm run verify`;
+follow its README for database migrations and API/worker deployment. The indexer
+build and runtime remain separate from this service.
