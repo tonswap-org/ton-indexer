@@ -395,6 +395,26 @@ current-to-dispatch boundary while avoiding unrelated lifetime history.
 
 Current Launchpad archived owed discovery is Sale-only. Authenticate canonical factory-derived child identity and paired slot token/wallet, then reconstruct complete original history. Owed live leaves use inline domain1, consumed leaves domain2, and pairs domain3; T3 receipt leaf encoding is incompatible. Bind JARC hints to every original archive count/root/total/frontier transition, and consume only successful exact CLMA with its original witness. Missing logs/history or overflow stays incomplete; no current-root/list approximation or invented payout. Run independent archive tree/API checks and native append/consume/append-after-consumption capture checks.
 
+Generic owed recovery binds the manifest's Governance, MerkleClaim,
+SwapCoordinator, PerpsEngine, RiskVault, OptionVault, FeeRouter,
+BuybackExecutor, EmissionsSplitter, CoverVault and DLMM holder layouts to exact
+native code/storage and same-head canonical token wallets. Unlisted pools require
+the current pinned factory's canonical identity. The three `/v1/owed/` routes
+share the existing 20-second evidence gate; keep 192 KiB requests, 8 MiB responses,
+256 returned original transactions, 10,000 aggregate history rows, 64 new archive
+boundaries and 32/32 wallet witnesses. Direct/archive books and sparse membership
+never prove cash: require the original owner CLMJ/CLMA, its actual debit and
+separately authenticated recipient credit, including zero-extra-debit retries.
+Frozen provenance may require complete history without returning unrelated rows;
+`completeAccounts` keeps its existing all-history response semantics. An active
+current T3 source may contain original skipped-execution frozen intervals only
+with unchanged full StateInit commitments and exact original thaw init. Require
+its final original active account to equal the current anchor; missing or changed
+history remains unavailable. Run `npm run test:current-owed`, the shared product
+and archive-checkpoint checks, typecheck and the ordinary suite after changes.
+The portable default/x6 corpus preserves original source closure and sandbox
+journals; it does not qualify public consensus or deployed release admission.
+
 
 Large Sale archive histories use request-driven durable verified boundary
 checkpoints. Scope them by exact release, decoder version, canonical holder/slot

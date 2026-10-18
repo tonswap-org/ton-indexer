@@ -32,7 +32,14 @@ const currentWalletClaims = object({ root: hash, count: uint, failureRoot: hash,
         originLt: uint, owner: address, recipient: address, queryId: uint, amountRaw: uint, burn: { const: false },
         transferTransaction: object({ account: address, transactionBoc: { type: 'string' }, beforeShardAccountBoc: { type: 'string' }, afterShardAccountBoc: { type: 'string' } }) }) },
       failures: { type: 'array', maxItems: 32, items: object({ index: uint, evidenceBoc: { type: 'string' }, proofBoc: { type: 'string' }, attemptHash: hash }) } });
+const owedRequest = { network:{enum:['mainnet','testnet','localnet']},releaseId:{type:'string'},manifestHash:hash,owner:address,holder:address,slot:{type:'integer',minimum:0,maximum:255} };
+const originalBoundary = object({account:address,transactionBoc:{type:'string'},beforeShardAccountBoc:{type:'string'},afterShardAccountBoc:{type:'string'}});
 export const currentReleaseSchemas = {
+  CurrentOwedRequest: object(owedRequest),
+  CurrentOwedOperationRequest: object({...owedRequest,kind:{enum:['direct','archive']},queryId:uint,amountRaw:uint,bodyBoc:{type:'string',maxLength:131072},bodyHash:hash,valueNano:uint,dispatch:object({lt:uint,hash,valueNano:uint})}),
+  OwedEvidenceResponse: object({schema:{const:'tonswap-owed-evidence-v1'},...identity,request:object({owner:address,holder:address,slot:owedRequest.slot}),coverage:object({complete:{const:true},gaps:{type:'array',maxItems:0}}),holder:object({address,shardAccountBoc:{type:'string'}}),tokenRoot:address,holderWallet:address,ownerWallet:address,directRaw:uint,minimumNano:uint,archiveMinimumNano:uint,archive:object({count:uint,root:hash,total:uint,records:{type:'array',maxItems:32,items:object({id:uint,owner:address,amountRaw:uint,proofBoc:{type:'string'},appendTransaction:originalBoundary})}})}),
+  OwedOperationEvidenceResponse: object({...productEvidence('tonswap-owed-operation-evidence-v1',['direct','archive']).properties,request:object({kind:{enum:['direct','archive']},owner:address,holder:address,slot:owedRequest.slot,bodyHash:hash})}),
+  OwedWalletClaimEvidenceResponse: object({schema:{const:'tonswap-owed-wallet-claim-evidence-v1'},...identity,request:object({kind:{enum:['direct','archive']},owner:address,holder:address,slot:owedRequest.slot,bodyHash:hash}),coverage:object({complete:{type:'boolean'},gaps:{type:'array',maxItems:256,items:gap}}),wallet:pinnedAccount,claims:currentWalletClaims}),
   CurrentPerpsEvidenceRequest: object({...productRequestIdentity,kind:{enum:['open','increase','addMargin','removeMargin','close','funding']},engine:address,riskVault:address,marketId:{type:'integer',minimum:1,maximum:4},queryId:uint,gen:nullable(uint),depositRaw:uint,sourceWallet:nullable(address)}),
   PerpsOperationEvidenceResponse: productEvidence('tonswap-perps-operation-evidence-v1',['open','increase','addMargin','removeMargin','close','funding']),
   PerpsWalletClaimEvidenceResponse: object({schema:{const:'tonswap-perps-wallet-claim-evidence-v1'},...identity,request:object({kind:{enum:['open','increase','addMargin','removeMargin','close','funding']},owner:address,bodyHash:hash}),
@@ -246,6 +253,24 @@ export const currentReleasePaths = {
     description:'Read-only. The original saved operation derives up to two canonical T3 source/holder wallets. Every selected attempt binds its original debit and immutable recipient, complete current sparse roots and original transaction history. No project or vesting wallet enrollment. Aggregate32 records/32 failures/10000 history rows,192KiB request/8MiB response, shared live gate, exact release header, no-store and explicit incomplete gaps.',
     requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentLaunchpadEvidenceRequest'}}}},
     responses:{200:response('LaunchpadWalletClaimEvidenceResponse','Current original causal claims and explicit coverage'),400:error('Invalid exact request'),409:error('Release mismatch'),413:error('Request exceeds192KiB'),503:error('Original current evidence unavailable')},
+  } },
+  '/api/indexer/v1/owed/evidence': { post: {
+    summary:'Discover current owed and archived tokens for a pinned holder',
+    description:'Read-only. Native current holder storage authenticates the direct book and archive roots; canonical master getters bind holder/owner wallets. Every archive append/consume is reconstructed from complete original history with immutable checkpoints (64 new boundaries per 8-second slice, 10000 history rows). No partial-ready answers or getter-only owner labels. At most32 owner archive candidates/8MiB response, shared20-second live gate, exact release header, no-store and retryable503 on incomplete history.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentOwedRequest'}}}},
+    responses:{200:response('OwedEvidenceResponse','Authenticated current book and original archive witnesses'),400:error('Invalid exact holder request'),409:error('Release mismatch'),413:error('Request exceeds192KiB'),503:error('Original history incomplete or current identity unavailable')},
+  } },
+  '/api/indexer/v1/owed/operation-evidence': { post: {
+    summary:'Read original owed-token claim and physical delivery evidence',
+    description:'Read-only. Exact CLMJ or CLMA request, original owner external dispatch, native holder code and canonical token wallets bind a bounded physical graph. Book consumption alone is never payment. Browser independently verifies the native book transition, full linked transfer and recipient balance credit. Shared live gate, no-store, release header,192KiB request/8MiB response and explicit incomplete coverage.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentOwedOperationRequest'}}}},
+    responses:{200:response('OwedOperationEvidenceResponse','Original claim graph and explicit coverage'),400:error('Invalid exact claim request'),409:error('Release mismatch'),413:error('Request exceeds192KiB'),503:error('Original claim evidence unavailable')},
+  } },
+  '/api/indexer/v1/owed/wallet-claim-evidence': { post: {
+    summary:'Read current fixed-recipient T3 recovery witnesses for an original owed claim',
+    description:'Read-only. Exact CLMJ or CLMA request, original owner external dispatch, native holder code and canonical token wallets bind a bounded physical graph. Complete original source-wallet history authenticates current claim/failure roots under one10000-row budget and64 new boundaries. Select at most32 current records/failures tied to the exact claim debit. Witnesses authorize permissionless MARK or immutable-recipient RETRY, never payment. Browser independently verifies the native book transition, full linked transfer and recipient balance credit. Shared live gate, no-store, release header,192KiB request/8MiB response and explicit incomplete coverage.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentOwedOperationRequest'}}}},
+    responses:{200:response('OwedWalletClaimEvidenceResponse','Original claim graph and explicit coverage'),400:error('Invalid exact claim request'),409:error('Release mismatch'),413:error('Request exceeds192KiB'),503:error('Original claim evidence unavailable')},
   } },
   '/api/indexer/v1/launchpad/owed-archive-evidence': { post: {
     summary:'Discover current original Sale owed archive witnesses',

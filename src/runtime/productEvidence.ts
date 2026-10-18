@@ -69,11 +69,14 @@ export function verifyFrozenProductHistory(rows: readonly Pick<PhysicalBoundary,
  * still decides business acceptance and actual independent token delivery. */
 export async function collectProductPhysicalGraph(source: ChainSource, store: PhysicalEvidenceStore, head: ChainHead,
   input: { owner: string; target: string; body: Cell; dispatch: ProductDispatch; pins: ReadonlyMap<string, string>;
-    completeAccounts: readonly string[]; includeAccounts?: readonly string[]; reader?: ReturnType<typeof createPhysicalEvidenceReader>;
+    completeAccounts: readonly string[]; includeAccounts?: readonly string[]; historyOnlyAccounts?: readonly string[]; historyLimit?: number; reader?: ReturnType<typeof createPhysicalEvidenceReader>;
     onCausal?: (row: PhysicalBoundary) => void; allowFrozenPins?: ReadonlySet<string> }, signal?: AbortSignal): Promise<ProductPhysicalGraph> {
   const limits = PRODUCT_EVIDENCE_LIMITS, reader = input.reader ?? createPhysicalEvidenceReader(source, store, head, { signal, newTransactions: limits.newTransactions });
   const gaps: PhysicalGap[] = [], histories = new Map<string, PhysicalBoundary[]>(), selected = new Map<string, PhysicalBoundary>();
-  let remaining = limits.history - 1, edges = 0;
+  const historyLimit=input.historyLimit??limits.history;
+  if(!Number.isSafeInteger(historyLimit)||historyLimit<1||historyLimit>10000||historyLimit>limits.history&&!input.historyOnlyAccounts?.length)throw new ProductEvidenceError(503,'upstream_unavailable');
+  const fullHistory=(account:string)=>input.completeAccounts.includes(account)||!!input.historyOnlyAccounts?.includes(account);
+  let remaining = historyLimit - 1, edges = 0;
   const checked = new Map<PhysicalBoundary, ReturnType<typeof verifyOrderTransaction>>();
   const tx = (row: PhysicalBoundary) => { let result = checked.get(row); if (!result) { result = verifyOrderTransaction(row.evidence); checked.set(row, result); } return result; };
   const messageHashes = new Map<Cell, string>();
@@ -94,13 +97,13 @@ export async function collectProductPhysicalGraph(source: ChainSource, store: Ph
     try {
       const state = await reader.current(account), pin = input.pins.get(account);
       const currentShard = orderShard(state.shardAccountBoc!, account).shard;
-      const frozen = currentShard.account?.storage.state.type === 'frozen' && input.allowFrozenPins?.has(account) && input.completeAccounts.includes(account);
+      const frozen = currentShard.account?.storage.state.type === 'frozen' && input.allowFrozenPins?.has(account) && fullHistory(account);
       if (pin && !frozen) activeOrderAccount(currentShard, pin);
       // Product/source-wallet histories are complete from initialization. A
       // causal recipient/GRAM-return account only needs its uninterrupted
       // current-to-dispatch interval; unrelated older owner activity is not a
       // prerequisite for proving the exact message delivery.
-      const result = await reader.history(account, state, remaining, input.completeAccounts.includes(account) ? undefined
+      const result = await reader.history(account, state, remaining, fullHistory(account) ? undefined
         : row => tx(row).tx.prevTransactionLt < BigInt(input.dispatch.lt)); remaining -= result.rows.length;
       gaps.push(...result.gaps); if (!result.complete) gaps.push({ code: 'complete_history_unavailable', account });
       if (pin && frozen) { if (!result.complete) throw new ProductEvidenceError(503, 'upstream_unavailable'); verifyFrozenProductHistory(result.rows, currentShard, pin); }
@@ -128,7 +131,12 @@ export async function collectProductPhysicalGraph(source: ChainSource, store: Ph
   add(dispatch);
   // Explicit recipient intervals retain later retry credits without demanding
   // unrelated lifetime history. Their current-to-dispatch chain remains exact.
-  for (const account of new Set([...input.completeAccounts, ...(input.includeAccounts ?? [])])) for (const row of await history(account)) add(row);
+  // Full provenance can be required without returning unrelated pre-dispatch
+  // activity. Every causal row and requested current-to-dispatch interval stays
+  // selected, with the same fixed response limit. Existing completeAccounts
+  // deliberately retains its original all-history response semantics.
+  for (const account of new Set([...input.completeAccounts, ...(input.includeAccounts ?? []), ...(input.historyOnlyAccounts??[])]))
+    for (const row of await history(account))if(input.completeAccounts.includes(account)||!input.historyOnlyAccounts?.includes(account)||tx(row).tx.lt>=BigInt(input.dispatch.lt))add(row);
   const targetHistory = await history(input.target), exactMessage = messageHash(sent[0]);
   const origins = targetHistory.filter(row => tx(row).tx.lt > tx(dispatch).tx.lt && tx(row).incoming
     && messageHash(tx(row).incoming!) === exactMessage);

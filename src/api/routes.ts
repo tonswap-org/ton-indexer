@@ -1,3 +1,4 @@
+import { readOwedRequest, readOwedOperationRequest } from '../runtime/owedEvidence';
 import { Address, Cell } from '@ton/core';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
@@ -286,7 +287,7 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
   installReleaseIdentity(app, config.network, registryMetadata);
@@ -381,6 +382,9 @@ export const registerRoutes = (
       ...(freshReads && runtime.orders?.perpsWalletClaimEvidence ? { perpsWalletClaimEvidence: '/api/indexer/v1/perps/wallet-claim-evidence' } : {}),
       ...(freshReads && runtime.orders?.walletTransferEvidence ? { walletTransferEvidence: '/api/indexer/v1/wallet/transfers/evidence' } : {}),
       ...(freshReads && runtime.orders?.launchpadWalletClaimEvidence ? { launchpadWalletClaimEvidence: '/api/indexer/v1/launchpad/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.owedEvidence ? { owedEvidence: '/api/indexer/v1/owed/evidence' } : {}),
+      ...(freshReads && runtime.orders?.owedOperationEvidence ? { owedOperationEvidence: '/api/indexer/v1/owed/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.owedWalletClaimEvidence ? { owedWalletClaimEvidence: '/api/indexer/v1/owed/wallet-claim-evidence' } : {}),
       ...(freshReads && runtime.orders?.launchpadOwedArchiveEvidence ? { launchpadOwedArchiveEvidence: '/api/indexer/v1/launchpad/owed-archive-evidence' } : {}),
       ...(freshReads && runtime.orders?.launchpadHolderRecoveryEvidence ? { launchpadHolderRecoveryEvidence: '/api/indexer/v1/launchpad/holder-recovery-evidence' } : {}),
       ...(freshReads && runtime.orders?.launchpadHolderProofSession ? { launchpadHolderProofSession: '/api/indexer/v1/launchpad/holder-proof-session' } : {}),
@@ -594,6 +598,48 @@ export const registerRoutes = (
       runtime.logger?.warn('current Launchpad holder recovery evidence unavailable', { error: errorDiagnostic(error) });
       if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad holder recovery evidence is unavailable.' });
       return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder recovery evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/owed/evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.owedEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOwedRequest(request.body, nativeRuntime);
+      return await runtime.orders.owedEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current owed-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current owed-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/owed/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.owedOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOwedOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.owedOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current owed-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current owed-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/owed/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.owedWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOwedOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.owedWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current owed-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current owed-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
     }
   });
   app.post('/api/indexer/v1/launchpad/owed-archive-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {

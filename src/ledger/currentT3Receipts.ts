@@ -1,4 +1,4 @@
-import { Address, beginCell, Cell } from '@ton/core';
+import { Address, beginCell, Cell, storeStateInit } from '@ton/core';
 import { businessBodyCell, bodyCell } from './wire';
 import type { RawTransaction } from '../data/dataSource';
 import type { LedgerStateSnapshot } from './archive';
@@ -223,6 +223,7 @@ export async function reconstructCurrentT3WalletClaims(input: {
             throw Error('current_wallet_identity_unavailable');
         const records = new Map<bigint, Cell>(), tree = new SparseT3Tree(), failureTree = new SparseT3Tree(1), failures: Cell[] = [];
         let previousRoot = tree.root, previousSeqno = 0, current: ReturnType<typeof readCurrentT3Wallet> | null = null;
+        let previousShard: Cell | null = null, lastActiveInit: Cell | null = null, lastOriginalActive = false;
         const record = (cell: Cell) => {
             if (cell.isExotic)
                 throw Error('exotic_wallet_record');
@@ -239,13 +240,41 @@ export async function reconstructCurrentT3WalletClaims(input: {
             if (i && (raw.prevTransactionLt !== transactions[i - 1].lt || canonicalLedgerHash(raw.prevTransactionHash!) !== canonicalLedgerHash(transactions[i - 1].hash)))
                 throw Error('history_gap');
             const after = await input.stateAt(wallet, raw.lt, raw.hash);
-            if (!validSnapshot(after, currentState, binding.walletCodeHash, previousSeqno) || after.state.lastTxLt !== raw.lt || !after.state.lastTxHash || canonicalLedgerHash(after.state.lastTxHash) !== canonicalLedgerHash(raw.hash))
+            const frozen = after?.state.accountState === 'frozen' && !after.state.codeBoc && !after.state.dataBoc;
+            if (!after || !Number.isSafeInteger(after.seqno) || after.seqno < previousSeqno || after.seqno > currentState.seqno
+                || (!frozen && !validSnapshot(after, currentState, binding.walletCodeHash, previousSeqno))
+                || after.state.lastTxLt !== raw.lt || !after.state.lastTxHash || canonicalLedgerHash(after.state.lastTxHash) !== canonicalLedgerHash(raw.hash))
                 throw Error('wallet_state_unavailable');
             const before = await input.stateAt(wallet, raw.prevTransactionLt!, raw.prevTransactionHash!);
             if (!before)
                 throw Error('original_state_boundary_unavailable');
-            currentT3OriginalBoundary(node, before, after);
+            const physical = currentT3OriginalBoundary(node, before, after);
+            if (previousShard && !previousShard.equals(Cell.fromBase64(before.state.shardAccountBoc!)))
+                throw Error('wallet_original_state_gap');
+            previousShard = Cell.fromBase64(after.state.shardAccountBoc!);
             previousSeqno = after.seqno;
+            const priorStorage = physical.before.account?.storage.state, storage = physical.after.account?.storage.state;
+            lastOriginalActive = storage?.type === 'active';
+            if (priorStorage?.type === 'frozen') {
+                if (!lastActiveInit || BigInt('0x' + lastActiveInit.hash().toString('hex')) !== priorStorage.stateHash)
+                    throw Error('frozen_wallet_commitment_mismatch');
+                if (storage?.type === 'active') {
+                    const init = physical.tx.inMessage?.init;
+                    if (!init || !beginCell().store(storeStateInit(init)).endCell().equals(lastActiveInit))
+                        throw Error('frozen_wallet_thaw_mismatch');
+                }
+            }
+            if (storage?.type === 'frozen') {
+                // No frozen row is omitted. Its original state commitment must
+                // preserve the last authenticated code/data, and no VM action
+                // may have changed either sparse tree while execution skipped.
+                if (!lastActiveInit || BigInt('0x' + lastActiveInit.hash().toString('hex')) !== storage.stateHash
+                    || physical.succeeded || physical.tx.description.type !== 'generic' || physical.tx.description.computePhase.type !== 'skipped')
+                    throw Error('frozen_wallet_commitment_mismatch');
+                continue;
+            }
+            if (storage?.type !== 'active') throw Error('wallet_state_unavailable');
+            lastActiveInit = beginCell().store(storeStateInit(storage.state)).endCell();
             const code = Cell.fromBase64(after.state.codeBoc!);
             if (code.isExotic || code.hash().toString('hex') !== binding.walletCodeHash || currentT3WalletAddress(Address.parse(owner), Address.parse(binding.hub), binding.proofCodeHash, code) !== wallet)
                 throw Error('wallet_code_or_address_mismatch');
@@ -324,7 +353,9 @@ export async function reconstructCurrentT3WalletClaims(input: {
                 throw Error('wallet_history_commitment_mismatch');
             previousRoot = tree.root;
         }
-        if (!current || !currentState.state.dataBoc || readCurrentT3Wallet(currentState.state.dataBoc).dataHash !== current.dataHash)
+        if (!current || !lastOriginalActive || !currentState.state.shardAccountBoc
+            || !previousShard?.equals(Cell.fromBase64(currentState.state.shardAccountBoc))
+            || !currentState.state.dataBoc || readCurrentT3Wallet(currentState.state.dataBoc).dataHash !== current.dataHash)
             throw Error('current_wallet_state_mismatch');
         const claims: CurrentT3WalletClaim[] = [], failureClaims: Extract<CurrentT3WalletClaimsResult, {
             status: 'ok';

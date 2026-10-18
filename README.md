@@ -2026,7 +2026,7 @@ on-chain decimals are required; remote metadata and implicit precision do not
 authorize token funding. The TS master must match the mandatory V21 minter pin.
 Run `npm run test:current-project-token` and `npm run test:runtime-manifest`.
 
-Current Launchpad archive discovery uses `POST /api/indexer/v1/launchpad/owed-archive-evidence` with the exact release and canonical sale identity, owner and slot. Only the current Sale contract implements CLMA. The collector reconstructs every original archive append and consumption through genesis-linked history, verifies current root/count/total/frontier and `get_owed_archive`, then returns unconsumed owner witnesses and original append transactions. The shared live gate remains20 seconds. Large histories progress through request-driven slices of at most64 newly verified boundaries and8 seconds of slice work. Until genesis and all transitions are verified, the endpoint returns retryable503, with no partial archive or ready witness. Retrying the same request resumes durable immutable boundary facts; current account/getter reads are always performed at the new exact head. Release/decoder identity, original transaction hashes and before/after account hashes isolate reuse across restarts, concurrent requests, advancing anchors and forks. The owning release schema retains checkpoints linked by foreign key to their original evidence; there is no background reconstruction loop or completed current-result cache. Coverage stays incomplete on a missing transition, more than32 candidates,10000 history rows or8MiB. Run `npm run test:current-launchpad-owed-archive`; native capture checks take absolute complete/request directories and a new durable output path via `test:current-launchpad-owed-archive:capture`. A witness does not prove physical payout.
+Current Launchpad archive discovery uses `POST /api/indexer/v1/launchpad/owed-archive-evidence` with the exact release and canonical sale identity, owner and slot. Within the Launchpad holder family, the current Sale contract implements CLMA. The collector reconstructs every original archive append and consumption through genesis-linked history, verifies current root/count/total/frontier and `get_owed_archive`, then returns unconsumed owner witnesses and original append transactions. The shared live gate remains20 seconds. Large histories progress through request-driven slices of at most64 newly verified boundaries and8 seconds of slice work. Until genesis and all transitions are verified, the endpoint returns retryable503, with no partial archive or ready witness. Retrying the same request resumes durable immutable boundary facts; current account/getter reads are always performed at the new exact head. Release/decoder identity, original transaction hashes and before/after account hashes isolate reuse across restarts, concurrent requests, advancing anchors and forks. The owning release schema retains checkpoints linked by foreign key to their original evidence; there is no background reconstruction loop or completed current-result cache. Coverage stays incomplete on a missing transition, more than32 candidates,10000 history rows or8MiB. Run `npm run test:current-launchpad-owed-archive`; native capture checks take absolute complete/request directories and a new durable output path via `test:current-launchpad-owed-archive:capture`. A witness does not prove physical payout.
 
 
 Archive persistence and orchestration checks use the canonical SQL through
@@ -2221,3 +2221,45 @@ gates run `current-order-expired-evidence-test.ts`: all eight source-bound nativ
 expiry cases at default/x6, both sides and both possible initialization winners.
 The retained original sandbox bytes and synthetic read adapter do not qualify
 public consensus or authorize deployment.
+
+
+Current owed-token recovery
+---------------------------
+
+`POST /api/indexer/v1/owed/evidence` discovers direct and archived owner claims
+from the current native storage of manifest-pinned Governance, MerkleClaim,
+SwapCoordinator, PerpsEngine, RiskVault, OptionVault, FeeRouter,
+BuybackExecutor, EmissionsSplitter, CoverVault and DLMM pools. Unlisted pools require the current pinned factory
+and exact canonical native pool identity before admission. Token
+master code and canonical wallet getters are authenticated at the same head.
+Archive reconstruction reuses the original-boundary checkpoint reader: complete
+genesis-linked append/consume/root/frontier history is mandatory. Its bounded
+64-boundary/8-second slices return retryable 503 until complete; no partial
+witness, stale completed-result cache or getter-only claim is returned.
+
+`POST /api/indexer/v1/owed/operation-evidence` binds an exact CLMJ/CLMA body to
+the original owner-wallet dispatch and causal holder/token-wallet graph. The
+web independently checks book consumption and actual token debit/credit before
+showing delivery. Consumed archives and wallet approval are not financial
+completion. `POST /api/indexer/v1/owed/wallet-claim-evidence` reconstructs
+the exact holder-owned T3 wallet debit and both current sparse trees. It returns
+only original-debit-selected MARK/RETRY witnesses for the fixed owner recipient;
+a mark, retry acceptance or sparse membership never proves physical delivery.
+All three routes use the shared current-evidence gate, release header,
+no-store semantics and 192 KiB/8 MiB request/response bounds. Missing originals,
+unsupported current identity or exceeded bounds remain unavailable.
+
+Frozen wallet provenance uses complete original initialization-to-head history,
+with an aggregate 10,000-row ceiling, while returning only causally required
+claim legs and the current-to-dispatch interval (at most 256 transactions).
+Missing earlier provenance is incomplete; existing full-history response modes
+retain their original response cap. Native fixtures qualify these storage and
+message rules in sandbox only, with synthetic transport/head anchors.
+
+An active T3 source wallet may include earlier skipped-execution frozen intervals
+only when every original boundary retains the last authenticated full StateInit
+commitment and the thaw supplies that exact original StateInit. The final original
+active account must equal the current anchored account. Missing or changed
+history remains unavailable. `npm run test:current-owed` includes the source-bound
+11-holder/default/x6 corpus, physical claim and protected-wallet collectors, and
+`current-t3-wallet-frozen-history-test.ts` commitment/thaw regressions.

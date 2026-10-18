@@ -91,7 +91,7 @@ export class CurrentOwedArchiveTree {
     let proof: Cell | null = null; for (let level = 63; level >= 0; level--) proof = beginCell().storeUint(siblings[level], 256).storeMaybeRef(proof).endCell(); return proof!;
   }
 }
-type ArchiveState = { count: bigint; root: bigint; total: bigint; frontier: Map<number, bigint> };
+export type ArchiveState = { count: bigint; root: bigint; total: bigint; frontier: Map<number, bigint> };
 function archiveCell(c: Cell): ArchiveState {
   const s = slice(c), count = s.loadUintBig(65), root = s.loadUintBig(256), total = s.loadCoins();
   const frontier = s.loadDict(Dictionary.Keys.Uint(8), Dictionary.Values.BigUint(256)); s.endParse();
@@ -114,6 +114,7 @@ function sameArchive(actual: ArchiveState, tree: CurrentOwedArchiveTree) {
   check(actual.count === tree.count && actual.root === tree.root && actual.total === tree.total && actual.frontier.size === tree.frontier.size
     && [...actual.frontier].every(([level, value]) => tree.frontier.get(level) === value));
 }
+type ArchiveReadContext = { identity: ArchiveIdentity; readState?: never } | { identity?: never; readState(shard: ShardAccount, empty: ArchiveState, allowUninitialized: boolean): ArchiveState };
 type ArchiveIdentity = ReturnType<typeof readLaunchChild>['id'];
 type StoredArchiveState = { count: string; root: string; total: string; frontier: [number, string][] };
 type ArchiveEvent = { kind: 'append' | 'consume'; id: string; owner: string; amount: string; proof?: string };
@@ -134,11 +135,14 @@ function saleArchiveState(shard: ShardAccount, input: { codeHash: string; identi
   check(Object.entries(input.identity).every(([key, value]) => child.id[key as keyof typeof child.id] === value));
   return archivedState(data, input.slot, empty);
 }
-function summarizeArchiveBoundary(row: PhysicalBoundary, input: { scope: string; holder: string; slot: number; codeHash: string; identity: ArchiveIdentity }): ArchiveBoundaryCheckpoint {
+function readArchiveState(shard: ShardAccount, input: {codeHash:string;slot:number} & ArchiveReadContext, empty: ArchiveState, allowUninitialized:boolean) {
+  return input.readState ? input.readState(shard,empty,allowUninitialized) : saleArchiveState(shard,{...input,identity:input.identity!},empty,allowUninitialized);
+}
+export function summarizeArchiveBoundary(row: PhysicalBoundary, input: { scope: string; holder: string; slot: number; codeHash: string } & ArchiveReadContext): ArchiveBoundaryCheckpoint {
   const t = verifyOrderTransaction(row.evidence); check(row.evidence.account === input.holder);
   const emptyTree = new CurrentOwedArchiveTree(input.holder, input.slot), empty = { count: 0n, root: emptyTree.root, total: 0n, frontier: new Map<number, bigint>() };
-  const facts: ArchiveFacts = { before: storedArchive(saleArchiveState(t.before, input, empty, t.tx.prevTransactionLt === 0n)),
-    after: storedArchive(saleArchiveState(t.after, input, empty, false)), events: [] };
+  const facts: ArchiveFacts = { before: storedArchive(readArchiveState(t.before, input, empty, t.tx.prevTransactionLt === 0n)),
+    after: storedArchive(readArchiveState(t.after, input, empty, false)), events: [] };
   if (t.succeeded) {
     const incoming = t.tx.inMessage;
     if (incoming?.info.type === 'internal' && !incoming.info.bounced && incoming.body.bits.length >= 32 && slice(incoming.body).preloadUint(32) === 0x434c4d41) {
@@ -157,8 +161,8 @@ function summarizeArchiveBoundary(row: PhysicalBoundary, input: { scope: string;
     before: orderCell(row.evidence.beforeShardAccountBoc).hash().toString('hex'), after: orderCell(row.evidence.afterShardAccountBoc).hash().toString('hex'),
     seqno: row.seqno, unixTime: t.tx.now, payload: facts });
 }
-async function replayArchiveFacts(input: { rows: readonly ArchiveBoundaryCheckpoint[]; holder: string; owner: string; slot: number; codeHash: string;
-  current: ShardAccount; identity: ArchiveIdentity; signal?: AbortSignal; evidence(row: ArchiveBoundaryCheckpoint): Promise<OrderTransactionEvidence> }) {
+export async function replayArchiveFacts(input: { rows: readonly ArchiveBoundaryCheckpoint[]; holder: string; owner: string; slot: number; codeHash: string;
+  current: ShardAccount; signal?: AbortSignal; evidence(row: ArchiveBoundaryCheckpoint): Promise<OrderTransactionEvidence> } & ArchiveReadContext) {
   check(input.rows.length > 0 && input.rows.length <= OWED_ARCHIVE_LIMITS.history);
   const tree = new CurrentOwedArchiveTree(input.holder, input.slot), empty = { count: 0n, root: tree.root, total: 0n, frontier: new Map<number, bigint>() };
   const records = new Map<bigint, { owner: string; amount: bigint; append: ArchiveBoundaryCheckpoint; consumed: boolean }>();
@@ -181,7 +185,7 @@ async function replayArchiveFacts(input: { rows: readonly ArchiveBoundaryCheckpo
     sameArchive(decodedArchive(facts.after), tree); previous = row;
   }
   check(previous!.after === beginCell().store(storeShardAccount(input.current)).endCell().hash().toString('hex'));
-  sameArchive(saleArchiveState(input.current, input, empty, false), tree);
+  sameArchive(readArchiveState(input.current, input, empty, false), tree);
   const selected = [...records].filter(([, record]) => !record.consumed && record.owner === input.owner), result = [];
   for (const [id, record] of selected.slice(0, OWED_ARCHIVE_LIMITS.records)) {
     input.signal?.throwIfAborted(); const appendTransaction = await input.evidence(record.append);

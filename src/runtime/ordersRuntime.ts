@@ -1,3 +1,5 @@
+import { collectOwedWalletClaimEvidence } from './owedWalletClaimEvidence';
+import { collectOwedEvidence, collectOwedOperationEvidence, type OwedRequest, type readOwedOperationRequest } from './owedEvidence';
 import { bindOrderRelease, type OrderRelease } from '../orders/discovery';
 import { pageOpenOrders } from '../orders/openOrders';
 import { currentNativeRuntime } from '../api/serviceMetadata';
@@ -52,6 +54,9 @@ export type CurrentOrdersRuntime = { start(): void; stop(): Promise<void>; statu
   perpsWalletClaimEvidence(request: ReturnType<typeof readPerpsWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentPerpsWalletClaimEvidence>;
   walletTransferEvidence(request: ReturnType<typeof readWalletTransferEvidenceRequest>, signal?: AbortSignal): Promise<CurrentWalletTransferEvidence>;
   launchpadWalletClaimEvidence(request: ReturnType<typeof readLaunchpadWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentLaunchpadWalletClaimEvidence>;
+  owedEvidence(request: OwedRequest, signal?: AbortSignal): Promise<Awaited<ReturnType<typeof collectOwedEvidence>>>;
+  owedWalletClaimEvidence(request: ReturnType<typeof readOwedOperationRequest>, signal?: AbortSignal): Promise<Awaited<ReturnType<typeof collectOwedWalletClaimEvidence>>>;
+  owedOperationEvidence(request: ReturnType<typeof readOwedOperationRequest>, signal?: AbortSignal): Promise<Awaited<ReturnType<typeof collectOwedOperationEvidence>>>;
   launchpadOwedArchiveEvidence(request: CurrentLaunchpadOwedArchiveRequest, signal?: AbortSignal): Promise<CurrentLaunchpadOwedArchiveEvidence>;
   launchpadHolderRecoveryEvidence(request: ReturnType<typeof readLaunchpadHolderRecoveryRequest>, signal?: AbortSignal): Promise<CurrentLaunchpadHolderRecoveryEvidence>;
   launchpadHolderProofSession(request: ReturnType<typeof readLaunchpadHolderProofSessionRequest>, signal?: AbortSignal): Promise<LaunchpadHolderProofSessionEvidence>;
@@ -192,6 +197,9 @@ export function createOrdersRuntime(deps: RuntimeDeps, options: {
       return evidence((store, active) => collectLaunchpadWalletClaimEvidence(native, source, store, request, active),
         () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
     },
+    owedEvidence(request, signal) { return evidence((store, active) => collectOwedEvidence(native, source, store, request, active), () => new ProductEvidenceError(503, 'upstream_unavailable'), signal); },
+    owedOperationEvidence(request, signal) { return evidence((store, active) => collectOwedOperationEvidence(native, source, store, request, active), () => new ProductEvidenceError(503, 'upstream_unavailable'), signal); },
+    owedWalletClaimEvidence(request, signal) { return evidence((store, active) => collectOwedWalletClaimEvidence(native, source, store, request, active), () => new ProductEvidenceError(503, 'upstream_unavailable'), signal); },
     launchpadOwedArchiveEvidence(request, signal) {
       return evidence((store, active) => collectLaunchpadOwedArchiveEvidence(native, source, store, request, active),
         () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
