@@ -192,6 +192,7 @@ export type LedgerEvent = {
   kind:
     | TxKind
     | "lp_fee_collect"
+    | "option_operation"
     | "option_buy"
     | "option_exercise"
     | "option_refund"
@@ -214,6 +215,7 @@ export type LedgerEvent = {
       | "lp_withdraw"
       | "lp_fee_collect"
       | "transfer"
+      | "option_operation"
       | "option_buy"
       | "option_exercise"
       | "option_refund"
@@ -232,6 +234,7 @@ export type LedgerEvent = {
     dlmmLiquidity?: DlmmLiquidityMetadata;
     launchpad?: import("./launchpad").LaunchpadRefundMetadata;
     launchpadParticipation?: import("./launchpadContributions").LaunchpadParticipationMetadata;
+    currentOptions?: import("./currentOptions").CurrentOptionsEconomics;
     optionLifecycle?: import("./optionLifecycle").OptionLifecycleMetadata;
     perps?: {
       engine: string;

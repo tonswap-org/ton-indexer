@@ -542,29 +542,40 @@ explicit `lp_*_state_unavailable` issues. No current position getter or requeste
 minimum is substituted. This requires an archive-capable configured liteserver and
 does not claim every historic LP event can be resolved by all providers.
 
-Option purchases use the configured `OptionFactory`, its collateral root and
-registered shout/outperformance series code. Proof follows the original owner's
-exact jetton funding query into the factory, its unique assigned position and
-wire ID, and the delivered factory-to-series activation plus consumed series ACK.
-The immutable position hash binds owner, series, position, notional, net premium,
-collateral and wire ID. Exact factory state before and after the original activation
-ACK must preserve those values and prove the transition to ACTIVE without
-abort/cancel/refund flags. Current position getters cannot prove this historical
-acquisition. A reservation, global notional change or ACK alone never confirms
-ownership. All contributing account chains must be complete. Historical position
-fields, data/code hashes, block boundaries and physical transaction evidence remain
-in the export.
+Current Options ledger operations use the release-pinned `OptionFactory`,
+`OptionVault`, `OptionSeriesManager`, Shout/Outperformance child templates, T3
+wallet and recovery-proof code. `currentOptionsBinding` is separate from the
+retired factory/position layout. The global ledger qualification fence stays in
+place until all current product decoders are qualified.
 
-Confirmed `kind: option_buy` events have `settlement.protocol: options` and
-`operation: option_buy`, the original query ID, canonical factory/series addresses,
-series/position/wire IDs, position hash and exact notional/net premium/collateral/
-protocol fee amounts. The acquired internal right uses `kind: option_position`,
-ID `<network>:option-position:<factory>:<seriesId>:<positionId>`, owner and zero
-decimals, with one unit. Funding is split exactly into `option_premium`,
-`option_collateral`, `protocol_fee` and any `option_excess` movements; their sum
-is the actual debit. Excess refund attribution remains explicit and unresolved.
-This proves purchase activation, not a cash-equivalent asset valuation, taxation,
-or a later exercise, settlement, payout, cancellation or refund.
+The ledger infers OVBY/OVFD, OSWW, FEXC/OFEX and slot0 CLMJ requests from the
+owner's original outgoing messages. It authenticates each original transaction
+and both account boundaries, full causal messages, current contract peers,
+canonical children and physical T3 debit/delivery. Current storage getters cannot
+substitute for historical state. Business proof accepts up to 256 original
+transaction envelopes at or after the dispatch; larger windows remain unresolved.
+
+`kind: option_operation` exposes `settlement.currentOptions`: original dispatch,
+request body, premium and fee components, writer backing/premium, right acquisition
+or retirement, actual paid input/output and pending payout. Rights use nine-decimal
+notional units. The premium and fee are components of one physical purchase debit;
+writer collateral is separate funding. Metadata cash legs annotate the existing
+T3 movements and must not be summed again. An accepted exercise can retire its
+right while payout remains incomplete. Zero payout retires the right without a
+cash movement; a refused exercise retains it. Retry delivery never repeats the
+original debit. Aggregate owed claims retain `aggregateOwed` without inventing an
+income source. Missing archive, wallet projection or related-chain coverage cannot
+produce a confirmed settlement.
+
+Run `npx tsx src/scripts/ledger-current-options-test.ts` for the current native
+matrix and graph checks. The fixtures retain 24 original default/x6 snapshots from
+a completed current440 producer run (two suites, ten tests), losslessly compressed
+with original byte hashes, receipt, log and static source inventory. Sandbox head,
+release and selected oracle responses are explicitly mocks. Portable current 1.5
+compiler/source/artifact closure checks run with `npm run test:capture-build`;
+missing historical producer manifests remain unqualified rather than being rebound
+to a newer build. Old Options positive fixtures remain historical material and do
+not admit the current release.
 
 Fresh T3 uses the manifest's `T3Hub` as both hub and jetton master, with
 `T3Wallet` and `T3RecoveryProof` code pins. Reserve identities carry each master's

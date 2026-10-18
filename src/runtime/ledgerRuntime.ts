@@ -47,7 +47,7 @@ export function createLedgerRuntime(deps: RuntimeDeps, options: {
         tokens: bindings.jettonRoots,
         jettonRoots: bindings.jettonRoots.map(root => root.master), dlmmRegistry: registry.DlmmRegistry,
         marketBindings: bindings.marketBindings, optionFactory: registry.OptionFactory, optionVault: registry.OptionVault,
-        optionCodeHashes: bindings.optionCodeHashes, launchpadCodeHashes: bindings.launchpadCodeHashes,
+        optionCodeHashes: bindings.optionCodeHashes, currentOptionsBinding: bindings.currentOptionsBinding, launchpadCodeHashes: bindings.launchpadCodeHashes,
         launchpadControllers: bindings.launchpadControllers, t3Hub: bindings.t3Hub, t3Root: bindings.t3Hub, t3RedemptionBinding,
         perpsEngine: registry.PerpsEngine, perpsEngineCodeHash: bindings.perpsEngineCodeHash,
         maxWatchedAccounts: config.ledgerMaxWatchedAccounts, maxPagesPerSync: config.ledgerMaxPagesPerSync,

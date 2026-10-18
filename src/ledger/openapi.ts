@@ -570,6 +570,7 @@ export const ledgerSchemas = {
               "lp_withdraw",
               "lp_fee_collect",
               "transfer",
+              "option_operation",
               "option_buy",
               "option_exercise",
               "option_refund",
@@ -592,6 +593,23 @@ export const ledgerSchemas = {
             description: "Exact historical swap conservation and independent physical finalization: paid input equals consumed plus returned input. Zero output is a fully returned request, not a trade.",
           },
           dlmmLiquidity: { $ref: "#/components/schemas/DlmmLiquidityMetadata" },
+          currentOptions: {
+            type: "object", additionalProperties: false,
+            description: "Current native Options economics from original authenticated owner dispatch and factory/vault/child boundaries. Right retirement, protocol accounting and physical T3 delivery are independent facts. Cash entries annotate the same LedgerMovement values and must never be added to them. aggregateOwed identifies a combined claim without inventing its original economic source. Missing evidence or the bounded proof limit remains incomplete.",
+            required: ["kind","outcome","factory","vault","owner","seriesId","positionId","queryId","requestBodyHash","dispatch","amountRequestedRaw","premiumNetRaw","protocolFeeRaw","writerBackingRaw","writerPremiumRaw","rightAcquiredRaw","rightRetiredRaw","paidInRaw","paidOutRaw","pendingOutRaw","aggregateOwed","cash","evidenceHashes"],
+            properties: {
+              kind: {type:"string",enum:["buy","fund","withdraw","payout","owed"]},
+              outcome: {type:"string",enum:["unresolved","rejected","accepted","delivered","refunded"]},
+              factory: {type:"string"}, vault: {type:"string"}, owner: {type:"string"},
+              seriesId: rawAmount, positionId: {type:["string","null"],pattern:"^[0-9]+$"},queryId:rawAmount,
+              requestBodyHash:{type:"string",pattern:"^[0-9a-f]{64}$"},
+              dispatch:{type:"object",additionalProperties:false,required:["lt","hash"],properties:{lt:rawAmount,hash:{type:"string",pattern:"^[0-9a-f]{64}$"}}},
+              amountRequestedRaw:rawAmount,premiumNetRaw:rawAmount,protocolFeeRaw:rawAmount,writerBackingRaw:rawAmount,writerPremiumRaw:rawAmount,
+              rightAcquiredRaw:rawAmount,rightRetiredRaw:rawAmount,paidInRaw:rawAmount,paidOutRaw:rawAmount,pendingOutRaw:rawAmount,aggregateOwed:{type:"boolean"},
+              cash:{type:"array",items:{type:"object",additionalProperties:false,required:["direction","amountRaw","ownerTransaction","debitTransaction","creditTransaction","wallet","otherOwner"],properties:{direction:{type:"string",enum:["in","out"]},amountRaw:rawAmount,ownerTransaction:{type:"string"},debitTransaction:{type:"string"},creditTransaction:{type:"string"},wallet:{type:"string"},otherOwner:{type:"string"}}}},
+              evidenceHashes:{type:"array",uniqueItems:true,items:{type:"string",pattern:"^[0-9a-f]{64}$"}},
+            },
+          },
           optionLifecycle: {
             type: "object",
             required: [

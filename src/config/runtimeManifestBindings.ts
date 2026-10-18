@@ -1,3 +1,4 @@
+import { currentOptionsBindingFromManifest, type NativeOptionProofBinding } from '../ledger/currentOptionsProof';
 import type { Network } from './index';
 import type { RuntimeReleaseManifest, JettonWalletBudget } from './runtimeManifest';
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
@@ -13,6 +14,7 @@ export type RuntimeManifestBindings = {
   jettonRoots: Array<{ master: string; symbol: string; decimals: number; masterCodeHash: string; walletCodeHash: string }>;
   currentSpotMarkets: CurrentSpotMarketBinding[];
   currentLedgerDecodersQualified: false;
+  currentOptionsBinding: NativeOptionProofBinding;
   walletTemplateCodeHash: string | null;
   dlmmRegistry?: string;
   optionFactory?: string;
@@ -45,6 +47,7 @@ export function deriveRuntimeManifestBindings(manifest: RuntimeReleaseManifest):
     // The previous JTW1/T3Root/DexRouter ledger must not receive fresh code pins.
     // This intermediate fence is removed only with current decoder qualification.
     currentLedgerDecodersQualified: false,
+    currentOptionsBinding: currentOptionsBindingFromManifest(manifest),
     walletTemplateCodeHash: null, marketBindings: [], launchpadControllers: [],
     t3Hub: contracts.T3Hub?.address,
     optionFactory: contracts.OptionFactory?.address, optionVault: contracts.OptionVault?.address,

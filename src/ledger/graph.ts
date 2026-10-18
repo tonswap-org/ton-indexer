@@ -1,3 +1,5 @@
+import { activeOrderAccount, orderShard } from '../orders/evidence';
+import { decodeOptionFactory, decodeOptionVault, decodeOptionManager, optionChildAddress } from './currentOptionsState';
 import { archiveBindingKey } from './publication';
 import type { OwnerCycle, RefreshDependency } from './cycle';
 import type { WalletIdentityStore } from './identities';
@@ -83,6 +85,7 @@ export class LedgerGraphBuilder {
     private launchpadCodeHashes?: LedgerLaunchpadCodeHashes,
     private launchpadControllers: string[] = [],
     private configuredMarketBindings: DlmmMarketBinding[] = [],
+    private currentOptionsBinding?: import("./currentOptionsProof").NativeOptionProofBinding,
   ) {}
   async build(owner: string, generation: string, cycle: OwnerCycle) {
     const chains = new Map<string, LedgerChain>(),
@@ -716,6 +719,50 @@ export class LedgerGraphBuilder {
         await wallet(account, "counterparty");
       }
     }
+    let currentOptionsBinding: import('./currentOptionsProof').NativeOptionProofBinding | undefined;
+    if (this.currentOptionsBinding) {
+      const b = this.currentOptionsBinding, o = b.options, key = `current-options:${o.factory.toRawString()}`;
+      bindings[key] = false;
+      try {
+        const active = async (address: string, pin: string) => {
+          const state = await source.getAccountState(address);
+          if (!state.shardAccountBoc) throw Error('Current Options account evidence unavailable');
+          return activeOrderAccount(orderShard(state.shardAccountBoc, address).shard, pin);
+        };
+        const f = decodeOptionFactory((await active(o.factory.toRawString(), o.factoryHash)).data);
+        const v = decodeOptionVault((await active(o.vault.toRawString(), o.vaultHash)).data);
+        const manager = decodeOptionManager((await active(o.manager.toRawString(), o.managerHash)).data);
+        if (!manager.governance.equals(o.governance) || !manager.factory.equals(o.factory)) throw Error('Current Options manager identity mismatch');
+        if (!f.governance.equals(o.governance) || !f.vault.equals(o.vault) || !f.manager?.equals(o.manager)
+          || f.shoutCode.hash().toString('hex') !== o.shoutHash || f.outperfCode.hash().toString('hex') !== o.outperfHash
+          || !v.governance.equals(o.governance) || !v.factory?.equals(o.factory) || !v.feeSink.equals(o.feeSink)
+          || !v.treasury.equals(o.treasury) || v.slots.size !== 1 || !v.slots.get(0)?.master.equals(o.t3Root)) throw Error('Current Options peer identity mismatch');
+        await load(o.factory.toRawString(), 'counterparty'); await load(o.vault.toRawString(), 'counterparty');
+        const vaultWallet = await discoverWallet(o.t3Root.toRawString(), o.vault.toRawString(), 'counterparty', 'option_current_wallet_identity_unresolved');
+        if (!vaultWallet || !v.slots.get(0)?.wallet?.equals(Address.parse(vaultWallet.wallet!))) throw Error('Current Options vault wallet mismatch');
+        await ownerWallet(o.t3Root.toRawString());
+        const ids = new Set<bigint>();
+        for (const [id, series] of f.series) if (series.writer.toRawString() === owner || [...series.positions.values()].some(p => p.buyer.toRawString() === owner)) ids.add(id);
+        for (const intent of v.book.intents.values()) if (intent.owner.toRawString() === owner) ids.add(intent.seriesId);
+        // Original owner commands also retain closed/purged series relevance.
+        for (const chain of chains.values()) if (chain.account === owner || wallets.get(chain.account)?.owner === owner) for (const tx of chain.transactions) {
+          for (const message of [tx.inMessage, ...tx.outMessages]) {
+            try {
+              const forward = tokenWire(message)?.forward, cell = forward && forward.bits.length >= 32 ? forward : message?.body ? Cell.fromBase64(message.body) : null;
+              if (!cell || cell.bits.length < 32) continue; const s = cell.beginParse(), op = s.loadUint(32);
+              if ([0x4f564259,0x4f564644,0x4f535757,0x4f464558].includes(op)) { s.loadUintBig(64); ids.add(s.loadUintBig(64)); }
+              else if (op === 0x46455843) ids.add(s.loadUintBig(64));
+            } catch { /* Only exact current messages select discovery work. */ }
+          }
+        }
+        for (const id of ids) {
+          const series = f.series.get(id);
+          if (!series || ![1,2].includes(series.kind) || !optionChildAddress(o.factory,id,series.kind===1?f.shoutCode:f.outperfCode).equals(series.child)) throw Error('Current Options child identity unavailable');
+          await load(series.child.toRawString(), 'counterparty');
+        }
+        currentOptionsBinding = b; bindings[key] = true;
+      } catch { issues.add('option_current_discovery_unavailable'); }
+    }
     // Product discovery catches transport/qualification failures locally. A
     // failed durable history read must still abort the whole projection.
     if (buildFailure) throw buildFailure;
@@ -729,6 +776,7 @@ export class LedgerGraphBuilder {
       pools,
       marketBindings,
       optionFactories,
+      currentOptionsBinding,
       launchpadSales,
       launchpadControllers: [...knownLaunchpadControllers],
       optionControllers: [

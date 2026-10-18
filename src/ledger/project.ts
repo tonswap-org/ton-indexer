@@ -1,3 +1,5 @@
+import { CURRENT_OPTIONS_USER_OPS } from './currentOptions';
+import { projectCurrentOptions, type CurrentOptionLedgerOperation } from './currentOptionsProjection';
 import {
   decodePerps,
   type LedgerPerpsEngine,
@@ -102,6 +104,7 @@ export type LedgerPool = {
   codeHash: string;
 };
 export type ProjectionInput = {
+  currentOptionsBinding?: import("./currentOptionsProof").NativeOptionProofBinding;
   network: Network;
   owner: string;
   perpsEngines?: Map<string, LedgerPerpsEngine>;
@@ -406,6 +409,7 @@ export async function projectOwnerLedger(
   };
   const operations: (
     | Operation
+    | CurrentOptionLedgerOperation
     | OptionLedgerOperation
     | OptionLifecycleOperation
     | T3LedgerOperation
@@ -829,6 +833,15 @@ export async function projectOwnerLedger(
   const t3Results = await decodeT3(input, nodes, flows, receiptFor, attach);
   operations.push(...t3Results.operations);
   for (const id of t3Results.usedFlows) usedFlows.add(id);
+  const currentOptions = await projectCurrentOptions(input, nodes, attach);
+  if (currentOptions.length) {
+    const owned = new Set(currentOptions.flatMap(o => o.evidence.map(r => `${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for (let i = operations.length - 1; i >= 0; i--) {
+      const op = operations[i];
+      if (op.kind === 'transfer' && op.settlement?.protocol === 't3' && op.evidence.every(r => owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`))) operations.splice(i, 1);
+    }
+    operations.push(...currentOptions);
+  }
   const perpsResults = await decodePerps(
     input,
     nodes,
@@ -901,6 +914,8 @@ export async function projectOwnerLedger(
           [null, 0].includes(opcode(msg)) ||
           TOKEN_CONTROL_OPS.has(businessOpcode(msg)!) ||
           nativeFundingRefund(msg) !== null ||
+          (groupOps.some(op => op.kind === 'option_operation') &&
+            (CURRENT_OPTIONS_USER_OPS.has(businessOpcode(msg)!) || CURRENT_T3_OPS.has(businessOpcode(msg)!) || (msg.bounced === true && opcode(msg) === 0xfffffffe))) ||
           (groupOps.some((op) => op.kind === "launchpad_refund") && opcode(msg) === 0x434c414d) ||
           (groupOps.some((op) => op.kind === "perps_operation") &&
             PERPS_USER_OPS.has(opcode(msg)!)) ||

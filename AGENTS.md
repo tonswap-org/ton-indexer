@@ -20,7 +20,17 @@ core pair. Observed code never enrolls a new decoder. Current receipt candidates
 are not physical payout evidence. Keep the runtime qualification fence until the
 fresh capture and original-source closure checks pass.
 
-Option lifecycle qualification uses manifest-approved factory, vault, Shout, Outperformance and wallet Cell hashes. Deployment identities and historical state must match. Exercise right retirement, actual holder payout and RiskVault reimbursement are separate facts. `ReleaseCollateral` never supplies a cash refund. An early OCRC receipt never proves a completed claim. Preserve raw fees and explicit archive/related-history gaps; owner-OBAR unwind requires original funding, historical cancellation and exact independent factory/vault cash finalizers. Initial BOYR/BBUY bounce recovery additionally requires the actual qualified failed product transaction, exact standard VM bounce, historical series/index unwind and independent physical factory return. Other automatic abort/retry recovery and expiry-only paths remain unsupported and must not fabricate payouts.
+Current Options ledger qualification uses the exact current factory/vault/manager,
+Shout/Outperformance, T3Wallet and T3RecoveryProof release pins. Infer owner
+requests from original dispatches, then authenticate historical controller and
+canonical child state independently from physical T3 transfers. Premium/fee and
+writer backing are accounting components, never additional cash. Right retirement
+can precede payout; failed transfers retain pending cash and retry never debits
+twice. Aggregate owed claims do not invent the original income source. Original
+archive, cash projection and related-history gaps remain incomplete. The current
+native suite replaces old Options ABI positive tests in the ordinary gate; retain
+old evidence without admitting it as current. Run ledger-current-options-test.ts,
+including native default/x6 economics, graph, refusal and missing-evidence cases.
 - **Is**: a runnable indexer service with in-memory storage and background workers, plus release-manifest bindings.
 - Product settlement support is deliberately bounded by the exact historical proof rules below; unqualified or missing evidence stays unresolved.
 
