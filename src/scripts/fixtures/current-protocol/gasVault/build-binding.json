@@ -1,0 +1,83 @@
+{
+  "schema": "tonswap-capture-build-v1",
+  "producer": "gasVault",
+  "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+  "tolkVersion": "1.5.0",
+  "sandboxVersion": "0.42.0",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d",
+  "targets": {
+    "FeeRouter": {
+      "source": "contracts/treasury/fee_router.tolk",
+      "codeHash": "f01ef4261a009fffed0283eed32cf4622aa9fdb682f4d7cc4945b17070832623",
+      "artifact": "build/FeeRouter.boc",
+      "artifactSha256": "0a51b6bac09a63c90f455cce1ba5113e0aae0a868c2f1f359ed4d89869fa3bcd",
+      "inputs": {
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/t3.tolk": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/generated/op/treasury.tolk": "92f07963d0f57bbd486e86d87fb50f001835b385836c0eabd6ef98d12cb07a0e",
+        "contracts/shared/jetton/holder_recovery.tolk": "cc5a72c240dfb44f02886de18d82236ede99d576f8c02bc102d0920c9e9b7116",
+        "contracts/shared/jetton/jetton_quotes.tolk": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+        "contracts/shared/jetton/jetton_slots.tolk": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+        "contracts/shared/jetton/jetton_sweep.tolk": "8b03f4982c992940be4ef738eccf4e6112120d5627401aea068b031e8099d146",
+        "contracts/shared/jetton/owed_archive.tolk": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/jetton/tep89_codec.tolk": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8",
+        "contracts/t3/receipt_tree.tolk": "22a916c4b730336d7f4464f30468c7a2f6919b49b790753daeddb6c9b1650216",
+        "contracts/t3/recovery_types.tolk": "8985e0572cfefb4f43fa2c40b3eea71331b80a44c615d2cb560db94a81a96b2d",
+        "contracts/t3/wallet_budget.tolk": "83e7fb8b154c72e496e2666c7a0c2366c4145163b3c6a32b179aa810de39c107",
+        "contracts/t3/wallet_types.tolk": "43d30a774779dd49ec5b1032a84c722c3cf14302724848a43892dffc0f21cd72",
+        "contracts/treasury/fee_router_quote.tolk": "9f841592feadbfa9c34e69706d14c7cd61d6656a28ba0dca36ab145ab6450801",
+        "contracts/treasury/fee_router.tolk": "5ef6dd5e358719c8b8ac15ca7861425f80b79116bab5f2a3ef8d89a6935883d4"
+      },
+      "inputsSha256": "950e509dcbd8bb145fb6e956b7667efc78e902807f1b6fa2ebc033be6757c3c3"
+    },
+    "GasVault": {
+      "source": "contracts/automation/gas_vault.tolk",
+      "codeHash": "40acb33b23bb791fccb5362307b4059d6574cd06378b7d0c9d1b50e425b03f47",
+      "artifact": "build/GasVault.boc",
+      "artifactSha256": "e0345baceb5752a38c6935f98fdf62fcf14b22b5208c63630c3ee143355a976d",
+      "inputs": {
+        "contracts/automation/gas_vault.tolk": "ea0fed54f1f781f3fa93a608b01a269281089c18b4692a59a01f254107afe9a9",
+        "contracts/generated/op/automation.tolk": "62c326c5131a57dece37639607c76285c01fb4319c275e0e1f6fb39143dc0d2a",
+        "contracts/generated/op/governance.tolk": "bfa1c2bfa74d49fe9fb0a2addda0f34184706133280ca62ad41b6a45c3d19bca",
+        "contracts/shared/governance/module_gate.tolk": "afb1612ff159d5a083680a7a8e7dd2a3cf3cdf62963c1a41cfb0ffeedacdf2de",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c"
+      },
+      "inputsSha256": "331645aa9c97d8aa3ac5373164328adfe2ed883cb41984e091e28c7e55a26a18"
+    }
+  },
+  "captures": {
+    "case-01.json": {
+      "executed": [
+        "FeeRouter",
+        "GasVault"
+      ],
+      "embedded": [
+        "FeeRouter",
+        "GasVault"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-02.json": {
+      "executed": [
+        "FeeRouter",
+        "GasVault"
+      ],
+      "embedded": [
+        "FeeRouter",
+        "GasVault"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    }
+  }
+}

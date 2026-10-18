@@ -1,4 +1,5 @@
 import { currentDlmmOrderCandidate } from './currentDlmmOrderDiscovery';
+import { ownerConnectedProtocolNodes, currentProtocolPins } from './currentProtocolEvents';
 import { readCurrentDlmmOrderCreations } from './currentDlmmOrderProof';
 import { discoverCurrentLaunchpad, discoverCurrentLaunchpadSupplies } from './currentLaunchpadDiscovery';
 import { LAUNCH_OP } from './currentLaunchpadState';
@@ -841,6 +842,26 @@ export class LedgerGraphBuilder {
         }catch{issues.add('launchpad_current_discovery_unavailable');}
       }
     }
+    // Lifecycle observations may follow only owner-connected configured identities.
+    // This discovery does not qualify their code, events or physical payments.
+    const protocolAddresses = new Set(this.currentDlmmBinding ? currentProtocolPins(this.currentDlmmBinding.release).keys() : []);
+    const protocolInspected = new Set<string>();
+    const protocolOwned = new Set([owner, ...[...wallets].filter(([, asset]) => asset.owner === owner || asset.controller === owner).map(([wallet]) => wallet),
+      ...[...chains.values()].filter(chain => chain.role === 'controlled_contract').map(chain => chain.account)]);
+    for (let depth = 0; depth < 16; depth++) {
+      const next = new Set<string>();
+      const physical = [...chains.values()].flatMap(chain => chain.transactions.map(raw => ({ account: chain.account, raw,
+        id: `${chain.account}:${raw.lt}:${raw.hash}` })));
+      for (const node of ownerConnectedProtocolNodes(physical, protocolOwned)) for (const msg of node.raw.outMessages) {
+        const candidate = addr(msg.destination);
+        if (candidate && protocolAddresses.has(candidate) && !chains.has(candidate) && !protocolInspected.has(candidate)) next.add(candidate);
+      }
+      if (!next.size) break;
+      for (const candidate of [...next].sort()) {
+        protocolInspected.add(candidate);
+        await load(candidate, 'counterparty');
+      }
+    }
     // Product discovery catches transport/qualification failures locally. A
     // failed durable history read must still abort the whole projection.
     if (buildFailure) throw buildFailure;
@@ -858,6 +879,7 @@ export class LedgerGraphBuilder {
       currentPerpsBinding,
       currentDlmmBinding,
       currentLaunchpadBinding,
+      currentProtocolRelease: this.currentDlmmBinding?.release,
       launchpadSales,
       launchpadControllers: [...knownLaunchpadControllers],
       optionControllers: [

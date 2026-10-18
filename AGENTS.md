@@ -521,3 +521,12 @@ changing this rule. The bounded-range retry test must explicitly complete and
 release held collectors before pool shutdown; early event-loop drain is failure.
 
 Current Governance snapshots admit only the manifest Governance singleton and exact code hash. Authenticate complete original active ShardAccount storage and current class parameters in one pinned-head batch; locks and proposals use the current Governance dictionaries, never retired Voting tuples. Keep uint32 allocation bounds and at most 64 IDs per page, with no completed-response cache for time-derived status. Absent allocated IDs are pruned with unknown terminal outcome; queueing/dispatch never proves target execution. Retain original default/x6 capture producer/source/artifact closure and native timing comparisons. Run `npm run test:governance`, API/OpenAPI/deadline tests and typecheck after changes.
+
+Current lifecycle observations are additive non-cash facts. Select owner-connected
+candidates before original archive reads; never expand all shared-contract history
+into an owner's dependency graph. Authenticate exact current role/code pins,
+original before/after account cells and unique full committed-message ancestry.
+Keep limits of 64 original boundaries, 16 ancestor hops and 256 observations. Events and
+successful calls never confirm physical delivery, target execution or supply totals.
+Run `test:ledger:protocol` after this boundary changes; retained filtered native
+rows qualify event decoding, not public consensus or complete route settlement.

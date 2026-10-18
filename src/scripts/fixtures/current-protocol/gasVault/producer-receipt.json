@@ -1,0 +1,45 @@
+{
+  "schema": "tonswap-capture-producer-v1",
+  "producer": "gasVault",
+  "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+  "tests": 2,
+  "captureDirectory": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/.local/state/current-protocol-captures-20261018-v1/gasVault",
+  "exitCode": 0,
+  "runtime": {
+    "node": "v22.23.3",
+    "tolk": "1.5.0",
+    "sandbox": "0.42.0"
+  },
+  "logSha256": "79cf2c1d19fc37b16a94d97c0958a96bbb981d70014e1045af8591ebd05fa587",
+  "build": {
+    "file": "build-binding.json",
+    "sha256": "55f449f6429b6aeb17cca913c850249402470f2f557c52014195a23d24342842",
+    "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+    "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d"
+  },
+  "compiled": {
+    "FeeRouter": {
+      "file": "current-compiled/FeeRouter.json",
+      "sha256": "ed19860dd044c16d3e600f15ec99146005445d9aca9a743994c36b1adc835658",
+      "codeHash": "f01ef4261a009fffed0283eed32cf4622aa9fdb682f4d7cc4945b17070832623",
+      "boc": "compiler/FeeRouter.boc",
+      "bocSha256": "0a51b6bac09a63c90f455cce1ba5113e0aae0a868c2f1f359ed4d89869fa3bcd"
+    },
+    "GasVault": {
+      "file": "current-compiled/GasVault.json",
+      "sha256": "b12ff621ce94b845dd3f68454f396ea5b9bd0114656e331f2c84cf35f814458b",
+      "codeHash": "40acb33b23bb791fccb5362307b4059d6574cd06378b7d0c9d1b50e425b03f47",
+      "boc": "compiler/GasVault.boc",
+      "bocSha256": "e0345baceb5752a38c6935f98fdf62fcf14b22b5208c63630c3ee143355a976d"
+    }
+  },
+  "artifacts": {
+    "build-binding.json": "55f449f6429b6aeb17cca913c850249402470f2f557c52014195a23d24342842",
+    "case-01.json": "46fb8baa4591991fe2c1ca90d9c8c7c3041221f31b3b23231c33cdabc455c945",
+    "case-02.json": "467a26cb029667468180a12cbbdb49811f8f8160ff9b9f1950b94b61f9bb5c54",
+    "compiler/FeeRouter.boc": "0a51b6bac09a63c90f455cce1ba5113e0aae0a868c2f1f359ed4d89869fa3bcd",
+    "compiler/GasVault.boc": "e0345baceb5752a38c6935f98fdf62fcf14b22b5208c63630c3ee143355a976d",
+    "current-compiled/FeeRouter.json": "ed19860dd044c16d3e600f15ec99146005445d9aca9a743994c36b1adc835658",
+    "current-compiled/GasVault.json": "b12ff621ce94b845dd3f68454f396ea5b9bd0114656e331f2c84cf35f814458b"
+  }
+}

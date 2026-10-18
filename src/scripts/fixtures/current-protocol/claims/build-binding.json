@@ -1,0 +1,118 @@
+{
+  "schema": "tonswap-capture-build-v1",
+  "producer": "claims",
+  "suite": "tests/system/ReleaseGovernance.spec.ts",
+  "tolkVersion": "1.5.0",
+  "sandboxVersion": "0.42.0",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d",
+  "targets": {
+    "EmissionsSplitter": {
+      "source": "contracts/referral/emissions_splitter.tolk",
+      "codeHash": "3bd40826c3cdd82f58137a18e12961ff13ae310339c52c3ef33955e8c73ef5e3",
+      "artifact": "build/EmissionsSplitter.boc",
+      "artifactSha256": "f2e15fe0984771db219f8895c4d15c4f5a203d9b6888ea8ad9cc21ae1842bd51",
+      "inputs": {
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/referral.tolk": "88b91539fde0e5b339adbc6b508bf460a6edb9144051860b515cd7d0ecdcd9ff",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/referral/emissions_splitter.tolk": "52db95d80c6d85283cbec48e555a306c8444b91d0c255a1348d5f1d333c03a0f",
+        "contracts/shared/jetton/jetton_quotes.tolk": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+        "contracts/shared/jetton/jetton_slots.tolk": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+        "contracts/shared/jetton/jetton_sweep.tolk": "8b03f4982c992940be4ef738eccf4e6112120d5627401aea068b031e8099d146",
+        "contracts/shared/jetton/owed_archive.tolk": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/jetton/tep89_codec.tolk": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8"
+      },
+      "inputsSha256": "ee9ab1a22224f8d41ca35ff185e62491b94f77e644ed714cb8559d958a1722e5"
+    },
+    "MerkleClaim": {
+      "source": "contracts/governance/merkle_claim.tolk",
+      "codeHash": "eaecc5c158557cb49a71d913a0d084c81e4421d7e0fec081c0153a076199ef48",
+      "artifact": "build/MerkleClaim.boc",
+      "artifactSha256": "75a8c226034e761411f5046f549e74513d3c4a19f6f89a73b0faeed75312a8f8",
+      "inputs": {
+        "contracts/generated/op/governance.tolk": "bfa1c2bfa74d49fe9fb0a2addda0f34184706133280ca62ad41b6a45c3d19bca",
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/governance/genesis_types.tolk": "a8a52c854c5cf248b768b4c940940bdcfcfe96f9ec6b5d0a3487150f6d9bb266",
+        "contracts/governance/merkle_claim.tolk": "d732914f699bd8e0a643cf42d79ce868c08e1f855e450c03e22bff18c046a144",
+        "contracts/shared/jetton/jetton_quotes.tolk": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+        "contracts/shared/jetton/jetton_slots.tolk": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+        "contracts/shared/jetton/jetton_sweep.tolk": "8b03f4982c992940be4ef738eccf4e6112120d5627401aea068b031e8099d146",
+        "contracts/shared/jetton/owed_archive.tolk": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/jetton/tep89_codec.tolk": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8"
+      },
+      "inputsSha256": "2b0e514d92a92871fb60f4458c959166baf0611ef511f749cae879e5ce3cb90b"
+    },
+    "Treasury": {
+      "source": "contracts/governance/treasury.tolk",
+      "codeHash": "36617c2af95ea29e112ca933130dc2ad1a880ff0ca8259907184b9618a3f4fef",
+      "artifact": "build/Treasury.boc",
+      "artifactSha256": "6fde34f75f0d7e49d86326b8483c60bec68105a562c91a380220695ccf842d63",
+      "inputs": {
+        "contracts/generated/op/governance.tolk": "bfa1c2bfa74d49fe9fb0a2addda0f34184706133280ca62ad41b6a45c3d19bca",
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/t3.tolk": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/governance/treasury.tolk": "e009f4eb4379ec3a70d7370ce853f8b74cc4fca1f91154a14052aab2994bf308",
+        "contracts/shared/jetton/holder_recovery.tolk": "cc5a72c240dfb44f02886de18d82236ede99d576f8c02bc102d0920c9e9b7116",
+        "contracts/shared/jetton/jetton_quotes.tolk": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+        "contracts/shared/jetton/jetton_slots.tolk": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+        "contracts/shared/jetton/owed_archive.tolk": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/jetton/tep89_codec.tolk": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8",
+        "contracts/t3/receipt_tree.tolk": "22a916c4b730336d7f4464f30468c7a2f6919b49b790753daeddb6c9b1650216",
+        "contracts/t3/recovery_types.tolk": "8985e0572cfefb4f43fa2c40b3eea71331b80a44c615d2cb560db94a81a96b2d",
+        "contracts/t3/wallet_budget.tolk": "83e7fb8b154c72e496e2666c7a0c2366c4145163b3c6a32b179aa810de39c107",
+        "contracts/t3/wallet_types.tolk": "43d30a774779dd49ec5b1032a84c722c3cf14302724848a43892dffc0f21cd72"
+      },
+      "inputsSha256": "b8705911865486b3ba5f1080e9d1257c6656d539f69cadd2ce5c2a27d3c5b8b4"
+    }
+  },
+  "captures": {
+    "case-01.json": {
+      "executed": [
+        "EmissionsSplitter",
+        "MerkleClaim",
+        "Treasury"
+      ],
+      "embedded": [
+        "EmissionsSplitter",
+        "MerkleClaim",
+        "Treasury"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-02.json": {
+      "executed": [
+        "EmissionsSplitter",
+        "MerkleClaim",
+        "Treasury"
+      ],
+      "embedded": [
+        "EmissionsSplitter",
+        "MerkleClaim",
+        "Treasury"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    }
+  }
+}

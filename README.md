@@ -2139,3 +2139,22 @@ unknown grouped messages retain the warnings. The retained current native Perps
 suite checks both cases. The bounded-range retry test also requires explicit
 completion and releases held collectors before closing its pool, so abandoned
 cleanup cannot silently exit successfully.
+
+### Current lifecycle observations
+
+`npm run test:ledger:protocol` verifies exact current event layouts and retained
+native default/x6 producers. Owner ledger events may carry `protocolObservations`:
+release-pinned Governance/supply/holder/platform facts and pool/coordinator events,
+with their original transaction, body/code hashes and authenticated causal chain.
+Successful calls and logged amounts never create cash movements, establish target
+execution or clear incomplete settlement. These are partial observations, not an
+exhaustive event feed or burned/minted supply audit.
+
+Discovery follows only owner-connected messages into supported release identities.
+Unrelated shared-contract history does not consume the 64-original boundary budget
+or introduce unrelated financial dependencies. Each observation requires original
+active code on both sides and unique full-message ancestry, with at most 16 ancestor
+hops, 64 facts per transaction and 256 facts per projection. Missing authority omits
+the observation; financial history and physical transfer qualification stay separate.
+The retained producer map and its limits are in
+`src/scripts/fixtures/current-protocol/README.md`.

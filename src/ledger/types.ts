@@ -208,6 +208,8 @@ export type LedgerEvent = {
   actions: TxAction[];
   issues: string[];
   launchpadRequests?: import("./launchpadRequests").LaunchpadRequestIdentity[];
+  /** Authenticated partial lifecycle facts; never proof of target execution or physical cash. */
+  protocolObservations?: import("./currentProtocolEvents").CurrentProtocolObservation[];
   settlement?: {
     status: "confirmed" | "incomplete";
     protocol: "dlmm" | "jetton" | "options" | "t3" | "perps" | "launchpad";

@@ -1,4 +1,5 @@
 import { projectCurrentLaunchpad } from './currentLaunchpadProjection';
+import { projectCurrentProtocolObservations } from './currentProtocolEvents';
 import { projectCurrentDlmm } from './currentDlmmProjection';
 import { projectCurrentPerps } from './currentPerpsProjection';
 import { CURRENT_OPTIONS_USER_OPS } from './currentOptions';
@@ -107,6 +108,7 @@ export type LedgerPool = {
   codeHash: string;
 };
 export type ProjectionInput = {
+  currentProtocolRelease?: import("../config/runtimeManifest").RuntimeReleaseManifest;
   currentDlmmBinding?: import("./currentDlmmPhysical").CurrentDlmmProofBinding;
   currentLaunchpadBinding?: import("./currentLaunchpadProof").CurrentLaunchpadBinding;
   currentPerpsBinding?: import("./currentPerpsProof").NativePerpsProofBinding;
@@ -938,6 +940,7 @@ export async function projectOwnerLedger(
           })),
         );
     }
+  const protocolObservations = await projectCurrentProtocolObservations(input, nodes);
   const grouped = new Map<string, Node[]>();
   for (const n of nodes)
     if (n.event) {
@@ -1068,6 +1071,9 @@ export async function projectOwnerLedger(
     if (unresolvedLaunchpad) issues.add("launchpad_identity_or_cash_settlement_unverified");
     const merged: LedgerEvent = {
       ...event,
+      ...(members.some(n => protocolObservations.has(n.id)) ? {
+        protocolObservations: members.flatMap(n => protocolObservations.get(n.id) ?? []),
+      } : {}),
       ...(launchpadRequests.length ? { launchpadRequests } : {}),
       account: owner,
       totalFeesRaw,
