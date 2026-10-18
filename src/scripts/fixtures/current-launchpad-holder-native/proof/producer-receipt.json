@@ -1,0 +1,39 @@
+{
+  "schema": "launchpad-ledger-native-run-v1",
+  "command": [
+    "./node_modules/.bin/vitest",
+    "--configLoader",
+    "runner",
+    "run",
+    "tests/wire/launchpadHolderProof.native.test.ts"
+  ],
+  "cwd": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web",
+  "startedAt": "2026-10-18T05:56:17.323836+00:00",
+  "completedAt": "2026-10-18T05:56:37.072155+00:00",
+  "exitCode": 0,
+  "sourceLockSha256": "6e4383d71acd9ec637280903ea4321601eea751b8faca819e9fd16351231d60f",
+  "changedSources": [],
+  "outputs": [
+    {
+      "path": "captures/lost-bounce-default.json",
+      "bytes": 507465,
+      "sha256": "6ad72a404331d3bcfca09e27ce3430f09942bb84a4a4c08a12c7a1fdc7852ac0"
+    },
+    {
+      "path": "captures/lost-bounce-x6.json",
+      "bytes": 507472,
+      "sha256": "330237078fd7b5867f5e7d4d27687a8e730ed07379480c484463bc02ad80482a"
+    },
+    {
+      "path": "captures/notification-default.json",
+      "bytes": 508304,
+      "sha256": "96ab44b4fbb205103c0bed9eead6c519ff9ed9bb9571d4ff89954e019602783f"
+    },
+    {
+      "path": "captures/notification-x6.json",
+      "bytes": 508299,
+      "sha256": "2f83a7c445221cf1a5167d7bd0e49c78671ca252bbd35c5c9b5c08065ee33cf0"
+    }
+  ],
+  "logSha256": "1dad98c724d4bda63554afafc65d6c6cd9649009c41f4ea82c6c13db3609610e"
+}

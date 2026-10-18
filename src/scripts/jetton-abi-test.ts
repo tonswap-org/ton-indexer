@@ -4,22 +4,20 @@ import {
   Cell,
   TupleItem,
   beginCell,
-  contractAddress,
-  loadStateInit
+  contractAddress
 } from '@ton/core';
-import { loadConfig } from '../config';
 import {
   buildTonswapJettonWalletInitialData,
   parseCanonicalJettonRootData,
   parseCanonicalJettonWalletAddress,
-  parseCanonicalJettonWalletData,
-  readCanonicalJettonBalance
+  parseCanonicalJettonWalletData
 } from '../data/jettonAbi';
-import { TonDataSource } from '../data/dataSource';
-import { IndexerService } from '../indexerService';
-import { MemoryStore } from '../store/memoryStore';
+import { createJettonWalletReader } from '../data/jettonWallet';
+import { ChainReadError } from '../data/dataSource';
+import { fakeChainSource } from './support/fakeChainSource';
+import { fixtureHead } from './support/chainFixture';
+
 import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
-import { loadOpcodes } from '../utils/opcodes';
 
 const owner = Address.parse(`0:${'1'.repeat(64)}`);
 const root = Address.parse(`0:${'2'.repeat(64)}`);
@@ -66,6 +64,33 @@ const walletStack = (
 
 type GetterName = 'get_jetton_data' | 'get_wallet_address' | 'get_wallet_data';
 
+// Exercise the current foreign-root reader while retaining the existing ABI
+// fixture's nullable result convention. Only production status:ok is a value.
+const readFixtureBalance = async (reader: {
+  owner: string; master: string;
+  runGetMethod: (address: string, method: GetterName, args?: TupleItem[]) => Promise<{ exitCode: number; stack: TupleItem[] } | null>;
+  readAccountCode: (address: string) => Promise<Cell | null>;
+}) => {
+  const at = fixtureHead();
+  const source = fakeChainSource({
+    head: async () => at,
+    getAccountState: async (address, options) => {
+      assert.deepEqual(options?.at, at, 'root and wallet identities use the selected head');
+      const code = address === reader.master ? walletCode : await reader.readAccountCode(address);
+      return { balance: '0', accountState: 'active', codeBoc: code?.toBoc().toString('base64'),
+        lastTxLt: '1', lastTxHash: '1'.repeat(64) };
+    },
+    runGetMethod: async (address, method, args, options) => {
+      assert.deepEqual(options?.at, at, 'canonical getter reads share the selected head');
+      const result = await reader.runGetMethod(address, method as GetterName, args);
+      if (!result) throw new ChainReadError('upstream_unavailable');
+      return result;
+    },
+  });
+  const result = await createJettonWalletReader({ source, tokens: [{ master: reader.master, masterCodeHash: walletCode.hash().toString('hex'), walletCodeHash: walletCode.hash().toString('hex') }] }).wallet(reader.master, reader.owner);
+  return result.status === 'ok' ? { wallet: result.wallet, balance: result.balanceRaw } : null;
+};
+
 const runBalanceRead = async (overrides: {
   result?: Partial<Record<GetterName, { exitCode: number; stack: TupleItem[] } | null>>;
   accountCode?: Cell | null;
@@ -77,7 +102,7 @@ const runBalanceRead = async (overrides: {
     get_wallet_address: { exitCode: 0, stack: walletAddressStack() },
     get_wallet_data: { exitCode: 0, stack: walletStack() }
   };
-  return readCanonicalJettonBalance({
+  return readFixtureBalance({
     owner: owner.toRawString(),
     master: root.toRawString(),
     runGetMethod: async (_address, method) => {
@@ -221,95 +246,8 @@ const assertCanonicalInitialWalletLayout = () => {
   );
 };
 
-const transferPayloadSource = (
-  getterWallet: Address,
-  accountStateCalls: string[]
-): TonDataSource => ({
-  network: 'testnet',
-  async getMasterchainInfo() {
-    return { seqno: 0 };
-  },
-  async getAccountState(address) {
-    accountStateCalls.push(address);
-    return { balance: '0', accountState: 'uninitialized' };
-  },
-  async getTransactions() {
-    return [];
-  },
-  async runGetMethod(address, method) {
-    if (address !== root.toRawString()) return null;
-    if (method === 'get_wallet_address') {
-      return { exitCode: 0, stack: [addressItem(getterWallet)] };
-    }
-    if (method === 'get_jetton_data') {
-      return { exitCode: 0, stack: rootStack() };
-    }
-    return null;
-  },
-  async getJettonBalance() {
-    return null;
-  },
-  async getJettonMetadata() {
-    return null;
-  },
-  async close() {
-    return;
-  }
-});
-
-const assertTransferPayloadUsesExactWalletLayout = async () => {
-  const config = loadConfig();
-  const canonicalData = buildTonswapJettonWalletInitialData(owner, root);
-  const canonicalWallet = contractAddress(0, {
-    code: walletCode,
-    data: canonicalData
-  });
-  const accountStateCalls: string[] = [];
-  const service = new IndexerService(
-    config,
-    new MemoryStore(config),
-    transferPayloadSource(canonicalWallet, accountStateCalls),
-    loadOpcodes(),
-    []
-  );
-
-  const payload = await service.getJettonTransferPayload(
-    root.toRawString(),
-    owner.toRawString()
-  );
-  assert.equal(accountStateCalls.length, 1);
-  assert.equal(accountStateCalls[0], canonicalWallet.toRawString());
-  assert.ok(payload.state_init);
-
-  const stateCell = Cell.fromBoc(Buffer.from(payload.state_init, 'base64'));
-  assert.equal(stateCell.length, 1);
-  const stateInit = loadStateInit(stateCell[0].beginParse());
-  assert.ok(stateInit.code?.hash().equals(walletCode.hash()));
-  assert.ok(stateInit.data?.hash().equals(canonicalData.hash()));
-
-  const legacyWallet = contractAddress(0, {
-    code: walletCode,
-    data: legacyWalletInitialData()
-  });
-  const legacyAccountStateCalls: string[] = [];
-  const legacyService = new IndexerService(
-    config,
-    new MemoryStore(config),
-    transferPayloadSource(legacyWallet, legacyAccountStateCalls),
-    loadOpcodes(),
-    []
-  );
-  const rejected = await legacyService.getJettonTransferPayload(
-    root.toRawString(),
-    owner.toRawString()
-  );
-  assert.deepEqual(rejected, { custom_payload: null, state_init: null });
-  assert.deepEqual(legacyAccountStateCalls, []);
-};
-
 const main = async () => {
   assertCanonicalInitialWalletLayout();
-  await assertTransferPayloadUsesExactWalletLayout();
 
   const canonical = await runBalanceRead();
   assert.ok(canonical);
@@ -322,7 +260,7 @@ const main = async () => {
     wallet_address: { exitCode: 0, stack: walletAddressStack() },
     wallet_data: { exitCode: 0, stack: walletStack() }
   };
-  const legacyAddressOnly = await readCanonicalJettonBalance({
+  const legacyAddressOnly = await readFixtureBalance({
     owner: owner.toRawString(),
     master: root.toRawString(),
     runGetMethod: async (_address, method) => {
@@ -342,7 +280,7 @@ const main = async () => {
     get_wallet_address: { exitCode: 0, stack: walletAddressStack() },
     wallet_data: { exitCode: 0, stack: walletStack() }
   };
-  const legacyWalletOnly = await readCanonicalJettonBalance({
+  const legacyWalletOnly = await readFixtureBalance({
     owner: owner.toRawString(),
     master: root.toRawString(),
     runGetMethod: async (_address, method) => {

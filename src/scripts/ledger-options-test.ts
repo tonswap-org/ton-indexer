@@ -1,3 +1,4 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { Address, Cell, Dictionary, beginCell } from "@ton/core";
 import { createHash } from "node:crypto";
@@ -8,8 +9,7 @@ import { createLogger } from "../utils/logger";
 import type {
   RawMessage,
   RawTransaction,
-  TonDataSource,
-} from "../data/dataSource";
+} from '../data/dataSource';
 import {
   projectOwnerLedger,
   type ProjectionInput,
@@ -317,9 +317,9 @@ async function durableGraph() {
       type: "slice" as const,
       cell: beginCell().storeAddress(A(address)).endCell(),
     });
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({ physicalCurrentReads: true,
     network: "testnet",
-    getMasterchainInfo: async () => ({ seqno: 100 }),
+    head: async () => ({ seqno: 100 }),
     getAccountStateAtSeqno: async (account, seqno) => {
       const latest = history(account)
         .filter((t) => BigInt(t.lt) <= BigInt(seqno))
@@ -365,14 +365,14 @@ async function durableGraph() {
         .slice()
         .reverse()
         .slice(0, limit),
-    getJettonBalance: async (owner, master) =>
+    walletBalance: async (owner, master) =>
       master === root && [buyer, factory].includes(owner)
         ? {
             wallet: owner === buyer ? buyerWallet : factoryWallet,
             balance: "0",
           }
         : null,
-    getJettonMetadata: async () => ({ decimals: 9 }),
+    jettonMetadata: async () => ({ decimals: 9 }),
     close: async () => {},
     runGetMethod: async (account, method, args) => {
       if (
@@ -412,7 +412,7 @@ async function durableGraph() {
         );
       return null;
     },
-  };
+  });
   try {
     await store.initialize();
     const service = new LedgerService(
@@ -424,7 +424,7 @@ async function durableGraph() {
       2,
       { jettonRoots: [root], optionFactory: factory, optionVault: vault, optionCodeHashes: qualifiedCodes, t3Root: root },
     );
-    await service.syncAccount(buyer);
+    await service.runOwnerCycle(buyer);
     const pending = await store.page("testnet", buyer);
     assert.equal(pending.coverage.historyComplete, true);
     assert.equal(
@@ -432,7 +432,7 @@ async function durableGraph() {
       "incomplete",
     );
     activated = true;
-    await service.syncAccount(buyer);
+    await service.runOwnerCycle(buyer);
     const complete = await store.page("testnet", buyer),
       event = complete.events.find((e) => e.kind === "option_buy")!;
     assert.equal(complete.coverage.historyComplete, true);
@@ -460,7 +460,7 @@ async function durableGraph() {
     const counts = await pool.query(
       "SELECT (SELECT count(*) FROM ledger_runs)::text AS runs,(SELECT count(*) FROM ledger_membership)::text AS members,(SELECT count(*) FROM ledger_projection_events)::text AS events",
     );
-    await service.syncAccount(buyer);
+    await service.runOwnerCycle(buyer);
     const quiet = await store.page("testnet", buyer);
     assert.equal(
       quiet.coverage.generation,
@@ -482,7 +482,7 @@ async function durableGraph() {
       lifecycle = stage;
       f.tx(factory, stage === "reduced" ? 90 : 100);
       await pool.query("DELETE FROM ledger_account_states");
-      await service.syncAccount(buyer);
+      await service.runOwnerCycle(buyer);
       const rebuilt = await store.page("testnet", buyer);
       assert.equal(
         rebuilt.events.find((e) => e.kind === "option_buy")?.settlement?.status,
@@ -499,14 +499,18 @@ async function durableGraph() {
       );
     }
     wrongCode = true;
-    await service.syncAccount(buyer);
+    const confirmedGeneration = (await store.page("testnet", buyer)).coverage.generation;
+    await pool.query("UPDATE ledger_owner_checks SET unresolved=true WHERE account=$1", [buyer]);
+    await service.runOwnerCycle(buyer);
     const unsupported = await store.page("testnet", buyer);
     assert.equal(
       unsupported.events.find((e) => e.kind === "option_buy")?.settlement
         ?.status,
-      "incomplete",
-      "a deployed series-code mismatch cannot retain active ownership proof",
+      "confirmed",
+      "an unresolved current binding cannot erase historical acquisition",
     );
+    assert.equal(unsupported.coverage.generation, confirmedGeneration);
+    assert(unsupported.coverage.refreshPending!.length > 0);
     await service.stop();
   } finally {
     await pool.end();

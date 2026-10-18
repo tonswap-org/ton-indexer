@@ -2,7 +2,7 @@ import { Config } from '../config';
 import { MemoryStore } from '../store/memoryStore';
 import {
   RawTransaction,
-  TonDataSource,
+  ChainSource, ChainHead,
   transactionPageIsLinkedInclusiveSegment,
   transactionPageReachesHistoryStart
 } from '../data/dataSource';
@@ -11,6 +11,7 @@ import { classifyTransaction } from '../utils/txClassifier';
 import { errorDiagnostic, Logger } from '../utils/logger';
 import { IndexerService } from '../indexerService';
 import { PoolTracker } from '../poolTracker';
+import type { HeadFeed } from '../runtime/headFeed';
 
 const transactionIdentity = (transaction: { lt: string; hash: string }) =>
   `${transaction.lt}:${transaction.hash}`;
@@ -34,23 +35,26 @@ const retainedExactTransactions = (
 export class BlockFollower {
   private config: Config;
   private store: MemoryStore;
-  private source: TonDataSource;
+  private source: ChainSource;
   private opcodes: OpcodeSets;
   private logger: Logger;
   private service: IndexerService;
   private poolTracker?: PoolTracker;
-  private timer?: NodeJS.Timeout;
+  private unsubscribe?: () => void;
+  private controller = new AbortController();
+  private pendingHead?: ChainHead;
   private lastSeqno?: number;
   private inFlight = false;
 
   constructor(
     config: Config,
     store: MemoryStore,
-    source: TonDataSource,
+    source: ChainSource,
     opcodes: OpcodeSets,
     logger: Logger,
     service: IndexerService,
-    poolTracker?: PoolTracker
+    poolTracker?: PoolTracker,
+    private readonly heads?: HeadFeed
   ) {
     this.config = config;
     this.store = store;
@@ -62,27 +66,29 @@ export class BlockFollower {
   }
 
   start() {
-    if (this.timer) return;
-    this.timer = setInterval(() => this.poll(), this.config.blockPollMs);
-    this.poll();
+    if (this.unsubscribe) return;
+    if (!this.heads) throw new Error('BlockFollower requires the shared HeadFeed.');
+    if (this.controller.signal.aborted) this.controller = new AbortController();
+    this.unsubscribe = this.heads.subscribe(head => { void this.poll(head); });
   }
 
   stop() {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
+    this.unsubscribe?.(); this.unsubscribe = undefined;
+    this.pendingHead = undefined; this.controller.abort();
   }
 
-  private async poll() {
-    if (this.inFlight) return;
+  private async poll(master: ChainHead) {
+    if (this.controller.signal.aborted) return;
+    if (this.inFlight) {
+      if (!this.pendingHead || master.seqno > this.pendingHead.seqno) this.pendingHead = master;
+      return;
+    }
     this.inFlight = true;
 
     try {
-      const master = await this.source.getMasterchainInfo();
       if (this.lastSeqno && master.seqno <= this.lastSeqno) return;
       this.lastSeqno = master.seqno;
-      this.service.setMasterchainInfo(master.seqno, master.timestamp);
+      this.service.setMasterchainInfo(master);
 
       this.store.purgeStale();
       const workflowGeneration = this.store.getWorkflowGeneration();
@@ -109,6 +115,8 @@ export class BlockFollower {
       this.logger.error('block follower error', { error: errorDiagnostic(error) });
     } finally {
       this.inFlight = false;
+      const next = this.pendingHead; this.pendingHead = undefined;
+      if (next && !this.controller.signal.aborted) void this.poll(next);
     }
   }
 
@@ -120,7 +128,8 @@ export class BlockFollower {
     await this.store.withAddressLock(
       address,
       async () => {
-        await this.service.refreshAccountStateWithinAddressLock(address);
+        this.controller.signal.throwIfAborted();
+        await this.service.refreshAccountStateWithinAddressLock(address, {signal: this.controller.signal});
         await this.refreshAddressLocked(address, seqno);
       },
       workflowGeneration
@@ -204,8 +213,9 @@ export class BlockFollower {
         address,
         requestLimit,
         cursorLt,
-        cursorHash
+        cursorHash, {signal: this.controller.signal}
       );
+      this.controller.signal.throwIfAborted();
       if (batch.length === 0) break;
 
       let added = 0;

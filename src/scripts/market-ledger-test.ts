@@ -55,6 +55,10 @@ assert.equal(damaged.historyComplete, false); assert.equal(damaged.observations.
 delete missingNotice.find(node => node.account === binding.pool && node.raw.lt === firstAcceptanceLt)!.raw.inMessage!.op;
 const missingEnvelope = projectDlmmMarket(binding, missingNotice, dependencies);
 assert.equal(missingEnvelope.historyComplete, false); assert.equal(missingEnvelope.observations.length, 4); assert.ok(missingEnvelope.issues.includes('market_pool_input_undecodable'));
+const behindBoundary = dependencies.map((dependency, index) => ({ ...dependency, historyComplete: index ? dependency.historyComplete : false }));
+const behindResult = projectDlmmMarket(binding, nodes, behindBoundary);
+assert.equal(behindResult.historyComplete, false);
+assert.equal(behindResult.observations.length, result.observations.length, 'boundary failure does not erase positive atomic settlement');
 const staleCoverage = dependencies.map(dependency => ({ ...dependency, checkedThrough: '2020-01-01T00:00:00.000Z' }));
 assert.equal(projectDlmmMarket(binding, nodes, staleCoverage).historyComplete, false);
 for (const label of ['missing input original', 'missing recipient credit', 'missing finalization', 'wrong historical code', 'wrong created LT', 'wrong boundary identity']) {

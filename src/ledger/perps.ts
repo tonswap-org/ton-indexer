@@ -342,8 +342,8 @@ export async function decodePerps(
         (economics || rejectedClose) &&
           complete(group) &&
           (!needsCustodyHistory ||
-            (input.chains.get(engine.ownerWallet)?.historyComplete || input.chains.get(engine.ownerWallet)?.verifiedRange) &&
-            (input.chains.get(engine.engineWallet)?.historyComplete || input.chains.get(engine.engineWallet)?.verifiedRange)),
+            chainCoversTransaction(input.chains.get(engine.ownerWallet), execution.raw) &&
+            chainCoversTransaction(input.chains.get(engine.engineWallet), execution.raw)),
       );
       if ((economics || rejectedClose) && !verified) issue = "perps_related_history_incomplete";
       if (verified && rejectedClose) {

@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 import type { Flow, Node, ProjectionInput } from "./project";
 import { createOptionAbortRecord } from "./optionAbortRecord";
 import { decodeInitialOptionBuyBounce } from "./optionBuyBounce";
@@ -718,7 +719,7 @@ export async function decodeOptionAborts(
         }
       }
       if (
-        unique(group).some((n) => !input.chains.get(n.account)?.historyComplete)
+        unique(group).some((n) => !chainCoversTransaction(input.chains.get(n.account), n.raw))
       ) {
         issue = "option_abort_related_history_incomplete";
         finish();

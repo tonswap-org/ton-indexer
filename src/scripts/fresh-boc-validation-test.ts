@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import { mock } from 'node:test';
 import { beginCell, Cell } from '@ton/core';
 import { loadConfig } from '../config';
-import type { TonDataSource } from '../data/dataSource';
+import { fakeChainSource } from './support/fakeChainSource';
 import { SingleRootBocValidationCache } from '../data/freshBocValidation';
 import { assertFreshReadBatch, type FreshReadBatch, type FreshReadCall } from '../data/freshRead';
-import { ResilientTonDataSource } from '../data/resilientSource';
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
 import { loadOpcodes } from '../utils/opcodes';
@@ -71,33 +70,29 @@ async function actualFreshLayers() {
   let stale = false, wrongNetwork = false, invalidHead = false;
   let invalidAddress = false, invalidKind = false, invalidCount = false;
   let lastTxLt: string | undefined, lastTxHash: string | undefined;
-  const primary: TonDataSource = {
+  const primary = fakeChainSource({
     network: 'testnet',
-    async readFresh(requested) {
+    async read(requested) {
       const startedAt = Date.now();
       const batch: FreshReadBatch = { network: wrongNetwork ? 'mainnet' : 'testnet',
         readContext: { source: 'lite', queriedAt: startedAt - (stale ? 60_000 : 0),
           head: { workchain: -1, shard: '-9223372036854775808', seqno: invalidHead ? -1 : 123,
-            rootHashHex: 'a'.repeat(64), fileHashHex: 'b'.repeat(64) } },
+            rootHashHex: 'a'.repeat(64), fileHashHex: 'b'.repeat(64), utime: Math.floor(Date.now() / 1_000) } },
         results: invalidCount ? [] : invalidKind ? [{ kind: 'getter', address, exitCode: 0, stack: [] }] :
           [{ kind: 'account', address: invalidAddress ? `0:${'2'.repeat(64)}` : address,
             state: { accountState: 'active', balance, codeBoc, dataBoc, lastTxLt, lastTxHash } }] };
       assertFreshReadBatch(batch, requested, 'testnet', startedAt); // Actual source's first boundary.
-      return batch;
+      return { head: { ...batch.readContext.head, utime: batch.readContext.head.utime! }, results: batch.results };
     },
-    async getMasterchainInfo() { return { seqno: 1 }; }, async getAccountState() { throw Error('ordinary state forbidden'); },
-    async getTransactions() { return []; }, async runGetMethod() { throw Error('ordinary getter forbidden'); },
-    async getJettonBalance() { return null; }, async getJettonMetadata() { return null; }, async close() {},
-  };
-  const fallback = { ...primary, readFresh: undefined };
+  });
   const config = { ...loadConfig(), network: 'testnet' as const };
-  const service = new IndexerService(config, new MemoryStore(config), new ResilientTonDataSource(primary, fallback), loadOpcodes(), []);
+  const service = new IndexerService(config, new MemoryStore(config), primary, loadOpcodes(), []);
   const original = Cell.fromBoc;
   let parses = 0;
   const parser = mock.method(Cell, 'fromBoc', (bytes: Buffer) => { parses++; return original(bytes); });
   try {
     const first = await service.readFresh(calls);
-    assert.equal(parses, 2, 'Source, Resilient and Indexer validators parse each exact code/data BOC once in total');
+    assert.equal(parses, 2, 'Source and Indexer validators parse each exact code/data BOC once in total');
     assert.equal(first.results[0].kind === 'account' && first.results[0].balance_raw, '1');
     balance = '987654321'; lastTxLt = '42'; lastTxHash = Buffer.alloc(32, 7).toString('base64');
     const current = await service.readFresh(calls);

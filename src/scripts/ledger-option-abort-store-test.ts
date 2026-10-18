@@ -1,7 +1,9 @@
+import { installFixtureIdentities } from './support/ledgerGraphFixture';
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { beginCell, Cell } from "@ton/core";
 import { PGlite } from "@electric-sql/pglite";
-import type { TonDataSource } from "../data/dataSource";
+
 import { PostgresLedgerStore, type LedgerSqlPool } from "../ledger/store";
 import { LedgerService } from "../ledger/service";
 import { createLogger } from "../utils/logger";
@@ -65,7 +67,7 @@ export async function durableOptionAbort(
         .map((t) => f.states.get(`${account}:${t.lt}`)?.data)
         .find(Boolean);
     return {
-      accountState: "active" as const,
+      accountState: (latest ? "active" : "uninitialized") as "active" | "uninitialized",
       balance: "0",
       lastTxLt: latest?.lt,
       lastTxHash: latest?.hash,
@@ -78,9 +80,9 @@ export async function durableOptionAbort(
       type: "slice" as const,
       cell: beginCell().storeAddress(A(a)).endCell(),
     });
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({ physicalCurrentReads: true,
     network: "testnet",
-    getMasterchainInfo: async () => ({ seqno: 1000 }),
+    head: async () => ({ seqno: 1000 }),
     getAccountState: async (a) => stateAtSeq(a),
     getAccountStateAtSeqno: async (a, s) => stateAtSeq(a, s),
     getTransactions: async (a, limit, lt) =>
@@ -89,11 +91,11 @@ export async function durableOptionAbort(
         .slice()
         .reverse()
         .slice(0, limit),
-    getJettonBalance: async (p, m) =>
+    walletBalance: async (p, m) =>
       m === root && [owner, other, factory, vault].includes(p)
         ? { wallet: wallet(p), balance: "0" }
         : null,
-    getJettonMetadata: async () => ({ decimals: 9 }),
+    jettonMetadata: async () => ({ decimals: 9 }),
     close: async () => {},
     runGetMethod: async (account, method) => {
       const asset = f.input.wallets.get(account);
@@ -127,7 +129,7 @@ export async function durableOptionAbort(
         throw Error("Latest getter cannot prove an aborted purchase");
       return null;
     },
-  };
+  });
   const service = new LedgerService(
     "testnet",
     store,
@@ -145,7 +147,8 @@ export async function durableOptionAbort(
   );
   try {
     await store.initialize();
-    await service.syncAccount(owner);
+    installFixtureIdentities(service, source, f.input.wallets);
+    await service.runOwnerCycle(owner);
     const pending = await store.page("testnet", owner),
       p = pending.events.find(
         (e) => e.settlement?.optionLifecycle?.refund?.kind === "aborted_buy",
@@ -161,7 +164,7 @@ export async function durableOptionAbort(
       "pending",
     );
     paid = true;
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     const completed = await store.page("testnet", owner),
       e = completed.events.find(
         (e) => e.settlement?.optionLifecycle?.refund?.kind === "aborted_buy",
@@ -187,7 +190,7 @@ export async function durableOptionAbort(
         )
       ).rows;
     const before = await count();
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     assert.deepEqual(
       await count(),
       before,
@@ -198,7 +201,7 @@ export async function durableOptionAbort(
       completed.events,
     );
     await pool.query("DELETE FROM ledger_account_states");
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     assert.deepEqual(
       (await store.page("testnet", owner)).events,
       completed.events,

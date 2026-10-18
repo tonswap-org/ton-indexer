@@ -136,55 +136,6 @@ export type IndexedTx = {
   ui: UiTx;
 };
 
-export type AccountBalance = {
-  ton: {
-    balance: string;
-    last_tx_lt?: string;
-    last_tx_hash?: string;
-  };
-  jettons: Array<{
-    master: string;
-    wallet: string;
-    balance: string;
-    decimals?: number;
-    symbol?: string;
-  }>;
-  confirmed: boolean;
-  updated_at: number;
-  network: Network;
-};
-
-type AccountAssetBalanceBase = {
-  symbol?: string;
-  address?: string;
-  wallet?: string;
-  balance_raw: string;
-};
-
-export type AccountAssetBalance =
-  | (AccountAssetBalanceBase & {
-      kind: 'native';
-      balance: string;
-      decimals: number;
-    })
-  | (AccountAssetBalanceBase & {
-      kind: 'jetton';
-      /** Formatted amount; omitted when the asset's decimal precision is unknown. */
-      balance?: string;
-      /** Explicit on-chain decimal precision; omitted when it cannot be read. */
-      decimals?: number;
-    });
-
-export type AccountBalances = {
-  address: string;
-  ton_raw: string;
-  ton: string;
-  assets: AccountAssetBalance[];
-  confirmed: boolean;
-  updated_at: number;
-  network: Network;
-};
-
 export type JettonMetadata = {
   symbol?: string;
   name?: string;
@@ -222,5 +173,7 @@ export type AccountStats = {
 export type HealthStatus = {
   lastMasterSeqno?: number;
   indexerLagSec?: number;
-  liteserverPoolStatus?: string;
+  chain: { peersConfigured: number; peersReady: number; headSeqno: number | null; headAgeSec: number | null };
+  ledger: 'disabled' | 'connecting' | 'ready' | 'unavailable';
+  disk: 'ok' | 'low' | 'critical';
 };

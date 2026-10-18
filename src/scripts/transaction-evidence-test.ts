@@ -1,11 +1,12 @@
+import { FakeLiteEngine } from './support/fakeLiteEngine';
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { Address, Cell, beginCell, loadTransaction } from '@ton/core';
 import { Blockchain } from '@ton/sandbox';
 import fastify from 'fastify';
-import { TonDataSource, RawTransaction } from '../data/dataSource';
+import {RawTransaction} from '../data/dataSource';
 import { decodeOriginalTransaction, assertOriginalTransactionPage, readOriginalTransactionEvidence, originalTransactionToToncenter } from '../data/transactionEvidence';
-import { LiteClientDataSource } from '../data/liteClientSource';
-import { TonClient4DataSource } from '../data/tonClient4Source';
+import { createLiteChainSource } from '../data/liteClientSource';
 import { IndexerService } from '../indexerService';
 import { MemoryStore } from '../store/memoryStore';
 import { loadConfig } from '../config';
@@ -35,12 +36,12 @@ export async function runTransactionEvidenceTests() {
     calls.push({ lt: lt!, hash: hash!, limit });
     const start = page.findIndex((row) => row.lt === lt && row.hash === hash);
     return start < 0 ? [] : page.slice(start, start + Math.min(limit, 7));
-  }): TonDataSource => ({
+  }): FixtureChainSource => (fixtureChainSource({
     network: 'testnet', getTransactions: read,
     async getAccountState() { accountReads++; return { balance: '0', accountState: 'active', lastTxLt: head.lt, lastTxHash: head.hash }; },
-    async getMasterchainInfo() { return { seqno: 1 }; }, async runGetMethod() { return null; },
-    async getJettonBalance() { return null; }, async getJettonMetadata() { return null; }, async close() {},
-  });
+    async head() { return { seqno: 1 }; }, async runGetMethod() { return null; },
+    async walletBalance() { return null; }, async jettonMetadata() { return null; }, async close() {},
+  }));
   await test('50 original transactions span provider pages, linked from the actual account head', async () => {
     const read = await readOriginalTransactionEvidence(makeSource(), owner.address.toRawString(), 50);
     assert.equal(accountReads, 1); assert.equal(read.length, 50); assert.equal(calls.length, 8);
@@ -85,7 +86,7 @@ export async function runTransactionEvidenceTests() {
       await assert.rejects(readOriginalTransactionEvidence({ ...makeSource(), async getAccountState() { return state; } }, owner.address.toRawString(), 1), /anchor/);
     }
     for (const limit of [0, 51, 1.5]) await assert.rejects(readOriginalTransactionEvidence(makeSource(), owner.address.toRawString(), limit, cursor), /limit/);
-    await assert.rejects(readOriginalTransactionEvidence(makeSource(), owner.address.toRawString(), 1, cursor, Date.now() - 1), /deadline/);
+    await assert.rejects(readOriginalTransactionEvidence(makeSource(), owner.address.toRawString(), 1, cursor, { signal: AbortSignal.abort(new Error('deadline exceeded')) }), /deadline/);
   });
   await test('an account with no transaction history returns an empty result without source scanning', async () => {
     const source = { ...makeSource(async () => { throw Error('must not scan'); }), async getAccountState() { return { balance: '0', accountState: 'uninitialized' as const }; } };
@@ -111,26 +112,22 @@ export async function runTransactionEvidenceTests() {
   });
   await test('Lite source retains the original provider cell and binds its block workchain', async () => {
     let wrong = false;
-    const fake = { async getAccountTransactions(address: Address, lt: string, hash: Buffer) {
-      assert.ok(address.equals(owner.address)); assert.equal(lt, head.lt); assert.equal(hash.toString('base64'), head.hash);
+    const engine = new FakeLiteEngine(async request => {
+      assert.equal(request.kind, 'liteServer.getTransactions');
+      assert.equal(request.account.workchain, owner.address.workChain);
+      assert.ok(request.account.id.equals(owner.address.hash));
+      assert.equal(request.lt, head.lt); assert.equal(request.hash.toString('base64'), head.hash);
       return { ids: [{ workchain: wrong ? -1 : 0 }], transactions: emitted[0].raw.toBoc() };
-    } };
-    const source = new (LiteClientDataSource as any)('testnet', fake) as LiteClientDataSource;
-    const read = await source.getTransactions(owner.address.toRawString(), 1, head.lt, head.hash);
-    assert.equal(read[0].rawBoc, head.rawBoc);
-    wrong = true; await assert.rejects(source.getTransactions(owner.address.toRawString(), 1, head.lt, head.hash), /workchain/);
-  });
-  await test('installed TonClient4 SDK unparsed endpoint delivers the original cell (never parsed summaries)', async () => {
-    const paths: string[] = [];
-    const TonClient4 = require('ton').TonClient4;
-    const client = new TonClient4({ endpoint: 'https://fixture.invalid', httpAdapter: async (config: any) => {
-      paths.push(config.url);
-      return { data: { boc: emitted[0].raw.toBoc().toString('base64'), blocks: [{ workchain: 0, seqno: 1, shard: '-9223372036854775808', rootHash: Buffer.alloc(32).toString('base64'), fileHash: Buffer.alloc(32).toString('base64') }] }, status: 200, statusText: 'OK', headers: {}, config };
-    } });
-    const source = new (TonClient4DataSource as any)('testnet', client, ['https://fixture.invalid']) as TonClient4DataSource;
-    const read = await source.getTransactions(owner.address.toRawString(), 1, head.lt, head.hash);
-    assert.equal(read[0].rawBoc, head.rawBoc); assert.equal(paths.length, 1);
-    assert.ok(paths[0].includes('/tx/')); assert.ok(!paths[0].includes('/parsed/'));
+    });
+    const source = createLiteChainSource({ network: 'testnet', logger: { info() {}, debug() {}, warn() {}, error() {} },
+      peers: [{ host: '127.0.0.1', port: 1, publicKey: Buffer.alloc(32) }], engineFactory: () => engine });
+    try {
+      const read = await source.getTransactions(owner.address.toRawString(), 1, head.lt, head.hash);
+      assert.equal(read[0].rawBoc, head.rawBoc);
+      wrong = true;
+      await assert.rejects(source.getTransactions(owner.address.toRawString(), 1, head.lt, head.hash),
+        (error: any) => error.code === 'upstream_unavailable' && /workchain/.test(error.cause?.message));
+    } finally { await source.close(); }
   });
   await test('real service plus both HTTP routes return decodable BOCs, honor cap, and never read summary caches', async () => {
     const config = { ...loadConfig(), network: 'testnet' as const, initialHistoryTimeoutMs: 10000 };

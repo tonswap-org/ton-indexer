@@ -5,9 +5,20 @@ import fastify from 'fastify';
 import { buildOpenApi } from '../api/openapi';
 import { registerRoutes } from '../api/routes';
 import { loadConfig } from '../config';
+import { runtimeMetadataFixture } from './fixtures/runtimeManifest';
 
 const root = resolve(__dirname, '../..');
 const retiredFiles = [
+  'scripts/production-deployment-evidence.json',
+  'scripts/generate-deployment-evidence-template.sh',
+  'scripts/audit-deployment-evidence.sh',
+  'scripts/test-deployment-evidence-audit.sh',
+  'scripts/test-deployment-evidence-template.sh',
+  'src/scripts/deployment-manifest-test.ts',
+  'docs/ti-production.md',
+  'Dockerfile',
+  '.dockerignore',
+
   'src/config/ledgerBridge.ts',
   'src/config/ledgerPerps.ts',
   'src/config/ledgerOptions.ts',
@@ -92,17 +103,25 @@ for (const relative of activeRoots) {
   }
 }
 
+for (const relative of ['src/api', 'src/config', 'src/data']) {
+  for (const file of visit(relative)) assert(!readFileSync(join(root, file), 'utf8').includes('ti.' + 'soramitsu.io'), `${file} must not name an unrelated deployment`);
+}
+const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+assert.doesNotMatch(workflow, /Deployment evidence audit|Build production Docker image/);
+assert.match(workflow, /npm ci/); assert.match(workflow, /npm audit --omit=dev/);
+
 async function main() {
   const poisoned = process.env.LEDGER_SCCP_ASSETS_JSON;
   process.env.LEDGER_SCCP_ASSETS_JSON = '[{"master":"retired"}]';
   try {
     const config = loadConfig();
     assert.equal('ledgerSccpAssets' in config, false, 'retired environment input must be ignored');
-    const spec = buildOpenApi(config);
+    const metadata = runtimeMetadataFixture(config.network);
+    const spec = buildOpenApi(config, metadata);
     assert.equal(Object.keys(spec.paths).some((path) => forbidden.test(path)), false);
 
     const app = fastify({ logger: false });
-    registerRoutes(app, config, {} as never);
+    registerRoutes(app, config, {} as never, undefined, undefined, undefined, undefined, undefined, metadata);
     await app.ready();
     for (const path of [
       '/api/indexer/v1/sccp/ton/burn-status',
@@ -110,6 +129,27 @@ async function main() {
     ]) {
       assert.equal((await app.inject(path)).statusCode, 404, `${path} must stay unpublished`);
     }
+    const retired = [
+      ['GET', '/api/indexer/v1/accounts/owner/balance'], ['GET', '/api/indexer/v1/accounts/owner/assets'],
+      ['GET', '/api/indexer/v1/stream'], ['GET', '/api/indexer/v1/jettons/root/transfer/owner/payload'],
+      ['GET', '/api/indexer/v1/perps/engine/snapshot'], ['GET', '/api/indexer/v1/options/factory/snapshot'],
+      ['GET', '/api/indexer/v1/cover/manager/snapshot'], ['GET', '/api/indexer/v1/vol-index/volIndex/snapshot'],
+      ['GET', '/api/indexer/v1/pools/pool/farms'], ['POST', '/api/indexer/v1/defi/snapshot'], ['POST', '/api/indexer/v1/runGetMethods'], ['GET', '/api/indexer/v1/accounts/owner/swaps'],
+    ] as const;
+    for (const [method, url] of retired) {
+      const response = await app.inject({method, url}); assert.equal(response.statusCode, 404, url);
+      assert.deepEqual(response.json(), {error: 'The requested resource was not found.', code: 'not_found'});
+    }
+    const info = (await app.inject('/api/indexer/v1/service-info')).json();
+    for (const capability of ['account-balance', 'account-assets', 'run-get-methods']) assert(!info.capabilities.includes(capability));
+    for (const endpoint of ['balance', 'assets', 'runGetMethods']) assert(!(endpoint in info.endpoints));
+    for (const [method, url] of [
+      ['POST','/api/indexer/v1/readFresh'],['POST','/api/indexer/v1/runGetMethod'],['GET','/api/indexer/v1/accounts/:addr/balances'],
+      ['GET','/api/indexer/v1/stream/balances'],['GET','/api/indexer/v1/accounts/:addr/txs'],['GET','/api/indexer/v1/accounts/:addr/state'],
+      ['GET','/api/indexer/v1/markets/:market/candles'],['GET','/api/indexer/v1/governance/:voting/snapshot'],
+      ['POST','/api/indexer/v1/dlmm/pools/snapshot'],
+      ['GET','/api/indexer/v1/service-info'],['GET','/api/indexer/v1/health'],['POST','/jsonRPC'],['POST','/api/v2/jsonRPC'],
+    ] as const) assert(app.hasRoute({method, url}), `${method} ${url} must remain registered`);
     await app.close();
   } finally {
     if (poisoned === undefined) delete process.env.LEDGER_SCCP_ASSETS_JSON;

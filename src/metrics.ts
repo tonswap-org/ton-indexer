@@ -3,6 +3,7 @@ import { MemoryStore } from './store/memoryStore';
 import { BackfillWorker } from './workers/backfillWorker';
 import { IndexerService } from './indexerService';
 import { MetricsCollector } from './metricsCollector';
+import type { RuntimeMetrics } from './runtimeMetrics';
 
 export class MetricsService {
   private config: Config;
@@ -19,7 +20,8 @@ export class MetricsService {
     store: MemoryStore,
     backfill: BackfillWorker,
     service: IndexerService,
-    collector: MetricsCollector
+    collector: MetricsCollector,
+    private readonly runtime?: RuntimeMetrics
   ) {
     this.config = config;
     this.store = store;
@@ -47,10 +49,11 @@ export class MetricsService {
     const health = this.service.getHealth();
 
     return {
+      runtime: this.runtime?.snapshot() ?? null,
       started_at: this.startedAt,
       uptime_ms: Date.now() - this.startedAt,
       network: this.config.network,
-      data_source: this.config.dataSource,
+      data_source: 'lite',
       addresses: this.store.getAddressCount(),
       total_txs: this.store.getTotalTxs(),
       backfill_pending: backfillStats.pending,
@@ -61,7 +64,7 @@ export class MetricsService {
       cache_stats: this.collector.getCacheStats(),
       last_master_seqno: health.lastMasterSeqno ?? null,
       indexer_lag_sec: health.indexerLagSec ?? null,
-      liteserver_pool_status: health.liteserverPoolStatus ?? null,
+      chain: health.chain, ledger: health.ledger, disk: health.disk,
     };
   }
 
@@ -114,7 +117,7 @@ export class MetricsService {
     gauge('indexer_last_master_seqno', health.lastMasterSeqno ?? null, 'Latest masterchain seqno seen');
     gauge('indexer_lag_sec', health.indexerLagSec ?? null, 'Indexer lag in seconds');
 
-    const output = `${lines.join('\n')}\n`;
+    const output = `${lines.join('\n')}\n${this.runtime?.prometheus() ?? ''}`;
     if (this.config.responseCacheEnabled && this.config.metricsCacheTtlMs > 0) {
       this.prometheusCache = { value: output, expiresAt: Date.now() + this.config.metricsCacheTtlMs };
     }

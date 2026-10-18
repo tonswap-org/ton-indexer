@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildRuntimeManifestBundle, hashRegistry, parseCanonicalReleaseManifest, readCanonicalReleaseManifest } from '../config/releaseManifest';
+import { buildRuntimeManifestBundle, hashRegistry, hashReleaseManifest, parseCanonicalReleaseManifest, readCanonicalReleaseManifest } from '../config/releaseManifest';
 import { validateReleaseManifest } from '../config/runtimeManifest';
 import { deriveRuntimeManifestBindings } from '../config/runtimeManifestBindings';
-import { nativeLocalnetManifestText, runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
+import { nativeLocalnetManifestText, retainedNativeLocalnetManifestText, runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'ton-indexer-release-manifest-')));
 const writeManifest = (name: string, overrides: Record<string, unknown> = {}) => {
@@ -36,14 +36,25 @@ try {
   const nativeBindings = deriveRuntimeManifestBindings(native.runtime);
   assert.equal(native.runtime.schema, 'tonswap-release-v1');
   assert.equal(nativeBindings.network, 'localnet');
-  assert.equal(nativeBindings.marketBindings.length, native.runtime.spotMarkets.length);
-  assert.equal(nativeBindings.t3CodeHashes?.hubCodeHash, native.runtime.contracts.T3!.codeHash);
-  assert.equal(nativeBindings.t3CodeHashes?.walletCodeHash, native.runtime.templates.JettonWallet);
+  assert.equal(nativeBindings.currentSpotMarkets.length, native.runtime.spotMarkets.length);
+  assert.equal(nativeBindings.t3Hub, native.runtime.contracts.T3Hub!.address);
+  assert.equal(native.manifestHash, '50ab97938efad54a000298046e308d0f8f3911e15a6ddbd335797a1a6527ba64');
+  assert.equal(JSON.parse(retainedNativeLocalnetManifestText).manifestHash, 'd83b6ab905f17bb363ca88504358a3a3840e1fae9c301ecb4c7eeceb32f59b56');
+  assert.throws(() => parseCanonicalReleaseManifest(retainedNativeLocalnetManifestText, 'localnet'), /templates/);
+  assert.equal(native.runtime.source.contracts, '0'.repeat(40), 'native fixture remains sandbox evidence');
+  assert.deepEqual(native.runtime.orderKeeper, { address: '0:6e99eb37460359d88a06cc351a874e619c6f78c6773671cd1490173e64d1bba5' });
+  assert.equal(nativeBindings.jettonRoots[0].walletCodeHash, native.runtime.templates.T3Wallet);
   assert.equal(nativeBindings.perpsEngine, native.runtime.contracts.PerpsEngine!.address);
-  assert.equal(nativeBindings.optionCodeHashes?.shoutCodeHash, native.runtime.templates.ShoutOption);
+  assert.equal(nativeBindings.currentLedgerDecodersQualified, false);
+  assert.equal(nativeBindings.optionCodeHashes, undefined);
+  assert.equal(nativeBindings.currentOptionsBinding.options.factory.toRawString(), native.runtime.contracts.OptionFactory!.address);
+  assert.equal(nativeBindings.currentOptionsBinding.options.vaultHash, native.runtime.contracts.OptionVault!.codeHash);
+  assert.equal(nativeBindings.currentOptionsBinding.proofCodeHash, native.runtime.templates.T3RecoveryProof);
+  assert.equal(nativeBindings.currentOptionsBinding.manifestHash, native.runtime.manifestHash);
+  assert.equal(nativeBindings.currentLedgerDecodersQualified, false);
   if (process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE) {
     const current = readCanonicalReleaseManifest(process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE, 'localnet');
-    assert.equal(deriveRuntimeManifestBindings(current.runtime).t3CodeHashes?.hubCodeHash, current.runtime.contracts.T3!.codeHash);
+    assert.equal(deriveRuntimeManifestBindings(current.runtime).t3Hub, current.runtime.contracts.T3Hub!.address);
   }
   const spotOnly = readCanonicalReleaseManifest(writeManifest('spot-only.json', { perpsMarkets: [], options: [] }), 'testnet');
   assert.equal(spotOnly.markets.length, 0); assert.equal(spotOnly.spotMarkets.length, 3);
@@ -63,12 +74,13 @@ try {
   fail('wrong-network-domain', { globalId: -239 }, /network\/globalId/);
   fail('wrong-source', { source: { ...fixture.source, contracts: 'not-a-git-sha' } });
   fail('wrong-release-build', { releaseId: 'testnet-unit-123456789abc' });
-  fail('missing-wallet-template', { templates: { ...fixture.templates, JettonWallet: undefined } });
-  fail('unknown-role', { contracts: { ...fixture.contracts, T3Hub: fixture.contracts.T3 } });
-  fail('old-address-entry', { contracts: { ...fixture.contracts, T3: contracts.T3 } });
-  fail('missing-code-hash', { contracts: { ...fixture.contracts, T3: { address: contracts.T3 } } });
+  fail('missing-wallet-template', { templates: { ...fixture.templates, T3Wallet: undefined } });
+  fail('unknown-role', { contracts: { ...fixture.contracts, T3Root: fixture.contracts.T3Hub } });
+  fail('old-address-entry', { contracts: { ...fixture.contracts, T3Hub: contracts.T3Hub } });
+  fail('missing-code-hash', { contracts: { ...fixture.contracts, T3Hub: { address: contracts.T3Hub } } });
   const shapeFail = (label: string, change: Record<string, unknown>, expected: string) => {
-    const malformed = runtimeManifestFixture(change);
+    const malformed = JSON.parse(JSON.stringify(runtimeManifestFixture(change)));
+    malformed.manifestHash = hashReleaseManifest(malformed);
     const validation = validateReleaseManifest(malformed);
     if (validation.ok) assert.fail(`${label} must reject its malformed shape`);
     assert(validation.errors.includes(expected), `${label}: ${validation.errors.join(', ')}`);
@@ -77,17 +89,17 @@ try {
   };
   shapeFail('array-source-sha', { source: { ...fixture.source, contracts: [fixture.source.contracts] } }, 'source');
   shapeFail('array-source-build-hash', { source: { ...fixture.source, build: [fixture.source.build] } }, 'source');
-  shapeFail('array-singleton-code-hash', { contracts: { ...fixture.contracts, T3: {
-    ...fixture.contracts.T3, codeHash: [fixture.contracts.T3!.codeHash] } } }, 'contracts.T3');
+  shapeFail('array-singleton-code-hash', { contracts: { ...fixture.contracts, T3Hub: {
+    ...fixture.contracts.T3Hub, codeHash: [fixture.contracts.T3Hub!.codeHash] } } }, 'contracts.T3Hub');
   shapeFail('array-template-code-hash', { templates: { ...fixture.templates,
-    JettonWallet: [fixture.templates.JettonWallet] } }, 'templates');
+    T3Wallet: [fixture.templates.T3Wallet] } }, 'templates');
   shapeFail('numeric-token-symbol', { tokens: fixture.tokens.map(token =>
     token.symbol === 'TS' ? { ...token, symbol: 123 } : token) }, 'tokens[1]');
   shapeFail('missing-perps-symbol-and-pool', { perpsMarkets: [{ marketId: 1 }] }, 'perpsMarkets[0]');
   shapeFail('missing-perps-pool', { perpsMarkets: [{ marketId: 1, symbol: 'USDT' }] }, 'perpsMarkets[0]');
   shapeFail('missing-perps-spot-symbol', { perpsMarkets: [{ marketId: 1, symbol: 'TS' }] }, 'perpsMarkets[0]');
-  fail('friendly-address', { contracts: { ...fixture.contracts, T3: { ...fixture.contracts.T3, address: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c' } } });
-  fail('duplicate-singleton', { contracts: { ...fixture.contracts, T3: { ...fixture.contracts.T3, address: contracts.T3Root } } });
+  fail('friendly-address', { contracts: { ...fixture.contracts, T3Hub: { ...fixture.contracts.T3Hub, address: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c' } } });
+  fail('duplicate-singleton', { contracts: { ...fixture.contracts, T3Hub: { ...fixture.contracts.T3Hub, address: contracts.Governance } } });
   fail('wrong-token-root', { tokens: fixture.tokens.map(t => t.symbol === 'T3' ? { ...t, root: runtimeAddress(999) } : t) });
   const precision = parseCanonicalReleaseManifest(runtimeManifestFixture({ tokens: fixture.tokens.map(t => t.symbol === 'T3' ? { ...t, decimals: 6 } : t) }), 'testnet');
   assert.equal(precision.spotMarkets[0].quoteDecimals, 6, 'metadata preserves declared precision; it does not infer it from a symbol');
@@ -97,9 +109,8 @@ try {
   assert.equal(parseCanonicalReleaseManifest(runtimeManifestFixture({ perpsMarkets: [{ ...fixture.perpsMarkets[0], marketId: 5 }] }), 'testnet').markets[0].perpsMarketId, 5);
   fail('duplicate-perps-id', { perpsMarkets: [...fixture.perpsMarkets, fixture.perpsMarkets[0]] });
   fail('duplicate-spot', { spotMarkets: [...fixture.spotMarkets, fixture.spotMarkets[0]] });
-  const oracleClaim = parseCanonicalReleaseManifest(runtimeManifestFixture({ spotMarkets: fixture.spotMarkets.map((spot, index) =>
-    index === 0 ? { ...spot, oracle: { status: 'ready' } } : spot) }), 'testnet');
-  assert.equal(oracleClaim.spotMarkets[0].oracle, undefined, 'extra metadata never proves current oracle readiness');
+  fail('oracle-claim', { spotMarkets: fixture.spotMarkets.map((spot, index) =>
+    index === 0 ? { ...spot, oracle: { status: 'ready' } } : spot) });
   fail('self-comparison', { options: [{ ...fixture.options[1], comparisonSymbol: 'USDT' }] });
   fail('partial-series', { options: [{ ...fixture.options[1], seriesId: '2' }] });
   fail('duplicate-series', { options: [fixture.options[0], { ...fixture.options[0], option: runtimeAddress(302) }] });
@@ -111,19 +122,47 @@ try {
 
   const bound = deriveRuntimeManifestBindings(parsed.runtime);
   assert.equal(bound.perpsEngineCodeHash, fixture.contracts.PerpsEngine!.codeHash);
-  assert.equal(bound.optionCodeHashes?.walletCodeHash, fixture.templates.JettonWallet);
-  assert.equal(bound.launchpadCodeHashes?.fixedCodeHash, fixture.templates.SaleFixed);
-  assert.equal(bound.marketBindings.length, 3);
-  assert.equal(bound.marketBindings[0].router, contracts.DexRouter);
-  assert.equal(bound.t3CodeHashes?.hubCodeHash, fixture.contracts.T3!.codeHash);
-  assert.equal(bound.t3CodeHashes?.rootCodeHash, fixture.contracts.T3Root!.codeHash);
-  assert.equal(bound.t3CodeHashes?.receiverCodeHash, fixture.templates.T3Receiver);
-  assert(!Object.hasOwn(bound, 't3RedemptionBinding'), 'vault custody routes still require authenticated independent discovery');
-  assert.deepEqual(deriveRuntimeManifestBindings(parsed.runtime), bound);
-  const external = runtimeManifestFixture({ contracts: Object.fromEntries(Object.entries(fixture.contracts).filter(([role]) => role !== 'USDT')) });
-  assert.equal(deriveRuntimeManifestBindings(external).marketBindings.length, 2, 'an omitted external root hash remains unresolved');
-  const nonRoot = runtimeManifestFixture({ tokens: fixture.tokens.map(token => token.symbol === 'USDT' ? { ...token, root: contracts.PerpsEngine } : token) });
-  assert.equal(deriveRuntimeManifestBindings(nonRoot).marketBindings.length, 2, 'a non-root singleton code is never enrolled as a trusted token root');
+  assert.equal(bound.t3Hub, contracts.T3Hub);
+  assert.deepEqual(bound.jettonRoots, fixture.tokens.map(token => ({ master: token.root, symbol: token.symbol,
+    decimals: token.decimals, masterCodeHash: token.masterCodeHash, walletCodeHash: token.walletCodeHash })));
+  assert.equal(new Set(bound.jettonRoots.map(token => token.walletCodeHash)).size, 3, 'tokens retain three distinct wallet implementations');
+  assert.equal(bound.currentSpotMarkets.length, 3);
+  assert.deepEqual(bound.currentSpotMarkets[0].walletBudgetX, fixture.spotMarkets[0].walletBudgetX);
+  assert.equal(bound.currentSpotMarkets[0].tokenX.masterCodeHash, fixture.tokens.find(t => t.symbol === 'USDT')!.masterCodeHash);
+  assert.equal(bound.currentSpotMarkets[0].tokenT.walletCodeHash, fixture.templates.T3Wallet);
+  assert.equal(parsed.spotMarkets.find(spot => spot.assetSymbol === 'USDT')!.tokenWalletCodeHash, bound.currentSpotMarkets[0].tokenX.walletCodeHash);
+  assert.equal(parsed.spotMarkets[0].quoteWalletCodeHash, fixture.templates.T3Wallet);
+  assert.equal(bound.currentLedgerDecodersQualified, false, 'discovery must not authorize the previous business-state decoders');
+  assert.deepEqual(bound.marketBindings, []);
+  for (const key of ['optionCodeHashes', 'launchpadCodeHashes', 't3CodeHashes', 't3RedemptionBinding'])
+    assert.equal((bound as any)[key], undefined);
+  assert.equal(bound.walletTemplateCodeHash, null, 'there is no global JTW1 wallet code');
+  assert.deepEqual(JSON.parse(JSON.stringify(deriveRuntimeManifestBindings(parsed.runtime))), JSON.parse(JSON.stringify(bound)),
+    'runtime values remain deterministic; current Options addresses have per-instance methods');
+  fail('missing-v21-minter-template', { templates: Object.fromEntries(Object.entries(fixture.templates).filter(([role]) => role !== 'JettonV21Minter')) });
+  fail('wrong-v21-minter-template', { templates: { ...fixture.templates, JettonV21Minter: 'f'.repeat(64) } });
+  fail('omitted-master', { contracts: Object.fromEntries(Object.entries(fixture.contracts).filter(([role]) => role !== 'USDT')) });
+  fail('non-root-token', { tokens: fixture.tokens.map(token => token.symbol === 'USDT' ? { ...token, root: contracts.PerpsEngine } : token) });
+  fail('wrong-master-pin', { tokens: fixture.tokens.map(token => token.symbol === 'USDT' ? { ...token, masterCodeHash: 'f'.repeat(64) } : token) });
+  fail('wrong-t3-wallet-pin', { tokens: fixture.tokens.map(token => token.symbol === 'T3' ? { ...token, walletCodeHash: fixture.templates.JettonV21Wallet } : token) });
+  fail('old-wallet-template', { templates: { ...fixture.templates, JettonWallet: fixture.templates.T3Wallet } });
+  fail('missing-wallet-profile', { spotMarkets: fixture.spotMarkets.map((spot, index) => index === 0 ? { ...spot, walletBudgetX: undefined } : spot) });
+  fail('wallet-budget-overflow', { spotMarkets: fixture.spotMarkets.map((spot, index) => index === 0
+    ? { ...spot, walletBudgetX: { ...spot.walletBudgetX, transferCopies: 9 } } : spot) });
+  fail('wrong-wallet-decimals', { spotMarkets: fixture.spotMarkets.map((spot, index) => index === 0 ? { ...spot, xDecimals: 9 } : spot) });
+  fail('moving-mount', { services: { ...fixture.services, indexer: 'https://test.tonswap.org/api/indexer/release-id' } });
+  fail('service-query', { services: { ...fixture.services, indexer: 'https://test.tonswap.org/api/indexer?release=1' } });
+  fail('public-http', { services: { ...fixture.services, indexer: 'http://test.tonswap.org/api/indexer' } });
+  fail('campaign-root', { campaign: { ...fixture.campaign, root: 'invalid' } });
+  fail('asset-path-traversal', { campaign: { ...fixture.campaign, leaves: { ...fixture.campaign.leaves, path: '../leaves.json' } } });
+  shapeFail('null-keeper', { orderKeeper: null }, 'orderKeeper');
+  shapeFail('missing-keeper', { orderKeeper: undefined }, 'orderKeeper');
+  shapeFail('old-keeper-shape', { orderKeeper: { address: runtimeAddress(901), previous: null, fillGas: 1, fillMsgs: 1, tipMargin: '0' } }, 'orderKeeper');
+  shapeFail('invalid-keeper-address', { orderKeeper: { address: '0:' + '0'.repeat(64) } }, 'orderKeeper');
+  shapeFail('keeper-contract-collision', { orderKeeper: { address: contracts.Governance } }, 'orderKeeper duplicates an address');
+  fail('keeper-pool-collision', { orderKeeper: { address: fixture.spotMarkets[0].pool } });
+  fail('keeper-option-collision', { orderKeeper: { address: fixture.options[0].option } });
+  assert.equal(parseCanonicalReleaseManifest(runtimeManifestFixture({ orderKeeper: { address: runtimeAddress(901) } }), 'testnet').runtime.orderKeeper.address, runtimeAddress(901));
 
   assert.throws(() => readCanonicalReleaseManifest('good.json', 'testnet'), /canonical absolute path/);
   const symlinkPath = join(root, 'symlink.json'); symlinkSync(path, symlinkPath);

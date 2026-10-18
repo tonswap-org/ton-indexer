@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 import type { Node, ProjectionInput } from "./project";
 import type { LedgerOptionFactory } from "./options";
 import { perpsControl, perpsWalletAddress } from "./perpsWire";
@@ -136,7 +137,7 @@ export function proveOptionCash(
     finalized,
     terminal,
   ]);
-  if (nodes.some((n) => !input.chains.get(n.account)?.historyComplete))
+  if (nodes.some((n) => !chainCoversTransaction(input.chains.get(n.account), n.raw)))
     return null;
   return { source, credit, terminal, sourceWallet, destinationWallet, nodes };
 }

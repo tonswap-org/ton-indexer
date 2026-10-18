@@ -16,8 +16,6 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - Run `npm audit --omit=dev` and confirm there are no production dependency
   audit findings.
 - Confirm public builds work without private overlays.
-- Run `docker build -t ton-indexer:release .` and confirm the production image
-  builds from the checked-in container contract.
 - Provide the reviewed native-deployer `tonswap-release-v1` manifest through
   required `INDEXER_RELEASE_MANIFEST` (file path or HTTPS URL; loopback HTTP
   allowed). Confirm its network/globalId, addresses, approved code pins and
@@ -28,37 +26,25 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - A registered PerpsEngine requires the reviewed macOS arm64 testnet native
   admission package. Configure its binary/config paths and SHA-256 hashes
   together; require authenticated fresh engine state before readiness. The
-  generic Linux image does not provide this runtime.
-- Run `npm run test:deployment-evidence-template`,
-  `npm run generate:deployment-evidence-template -- --output
-  build/reports/production-deployment-evidence-template.json`,
-  `npm run test:deployment-evidence-audit` and
-  `npm run audit:deployment-evidence`. Before declaring the deployment
-  production-ready, use the generated template to prepare the evidence manifest,
-  then record the deployed image digest, deployment ID, tagged commit, operator,
-  UTC smoke timestamp, the production `/api/indexer/v1/service-info` identity
-  payload, and exact
-  `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
-  result in `scripts/production-deployment-evidence.json`, set
-  `status: ready` and `releaseEnabled: true`, and rerun
-  `npm run audit:deployment-evidence -- --require-ready`. The offline audit
-  validates recorded deployment evidence; live smoke verifies the running
-  manifest-derived release identity.
+  release host must provide this runtime before admission can become ready.
 - Run or confirm green CI for branch-flow audit, public artifact audit,
-  TODO-debt audit, install, production dependency audit, tests, build, Docker
-  image build, and OpenAPI smoke.
-- Confirm `https://ti.soramitsu.io` deployment target and read-only public write
-  RPC posture.
-- For testnet/localnet releases, pin `TON_INDEXER_EXPECTED_NETWORK`,
+  TODO-debt audit, install, production dependency audit, tests, build, and
+  release-bound OpenAPI smoke.
+- Confirm the canonical manifest `services.indexer` public mount and the
+  intended `INDEXER_ENABLE_WRITE_RPC` posture.
+- For every release, pin `TON_INDEXER_EXPECTED_NETWORK`,
   `TON_INDEXER_EXPECTED_RELEASE_ID`,
   `TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH`, the canonical single-link absolute
   `TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH`, and
   `TON_INDEXER_EXPECTED_CORS_ORIGIN` to the canonical release evidence. Confirm
   both public `/contracts` and `/service-info` report
   `release: { releaseId, manifestHash }` without obsolete hash aliases.
-- Run `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
-  against the deployed service and confirm health, service-info, OpenAPI, and
-  required wallet routes pass before declaring the release production-ready.
+- Run `npm run smoke:production`
+  against the manifest-derived target and confirm health, service-info, OpenAPI,
+  and required wallet routes pass before declaring the release production-ready.
+  Preserve the complete manifest, build identity, admission and activation receipts,
+  smoke output, timestamps and operator record in the durable release evidence root.
+  An explicit transport target must preserve the manifest mount.
 - Confirm rollback owner, monitoring owner, and release communication channel.
 
 ## Release PR To `master`
@@ -73,7 +59,7 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 ## After Release
 
 - Verify the deployed service is serving the tagged commit.
-- Re-run `TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production`
-  and confirm health, service-info, OpenAPI, balance, assets, state, and history
-  endpoint coverage.
+- Re-run `npm run smoke:production`
+  with the same pinned release inputs and confirm health, service-info, OpenAPI,
+  balances, state, history and candle endpoint coverage.
 - Monitor latency, RPC error rates, cache hit rates, and response-shape errors.

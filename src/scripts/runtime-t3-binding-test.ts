@@ -1,121 +1,63 @@
 import assert from 'node:assert/strict';
-import { Address, beginCell, Cell, contractAddress } from '@ton/core';
-import type { AccountStateResponse } from '../data/dataSource';
-import { buildTonswapJettonWalletInitialData } from '../data/jettonAbi';
+import { Address, beginCell, Cell, type TupleItem } from '@ton/core';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { deriveT3RedemptionBinding } from '../ledger/runtimeT3Binding';
-import { releaseDatabaseSchema, releaseSnapshotPath } from '../releaseState';
-import { runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
-
-// Synthetic current JTRS/StateInit fixtures. These exercise pin validation and
-// deterministic derivation only; no compiled or deployed contract is claimed.
-const rootCode = beginCell().storeUint(0x524f4f54, 32).endCell();
-const walletCode = beginCell().storeUint(0x57414c4c, 32).endCell();
-const otherCode = beginCell().storeUint(0x4f544852, 32).endCell();
-const base = runtimeManifestFixture();
-const manifest = runtimeManifestFixture({
-  contracts: { ...base.contracts, T3Root: { ...base.contracts.T3Root!, codeHash: rootCode.hash().toString('hex') } },
-  templates: { ...base.templates, JettonWallet: walletCode.hash().toString('hex') },
-});
-const hub = manifest.contracts.T3!;
-const root = manifest.contracts.T3Root!;
-const reserves = ['USDT', 'USDC', 'KUSD'].map(symbol => manifest.tokens.find(token => token.symbol === symbol)!.root);
-const boc = (cell: Cell) => cell.toBoc().toString('base64');
-
-function rootData(emitter: string | null = hub.address, code = walletCode): Cell {
-  const admin = Address.parse(runtimeAddress(900));
-  const registry = beginCell().storeAddress(admin).storeUint(1, 8).storeUint(0, 8).storeRef(Cell.EMPTY).endCell();
-  const data = beginCell().storeCoins(123_000_000_000n).storeAddress(admin)
-    .storeRef(code).storeRef(Cell.EMPTY).storeAddress(emitter === null ? null : Address.parse(emitter)).endCell();
-  const receipts = beginCell().storeDict(null).endCell();
-  const mintTail = beginCell().storeDict(null).storeDict(null).endCell();
-  const mintState = beginCell().storeUint(1n, 64).storeDict(null).storeDict(null).storeRef(mintTail).endCell();
-  return beginCell().storeUint(0x4a545253, 32).storeRef(registry).storeRef(data).storeRef(receipts).storeRef(mintState).endCell();
-}
-
-const activeState = (overrides: Partial<AccountStateResponse> = {}): AccountStateResponse => ({
-  balance: '1000000000', accountState: 'active', codeBoc: boc(rootCode), dataBoc: boc(rootData()), ...overrides,
-});
-const sourceFor = (state: AccountStateResponse, calls: string[] = []) => ({
-  async getAccountState(address: string) {
-    calls.push(address);
-    assert.equal(address, root.address, 'only the manifest-approved T3 root supplies the wallet Cell');
-    return state;
-  },
-});
-
+import { validateT3RedemptionBinding } from '../ledger/bindings';
+import { runtimeManifestFixture } from './fixtures/runtimeManifest';
+import { currentT3Fixture } from './support/currentT3Fixture';
+import { fakeChainSource } from './support/fakeChainSource';
+import { fixtureHead } from './support/chainFixture';
+const cell = (path: string) => Cell.fromBoc(readFileSync(join(__dirname, 'fixtures/current-t3', path)))[0];
+const addr = (address: string): TupleItem => ({ type: 'slice', cell: beginCell().storeAddress(Address.parse(address)).endCell() });
 async function main() {
-  const calls: string[] = [];
-  const binding = await deriveT3RedemptionBinding(manifest, sourceFor(activeState(), calls));
-  assert.deepEqual(calls, [root.address]);
-  assert(binding);
-  assert.deepEqual(binding, {
-    network: 'testnet', hub: hub.address, root: root.address,
-    hubCodeHash: hub.codeHash, rootCodeHash: root.codeHash,
-    walletCodeHash: manifest.templates.JettonWallet, receiverCodeHash: manifest.templates.T3Receiver,
-    reserveRoutes: reserves.map(reserve => ({
-      root: reserve, discovery: reserve,
-      vault: contractAddress(0, {
-        code: walletCode,
-        data: buildTonswapJettonWalletInitialData(Address.parse(hub.address), Address.parse(reserve)),
-      }).toRawString(),
-    })),
-  });
-  assert.equal(new Set(binding.reserveRoutes.map(route => route.vault)).size, 3);
-  assert.notEqual(binding.reserveRoutes[0].vault, contractAddress(0, {
-    code: walletCode,
-    data: buildTonswapJettonWalletInitialData(Address.parse(runtimeAddress(901)), Address.parse(reserves[0])),
-  }).toRawString(), 'reserve wallet custody belongs to the approved hub');
-
-  const reordered = runtimeManifestFixture({ ...manifest, tokens: [...manifest.tokens].reverse() });
-  assert.deepEqual(await deriveT3RedemptionBinding(reordered, sourceFor(activeState())), binding,
-    'reserve routes follow USDT/USDC/KUSD identity, not token inventory order');
-
-  await assert.rejects(deriveT3RedemptionBinding(manifest, sourceFor(activeState({ codeBoc: boc(otherCode) }))),
-    /root state does not match/, 'a live code hash cannot replace the approved root pin');
-  for (const emitter of [runtimeAddress(902), null]) {
-    await assert.rejects(deriveT3RedemptionBinding(manifest, sourceFor(activeState({ dataBoc: boc(rootData(emitter)) }))),
-      /emitter or wallet template/, 'a foreign or absent issuer never qualifies the T3 root');
-  }
-  await assert.rejects(deriveT3RedemptionBinding(manifest, sourceFor(activeState({ dataBoc: boc(rootData(hub.address, otherCode)) }))),
-    /emitter or wallet template/, 'observed wallet code is checked against the manifest template');
-  const wrongWalletPin = runtimeManifestFixture({ ...manifest,
-    templates: { ...manifest.templates, JettonWallet: otherCode.hash().toString('hex') } });
-  await assert.rejects(deriveT3RedemptionBinding(wrongWalletPin, sourceFor(activeState())), /emitter or wallet template/);
-
-  for (const symbol of ['USDT', 'USDC', 'KUSD']) {
-    const incomplete = runtimeManifestFixture({ ...manifest, tokens: manifest.tokens.filter(token => token.symbol !== symbol) });
-    const queried: string[] = [];
-    await assert.rejects(deriveT3RedemptionBinding(incomplete, sourceFor(activeState(), queried)), /all three declared reserve roots/);
-    assert.deepEqual(queried, [], 'incomplete reserve qualification fails before querying current state');
-  }
-  for (const state of [activeState({ accountState: 'frozen' }), activeState({ accountState: 'uninitialized' }),
-    activeState({ codeBoc: null }), activeState({ dataBoc: null })]) {
-    await assert.rejects(deriveT3RedemptionBinding(manifest, sourceFor(state)), /root state does not match/);
-  }
-  await assert.rejects(deriveT3RedemptionBinding(manifest, sourceFor(activeState({ dataBoc: boc(Cell.EMPTY) }))),
-    'an old or incomplete root layout cannot qualify the wallet code');
-  const absent = runtimeManifestFixture({ ...manifest,
-    contracts: Object.fromEntries(Object.entries(manifest.contracts).filter(([role]) => role !== 'T3')) });
-  const unused: string[] = [];
-  assert.equal(await deriveT3RedemptionBinding(absent, sourceFor(activeState(), unused)), undefined);
-  assert.deepEqual(unused, [], 'an absent T3 hub does not invent a recovery binding');
-
-  const hashA = 'a'.repeat(64), hashB = 'a'.repeat(63) + 'b';
-  const snapshotA = releaseSnapshotPath('/durable/snapshots/indexer', hashA)!;
-  const snapshotB = releaseSnapshotPath('/durable/snapshots/indexer', hashB)!;
-  assert.notEqual(snapshotA, snapshotB, 'snapshot names bind every manifest hash byte');
-  assert(snapshotA.includes(hashA) && snapshotB.includes(hashB));
-  assert.equal(releaseSnapshotPath(undefined, hashA), undefined);
-  const schema = releaseDatabaseSchema(hashA);
-  assert(Buffer.byteLength(schema, 'utf8') <= 63, 'release schema fits PostgreSQL without silent truncation');
-  assert.match(schema, /^[a-z_][a-z0-9_]*$/);
-  assert.notEqual(schema, releaseDatabaseSchema('b' + hashA.slice(1)));
-  for (const invalid of ['', 'A'.repeat(64), 'a'.repeat(63), 'a'.repeat(65), `${hashA} `, ` ${hashA}`, 'a;DROP SCHEMA public']) {
-    assert.throws(() => releaseDatabaseSchema(invalid), /canonical manifest hash/);
-    assert.throws(() => releaseSnapshotPath('/durable/snapshots/indexer', invalid), /canonical manifest hash/);
-    assert.throws(() => releaseSnapshotPath(undefined, invalid), /canonical manifest hash/);
-  }
-  console.log('runtime T3 binding and release state tests passed');
+    const f = currentT3Fixture(), base = runtimeManifestFixture(), head = fixtureHead(123), last = f.hubRows.at(-1)!;
+    const walletCodes = [cell('stablecoin/JettonWallet.code.boc'), cell('stablecoin/JettonWallet.code.boc'), cell('hub/compiler/JettonV21Wallet.boc')];
+    const masterCodes = [cell('stablecoin/JettonMinter.code.boc'), cell('stablecoin/JettonMinter.code.boc'), cell('hub/compiler/JettonV21Minter.boc')];
+    const tokens = f.binding.reserveRoutes.map((r, i) => ({ symbol: ['USDT', 'USDC', 'KUSD'][i], root: r.root, decimals: r.decimals, masterCodeHash: masterCodes[i].hash().toString('hex'), walletCodeHash: walletCodes[i].hash().toString('hex') }));
+    const manifest = { ...base, contracts: { ...base.contracts, T3Hub: { address: f.hub, codeHash: f.binding.hubCodeHash }, Governance: { address: f.state.governance, codeHash: base.contracts.Governance!.codeHash } }, templates: { ...base.templates, T3Wallet: f.state.walletCodeHash, T3RecoveryProof: f.state.proofCodeHash, JettonV21Wallet: walletCodes[2].hash().toString('hex') }, tokens, vendor: { ...base.vendor, stablecoin: { ...base.vendor.stablecoin, wallet: { ...base.vendor.stablecoin.wallet, codeHash: walletCodes[0].hash().toString('hex') } } } };
+    let corrupt = false, reads = 0, expectedSignal: AbortSignal | undefined;
+    const source = fakeChainSource({ head: async () => head, getAccountState: async (address, options) => {
+            assert.equal(options?.at, head);
+            assert.equal(options?.signal, expectedSignal);
+            reads++;
+            if (address === f.hub)
+                return { accountState: 'active', balance: '0', codeBoc: last.row.codeBoc, dataBoc: last.row.afterDataBoc };
+            const root = tokens.findIndex(t => t.root === address);
+            if (root >= 0)
+                return { accountState: 'active', balance: '0', codeBoc: (corrupt ? Cell.EMPTY : masterCodes[root]).toBoc().toString('base64') };
+            const wallet = f.binding.reserveRoutes.findIndex(r => r.vault === address);
+            assert(wallet >= 0);
+            return wallet === 2 ? { accountState: 'uninitialized', balance: '0' } : { accountState: 'active', balance: '0', codeBoc: walletCodes[wallet].toBoc().toString('base64'), lastTxLt: '1', lastTxHash: '1'.repeat(64) };
+        }, runGetMethod: async (address, method, args, options) => {
+            assert.equal(options?.at, head);
+            assert.equal(options?.signal, expectedSignal);
+            reads++;
+            const root = tokens.findIndex(t => t.root === address), wallet = f.binding.reserveRoutes.findIndex(r => r.vault === address);
+            if (method === 'get_jetton_data')
+                return { exitCode: 0, stack: [{ type: 'int', value: 0n }, { type: 'int', value: -1n }, { type: 'null' }, { type: 'cell', cell: Cell.EMPTY }, { type: 'cell', cell: walletCodes[root] }] };
+            if (method === 'get_wallet_address')
+                return { exitCode: 0, stack: [addr(f.binding.reserveRoutes[root].vault)] };
+            if (method === 'get_wallet_data')
+                return { exitCode: 0, stack: [{ type: 'int', value: 0n }, addr(f.hub), addr(tokens[wallet].root), { type: 'cell', cell: walletCodes[wallet] }] };
+            throw Error(method);
+        } });
+    const binding = await deriveT3RedemptionBinding(manifest, source);
+    assert(binding);
+    assert.equal(binding.root, binding.hub);
+    assert.equal(binding.reserveRoutes[2].profile.wallet, null);
+    assert.equal(binding.reserveRoutes[0].decimals, 6);
+    assert.equal(binding.reserveRoutes[2].decimals, 9);
+    assert(reads > 10);
+    validateT3RedemptionBinding(binding, binding.network);
+    corrupt = true;
+    await assert.rejects(() => deriveT3RedemptionBinding(manifest, source), /not authenticated/);
+    corrupt = false;
+    await assert.rejects(() => deriveT3RedemptionBinding({ ...manifest, templates: { ...manifest.templates, T3RecoveryProof: '0'.repeat(64) } }, source), /template mismatch/);
+    await assert.rejects(() => deriveT3RedemptionBinding({ ...manifest, tokens: tokens.map((t, i) => i === 0 ? { ...t, decimals: 9 } : t) }, source), /precision/);
+    assert.throws(() => validateT3RedemptionBinding({ ...binding, root: tokens[0].root }, 'localnet'));
+    expectedSignal=new AbortController().signal;
+    assert(await deriveT3RedemptionBinding(manifest,source,{at:head,signal:expectedSignal}));
+    console.log('current T3 binding: authenticated hub/master, per-token pins, mixed precision, optional undiscovered reserve, one-head reads and mismatch rejection passed');
 }
-
-main().catch(error => { console.error(error); process.exitCode = 1; });
+void main().catch(e => { console.error(e); process.exitCode = 1; });

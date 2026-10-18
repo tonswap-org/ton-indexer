@@ -37,7 +37,7 @@ export class DebugService {
     const backfill = this.backfill.getStats();
 
     return {
-      data_source: this.config.dataSource,
+      data_source: 'lite',
       network: this.config.network,
       snapshot_path: this.config.snapshotPath ?? null,
       snapshot_on_exit: this.config.snapshotOnExit,

@@ -1,6 +1,6 @@
 import type {
   AccountStateResponse,
-  TonDataSource,
+  ChainSource,
   TransactionCursor,
 } from '../data/dataSource';
 import { canonicalLedgerHash } from './normalize';
@@ -9,18 +9,41 @@ export type LedgerStateSnapshot = {
   seqno: number;
   state: AccountStateResponse;
 };
+type ArchiveSource = Pick<ChainSource, 'head' | 'getAccountStateAtSeqno' | 'getAccountStateAtTransaction'>;
+const unavailable = new WeakMap<ArchiveSource, Map<string, { seqno: number; expiresAt: number }>>();
 /** A boundary is usable only if its account last-transaction hash is exact.
  * Intermediate states require authenticated replay, never interpolation. */
 export async function findTransactionState(
-  source: TonDataSource,
+  source: ArchiveSource,
   account: string,
   cursor: TransactionCursor,
   headSeqno?: number,
+  options: { signal?: AbortSignal } = {},
 ): Promise<LedgerStateSnapshot | null> {
-  if (!source.getAccountStateAtSeqno || !/^(0|[1-9][0-9]*)$/.test(cursor.lt))
+  if (!/^(0|[1-9][0-9]*)$/.test(cursor.lt))
     return null;
   try {
-    const head = headSeqno ?? (await source.getMasterchainInfo()).seqno;
+    options.signal?.throwIfAborted();
+    const head = headSeqno ?? (await source.head(options)).seqno;
+    let misses = unavailable.get(source);
+    if (!misses) unavailable.set(source, misses = new Map());
+    const read = async (seqno: number, cursor?: TransactionCursor) => {
+      options.signal?.throwIfAborted();
+      const miss = misses!.get(account);
+      // This cache is a temporary inability to read, never authenticated absence.
+      if (miss && miss.expiresAt > Date.now() && seqno <= miss.seqno) throw Error('archive_temporarily_unavailable');
+      try {
+        return cursor ? await source.getAccountStateAtTransaction(account, cursor, seqno, options)
+          : await source.getAccountStateAtSeqno(account, seqno, options);
+      } catch (error) {
+        if (!options.signal?.aborted) {
+          if (misses!.size >= 4096) misses!.delete(misses!.keys().next().value!);
+          misses!.set(account, { seqno: miss && miss.expiresAt > Date.now() ? Math.max(miss.seqno, seqno) : seqno,
+            expiresAt: Date.now() + 60_000 });
+        }
+        throw error;
+      }
+    };
     if (!Number.isSafeInteger(head) || head < 0) return null;
     if (cursor.lt === '0') {
       let low = 0, high = head;
@@ -29,7 +52,7 @@ export async function findTransactionState(
       // owner and market projections. No active state is interpolated to zero.
       if (Buffer.from(canonicalLedgerHash(cursor.hash), 'base64').some(byte => byte !== 0)) return null;
       while (low <= high) {
-        const seqno = Math.floor((low + high) / 2), state = await source.getAccountStateAtSeqno(account, seqno);
+        const seqno = Math.floor((low + high) / 2), state = await read(seqno);
         if (state.lastTxLt === '0') { candidate = {seqno, state}; low = seqno + 1; }
         else high = seqno - 1;
       }
@@ -40,11 +63,11 @@ export async function findTransactionState(
     // Bracket from the recent head. A recent transaction must not require an
     // unrelated ancient archive merely because the chain is many years old.
     let high = head, low = 0;
-    let candidate: LedgerStateSnapshot | null = { seqno: head, state: await source.getAccountStateAtSeqno(account, head) };
+    let candidate: LedgerStateSnapshot | null = { seqno: head, state: await read(head) };
     if (BigInt(candidate.state.lastTxLt ?? '0') < target) return null;
     for (let distance = 1; high > 0; distance *= 2) {
       const seqno = Math.max(0, head - distance);
-      const state = await source.getAccountStateAtSeqno(account, seqno);
+      const state = await read(seqno);
       if (BigInt(state.lastTxLt ?? '0') < target) { low = seqno + 1; break; }
       candidate = { seqno, state };
       high = seqno;
@@ -52,17 +75,16 @@ export async function findTransactionState(
     }
     while (low < high) {
       const seqno = Math.floor((low + high) / 2);
-      const state = await source.getAccountStateAtSeqno(account, seqno);
+      const state = await read(seqno);
       if (BigInt(state.lastTxLt ?? '0') >= target) {
         candidate = { seqno, state };
         high = seqno;
       } else low = seqno + 1;
     }
-    if (candidate && BigInt(candidate.state.lastTxLt ?? '0') > BigInt(cursor.lt) &&
-        source.getAccountStateAtTransaction) {
+    if (candidate && BigInt(candidate.state.lastTxLt ?? '0') > BigInt(cursor.lt)) {
       candidate = {
         seqno: candidate.seqno,
-        state: await source.getAccountStateAtTransaction(account, cursor, candidate.seqno),
+        state: await read(candidate.seqno, cursor),
       };
     }
     if (

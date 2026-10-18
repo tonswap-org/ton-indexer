@@ -1,9 +1,10 @@
-import type { TonDataSource } from '../data/dataSource';
+import { isDeepStrictEqual } from 'node:util';
+import type { ChainSource } from '../data/dataSource';
 import type { Logger } from '../utils/logger';
 import type { LedgerService } from './service';
-import type { DlmmMarketBinding } from './marketTypes';
-import { DlmmMarketGraphBuilder } from './marketGraph';
-import { projectDlmmMarket } from './marketProjection';
+import type { CurrentDlmmMarketBinding, CurrentDlmmMarketProjection } from './currentDlmmMarketTypes';
+import { CurrentDlmmMarketGraphBuilder } from './currentDlmmMarketGraph';
+import { projectCurrentDlmmMarket, validateCurrentDlmmMarketBinding } from './currentDlmmMarketProjection';
 import { PostgresMarketStore, type MarketQuery } from './marketStore';
 
 /** Configured pools only. Reads schedule durable backfill without wallet actions. */
@@ -15,12 +16,13 @@ export class DlmmMarketService {
   private stopped = false;
   private attempts = new Map<string, number>();
   private errors = new Set<string>();
-  private bindings: Map<string, DlmmMarketBinding>;
-  private graph: DlmmMarketGraphBuilder;
-  constructor(private ledger: LedgerService, private source: TonDataSource, readonly store: PostgresMarketStore,
-    bindings: DlmmMarketBinding[], private logger: Logger, maxAccounts = 256) {
+  private bindings: Map<string, CurrentDlmmMarketBinding>;
+  private graph: CurrentDlmmMarketGraphBuilder;
+  constructor(private ledger: LedgerService, private source: ChainSource, readonly store: PostgresMarketStore<CurrentDlmmMarketProjection>,
+    bindings: CurrentDlmmMarketBinding[], private logger: Logger, maxAccounts = 256, private readStore: PostgresMarketStore<CurrentDlmmMarketProjection> = store) {
+    bindings.forEach(validateCurrentDlmmMarketBinding);
     this.bindings = new Map(bindings.map(binding => [binding.pool, binding]));
-    this.graph = new DlmmMarketGraphBuilder(ledger, source, maxAccounts);
+    this.graph = new CurrentDlmmMarketGraphBuilder(ledger, source, maxAccounts);
   }
   configured(pool: string) { return this.bindings.has(pool); }
   start() {
@@ -45,7 +47,7 @@ export class DlmmMarketService {
     await this.ledger.store.withAccountLock(binding.network, `market:${pool}`, async () => {
       const prior = await this.store.current(binding.network, pool), graph = await this.graph.build(binding);
       if (!graph.dependencies.some(dependency => dependency.account === pool)) throw new Error('market_pool_history_unavailable');
-      const projection = projectDlmmMarket(binding, graph.nodes, graph.dependencies);
+      const projection = projectCurrentDlmmMarket(binding, graph.evidence, graph.wallets, graph.dependencies, graph.executionSeqnos, graph.archives, graph.anchors);
       projection.issues = [...new Set([...projection.issues, ...graph.issues])].sort();
       if (graph.issues.length) projection.historyComplete = false;
       await this.store.publish(projection, prior?.generation ?? null);
@@ -54,7 +56,8 @@ export class DlmmMarketService {
   async page(pool: string, query: MarketQuery, candidates = false) {
     if (!this.bindings.has(pool)) throw new Error('market_binding_unconfigured');
     if (!query.cursor && !query.generation) this.requestSync(pool);
-    const page = candidates ? await this.store.candidatesPage(this.ledger.network, pool, query) : await this.store.page(this.ledger.network, pool, query);
+    const page = candidates ? await this.readStore.candidatesPage(this.ledger.network, pool, query) : await this.readStore.page(this.ledger.network, pool, query);
+    if(page.coverage && (page.coverage.schema !== 'dlmm-market-ledger-v2' || !isDeepStrictEqual(page.coverage.binding, this.bindings.get(pool)))) throw Error('market_current_schema_required');
     return { ...page, refresh: this.errors.has(pool) ? 'unavailable' : this.activePool === pool || this.pending.has(pool) ? 'running' : 'idle' };
   }
 }

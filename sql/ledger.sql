@@ -70,7 +70,10 @@ CREATE TABLE IF NOT EXISTS ledger_projection_coverage (
   projection_scope jsonb NOT NULL,
   fingerprint text NOT NULL,
   related_accounts jsonb NOT NULL,
-  issues jsonb NOT NULL
+  issues jsonb NOT NULL,
+  boundary_seqno bigint,
+  boundary_utime bigint,
+  CHECK ((boundary_seqno IS NULL) = (boundary_utime IS NULL))
 );
 -- Owner-specific publication order is allocated under one transactional row
 -- lock. It never relies on a global sequence whose commits can arrive out of order.
@@ -109,8 +112,34 @@ CREATE TABLE IF NOT EXISTS ledger_account_states (
 CREATE TABLE IF NOT EXISTS ledger_watch_accounts (
   network text NOT NULL,
   account text NOT NULL,
+  requested_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(network,account),
   FOREIGN KEY(network,account) REFERENCES ledger_accounts(network,account)
+);
+
+-- Mutable owner rechecks are separate from immutable published coverage.
+CREATE TABLE IF NOT EXISTS ledger_owner_checks (
+  network text NOT NULL,
+  account text NOT NULL,
+  checked_at timestamptz NOT NULL,
+  boundary_seqno bigint NOT NULL,
+  boundary_utime bigint NOT NULL,
+  head_vector jsonb NOT NULL,
+  pending_accounts jsonb NOT NULL DEFAULT '[]',
+  bindings jsonb NOT NULL DEFAULT '{}',
+  unresolved boolean NOT NULL DEFAULT false,
+  error_code text,
+  PRIMARY KEY (network, account),
+  FOREIGN KEY (network, account) REFERENCES ledger_accounts(network, account)
+);
+CREATE TABLE IF NOT EXISTS ledger_wallet_identities (
+  network text NOT NULL,
+  wallet text NOT NULL,
+  owner text NOT NULL,
+  master text NOT NULL,
+  code_hash text NOT NULL,
+  verified_seqno bigint NOT NULL,
+  PRIMARY KEY (network, wallet)
 );
 
 -- Immutable market evidence is separate from account/owner projections and from
@@ -190,3 +219,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS ledger_perps_ranges_active
   WHERE status IN ('pending','running');
 CREATE INDEX IF NOT EXISTS ledger_perps_ranges_pending
   ON ledger_perps_ranges(network,created_at,generation_order) WHERE status IN ('pending','running');
+
+-- Current products share immutable authenticated transaction boundaries. Order
+-- publications retain exact heads. Release identity is never inferred from names.
+CREATE TABLE IF NOT EXISTS current_transaction_evidence (
+  manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  account text NOT NULL CHECK (account ~ '^0:[0-9a-f]{64}$'),
+  lt numeric(20,0) NOT NULL CHECK (lt > 0),
+  hash text NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
+  evidence jsonb NOT NULL,
+  containing_seqno bigint NOT NULL CHECK (containing_seqno >= 0),
+  PRIMARY KEY (manifest_hash, account, lt, hash)
+);
+-- Verified decoder facts retain their original immutable transaction authority.
+-- Scope includes release, exact contract identity and decoder format/version.
+-- There is no partial/current answer, mutable cursor or background job here.
+CREATE TABLE IF NOT EXISTS current_archive_checkpoints (
+  manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  scope text NOT NULL CHECK (scope ~ '^[0-9a-f]{64}$'),
+  account text NOT NULL CHECK (account ~ '^0:[0-9a-f]{64}$'),
+  lt numeric(20,0) NOT NULL CHECK (lt > 0),
+  hash text NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
+  checkpoint jsonb NOT NULL,
+  PRIMARY KEY (manifest_hash, scope, account, lt, hash),
+  FOREIGN KEY (manifest_hash, account, lt, hash) REFERENCES current_transaction_evidence(manifest_hash, account, lt, hash)
+);
+CREATE TABLE IF NOT EXISTS current_order_snapshots (
+  manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  snapshot_id text NOT NULL CHECK (snapshot_id ~ '^[0-9a-f]{64}$'),
+  masterchain_seqno bigint NOT NULL CHECK (masterchain_seqno >= 0),
+  block_root_hash text NOT NULL CHECK (block_root_hash ~ '^[0-9a-f]{64}$'),
+  unix_time bigint NOT NULL CHECK (unix_time >= 0),
+  snapshot jsonb NOT NULL,
+  PRIMARY KEY (manifest_hash, snapshot_id)
+);
+CREATE TABLE IF NOT EXISTS current_order_publication (
+  manifest_hash text PRIMARY KEY CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  snapshot_id text NOT NULL,
+  FOREIGN KEY (manifest_hash, snapshot_id) REFERENCES current_order_snapshots(manifest_hash, snapshot_id)
+);

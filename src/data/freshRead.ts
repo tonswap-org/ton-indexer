@@ -13,7 +13,7 @@ export type FreshReadResult =
   | { kind: 'getter'; address: string; exitCode: number; stack: TupleItem[] };
 export type FreshReadBatch = {
   network: Network;
-  readContext: { source: 'lite' | 'http4'; head: TonBlockIdExt; queriedAt: number };
+  readContext: { source: 'lite'; head: TonBlockIdExt & { utime?: number }; queriedAt: number };
   results: FreshReadResult[];
 };
 
@@ -23,20 +23,6 @@ export class FreshReadUnavailableError extends Error {
 
 export function assertFreshReadActive(signal?: AbortSignal): void {
   if (signal?.aborted) throw new FreshReadUnavailableError(signal.reason);
-}
-
-/** Cancel retry waits without abandoning an already dispatched transport query. */
-export async function freshReadDelay(ms: number, signal?: AbortSignal): Promise<void> {
-  assertFreshReadActive(signal);
-  await new Promise<void>((resolve, reject) => {
-    const finish = () => { signal?.removeEventListener('abort', abort); resolve(); };
-    const timer = setTimeout(finish, ms);
-    const abort = () => {
-      clearTimeout(timer); signal?.removeEventListener('abort', abort);
-      reject(new FreshReadUnavailableError(signal?.reason));
-    };
-    signal?.addEventListener('abort', abort, { once: true });
-  });
 }
 
 type SourceBlock = { workchain: number; shard: string; seqno: number; rootHash: Buffer | string; fileHash: Buffer | string };
@@ -67,7 +53,7 @@ export function assertFreshNetwork(network: Network, init: { workchain?: number;
 
 export function assertFreshBlock(actual: SourceBlock, expected: TonBlockIdExt): void {
   const normalized = freshMasterchainBlock(actual);
-  if (Object.keys(expected).some(key => normalized[key as keyof TonBlockIdExt] !== expected[key as keyof TonBlockIdExt]))
+  if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex'] as const).some(key => normalized[key as keyof TonBlockIdExt] !== expected[key as keyof TonBlockIdExt]))
     throw new FreshReadUnavailableError();
 }
 
@@ -86,7 +72,7 @@ function assertAccount(state: AccountStateResponse): void {
 /** A fresh provider must return one complete observation, never a merge of different heads. */
 export function assertFreshReadBatch(batch: FreshReadBatch, calls: FreshReadCall[], network: Network, startedAt: number): void {
   if (!batch || batch.network !== network || !batch.readContext
-    || !['lite', 'http4'].includes(batch.readContext.source)
+    || batch.readContext.source !== 'lite'
     || !Number.isSafeInteger(batch.readContext.queriedAt) || batch.readContext.queriedAt < startedAt
     || batch.readContext.queriedAt > Date.now() || batch.results?.length !== calls.length) throw new FreshReadUnavailableError();
   const head = batch.readContext.head;

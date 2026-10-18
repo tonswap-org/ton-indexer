@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 import { beginCell } from "@ton/core";
 import type { Flow, Node, ProjectionInput } from "./project";
 import { optionBoundary } from "./optionLifecycle";
@@ -127,7 +128,7 @@ export async function decodeInitialOptionBuyBounce(
     meta.afterPosition = cash.afterPosition;
     meta.positionEvidence = cash.terminalState.evidence;
   }
-  const historyComplete = optionUnique(record.group).every(n => input.chains.get(n.account)?.historyComplete),
+  const historyComplete = optionUnique(record.group).every(n => chainCoversTransaction(input.chains.get(n.account), n.raw)),
     confirmed = historyComplete && unwind.factoryReturn.status === "completed";
   if (confirmed) {
     meta.outcome = "refunded";

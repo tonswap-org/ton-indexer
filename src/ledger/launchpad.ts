@@ -1,3 +1,4 @@
+import { chainCoversTransaction, chainAtBoundary } from "./project";
 import { Cell } from '@ton/core';
 import type { Flow, Node, ProjectionInput } from './project';
 import type { LedgerEvent, LedgerEvidenceRef } from './types';
@@ -149,7 +150,7 @@ async function proveCash(input: ProjectionInput, start: Node, sale: LedgerLaunch
   requireEvidence(terminal, 'launchpad_refund_final_callback_unverified');
   retain(terminal);
   const proof = [start, source.node, credit.node, accepted, delivered, finalized, terminal];
-  requireEvidence(proof.every(node => input.chains.get(node.account)?.historyComplete), 'launchpad_refund_history_incomplete');
+  requireEvidence(proof.every(node => chainCoversTransaction(input.chains.get(node.account), node.raw)), 'launchpad_refund_history_incomplete');
   for (const node of proof.filter(node => [record.sourceWallet, record.destinationWallet].includes(node.account)))
     await qualifyWallet(input, node, sale, node.account === record.sourceWallet ? sale.address : record.recipientOwner);
   return { source: source.node, credit: credit.node, delivered, terminal, nodes: proof };
@@ -207,7 +208,7 @@ export async function decodeLaunchpadRefunds(input: ProjectionInput, nodes: Node
       stateEvidence: [], localNetworkFees: [] };
     let proof: Node[] = [anchor, node], issue: string | undefined, confirmed = false;
     try {
-      requireEvidence(input.chains.get(input.owner)?.historyComplete && input.chains.get(sale.address)?.historyComplete, 'launchpad_refund_history_incomplete');
+      requireEvidence(chainAtBoundary(input.chains.get(input.owner)) && chainAtBoundary(input.chains.get(sale.address)), 'launchpad_refund_history_incomplete');
       const { old, updated, record } = validateEnqueue(claimState.before, claimState.after, sale, input.owner);
       metadata.reason = 'failed-soft-cap'; metadata.amountRaw = record.amountRaw; metadata.settlementId = record.settlementId;
       metadata.settlementRequestHash = record.requestHash; metadata.recipientOwner = record.recipientOwner; metadata.destinationWallet = record.destinationWallet;

@@ -6,7 +6,7 @@ import { gunzipSync } from 'node:zlib';
 import { Cell, beginCell, loadTransaction } from '@ton/core';
 import { readDlmmMarketState } from '../ledger/dlmmState';
 import { readT3RecoveryWallet } from '../ledger/t3RecoveryState';
-import type { TonDataSource } from '../data/dataSource';
+
 import { projectOwnerLedger, type LedgerChain, type ProjectionInput } from '../ledger/project';
 import { canonicalLedgerHash } from '../ledger/normalize';
 import { createDlmmProofGraph, type DlmmProofBinding } from '../ledger/dlmmProof';
@@ -15,10 +15,6 @@ import { tokenWire, protocolForward } from '../ledger/wire';
 import type { MarketNode } from '../ledger/marketTypes';
 import type { LedgerAsset, LedgerEvent, LedgerEvidenceRef } from '../ledger/types';
 import { loadOpcodes } from '../utils/opcodes';
-import { classifyTransaction } from '../utils/txClassifier';
-import { IndexerService } from '../indexerService';
-import { MemoryStore } from '../store/memoryStore';
-import { loadConfig } from '../config';
 import { ledgerSchemas } from '../ledger/openapi';
 
 const opcodes = loadOpcodes();
@@ -128,30 +124,6 @@ async function main() {
       assert.equal(rows[0].settlement!.dlmmSwap!.outputRaw,'0');
       assert.equal(rows[0].settlement!.dlmmSwap!.consumedInputRaw,'0');
     });
-    const config = {...loadConfig(),network:'localnet' as const,responseCacheEnabled:false}, store = new MemoryStore(config);
-    const originals = nodes.filter(node=>node.account===owner).map(node=>classifyTransaction(owner,node.raw,opcodes));
-    store.addTransactions(owner,originals);const head=[...originals].sort((a,b)=>BigInt(a.lt)>BigInt(b.lt)?-1:1)[0];
-    store.setBalance(owner,{address:owner,balance:'0',lastTxLt:head.lt,lastTxHash:head.hash,updatedAt:Date.now()});store.markHistoryComplete(owner);
-    const service=new IndexerService(config,store,{} as TonDataSource,opcodes,[]);
-    const page=(events:LedgerEvent[])=>({network:'localnet' as const,account:owner,events,nextCursor:null,
-      coverage:{generation:'sandbox-swap-projection',snapshotComplete:true,historyComplete:true,issues:[]}}) as any;
-    service.setSwapLedgerReader(async()=>page(projection.events));
-    const actual=await service.getSwapExecutions(owner);
-    await test(`${label}: public swap history reports consumed input and preserves actual refund separately`,()=>{
-      assert.equal(actual.swaps.length,fixture.intents.length);
-      for(const intent of fixture.intents){
-        const swap=actual.swaps.find(row=>row.queryId===intent.outerQueryId)!;assert(swap);
-        assert.equal(swap.requestedPayAmount,intent.amountInRaw);assert.equal(swap.returnedPayAmount,intent.actualRefundRaw);
-        assert.equal(BigInt(swap.payAmount!),BigInt(intent.amountInRaw)-BigInt(intent.actualRefundRaw));
-        assert.equal(swap.receiveAmount,intent.actualDeliveredOutputRaw==='0'?undefined:intent.actualDeliveredOutputRaw);
-        assert.equal(swap.receiveAmountSource,intent.actualDeliveredOutputRaw==='0'?undefined:'actual');
-        assert.equal(!!swap.receipt,intent.actualDeliveredOutputRaw!=='0');
-      }
-    });
-    service.setSwapLedgerReader(async()=>{throw Error('archive unavailable');});
-    await test(`${label}: unavailable ledger cannot overwrite locally proven consumption with requested input`,async()=>{
-      for(const row of (await service.getSwapExecutions(owner)).swaps){assert(row.requestedPayAmount);assert.equal(row.payAmount,undefined);assert.equal(row.receiveAmount,undefined);assert.equal(row.returnedPayAmount,undefined);}
-    });
     for(const target of rows){
       const m=target.settlement!.dlmmSwap!;
       for(const [name,id] of [['output',m.outputMovementId],['refund',m.refundMovementId]] as const){
@@ -160,34 +132,14 @@ async function main() {
           const result=await projectOwnerLedger(ownerInput(nodes.filter(node=>!matches(node,credit))));
           assert.notEqual(swaps(result.events).find(row=>row.settlement?.queryId===target.settlement!.queryId)?.settlement?.status,'confirmed');
         });
-        await test(`${label}/${m.acceptance.lt}: missing or duplicated ${name} movement rejects public amount enrichment`,async()=>{
-          for(const duplicate of [false,true]){
-            const altered=structuredClone(projection.events),event=altered.find(row=>row.id===target.id)!;
-            if(duplicate)event.movements.push(structuredClone(event.movements.find(row=>row.id===id)!));else event.movements=event.movements.filter(row=>row.id!==id);
-            service.setSwapLedgerReader(async()=>page(altered));
-            const swap=(await service.getSwapExecutions(owner)).swaps.find(row=>row.queryId===target.settlement!.queryId)!;
-            assert.equal(swap.payAmount,undefined);assert.equal(swap.receiveAmount,undefined);assert.equal(swap.returnedPayAmount,undefined);
-          }
-        });
       }
       await test(`${label}/${m.acceptance.lt}: duplicate original acceptance cannot qualify a second economic event`,async()=>{
         const input=ownerInput([...nodes,nodes.find(node=>matches(node,m.acceptance))!]);
         assert(!swaps((await projectOwnerLedger(input)).events).some(row=>row.settlement?.status==='confirmed'));
       });
-      await test(`${label}/${m.acceptance.lt}: broken consumption conservation or missing finalizer rejects public amounts`,async()=>{
-        for(const invalid of ['conservation','finalization','duplicate-event']){
-          const altered=structuredClone(projection.events),event=altered.find(row=>row.id===target.id)!;
-          if(invalid==='conservation')event.settlement!.dlmmSwap!.consumedInputRaw=(BigInt(m.consumedInputRaw)+1n).toString();
-          if(invalid==='finalization')event.settlement!.dlmmSwap!.finalizations.pop();
-          if(invalid==='duplicate-event')altered.push(structuredClone(event));
-          service.setSwapLedgerReader(async()=>page(altered));
-          const swap=(await service.getSwapExecutions(owner)).swaps.find(row=>row.queryId===target.settlement!.queryId)!;
-          assert.equal(swap.payAmount,undefined);assert.equal(swap.receiveAmount,undefined);assert.equal(swap.returnedPayAmount,undefined);
-        }
-      });
     }
     assert.equal(JSON.stringify(nodes),originalJson,'unaltered original transaction and archive evidence');
-    evidence.push({label,binding,source:provenance[label],projection,publicSwaps:actual});
+    evidence.push({label,binding,source:provenance[label],projection});
   }
   if(process.env.DLMM_SWAP_EVIDENCE_OUT){const out=resolve(process.env.DLMM_SWAP_EVIDENCE_OUT);mkdirSync(out,{recursive:true});writeFileSync(resolve(out,'owner-swap-checks.json'),JSON.stringify({checks,evidence},null,2)+'\n');}
   console.log(`PASS ${checks.length} actual DLMM swap projection and receipt checks`);

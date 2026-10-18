@@ -1,7 +1,6 @@
 import { TupleItem } from '@ton/core';
 import { Buffer } from 'node:buffer';
 import { Network } from '../models';
-import { JettonMetadata } from '../models';
 
 export type RawMessage = {
   source?: string;
@@ -173,6 +172,16 @@ export const transactionPageReachesHistoryStart = (
 };
 
 export type AccountStateResponse = {
+  anchor?: AccountAnchor;
+  /** Exact authenticated masterchain boundary used for this account read or
+   * containing its replayed transaction. Shard sequence numbers are independent. */
+  sourceMasterchain?: ChainHead;
+  /** Original authenticated ShardAccount envelope, with its hash-bound Account
+   * reference expanded. Absent accounts have no dictionary envelope. */
+  shardAccountBoc?: string;
+  /** Exact requested account key is absent from the authenticated shard
+   * dictionary. Missing/unavailable state or an uninitialized account is not absence. */
+  provenAbsent?: true;
   balance: string;
   lastTxLt?: string;
   lastTxHash?: string;
@@ -189,12 +198,6 @@ export type AccountStateResponse = {
   }>;
 };
 
-export type MasterchainInfo = {
-  seqno: number;
-  /** Canonical masterblock creation time, never provider/server wall clock. */
-  timestamp?: number;
-};
-
 export type TonBlockIdExt = {
   seqno: number;
   workchain: number;
@@ -203,27 +206,36 @@ export type TonBlockIdExt = {
   fileHashHex: string;
 };
 
-export interface TonDataSource {
-  network: Network;
-  /** Uncached current head, complete same-head account/getter observations, or failure. */
-  readFresh?(calls: import('./freshRead').FreshReadCall[], signal?: AbortSignal, headFloor?: import('./freshHead').FreshReadHeadFloor): Promise<import('./freshRead').FreshReadBatch>;
-  getMasterchainInfo(): Promise<MasterchainInfo>;
-  getAccountState(address: string): Promise<AccountStateResponse>;
-  getAccountStateLite?(address: string): Promise<AccountStateResponse>;
-  /** Archival account state at a masterchain boundary; callers must bind lastTx to the desired transaction. */
-  getAccountStateAtSeqno?(address: string, seqno: number): Promise<AccountStateResponse>;
-  /** Exact intermediate state, authenticated by the original transaction and Account hashes. */
-  getAccountStateAtTransaction?(address: string, cursor: TransactionCursor, containingSeqno: number): Promise<AccountStateResponse>;
-  getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]>;
-  runGetMethod(
-    address: string,
-    method: string,
-    args?: TupleItem[]
-  ): Promise<{ exitCode: number; stack: TupleItem[] } | null>;
-  // Canonical TEP-74 only. Implementations return null unless the root and
-  // wallet getters have exact canonical shapes and the wallet owner/root/code
-  // identities can be verified against active account code.
-  getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null>;
-  getJettonMetadata(master: string): Promise<JettonMetadata | null>;
+export type ChainHead = TonBlockIdExt & { utime: number };
+export type AccountAnchor = { shardBlock: TonBlockIdExt; genUtime: number };
+export type ReadOptions = { signal?: AbortSignal; at?: ChainHead };
+/** Original lite-server proofs. Consumers verify these cells again; the labels
+ * alone do not establish an account or masterchain commitment. */
+export type RecoveryProofAnchor = {
+  account: string; head: ChainHead; shardBlock: TonBlockIdExt;
+  masterchainProofBoc: string; accountProofBoc: string; accountBoc: string; shardAccountBoc: string;
+};
+export type RecoveryProofHistory = { head: ChainHead; anchor: ChainHead; blockBoc: string; stateBoc: string };
+export class ChainReadError extends Error {
+  constructor(readonly code: 'upstream_timeout' | 'upstream_unavailable', options?: ErrorOptions) {
+    super(code === 'upstream_timeout' ? 'Chain read deadline exceeded.' : 'Chain read unavailable.', options);
+    this.name = 'ChainReadError';
+  }
+}
+export interface ChainSource {
+  readonly network: Network;
+  head(options?: { signal?: AbortSignal }): Promise<ChainHead>;
+  read(calls: import('./freshRead').FreshReadCall[], options?: ReadOptions): Promise<{ head: ChainHead; results: import('./freshRead').FreshReadResult[] }>;
+  getConfig(options?: ReadOptions): Promise<{ head: ChainHead; configBoc: string }>;
+  getAccountState(address: string, options?: ReadOptions): Promise<AccountStateResponse>;
+  getRecoveryProofAnchor?(address: string, options?: ReadOptions): Promise<RecoveryProofAnchor>;
+  getRecoveryProofHistory?(anchor: ChainHead, options?: ReadOptions): Promise<RecoveryProofHistory>;
+  runGetMethod(address: string, method: string, args?: TupleItem[], options?: ReadOptions): Promise<{ exitCode: number; stack: TupleItem[] }>;
+  getAccountStateAtSeqno(address: string, seqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
+  getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
+  getTransactions(address: string, limit: number, lt: string, hash: string, options?: { signal?: AbortSignal }): Promise<RawTransaction[]>;
+  sendMessage(boc: Buffer, options?: { signal?: AbortSignal }): Promise<void>;
+  health(): { peersConfigured: number; peersReady: number; head: ChainHead | null;
+    peers: Array<{ index: number; ready: boolean; open: boolean; failures: number; latencyMs: number | null }> };
   close(): Promise<void>;
 }

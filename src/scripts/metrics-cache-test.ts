@@ -1,3 +1,4 @@
+import { fixtureChainSource, fixtureHead, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { MemoryStore } from '../store/memoryStore';
@@ -7,7 +8,7 @@ import { MetricsService } from '../metrics';
 import { IndexerService } from '../indexerService';
 import { loadOpcodes } from '../utils/opcodes';
 import { createLogger } from '../utils/logger';
-import { TonDataSource } from '../data/dataSource';
+
 
 const config = {
   ...loadConfig(),
@@ -19,9 +20,13 @@ const store = new MemoryStore({ ...config, maxAddresses: 10 });
 const opcodes = loadOpcodes();
 const logger = createLogger('fatal');
 
-const dummySource: TonDataSource = {
+const dummySource: FixtureChainSource = fixtureChainSource({
   network: 'mainnet',
-  async getMasterchainInfo() {
+  health() {
+    return { peersConfigured: 1, peersReady: 1, head: fixtureHead(),
+      peers: [{ index: 0, ready: true, open: true, failures: 0, latencyMs: 10 }] };
+  },
+  async head() {
     return { seqno: 0 };
   },
   async getAccountState() {
@@ -33,16 +38,16 @@ const dummySource: TonDataSource = {
   async runGetMethod() {
     return null;
   },
-  async getJettonBalance() {
+  async walletBalance() {
     return null;
   },
-  async getJettonMetadata() {
+  async jettonMetadata() {
     return null;
   },
   async close() {
     return;
   },
-};
+});
 
 const service = new IndexerService(config, store, dummySource, opcodes, []);
 const backfill = new BackfillWorker(config, store, dummySource, opcodes, logger);
@@ -50,6 +55,10 @@ const collector = new MetricsCollector();
 const metrics = new MetricsService(config, store, backfill, service, collector);
 
 const first = metrics.getMetrics();
+assert.equal(first.last_master_seqno, 1);
+assert.equal(first.chain.peersConfigured, 1);
+assert.equal(first.chain.peersReady, 1);
+assert.equal(first.chain.headSeqno, 1);
 collector.recordRequest(50);
 const second = metrics.getMetrics();
 assert.equal(second.request_stats.count, first.request_stats.count);

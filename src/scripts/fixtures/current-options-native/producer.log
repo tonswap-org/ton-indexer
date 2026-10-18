@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web
+
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  12:35:49
+   Duration  44.76s (transform 1.11s, setup 218ms, import 808ms, tests 43.41s, environment 1ms)
+

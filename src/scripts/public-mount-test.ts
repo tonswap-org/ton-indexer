@@ -48,72 +48,58 @@ async function main() {
   assert.throws(() => productionSmokeBaseUrl(r1, r2), /target path differs/);
   assert.throws(() => productionSmokeBaseUrl(`${r2}/api/indexer`, r2), /target path differs/);
 
-  const r1Spec = buildOpenApi({ network: 'testnet' }, metadataFor(r1));
-  const r2Spec = buildOpenApi({ network: 'testnet' }, metadataFor(r2));
-  const r2Paths = r2Spec.paths as Record<string, unknown>;
-  assert.deepEqual(r1Spec.servers, [{ url: '/' }]);
-  assert.deepEqual(r2Spec.servers, [{ url: '/' }]);
-  assert.equal(Object.keys(r1Spec.paths).length, Object.keys(r2Paths).length);
-  for (const [path, operation] of Object.entries(r1Spec.paths)) {
-    const expected = path.replace(/^\/api\/indexer\//, '/api/indexer-r2/');
-    assert.notEqual(expected, path);
-    assert.deepEqual(r2Paths[expected], operation, `Moving ${path} must preserve its method/schema/security references`);
-    assert.equal(path in r2Paths, false, 'The document must not advertise an R1 alias');
-    // OpenAPI path templates are not URLs: URL encodes literal braces. Substitute
-    // a concrete encoded parameter before checking the public URL composition.
-    const concrete = expected.replace(/\{[^}]+\}/g, encodeURIComponent('example:value'));
-    const composed = new URL(concrete, new URL(r2Spec.servers[0].url, r2));
+  const current = metadataFor(r1);
+  const spec = buildOpenApi({ network: 'testnet' }, current);
+  const repeated = buildOpenApi({ network: 'testnet' }, current);
+  assert.deepEqual(spec, repeated, 'Repeated generation cannot mutate shared path definitions or append duplicate headers');
+  assert.deepEqual(spec.servers, [{ url: '/' }]);
+  for (const [path, route] of Object.entries(spec.paths)) {
+    assert(path.startsWith('/api/indexer/v1/'));
+    const concrete = path.replace(/\{[^}]+\}/g, encodeURIComponent('example:value'));
+    const composed = new URL(concrete, new URL(spec.servers[0].url, r1));
     assert.equal(composed.origin, 'https://test.tonswap.org');
-    assert.equal(composed.pathname, concrete, 'OpenAPI server and concrete path compose exactly once');
-    assert.equal(composed.pathname.split('/api/indexer-r2').length - 1, 1, 'The public mount occurs exactly once');
+    assert.equal(composed.pathname, concrete);
+    assert.equal(composed.pathname.split('/api/indexer').length - 1, 1);
+    for (const operation of Object.values(route) as any[]) {
+      assert.equal(operation.parameters.filter((p: any) => p.name === 'x-tonswap-release').length, 1);
+    }
   }
-  // Every local schema/security reference must still resolve after path remapping.
-  const refs = JSON.stringify(r2Paths).matchAll(/"\$ref":"(#[^"]+)"/g);
+  const refs = JSON.stringify(spec.paths).matchAll(/"\$ref":"(#[^"]+)"/g);
   let refCount = 0;
   for (const [, ref] of refs) {
     const value = ref.slice(2).split('/').reduce<unknown>((node, part) =>
-      (node as Record<string, unknown>)[part.replace(/~1/g, '/').replace(/~0/g, '~')], r2Spec);
-    assert.notEqual(value, undefined, `Unresolved original reference ${ref}`);
-    refCount++;
+      (node as Record<string, unknown>)[part.replace(/~1/g, '/').replace(/~0/g, '~')], spec);
+    assert.notEqual(value, undefined, `Unresolved reference ${ref}`); refCount++;
   }
-  assert.ok(refCount > 20, 'Exercise the actual API and ledger component references');
-  const docs = buildDocsHtml('mount-test-nonce', r2);
-  assert.ok(docs.includes('href="/api/indexer-r2/v1/openapi.json"'));
-  assert.ok(docs.includes('value="/api/indexer-r2/v1/options/{factory}/snapshot"'));
-  assert.ok(docs.includes('<script nonce="mount-test-nonce">'));
-  assert.equal(docs.includes('/api/indexer/v1'), false);
-
-  for (const [indexer, mount] of [[r1, '/api/indexer'], [r2, '/api/indexer-r2'], [`${r2}/`, '/api/indexer-r2']] as const) {
+  assert(refCount > 20);
+  const docs = buildDocsHtml('mount-test-nonce', r1);
+  assert(docs.includes('href="/api/indexer/v1/openapi.json"'));
+  assert(docs.includes('value="/api/indexer/v1/governance/{voting}/snapshot"'));
+  for (const retired of ['/cover/', '/vol-index/', '/pools/{pool}/farms']) assert(!docs.includes(retired));
+  assert(docs.includes('<script nonce="mount-test-nonce">'));
+  for (const indexer of [r1, r2, `${r1}/`]) {
     const app = Fastify();
     try {
       registerRoutes(app, { network: 'testnet' }, service, undefined, undefined, undefined, undefined, {}, metadataFor(indexer));
-      const response = await app.inject({ method: 'GET', url: '/api/indexer/v1/service-info' });
-      assert.equal(response.statusCode, 200);
+      const response = await app.inject('/api/indexer/v1/service-info'); assert.equal(response.statusCode, 200);
       const info = response.json();
-      assert.equal(info.publicBaseUrl, indexer);
-      assert.equal(info.serviceId, `test.tonswap.org${mount}`);
-      assert.equal(info.endpoints.openapi, `${mount}/v1/openapi.json`);
-      assert.equal(info.endpoints.balance, `${mount}/v1/accounts/{addr}/balance`);
-      assert.equal(info.endpoints.readFresh, `${mount}/v1/readFresh`);
-      assert.equal(info.endpoints.marketCandles, `${mount}/v1/markets/{market}/candles`);
-      assert.ok(Object.values(info.endpoints).every(path => typeof path === 'string' && path.startsWith(`${mount}/v1/`)));
-      const specResponse = await app.inject({ method: 'GET', url: '/api/indexer/v1/openapi.json' });
-      assert.equal(specResponse.statusCode, 200);
-      const spec = specResponse.json();
-      assert.ok(spec.paths[info.endpoints.readFresh]);
-      assert.ok(spec.paths[info.endpoints.balance]);
-      const docsResponse = await app.inject({ method: 'GET', url: '/api/indexer/v1/docs' });
-      assert.equal(docsResponse.statusCode, 200);
-      assert.ok(docsResponse.body.includes(`href="${mount}/v1/openapi.json"`));
-      if (mount === '/api/indexer-r2') {
-        assert.equal((await app.inject({ method: 'GET', url: '/api/indexer-r2/v1/service-info' })).statusCode, 404,
-          'The public proxy rewrites to the canonical backend; the worker must not register a second release route');
+      if (indexer === r1) {
+        assert.equal(info.publicBaseUrl, r1); assert.equal(info.serviceId, 'test.tonswap.org/api/indexer');
+        assert.equal(info.endpoints.openapi, '/api/indexer/v1/openapi.json');
+        assert.equal(info.endpoints.balances, '/api/indexer/v1/accounts/{addr}/balances');
+        assert.equal(info.endpoints.readFresh, '/api/indexer/v1/readFresh');
+        assert.equal(response.headers['x-tonswap-release'], current.manifestHash);
+      } else {
+        assert.equal(info.publicBaseUrl, null); assert.equal(info.serviceId, null);
+        assert.deepEqual(info.release, { releaseId: null, manifestHash: null });
+        assert.equal(info.endpoints.readFresh, undefined, 'An invalid public mount cannot advertise current reads');
+        assert.equal(response.headers['x-tonswap-release'], undefined);
       }
-    } finally {
-      await app.close();
-    }
+      const openapi = (await app.inject('/api/indexer/v1/openapi.json')).json();
+      assert(Object.keys(openapi.paths).every(path => path.startsWith('/api/indexer/v1/')));
+      assert.equal((await app.inject('/api/indexer-r2/v1/service-info')).statusCode, 404, 'No old mount alias is registered');
+    } finally { await app.close(); }
   }
-  process.stdout.write('public API mount behavior ok (synthetic offline fixtures; no deployed release qualification)\n');
+  process.stdout.write('Stable current public mount, exact release binding, component references and repeatable OpenAPI passed.\n');
 }
-
 main().catch(error => { console.error(error); process.exitCode = 1; });

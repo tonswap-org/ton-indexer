@@ -1,3 +1,6 @@
+import type { WalletIdentityStore } from "../ledger/identities";
+import { fixtureHead } from "./support/chainFixture";
+import { fixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -5,7 +8,7 @@ import { Cell } from "@ton/core";
 import { LedgerGraphBuilder } from "../ledger/graph";
 import { projectOwnerLedger } from "../ledger/project";
 import type { LedgerAsset } from "../ledger/types";
-import type { AccountStateResponse, RawTransaction, TonDataSource } from "../data/dataSource";
+import type { AccountStateResponse, RawTransaction} from '../data/dataSource';
 import type { LedgerLaunchpadCodeHashes } from "../ledger/bindings";
 import type { PostgresLedgerStore } from "../ledger/store";
 import { canonicalLedgerHash } from "../ledger/normalize";
@@ -66,7 +69,7 @@ async function build(options: {
     rawHistory: async (generation: string) => (generation === fixture.accounts.owner && options.ownerTransactions !== undefined
       ? options.ownerTransactions : histories.get(generation) ?? []).map(raw => ({ raw })),
     pool: { query: async (sql: string, values: string[]) => {
-      if (sql.startsWith("SELECT complete")) return { rows: [{ complete: true, head_observed_at: "2026-01-01T00:00:00.000Z" }] };
+      if (sql.startsWith("SELECT source_complete")) return { rows: [{ complete: true, head_observed_at: "2026-01-01T00:00:00.000Z" }] };
       if (sql.startsWith("SELECT snapshot")) {
         const snapshot = archive.get(`${values[1]}:${values[2]}:${values[3]}`);
         return { rows: snapshot ? [{ snapshot }] : [] };
@@ -74,28 +77,33 @@ async function build(options: {
       throw Error(`Unexpected graph storage call: ${sql}`);
     } },
   } as unknown as PostgresLedgerStore;
-  const source = {
+  const source = fixtureChainSource({
     getAccountState: async (account: string) => {
       currentReads.push(account);
       if (options.missingCode && account === fixture.accounts.sale) return { ...saleState, codeBoc: null };
       return current.get(account) ?? { balance: "0", accountState: "uninitialized", lastTxLt: "0" };
     },
-    getJettonBalance: async (owner: string, master: string) => {
-      const asset = [...assets.values()].find(asset => asset.owner === owner && asset.master === master);
-      return asset ? { wallet: asset.wallet } : null;
-    },
     runGetMethod: async (_account: string, method: string) => { getters.push(method); throw Error(`Unexpected getter: ${method}`); },
-  } as unknown as TonDataSource;
-  const builder = new LedgerGraphBuilder("mainnet", source, store, [fixture.accounts.paymentRoot], undefined,
-    async wallet => {
+  });
+  const identityStore = {
+    resolve: async (wallet: string) => {
       const asset = assets.get(wallet);
       return options.identityMismatch && wallet === fixture.accounts.paymentSaleWallet && asset
         ? { ...asset, owner: fixture.accounts.owner } : asset ?? null;
     },
-    async account => { crawled.push(account); return !(options.incompletePaymentHistory && account === fixture.accounts.paymentSaleWallet); },
+    known: async () => null,
+    reader: { wallet: async (root: string, owner: string) => {
+      const asset = [...assets.values()].find(asset => asset.owner === owner && asset.master === root);
+      return asset?.wallet ? { status: 'ok', root, wallet: asset.wallet, balanceRaw: '0', lastTxLt: '1', lastTxHash: '0'.repeat(64) }
+        : { status: 'unavailable', root, wallet: null, reason: 'upstream' };
+    } },
+  } as unknown as WalletIdentityStore;
+  const builder = new LedgerGraphBuilder("mainnet", source, store, [fixture.accounts.paymentRoot], undefined, identityStore,
+    async account => { crawled.push(account); const complete = !(options.incompletePaymentHistory && account === fixture.accounts.paymentSaleWallet);
+      return { account, generation: account, head: null, complete, atBoundary: complete, errorCode: complete ? null : 'source_unavailable' }; },
     options.maxAccounts ?? 256, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     options.hashes === null ? undefined : options.hashes ?? hashes, [fixture.accounts.sale]);
-  const graph = await builder.build(fixture.accounts.owner, fixture.accounts.owner, "2026-01-01T00:00:00.000Z");
+  const graph = await builder.build(fixture.accounts.owner, fixture.accounts.owner, { boundary: fixtureHead(1000) });
   return { graph, crawled, getters, currentReads };
 }
 

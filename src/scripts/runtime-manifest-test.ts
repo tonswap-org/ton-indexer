@@ -11,7 +11,6 @@ import { createManifestSupervisor, MANIFEST_POLL_INTERVAL_MS, type ManifestWorke
 import { releaseDatabaseSchema } from '../releaseState';
 import { releasePoolConfig } from '../ledger/releasePool';
 import { launchManifestWorker, MANIFEST_WORKER_STARTUP_TIMEOUT_MS } from '../manifestWorker';
-import { ADMISSION_STARTUP_MS } from '../data/admission/protocol';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 const first = runtimeManifestFixture();
@@ -29,8 +28,8 @@ const until = async (condition: () => boolean) => {
 
 async function main() {
   assert.equal(MANIFEST_POLL_INTERVAL_MS, 5_000);
-  assert(MANIFEST_WORKER_STARTUP_TIMEOUT_MS >= ADMISSION_STARTUP_MS + 60_000,
-    'supervisor must allow the complete native authentication window and remaining startup');
+  assert.equal(MANIFEST_WORKER_STARTUP_TIMEOUT_MS, 30_000,
+    'worker readiness now acknowledges the HTTP listener before background authentication');
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'tonswap-manifest-unit-')));
   let body = JSON.stringify(first);
   const server = createServer((_request, response) => { response.setHeader('Content-Type', 'application/json'); response.end(body); });
@@ -145,7 +144,7 @@ async function main() {
     const processWorker = launchManifestWorker(__filename, parseCanonicalReleaseManifest(first, 'testnet'));
     await processWorker.ready;
     await processWorker.stop(); await processWorker.stop(); await processWorker.exited;
-    const wrongReady = runtimeManifestFixture({ services: { ...first.services, indexer: 'https://wrong-ready.test' } });
+    const wrongReady = runtimeManifestFixture({ services: { ...first.services, indexer: 'https://wrong-ready.test/api/indexer' } });
     const rejectedWorker = launchManifestWorker(__filename, parseCanonicalReleaseManifest(wrongReady, 'testnet'), 1_000);
     await assert.rejects(rejectedWorker.ready, /timed out/);
     await rejectedWorker.stop(); await rejectedWorker.exited;
@@ -159,7 +158,7 @@ if (process.argv.includes('--manifest-worker')) {
   process.once('message', (message: any) => {
     assert.equal(message.type, 'manifest-start');
     const manifest = parseCanonicalReleaseManifest(message.manifest, 'testnet');
-    process.send?.({ type: 'manifest-ready', manifestHash: manifest.runtime.services.indexer === 'https://wrong-ready.test'
+    process.send?.({ type: 'manifest-ready', manifestHash: manifest.runtime.services.indexer === 'https://wrong-ready.test/api/indexer'
       ? '0'.repeat(64) : manifest.runtime.manifestHash });
     setInterval(() => undefined, 1_000);
     process.on('SIGTERM', () => process.exit(0));

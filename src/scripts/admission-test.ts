@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,7 +10,7 @@ import { IndexerService } from '../indexerService';
 import { loadConfig } from '../config';
 import { MemoryStore } from '../store/memoryStore';
 import { loadOpcodes } from '../utils/opcodes';
-import type { TonDataSource } from '../data/dataSource';
+
 
 const raw = readFileSync(join(__dirname, 'fixtures/native-admission/captured.json'));
 assert.equal(createHash('sha256').update(raw).digest('hex'), '30eb939cac02861af65e5d55fcf9e67c369fc43d712ebaff443ae1e97de794f3');
@@ -69,7 +70,7 @@ for (const env of [{ PERPS_ADMISSION_BINARY_PATH: '/a' }, { PERPS_ADMISSION_BINA
 
 async function serviceBoundary() {
   const config = loadConfig(), store = new MemoryStore(config); let remoteCalls = 0;
-  const source = { network: 'testnet', runGetMethod: async () => { remoteCalls++; throw Error('Remote admission fallback forbidden'); } } as unknown as TonDataSource;
+  const source = fixtureChainSource({ network: 'testnet', runGetMethod: async () => { remoteCalls++; throw Error('Remote admission fallback forbidden'); } });
   const service = new IndexerService(config, store, source, loadOpcodes(), []);
   await assert.rejects(service.runGetMethod(identity.engine, 'close_order_preflight', args), AdmissionError);
   let nativeCalls = 0;

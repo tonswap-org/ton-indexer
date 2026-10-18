@@ -1,0 +1,576 @@
+{
+  "schema": "tonswap-current-options-producer-source-v1",
+  "qualification": "Pre-run static local source closure plus package locks and exact pinned native executor. Installed module content is not independently locked by this inventory. Source paths are retained unchanged as identity only.",
+  "files": [
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/contracts/targets.ts",
+      "retained": "source/tonswap_tolk/contracts/targets.ts",
+      "sha256": "8035d586ce27840c380875b2cb30cc6d55cc184929fab112ab8c158c5a032146",
+      "bytes": 4210
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/contracts/vendor/jetton-v2.1/PROVENANCE.json",
+      "retained": "source/tonswap_tolk/contracts/vendor/jetton-v2.1/PROVENANCE.json",
+      "sha256": "b7a048c6cdda3e7524f00394109c3c784a52cd6ac2a47b0a427e8de914c18650",
+      "bytes": 2114
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/contracts/vendor/stablecoin/PROVENANCE.json",
+      "retained": "source/tonswap_tolk/contracts/vendor/stablecoin/PROVENANCE.json",
+      "sha256": "959df08a8f3e73d14a29a727f3f6ef82da588d29f9b3f8c988bfc83fe9090668",
+      "bytes": 3837
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/package-lock.json",
+      "retained": "source/tonswap_tolk/package-lock.json",
+      "sha256": "7cefb34c6d22f67bb1c09c981b3a2b8a072b41295920f3a864cc16886a558305",
+      "bytes": 322196
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/package.json",
+      "retained": "source/tonswap_tolk/package.json",
+      "sha256": "3fcb31bb1b92eefda0d87438866e1de0cb828090dc27811335df2632c0171ecf",
+      "bytes": 4272
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/scripts/build/build.ts",
+      "retained": "source/tonswap_tolk/scripts/build/build.ts",
+      "sha256": "a2b4771490ab367c37852afae03a34f0f8d38d24cdffada81a11b0f68ca76565",
+      "bytes": 14091
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/scripts/build/compiler.json",
+      "retained": "source/tonswap_tolk/scripts/build/compiler.json",
+      "sha256": "73fb0f058cd4959f65d5f9f55ebd85aed63003d2a7ff1aed66be525de177200a",
+      "bytes": 139
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/scripts/build/vendor.ts",
+      "retained": "source/tonswap_tolk/scripts/build/vendor.ts",
+      "sha256": "8890741ef82903ec28f6f423ab4c469306733e92462499b8081e980ac30580b2",
+      "bytes": 6343
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/scripts/build/worker.cjs",
+      "retained": "source/tonswap_tolk/scripts/build/worker.cjs",
+      "sha256": "030e574ebdd81a09e9868b5aee799e8307ff726ccfe98304bd25ecec924f7c56",
+      "bytes": 1866
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/scripts/codegen/generate_opcodes.ts",
+      "retained": "source/tonswap_tolk/scripts/codegen/generate_opcodes.ts",
+      "sha256": "11afc7fba25c78123b5bf66c166da9004774d9715d5074a74688a69a273537f7",
+      "bytes": 14531
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/scripts/utils/jsonEvidence.ts",
+      "retained": "source/tonswap_tolk/scripts/utils/jsonEvidence.ts",
+      "sha256": "8e44bd4ccdbfc7e61330f3759ea348c914b372699667207d6ce2b178b76811cb",
+      "bytes": 6035
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/scripts/utils/repoPathGuards.ts",
+      "retained": "source/tonswap_tolk/scripts/utils/repoPathGuards.ts",
+      "sha256": "04d3d07caa8c110c7d4be5e5433ebd03e22cfbf576108973e21e97ba5ae78e2e",
+      "bytes": 105995
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/simulations/t3/harness.ts",
+      "retained": "source/tonswap_tolk/simulations/t3/harness.ts",
+      "sha256": "f0ec3729ab219741826e6066ca2a1520782b7c2425df96d37afb619ed751d649",
+      "bytes": 6183
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/fixtures/feeConfigs.ts",
+      "retained": "source/tonswap_tolk/tests/fixtures/feeConfigs.ts",
+      "sha256": "65aca2fa39d92dd278d75f05a3e2da601b1044fe590342e1b827ab3d1bb57a69",
+      "bytes": 6084
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/fixtures/freshT3.ts",
+      "retained": "source/tonswap_tolk/tests/fixtures/freshT3.ts",
+      "sha256": "08bdcecf32b2800ad2dc40bcfc889b7648a6ee4a28930db47c45964aac0e7f14",
+      "bytes": 4047
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/fixtures/native/ton-transaction-worker",
+      "retained": "source/tonswap_tolk/tests/fixtures/native/ton-transaction-worker",
+      "sha256": "929825eb93cac08c4aed028b778e4fe148da264331636f53f5bcb7cff4c134a7",
+      "bytes": 12828296
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/fixtures/native/transaction-worker-build.json",
+      "retained": "source/tonswap_tolk/tests/fixtures/native/transaction-worker-build.json",
+      "sha256": "fe977fe71d594d8425b052d47f89888e33349152272c0faa6c3599f321fe6f14",
+      "bytes": 12338
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/fixtures/native/transaction-worker.cpp",
+      "retained": "source/tonswap_tolk/tests/fixtures/native/transaction-worker.cpp",
+      "sha256": "8c9170bb1b2eabf5981422eb6ab0f3a7aa849c10dbca33063fa7586955f7a374",
+      "bytes": 3510
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/fixtures/spotPool.ts",
+      "retained": "source/tonswap_tolk/tests/fixtures/spotPool.ts",
+      "sha256": "52527613b223cd035904b3cf451554d016d3ca8ec5439babb91e8bfba3dbd7a4",
+      "bytes": 14987
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/fixtures/stablecoin.ts",
+      "retained": "source/tonswap_tolk/tests/fixtures/stablecoin.ts",
+      "sha256": "73fcc9cad9348068cdf1854c462c2d76f2b975ea6a7ee66dd1d9eb7c2a1ae3bb",
+      "bytes": 9017
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/helpers/compile.ts",
+      "retained": "source/tonswap_tolk/tests/helpers/compile.ts",
+      "sha256": "57270798140e9b4352c05f9d0a9783950ab0f71d3b3c79b4d4e3dbd14fb17429",
+      "bytes": 1164
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tests/helpers/nativeTransactionExecutor.ts",
+      "retained": "source/tonswap_tolk/tests/helpers/nativeTransactionExecutor.ts",
+      "sha256": "2c9365935eff3c6b61c3da90648d63bfecf99119cc8674b93bc07e5e95133d12",
+      "bytes": 8964
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/tsconfig.json",
+      "retained": "source/tonswap_tolk/tsconfig.json",
+      "sha256": "77740278e57e5346d55584a6b1e65257c8de5131e8539b77f85fa76af3633516",
+      "bytes": 807
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/DlmmPool.ts",
+      "retained": "source/tonswap_tolk/wrappers/DlmmPool.ts",
+      "sha256": "26c9e67794a002b073a52fd5e67582d0d028880eb4f29ca5d4fa2cf14b924b48",
+      "bytes": 24161
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/DlmmPoolFactory.ts",
+      "retained": "source/tonswap_tolk/wrappers/DlmmPoolFactory.ts",
+      "sha256": "2adc54fdfab75b9a52a5bf75586b36e81954691783419d6170654d1e3556df0e",
+      "bytes": 4481
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/Jetton.ts",
+      "retained": "source/tonswap_tolk/wrappers/Jetton.ts",
+      "sha256": "14c1764ff8385d1d0a0d3e2a4d598377516d1a8d7aee1769b578befb5ba6897d",
+      "bytes": 10242
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/OptionChild.ts",
+      "retained": "source/tonswap_tolk/wrappers/OptionChild.ts",
+      "sha256": "ac37cbbaa4b254dac01e3c8c0093beb872d4e8a6a0790590e0317755993c02b9",
+      "bytes": 5739
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/OptionFactory.ts",
+      "retained": "source/tonswap_tolk/wrappers/OptionFactory.ts",
+      "sha256": "06fa026f87d8d485da8a10a3e7100bd0e0925835d8c8a71363b6ac7ac41e9bdc",
+      "bytes": 9893
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/OptionSeriesManager.ts",
+      "retained": "source/tonswap_tolk/wrappers/OptionSeriesManager.ts",
+      "sha256": "51c1081741fb46f4780f5548b7718fab7ff115f0fa4f57b46d37f5253f3ef315",
+      "bytes": 6421
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/OptionVault.ts",
+      "retained": "source/tonswap_tolk/wrappers/OptionVault.ts",
+      "sha256": "67dbc5cee14022c932c514d747fc34df3108a54626fd2b415b2733d289e81c76",
+      "bytes": 14456
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/T3Hub.ts",
+      "retained": "source/tonswap_tolk/wrappers/T3Hub.ts",
+      "sha256": "602ac5e0218805341ec9605da99e7e7674bb11588c17a4ad3b00e419c97f395d",
+      "bytes": 14595
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/T3Wallet.ts",
+      "retained": "source/tonswap_tolk/wrappers/T3Wallet.ts",
+      "sha256": "d7899096d18d29ca72335fcadaf1dda1eabb030435e783f4e18c93218a506cbb",
+      "bytes": 9648
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/generated/opcodes.ts",
+      "retained": "source/tonswap_tolk/wrappers/generated/opcodes.ts",
+      "sha256": "33ac28a4998016ad3748023d9963b5c35c7a0ad3284912aade367c5b3825bd43",
+      "bytes": 7806
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/jettonRecovery.ts",
+      "retained": "source/tonswap_tolk/wrappers/jettonRecovery.ts",
+      "sha256": "da4dbff12b541fc49fae82f08b9c81b521f8f5a46fc5c15c1c8c879be789026c",
+      "bytes": 2923
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/jettonSlots.ts",
+      "retained": "source/tonswap_tolk/wrappers/jettonSlots.ts",
+      "sha256": "1cb9c95e4affafc8424de364d0109376b1268aaf4457230c3efa598dbf9b458c",
+      "bytes": 11480
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/jettonWalletBudget.ts",
+      "retained": "source/tonswap_tolk/wrappers/jettonWalletBudget.ts",
+      "sha256": "8fd6ce7783540a2bca37fc679313eb1853d76a2ee616644bdc4e562c2ae0d68d",
+      "bytes": 5264
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/utils/oracleEvidence.ts",
+      "retained": "source/tonswap_tolk/wrappers/utils/oracleEvidence.ts",
+      "sha256": "974fb4fc64e36e05070b47325420e73b23ed536b3a8edd1829e157c365782afe",
+      "bytes": 12746
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_tolk/wrappers/utils/swapPayload.ts",
+      "retained": "source/tonswap_tolk/wrappers/utils/swapPayload.ts",
+      "sha256": "353c5500e6e9935fc1a299ac0afa3b95d2b91fdf074e35274a1c83ba061005c0",
+      "bytes": 11114
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/constants.ts",
+      "retained": "source/tonswap_web/constants.ts",
+      "sha256": "3df6700ea1a95e67e0736cc566a8ac2509f0a70f819029036f2cf23a7ba30cd8",
+      "bytes": 4898
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/i18n/format.ts",
+      "retained": "source/tonswap_web/i18n/format.ts",
+      "sha256": "095a9ee2baad657edf4b9908f6b9a8174d424e9e5318c17314ecaa1d20c51d34",
+      "bytes": 5987
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/i18n/locales/en/review.ts",
+      "retained": "source/tonswap_web/i18n/locales/en/review.ts",
+      "sha256": "67264cdd45b7ff768647aeb8c7c45f4013518f725908e8df23e8d599f5663460",
+      "bytes": 15525
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/i18n/message.ts",
+      "retained": "source/tonswap_web/i18n/message.ts",
+      "sha256": "80accfb071fce6fe488d5bbbfba671f9b71eface32cc882dae4e2251a6b2cb05",
+      "bytes": 17261
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/i18n/meta.ts",
+      "retained": "source/tonswap_web/i18n/meta.ts",
+      "sha256": "bc8b67d69c1e5cf4b7b2f392a0a38dea0e320ceeccea8ab494153fb41eac7e28",
+      "bytes": 5142
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/i18n/pseudo.ts",
+      "retained": "source/tonswap_web/i18n/pseudo.ts",
+      "sha256": "c068a6dde18bb5a7013ef7778a3de578594bf3accf43600681007e0114545ba7",
+      "bytes": 2042
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/package-lock.json",
+      "retained": "source/tonswap_web/package-lock.json",
+      "sha256": "8bd1aa32f471d0f9b26c827efea1f86c3c4d1067f406794511735415c253b04b",
+      "bytes": 127707
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/package.json",
+      "retained": "source/tonswap_web/package.json",
+      "sha256": "1f0b5553a5d430c4919c951fbbb559b01f0da7fc32524431d8be51d9d0ba9214",
+      "bytes": 3592
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/releaseManifest.ts",
+      "retained": "source/tonswap_web/releaseManifest.ts",
+      "sha256": "16dd00f1e4bce13fbce980f1f205551d7ba44da666c831dc0a49bbb881e977bb",
+      "bytes": 5107
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/releaseManifestCodec.mjs",
+      "retained": "source/tonswap_web/releaseManifestCodec.mjs",
+      "sha256": "ee611cca51373c15e0f25b244e4199317b68bc264ddb6c99c10b353c97d1ec10",
+      "bytes": 12300
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/releaseViteCache.ts",
+      "retained": "source/tonswap_web/releaseViteCache.ts",
+      "sha256": "f45b86bccfc43197ea1367514ef665dea7f4bfd2c28e57ae7866500ee0cd71e6",
+      "bytes": 1779
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/routes.mjs",
+      "retained": "source/tonswap_web/routes.mjs",
+      "sha256": "8437ef747197b25c41d22002892633d3bbd7142bc5f529073f6a7cb589ef29bf",
+      "bytes": 20105
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/appError.ts",
+      "retained": "source/tonswap_web/services/appError.ts",
+      "sha256": "20c0c55e8e0b9febd686ecb3aa50c5b9e79ef02e2d1b068a8ae9c238140b6dca",
+      "bytes": 2048
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/appExecutionNetwork.ts",
+      "retained": "source/tonswap_web/services/appExecutionNetwork.ts",
+      "sha256": "7bf14ff1da023b87eea58654430f72a094a68fd4d75e47504baf9949312e8559",
+      "bytes": 310
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/assetValuations.ts",
+      "retained": "source/tonswap_web/services/assetValuations.ts",
+      "sha256": "4faf05adf135df0fcf5aa634527567e07b29f067c9edad132cb605e9e105c478",
+      "bytes": 12456
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/chainReadError.ts",
+      "retained": "source/tonswap_web/services/chainReadError.ts",
+      "sha256": "79b9aef5a220d187a538f6f0cd9866f6d37983eba4e7c66289a3b8e72b339fef",
+      "bytes": 2045
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/displayDecimal.ts",
+      "retained": "source/tonswap_web/services/displayDecimal.ts",
+      "sha256": "f8234a020bc53e482f5a2b71ef392304fb90a438835a02098701f209548d6f0b",
+      "bytes": 2536
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/executionNetwork.ts",
+      "retained": "source/tonswap_web/services/executionNetwork.ts",
+      "sha256": "eed6b25e655d5c4ec8632f0b86f23a12ff0168eb0147691409e69abed84e2f57",
+      "bytes": 823
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/indexer.ts",
+      "retained": "source/tonswap_web/services/indexer.ts",
+      "sha256": "deeb1130722f9701a04034ed0ba3741fdc05aa44d297455e3818b509b95abe5d",
+      "bytes": 59101
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/jettonWalletProfile.ts",
+      "retained": "source/tonswap_web/services/jettonWalletProfile.ts",
+      "sha256": "fd7a1ce46990c7b95a82240d966f7966e0e952e74e1d1d8aaa499e9e11a4ca51",
+      "bytes": 11718
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/nodeEndpoint.ts",
+      "retained": "source/tonswap_web/services/nodeEndpoint.ts",
+      "sha256": "8de6f26aea42ae766b52a088e3f8bbe17a73911b6737516b2aadb127b984384e",
+      "bytes": 9929
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/optionOracle.ts",
+      "retained": "source/tonswap_web/services/optionOracle.ts",
+      "sha256": "d3fd4c73ec377e2237b906314c3a1628f11b2d48defae9e013d3b8f83e208c5d",
+      "bytes": 3579
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/optionPurchaseChainProof.ts",
+      "retained": "source/tonswap_web/services/optionPurchaseChainProof.ts",
+      "sha256": "8129d910d7ef1574cbb7ba2f174ad2c76156d74a1f011f19dd25cde694212355",
+      "bytes": 31569
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/optionPurchaseSettlement.ts",
+      "retained": "source/tonswap_web/services/optionPurchaseSettlement.ts",
+      "sha256": "a1415bf0ab9ee028132aacc5ec4adef6abb87f01386bf0f18c971ae061a6d44b",
+      "bytes": 3664
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/optionsContracts.ts",
+      "retained": "source/tonswap_web/services/optionsContracts.ts",
+      "sha256": "c581832528d5776f8e4e2b768a61d9e2532fe927d5eec6ed2631fee0baea96bd",
+      "bytes": 25531
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/perpsUpkeep.ts",
+      "retained": "source/tonswap_web/services/perpsUpkeep.ts",
+      "sha256": "5db85eb3c5cee7b73c52586aa748397605cb448637e4305d44cff74e68352719",
+      "bytes": 11471
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/platformApi.ts",
+      "retained": "source/tonswap_web/services/platformApi.ts",
+      "sha256": "e79e09d35675cae97e12ac3bebba511eac910dc0058d99916f260c6db3789337",
+      "bytes": 2831
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/releaseTransport.ts",
+      "retained": "source/tonswap_web/services/releaseTransport.ts",
+      "sha256": "6fee92a17947298852d6c6aab981172c99e7d334e05e43f177896f5774787444",
+      "bytes": 1787
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/spotContracts.ts",
+      "retained": "source/tonswap_web/services/spotContracts.ts",
+      "sha256": "d14037c04cd288a23a84cfff9aeee4b4ee377173a24678b1eb6fd10becacba41",
+      "bytes": 27148
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/spotDirectSwapReceipt.ts",
+      "retained": "source/tonswap_web/services/spotDirectSwapReceipt.ts",
+      "sha256": "1dc73af7b7af9c067281054a1be6e78189cb35885322b9c00ceb4a4f2a3858c9",
+      "bytes": 994
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/spotPoolRead.ts",
+      "retained": "source/tonswap_web/services/spotPoolRead.ts",
+      "sha256": "1674119de83be9abd354926810956432bd8961b0abca8be9dbecb4cfb8f57e1f",
+      "bytes": 4640
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/spotPoolWallets.ts",
+      "retained": "source/tonswap_web/services/spotPoolWallets.ts",
+      "sha256": "1ffd1ff04215fcdf4f3679ee00ae4aff4f2c71e1e485422b49338c33aa8f0885",
+      "bytes": 5936
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/spotSwapAmounts.ts",
+      "retained": "source/tonswap_web/services/spotSwapAmounts.ts",
+      "sha256": "341c4d2c18c0e33d6e2fd4206d8daf48c645ad1ea6a8c81f0d70b736d3189042",
+      "bytes": 1449
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/spotSwapChainProof.ts",
+      "retained": "source/tonswap_web/services/spotSwapChainProof.ts",
+      "sha256": "20783573237815eda6025fab28dfd2ecd84a128a05b7eae337e3f11d6bc0bdb2",
+      "bytes": 23221
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/spotSwapIdentity.ts",
+      "retained": "source/tonswap_web/services/spotSwapIdentity.ts",
+      "sha256": "000b14ccd53fa402d80efa3f85b20f4a97cdcd5f68baf38f0845ed6471a67429",
+      "bytes": 2541
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/t3Contracts.ts",
+      "retained": "source/tonswap_web/services/t3Contracts.ts",
+      "sha256": "7f51e51fd6f603957c7b8a79c0bbca4a086530b7f41f15750ca37b3ea7fcc05c",
+      "bytes": 50627
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/t3CurrentEvidence.ts",
+      "retained": "source/tonswap_web/services/t3CurrentEvidence.ts",
+      "sha256": "039518548c52a18ad55bc1bb977f1d7efee2c5f6ef52563f79802c2175f1f9b1",
+      "bytes": 43459
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/t3Redemption.ts",
+      "retained": "source/tonswap_web/services/t3Redemption.ts",
+      "sha256": "4ce0e58c5ccf32a8b3d52c5289a933f3880d86f558457f66e6cc8beaf276ac41",
+      "bytes": 17366
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/t3RedemptionBinding.ts",
+      "retained": "source/tonswap_web/services/t3RedemptionBinding.ts",
+      "sha256": "a8ae7fb89137d581e0dee88ae6c735de21f772de15926fb9d3b4d423245d9005",
+      "bytes": 2060
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/tonUnits.ts",
+      "retained": "source/tonswap_web/services/tonUnits.ts",
+      "sha256": "8fe93dea636232d61c31ab8b196fd940b7349d7000a4152b671837fdbd25bf1b",
+      "bytes": 5114
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/toncenter.ts",
+      "retained": "source/tonswap_web/services/toncenter.ts",
+      "sha256": "7526cb4721fae476d781fbb0f177967a2a9147da3a31704c4a5f24c67cfd98bb",
+      "bytes": 69074
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/transactionProofHistory.ts",
+      "retained": "source/tonswap_web/services/transactionProofHistory.ts",
+      "sha256": "1b5fe674ef1dbc1f1e329eeea6b058ae4d81e6f68aa05f49b6a5b5baebf8f910",
+      "bytes": 5750
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/transportHealth.ts",
+      "retained": "source/tonswap_web/services/transportHealth.ts",
+      "sha256": "708c3b159a658e186780bc84aabe8dd21baa26db13cd885a05c02aa46f246f37",
+      "bytes": 6061
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/walletRequest.ts",
+      "retained": "source/tonswap_web/services/walletRequest.ts",
+      "sha256": "6758ac847a78ecfb0cc8a8fde8cea33a3ee406aeaf9d418f9dcb8ac63e0cd2c0",
+      "bytes": 30290
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/walletRequestChain.ts",
+      "retained": "source/tonswap_web/services/walletRequestChain.ts",
+      "sha256": "f75aa669d4e7408d2c551a0fdb2c6059953e839bdce2f0622f9155e97d275744",
+      "bytes": 3256
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/walletRequestCodec.ts",
+      "retained": "source/tonswap_web/services/walletRequestCodec.ts",
+      "sha256": "abd9677b260436c22c60e1af087541f2685c97dbe3aca54a83803caa8752ee0b",
+      "bytes": 2614
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/services/walletRequestNotSent.ts",
+      "retained": "source/tonswap_web/services/walletRequestNotSent.ts",
+      "sha256": "920d315a3df6a24f132dc8518362ed4f4c24c0ae2ccc998c68ee707f9ffef749",
+      "bytes": 3203
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/tests/fixtures/release-manifest.localnet.json",
+      "retained": "source/tonswap_web/tests/fixtures/release-manifest.localnet.json",
+      "sha256": "9cdf82a0d3101a879d8ce05123d5a4d26fae173438ad52fc3c64524ae0b3641f",
+      "bytes": 13540
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/tests/helpers/contractSandbox.ts",
+      "retained": "source/tonswap_web/tests/helpers/contractSandbox.ts",
+      "sha256": "66a07b0132cbbe97325e0e9663238cd1db86000b4eb9d3726637cde281602d88",
+      "bytes": 13571
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/tests/helpers/optionsNativeWire.ts",
+      "retained": "source/tonswap_web/tests/helpers/optionsNativeWire.ts",
+      "sha256": "8c70dc3e8184ca52badd5dccfddd63e909fdff373b1701c6297cbd05ce6b1b06",
+      "bytes": 19576
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/tests/setup/release.ts",
+      "retained": "source/tonswap_web/tests/setup/release.ts",
+      "sha256": "ebf96ba8e5f5a5f889662c0671032ab740d2fde78fda0d2d8717bc288b0790b5",
+      "bytes": 720
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/tests/wire/parity.options-writer.test.ts",
+      "retained": "source/tonswap_web/tests/wire/parity.options-writer.test.ts",
+      "sha256": "02f0e864081eb96b832cfed1ade460eecfadedd62f19e68517c043206884671a",
+      "bytes": 5714
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/tests/wire/parity.options.test.ts",
+      "retained": "source/tonswap_web/tests/wire/parity.options.test.ts",
+      "sha256": "159137d53e734c1662bfc95b8e0597bd996e6b14aae0ecec5d48089aa64adbfb",
+      "bytes": 6581
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/tsconfig.json",
+      "retained": "source/tonswap_web/tsconfig.json",
+      "sha256": "194ff9314d170f333c8169f21e519e65780def2dfa0d591a2cb476a13f151e2d",
+      "bytes": 575
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/types.ts",
+      "retained": "source/tonswap_web/types.ts",
+      "sha256": "639345f890959cfd0e04b0a2090a9032d87ab060b15c876b11c1ccd603c61050",
+      "bytes": 1990
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/urlSecurity.ts",
+      "retained": "source/tonswap_web/urlSecurity.ts",
+      "sha256": "2c2c8a9864accbb7076280bbb1c5d606f1a892676dc683cb207d789180695348",
+      "bytes": 951
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web/vitest.config.ts",
+      "retained": "source/tonswap_web/vitest.config.ts",
+      "sha256": "d4468bed9a25f11ace0ee84bd110511a55a17d7f6eb26133a2aa59f3c3f2d03f",
+      "bytes": 997
+    }
+  ]
+}

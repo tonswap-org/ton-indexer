@@ -12,9 +12,9 @@ import {
   OPTION_BUY_SPREAD,
 } from "../ledger/options";
 import {
-  A, owner, other, factory, series, ownerWallet, factoryWallet,
-  factoryCode, shoutCode, spreadCode, notional, premium, collateral,
-  boc, position, factoryData, factorySeries, productData, fixture, cash,
+  A, owner, other, factory, vault, series, ownerWallet, factoryWallet,
+  factoryCode, vaultCode, shoutCode, spreadCode, notional, premium, collateral,
+  boc, position, factoryData, factorySeries, productData, vaultData, fixture, cash,
   type FactoryStateFixture, acceptedIngressState,
 } from "./ledger-option-lifecycle-test";
 
@@ -42,6 +42,9 @@ export function bounceFixture(kind: 1 | 2 = 1, paid = true) {
   f.tx(series, undefined, [], {
     code: productCode, data: productData(kind, false, 0n, owner, "absent"),
   });
+  // Pinned identity reads require the configured vault's physical deployment,
+  // even when a failed initial buy never sends collateral to that vault.
+  f.tx(vault, undefined, [], { code: vaultCode, data: vaultData(null) });
   const payload = beginCell()
     .storeUint(OPTION_FACTORY_BUY, 32).storeUint(7, 64).storeAddress(A(owner))
     .storeCoins(notional).storeCoins(premium + 20n).storeUint(10000, 32).storeAddress(null).endCell();

@@ -1,0 +1,183 @@
+{
+  "schema": "tonswap-capture-build-v1",
+  "producer": "t3Recovery",
+  "suite": "tests/system/T3RecoveryCapture.spec.ts",
+  "tolkVersion": "1.5.0",
+  "sandboxVersion": "0.42.0",
+  "manifestSha256": "366e72a3593a321128bb6744018e51599980c9d7f40af9c063417f23d1320a4b",
+  "buildHash": "e7c9ea2bfb0cdff6375b72d64599eeefd39c00330a4050e8e26e737cc038cebf",
+  "targets": {
+    "T3Hub": {
+      "source": "contracts/t3/hub.tolk",
+      "codeHash": "b2fb1bebba68bfd5444424f914f22e2a4d6ac0cf0a69c1803106ea25ef0b67cb",
+      "artifact": "build/T3Hub.boc",
+      "artifactSha256": "36175ba5d3e434bcc16904ccbe0c3c054e8513f23052c3c776e348a826323d03",
+      "inputs": {
+        "contracts/generated/op/governance.tolk": "bfa1c2bfa74d49fe9fb0a2addda0f34184706133280ca62ad41b6a45c3d19bca",
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/t3.tolk": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/shared/governance/module_gate.tolk": "afb1612ff159d5a083680a7a8e7dd2a3cf3cdf62963c1a41cfb0ffeedacdf2de",
+        "contracts/shared/jetton/jetton_quotes.tolk": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+        "contracts/shared/jetton/jetton_slots.tolk": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+        "contracts/shared/jetton/owed_archive.tolk": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/jetton/tep89_codec.tolk": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+        "contracts/shared/math/full_math.tolk": "d2b0ea2d3dd311fa76f57fc85d88faab310c8d85281abf6f238a3b09bdbffd4f",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8",
+        "contracts/t3/deposit_intent.tolk": "5ddb880bfaf21ebfa6c1f1cb921bcd8d42ebc97cd1fe1c61ff5bdb0bf96a5861",
+        "contracts/t3/fresh_math.tolk": "ec9f410fc3c7a173c154a514cf4ff850af5422b72c321a682dbab176cdbcaa3c",
+        "contracts/t3/hub_helpers.tolk": "788923c34db6e3747ebcb1d95c1f285e8d68593108746d253fec73140b396155",
+        "contracts/t3/hub_types.tolk": "a2c9f9d7317bc993212d6708e6d7f55883d62dc9e9e89b4d858f2b234527482c",
+        "contracts/t3/hub.tolk": "919ecdf7aebf2b9e7d30e5c9c0232eba120c431bf07394025e9356c1dfe808ac",
+        "contracts/t3/receipt_tree.tolk": "22a916c4b730336d7f4464f30468c7a2f6919b49b790753daeddb6c9b1650216",
+        "contracts/t3/recovery_types.tolk": "8985e0572cfefb4f43fa2c40b3eea71331b80a44c615d2cb560db94a81a96b2d",
+        "contracts/t3/reserve_credit.tolk": "a53bbc326a5b7c3fabca4985cf88abbeff1559ab81b3c4783603ebd9082c13f5",
+        "contracts/t3/wallet_budget.tolk": "83e7fb8b154c72e496e2666c7a0c2366c4145163b3c6a32b179aa810de39c107",
+        "contracts/t3/wallet_types.tolk": "43d30a774779dd49ec5b1032a84c722c3cf14302724848a43892dffc0f21cd72"
+      },
+      "inputsSha256": "570b8a75a5c5b0226ad8b39ec93debd0dd0703a7b1c14c2195dc094f18d64680"
+    },
+    "T3RecoveryProof": {
+      "source": "contracts/t3/recovery_proof.tolk",
+      "codeHash": "66fea90500722cc6f723b1ca26231dec5bdb680d6ff45876bd9eba5bea79ba00",
+      "artifact": "build/T3RecoveryProof.boc",
+      "artifactSha256": "bd8fb94194ff50ec733290a98677a0bf0f6ce5dfcb8e81bddcc443316240b60b",
+      "inputs": {
+        "contracts/generated/op/t3.tolk": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8",
+        "contracts/t3/deposit_intent.tolk": "5ddb880bfaf21ebfa6c1f1cb921bcd8d42ebc97cd1fe1c61ff5bdb0bf96a5861",
+        "contracts/t3/recovery_proof.tolk": "72da137d95ff3d1b1257af1c42e0794a02401700133015f127f16090862f1576",
+        "contracts/t3/recovery_types.tolk": "8985e0572cfefb4f43fa2c40b3eea71331b80a44c615d2cb560db94a81a96b2d",
+        "contracts/t3/wallet_budget.tolk": "83e7fb8b154c72e496e2666c7a0c2366c4145163b3c6a32b179aa810de39c107",
+        "contracts/t3/wallet_types.tolk": "43d30a774779dd49ec5b1032a84c722c3cf14302724848a43892dffc0f21cd72"
+      },
+      "inputsSha256": "5f0763483fafdbe6555144e13170409a8ba8b20de859baf290d7778128012d2b"
+    },
+    "T3Wallet": {
+      "source": "contracts/t3/wallet.tolk",
+      "codeHash": "3bd7020c846ba45b9291003c3d0fe79fb6e9428a26819ee63e3ed30e0dd9abf6",
+      "artifact": "build/T3Wallet.boc",
+      "artifactSha256": "9bfaea10002418ef0f9714783ebaa72745bf46a7dedd5cb861900fbb711a38e7",
+      "inputs": {
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/t3.tolk": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8",
+        "contracts/t3/recovery_types.tolk": "8985e0572cfefb4f43fa2c40b3eea71331b80a44c615d2cb560db94a81a96b2d",
+        "contracts/t3/wallet_budget.tolk": "83e7fb8b154c72e496e2666c7a0c2366c4145163b3c6a32b179aa810de39c107",
+        "contracts/t3/wallet_tree.tolk": "689f119d58bbcc11afb768fc613295ef2be22895931ae804f7ccde58938440f4",
+        "contracts/t3/wallet_types.tolk": "43d30a774779dd49ec5b1032a84c722c3cf14302724848a43892dffc0f21cd72",
+        "contracts/t3/wallet.tolk": "541047231bf34b54ae8b1a6f162ef05db6009e0f1fa7414389f4623105757373"
+      },
+      "inputsSha256": "204376b2cdc56374a93b53d52a3232312ab899c4ac6979bc878e02caf4f35855"
+    }
+  },
+  "captures": {
+    "case-01.json": {
+      "executed": [
+        "T3Hub",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "T3Hub",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "18d5b6e780ff0bb451254c2c760d09d6e485638cd1407abb97078752c3c1c9ee",
+        "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-02.json": {
+      "executed": [
+        "T3Hub",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "T3Hub",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "18d5b6e780ff0bb451254c2c760d09d6e485638cd1407abb97078752c3c1c9ee",
+        "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-03.json": {
+      "executed": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "18d5b6e780ff0bb451254c2c760d09d6e485638cd1407abb97078752c3c1c9ee",
+        "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-04.json": {
+      "executed": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "18d5b6e780ff0bb451254c2c760d09d6e485638cd1407abb97078752c3c1c9ee",
+        "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-05.json": {
+      "executed": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "18d5b6e780ff0bb451254c2c760d09d6e485638cd1407abb97078752c3c1c9ee",
+        "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-06.json": {
+      "executed": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "T3Hub",
+        "T3RecoveryProof",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "18d5b6e780ff0bb451254c2c760d09d6e485638cd1407abb97078752c3c1c9ee",
+        "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    }
+  }
+}

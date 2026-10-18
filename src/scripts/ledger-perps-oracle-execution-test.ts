@@ -18,7 +18,7 @@ const provenance = readPerpsRiskFixtureProvenance();
 
 // Unmodified raw transactions and before/after storage emitted by the actual
 // Tolk engine, DLMM, RiskVault, RiskController and owner/product T3 wallets.
-function fixture(name: string) {
+export function fixture(name: string) {
   const bytes = readFileSync(join(folder, `${name}.json`));
   const original = provenance.artifacts.find((entry: { relative: string }) => entry.relative === `${name}.json`);
   assert(original, 'Every execution case identifies its unchanged original capture');
@@ -297,4 +297,4 @@ async function main() {
   console.log('PASS missing beneficiary custody, missing vault journal and forged RVPH never complete a counterparty payment');
   console.log('PASS missing vault/policy historical boundaries remain unresolved');
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });

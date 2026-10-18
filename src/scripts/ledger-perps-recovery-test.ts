@@ -1,3 +1,6 @@
+import { fixtureChainSource } from './support/chainFixture';
+import { currentPerpsBindingFromManifest } from '../ledger/currentPerpsProof';
+import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay, setImmediate as nextTurn } from 'node:timers/promises';
@@ -8,11 +11,12 @@ import { LedgerService } from '../ledger/service';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import { loadOpcodes } from '../utils/opcodes';
 import type { Logger } from '../utils/logger';
-import type { TonDataSource } from '../data/dataSource';
+
 
 async function settle(service: PerpsRangeService) {
   while ((service as any).running.size) await Promise.allSettled((service as any).running.values());
   assert.equal((service as any).pending.size, 0);
+  assert.equal((service as any).foreground.size, 0);
 }
 async function until(check: () => Promise<boolean>) {
   const deadline = Date.now() + 12_000;
@@ -25,7 +29,7 @@ async function until(check: () => Promise<boolean>) {
 /** Native runs use only a new isolated schema on an explicitly selected loopback
  * server. PGlite covers durable state; native PostgreSQL covers session locks. */
 async function main() {
-  const connectionString = process.env.LEDGER_PERPS_RETRY_TEST_DATABASE_URL;
+  const connectionString = process.env.INDEXER_TEST_DATABASE_URL;
   if (connectionString && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(connectionString).hostname))
     throw Error('Perps recovery integration requires isolated loopback PostgreSQL.');
   const schema = 'perps_recovery_' + randomUUID().replace(/-/g, '');
@@ -38,15 +42,18 @@ async function main() {
     connect: async () => sql, end: async () => db!.close(),
   };
   const store = new PostgresLedgerStore(sql), opcodes = loadOpcodes();
-  const options = { perpsEngine: `0:${'2'.repeat(64)}`, t3Root: `0:${'3'.repeat(64)}`, perpsEngineCodeHash: '4'.repeat(64) };
+  const currentPerpsBinding = currentPerpsBindingFromManifest(runtimeManifestFixture({ network: 'ton:localnet' }));
+  const options = { currentPerpsBinding, perpsEngine: currentPerpsBinding.perps.engine.toRawString(), t3Root: currentPerpsBinding.perps.t3Root.toRawString(), perpsEngineCodeHash: currentPerpsBinding.perps.engineHash };
   const now = Math.floor(Date.now() / 1000), bounds = { scope: 'perps' as const, fromUtime: now - 60, toUtime: now };
   const owner = (index: number) => `0:${BigInt(index).toString(16).padStart(64, '0')}`;
-  let head = now - 1, reads = 0, inFlight = 0, peak = 0;
-  const source = { getMasterchainInfo: async () => {
+  let head = now - 1, reads = 0, inFlight = 0, peak = 0, rangeReads = 0;
+  const source = fixtureChainSource({ physicalCurrentReads: true,
+    getAccountState: async (account) => { if(account === options.perpsEngine) rangeReads++; return {accountState: 'uninitialized', balance: '0'}; },
+    getAccountStateAtSeqno: async () => { throw new Error('unexpected historical read without original current state');}, head: async () => {
     reads++; peak = Math.max(peak, ++inFlight);
     await nextTurn(); inFlight--;
-    return { seqno: 100, timestamp: head };
-  } } as unknown as TonDataSource;
+    return { seqno: 100, utime: head };
+  } });
   const workers: PerpsRangeService[] = [];
   const worker = (dataSource = source) => {
     const value = new PerpsRangeService('localnet', store, dataSource, opcodes, options);
@@ -76,11 +83,14 @@ async function main() {
     ledger = new LedgerService('localnet', store, source, opcodes, logger, 2, options);
     ledger.start(); // No owner polls or explicit collector calls after restart.
     await until(async () => await activeCount() === 0);
-    assert.equal(reads, 256, 'all 128 original requests resumed, including the crashed running row');
-    assert(peak > 0 && peak <= 2, 'startup and timer share the two-worker bound');
-    assert.deepEqual(warnings, []);
+    await until(async () => !(ledger as any).scheduled.size);
+    assert.equal(rangeReads, 129, 'all 128 original requests resumed, including the crashed running row, plus the engine singleton prewarm');
+    assert.equal(reads, 258, '128 head waits, 128 range retries and two singleton prewarms');
+    assert(peak > 0 && peak <= 3, 'two range workers and one background singleton worker bound startup work');
+    assert.equal(warnings.filter(message => message === 'ledger perps range collection failed').length, 128);
+    assert(warnings.every(message => message === 'ledger perps range collection failed'), 'expected collection failures are logged without extra resume errors');
     const outcomes = (await sql.query('SELECT status,error_code,count(*)::int AS count FROM ledger_perps_ranges GROUP BY status,error_code')).rows;
-    assert.deepEqual(outcomes, [{ status: 'failed', error_code: 'perps_range_archive_unavailable', count: 128 }]);
+    assert.deepEqual(outcomes, [{ status: 'failed', error_code: 'perps_range_original_state_unavailable', count: 128 }]);
     const admitted = await ledger.page(owner(129), bounds);
     assert(admitted.coverage.generation);
     const stoppedRanges = (ledger as any).ranges as PerpsRangeService;
@@ -167,7 +177,7 @@ async function main() {
       let entered!: () => void, release!: () => void;
       const readEntered = new Promise<void>(resolve => { entered = resolve; });
       const released = new Promise<void>(resolve => { release = resolve; });
-      const held = worker({ getMasterchainInfo: async () => { entered(); await released; throw Error('held source unavailable'); } } as unknown as TonDataSource);
+      const held = worker(fixtureChainSource({ head: async () => { entered(); await released; throw Error('held source unavailable'); } }));
       const locked = randomUUID();
       await sql.query(`INSERT INTO ledger_perps_ranges(generation,network,account,from_utime,to_utime,binding,status)
         VALUES($1,'localnet',$2,$3,$4,$5,'pending')`, [locked, owner(400), bounds.fromUtime, bounds.toUtime, binding]);

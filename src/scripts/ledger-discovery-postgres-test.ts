@@ -6,9 +6,9 @@ import type { LedgerEvent } from '../ledger/types';
 
 /** Real connection/lock behavior, restricted to an explicitly supplied local test database. */
 async function main() {
-  const connectionString = process.env.LEDGER_DISCOVERY_TEST_DATABASE_URL;
+  const connectionString = process.env.INDEXER_TEST_DATABASE_URL;
   if (!connectionString || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(connectionString).hostname))
-    throw new Error('Set LEDGER_DISCOVERY_TEST_DATABASE_URL to an isolated loopback PostgreSQL instance.');
+    throw new Error('Set INDEXER_TEST_DATABASE_URL to an isolated loopback PostgreSQL instance.');
   const schema = 'discovery_' + randomUUID().replace(/-/g, '');
   const admin = new Pool({ connectionString, max: 1 });
   let pool: Pool | undefined, created = false;

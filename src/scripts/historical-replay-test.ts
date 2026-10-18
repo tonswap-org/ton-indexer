@@ -1,3 +1,4 @@
+import { fixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -6,10 +7,10 @@ import { Address, Cell, beginCell, loadShardAccount, loadTransaction, storeShard
 import { Executor, type IExecutor } from '@ton/sandbox';
 import { replayHistoricalAccount, type HistoricalReplayStep } from '../data/historicalReplay';
 import { findTransactionState } from '../ledger/archive';
-import { readPerpsState } from '../ledger/perpsState';
+import { decodeNativePerpsState } from '../ledger/currentPerpsState';
 import { projectOwnerLedger, type ProjectionInput, type LedgerChain } from '../ledger/project';
 import { loadOpcodes } from '../utils/opcodes';
-import type { AccountStateResponse, TonDataSource, RawTransaction } from '../data/dataSource';
+import type {AccountStateResponse, RawTransaction} from '../data/dataSource';
 
 const dir = join(__dirname, 'fixtures/perps-intermediate-state');
 const provenance = JSON.parse(readFileSync(join(dir, 'provenance.json'), 'utf8'));
@@ -81,6 +82,12 @@ async function main() {
   await check('a shard block without the original transaction is rejected', async () => {
     await assert.rejects(replayHistoricalAccount({ ...input, steps: [{ ...steps[0], block: Cell.EMPTY }] }, executor), /binding mismatch/);
   });
+  await check('a transaction embedded only as arbitrary block payload is not executed membership', async () => {
+    const extra = beginCell().storeUint(0x4a33f6fd, 32).storeRef(steps[0].transaction).storeRef(Cell.EMPTY)
+      .storeRef(beginCell().storeBit(false).storeCoins(0).storeBit(false).endCell()).storeBuffer(Buffer.alloc(32)).endCell();
+    const payloadOnly = new Cell({ bits: block.bits, refs: [...block.refs.slice(0, 3), extra] });
+    await assert.rejects(replayHistoricalAccount({ ...input, steps: [{ ...steps[0], block: payloadOnly }] }, executor), /binding mismatch/);
+  });
   await check('missing historical config does not substitute sandbox defaults', async () => {
     await assert.rejects(replayHistoricalAccount({ ...input, steps: [{ ...steps[0], config: Cell.EMPTY }] }, executor));
   });
@@ -107,15 +114,15 @@ async function main() {
   snapshots.set(before.lastTransactionLt.toString(), beforeState);
   await check('masterchain search uses exact replay only for a skipped intermediate cursor', async () => {
     let replayCalls = 0;
-    const source = { getMasterchainInfo: async () => ({ seqno: 8103 }),
+    const source = fixtureChainSource({ head: async () => ({ seqno: 8103 }),
       getAccountStateAtSeqno: async (_a: string, seqno: number) => seqno < 8102 ? beforeState : snapshots.get('8218000019')!,
       getAccountStateAtTransaction: async (_a: string, c: typeof cursor, seqno: number) => {
         replayCalls++; assert.equal(seqno, 8102); assert.deepEqual(c, cursor); return snapshots.get(cursor.lt)!;
       },
-    } as unknown as TonDataSource;
+    });
     assert.equal((await findTransactionState(source, address.toRawString(), cursor))?.state.lastTxLt, cursor.lt);
     assert.equal(replayCalls, 1);
-    delete source.getAccountStateAtTransaction;
+    source.getAccountStateAtTransaction = async () => { throw Error('archive unavailable'); };
     assert.equal(await findTransactionState(source, address.toRawString(), cursor), null);
   });
 
@@ -132,7 +139,9 @@ async function main() {
         role: row.account === owner ? 'owner' : row.account === ownerWallet ? 'owned_jetton_wallet' : 'counterparty', transactions: [] }; chains.set(row.account, chain); }
       chain.transactions.push(row.raw);
     }
-    assert.throws(() => readPerpsState(beforeState.dataBoc!, active.state.code!.hash().toString('hex')));
+    for (const state of [beforeState, ...snapshots.values()])
+      assert.throws(() => decodeNativePerpsState(Cell.fromBase64(state.dataBoc!)),
+        'Authenticated archived storage cannot enter the current PxStorage decoder');
     // Public identities captured from this immutable archive before retiring its decoder.
     const decoded = { root: '0:0158b4cf7b5ec1669943ab79d3e521b396883cede549fe1789a7716eb47ad06b', walletCodeHash: '5f84fc5075c0553ce1ed92fed04cc23ffa903acda5c697ecefd36cd05f0e075e' };
     const asset = (wallet: string, owner: string) => ({ kind: 'jetton' as const, id: `localnet:jetton:${decoded.root}`, master: decoded.root, wallet, owner, decimals: 9 });
@@ -147,18 +156,24 @@ async function main() {
         return a === engine && state && sh && sh.equals(h) ? { seqno: lt === before.lastTransactionLt.toString() ? 6416 : 8102, state } : null;
       },
     };
-    const target = (events: Awaited<ReturnType<typeof projectOwnerLedger>>["events"]) => events.find(e => e.settlement?.perps?.queryId === '1788897868699');
-    const unresolved = target((await projectOwnerLedger({ ...projection, stateAt: async () => null })).events);
-    assert.ok(unresolved?.issues.includes('perps_exact_state_unavailable'));
-    const event = target((await projectOwnerLedger(projection)).events);
-    assert.notEqual(event?.settlement?.status, 'confirmed');
-    assert.equal(event?.settlement?.perps?.outcome, 'unresolved');
-    assert.equal(event?.settlement?.perps?.economics, undefined);
-    assert.equal(event?.settlement?.perps?.request.sizeRaw, '-4000000000');
-    assert.equal(event?.settlement?.perps?.request.marginRaw, '800000000');
-    assert.equal(event?.settlement?.perps?.request.leverageBps, 5000);
-    assert.equal(event?.settlement?.perps?.depositRaw, '812420000');
-    assert.ok(event?.issues.includes('perps_exact_state_unavailable'));
+    const missing = await projectOwnerLedger({ ...projection, stateAt: async () => null });
+    const replayed = await projectOwnerLedger(projection);
+    const dispatch = records.find(row => row.account === owner)!.raw;
+    for (const result of [missing, replayed]) {
+      assert(result.events.length > 0);
+      const retained = result.events.find(event => event.account === owner && event.lt === dispatch.lt);
+      assert(retained, 'The original owner dispatch survives unsupported product decoding');
+      assert.equal(retained.hash, dispatch.hash);
+      assert(retained.movements.some(movement => movement.asset.kind === 'native' && movement.direction === 'fee'),
+        'Unsupported business storage does not erase physical native charges');
+      assert(result.events.every(event => event.kind !== 'perps_operation'
+        && event.settlement?.protocol !== 'perps' && !event.settlement?.perps && !event.settlement?.currentPerps),
+        'Old code pins and exact replay cannot enroll a retired business decoder');
+      assert(result.events.every(event => event.movements.every(movement => movement.asset.kind !== 'perps_balance')),
+        'Archived position bookkeeping cannot create a current financial balance');
+    }
+    assert.deepEqual(replayed.events, missing.events,
+      'Exact replay authenticates historical cells without changing unsupported business classification or physical movements');
   });
   console.log(`Historical replay checks passed: ${checks}`);
 }

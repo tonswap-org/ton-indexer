@@ -1,21 +1,31 @@
+import type { RuntimeMetrics } from '../runtimeMetrics';
+import type { LedgerSqlPool } from './store';
 import { Pool } from 'pg';
 import { releaseDatabaseSchema } from '../releaseState';
 import { RELEASE_IDENTITY_DDL } from './schemaReadiness';
 
-export function releasePoolConfig(connectionString: string, manifestHash: string) {
+export type ReleasePoolOptions = { size?: number; metrics?: RuntimeMetrics; role?: 'worker' | 'read'; statementTimeoutMs?: number };
+export function releasePoolConfig(connectionString: string, manifestHash: string, options: ReleasePoolOptions = {}) {
+  const max = options.size ?? 10;
+  if (!Number.isSafeInteger(max) || max < 1 || max > 100) throw new Error('Invalid release pool size');
   const schema = releaseDatabaseSchema(manifestHash);
   // pg merges URL parameters over object options. Put the enforced namespace
   // into the URL itself so an old ?options=search_path cannot override it.
   const url = new URL(connectionString);
   url.searchParams.set('options', `-c search_path=${schema}`);
-  return { connectionString: url.toString(), max: 10, connectionTimeoutMillis: 10_000 };
+  if (options.statementTimeoutMs !== undefined) {
+    if (!Number.isSafeInteger(options.statementTimeoutMs) || options.statementTimeoutMs < 1 || options.statementTimeoutMs > 30_000)
+      throw Error('Invalid release statement timeout');
+    url.searchParams.set('statement_timeout', String(options.statementTimeoutMs));
+  }
+  return { connectionString: url.toString(), max, connectionTimeoutMillis: 10_000 };
 }
 
 /** No public-schema fallback: an old publication or retry job belongs to its
  * original release, even when the new release uses the same owner/network. */
-export async function createReleaseLedgerPool(connectionString: string, manifestHash: string): Promise<Pool> {
+export async function createReleaseLedgerPool(connectionString: string, manifestHash: string, options: ReleasePoolOptions = {}): Promise<LedgerSqlPool> {
   const schema = releaseDatabaseSchema(manifestHash);
-  const pool = new Pool(releasePoolConfig(connectionString, manifestHash));
+  const pool = new Pool(releasePoolConfig(connectionString, manifestHash, options));
   try {
     const client = await pool.connect();
     try {
@@ -33,6 +43,14 @@ export async function createReleaseLedgerPool(connectionString: string, manifest
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
-    return pool;
+    const connect = async () => {
+      const start = performance.now();
+      try { return await pool.connect(); }
+      finally { options.metrics?.observe('ledger_pool_wait_ms', performance.now() - start, { role: options.role ?? 'worker' }); }
+    };
+    return { connect, end: () => pool.end(), query: async (sql, params) => {
+      const client = await connect();
+      try { return await client.query(sql, params); } finally { client.release(); }
+    } };
   } catch (error) { await pool.end(); throw error; }
 }

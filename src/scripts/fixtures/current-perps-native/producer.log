@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /Users/mtakemiya/dev/tonswap/ton-indexer/.local/fresh-consumer-20261018/perps-current440-producer-v5/source/tonswap_web
+
+
+ Test Files  1 passed (1)
+      Tests  18 passed (18)
+   Start at  14:32:03
+   Duration  297.76s (transform 3.66s, setup 412ms, import 2.67s, tests 294.25s, environment 0ms)
+

@@ -1,8 +1,9 @@
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { loadConfig } from '../config';
 import { registerRoutes } from '../api/routes';
-import { TonDataSource } from '../data/dataSource';
+
 import { IndexerService } from '../indexerService';
 import { IndexedTx } from '../models';
 import { MemoryStore } from '../store/memoryStore';
@@ -12,9 +13,9 @@ const marketAddress = `0:${'1'.repeat(64)}`;
 const transactionHash = (lt: number) =>
   Buffer.from(BigInt(lt).toString(16).padStart(64, '0'), 'hex').toString('base64');
 
-const source: TonDataSource = {
+const source: FixtureChainSource = fixtureChainSource({
   network: 'localnet',
-  async getMasterchainInfo() {
+  async head() {
     return { seqno: 1 };
   },
   async getAccountState() {
@@ -26,16 +27,16 @@ const source: TonDataSource = {
   async runGetMethod() {
     return null;
   },
-  async getJettonBalance() {
+  async walletBalance() {
     return null;
   },
-  async getJettonMetadata() {
+  async jettonMetadata() {
     return null;
   },
   async close() {
     return;
   },
-};
+});
 
 const opcodes: OpcodeSets = {
   swap: new Set(),
@@ -207,12 +208,6 @@ async function main() {
     limit: 1,
   });
   assert.deepEqual(lastOnly.candles.map((candle) => candle.ts), [180]);
-
-  const swaps = await service.getSwapExecutions(marketAddress, { status: 'success' });
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '3')?.receiveAmountSource, undefined, 'Decoded action is not a ledger receipt');
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.receiveAmountSource, undefined);
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.receiveAmount, undefined);
-  assert.equal(swaps.swaps.find((swap) => swap.lt === '5')?.minimumReceiveAmount, '100');
 
   const app = Fastify();
   registerRoutes(app, config, service);

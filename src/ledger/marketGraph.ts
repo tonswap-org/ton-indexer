@@ -1,5 +1,5 @@
 import { resolveHistoricalJettonPrecision, type HistoricalRootArchive } from './jettonPrecision';
-import type { TonDataSource } from '../data/dataSource';
+import type { ChainSource } from '../data/dataSource';
 import type { LedgerService } from './service';
 import type { DlmmMarketBinding, MarketDependency, MarketNode } from './marketTypes';
 import { findTransactionState, type LedgerStateSnapshot } from './archive';
@@ -13,10 +13,11 @@ import { perpsWalletAddress } from './perpsWire';
 
 /** A pool-seeded, ownership-independent graph over durable physical chains. */
 export class DlmmMarketGraphBuilder {
-  constructor(private ledger: LedgerService, private source: TonDataSource, private maxAccounts = 256) {}
+  constructor(private ledger: LedgerService, private source: ChainSource, private maxAccounts = 256) {}
 
   async build(binding: DlmmMarketBinding) {
     if (binding.network !== this.ledger.network) throw new Error('market_network_mismatch');
+    const cycle = { boundary: await this.source.head() };
     const nodes: MarketNode[] = [], dependencies: MarketDependency[] = [], issues = new Set<string>(), loaded = new Set<string>();
     const snapshots = new Map<string, Promise<LedgerStateSnapshot | null>>();
     const rootStates = new Map<string,Promise<{state:HistoricalRootArchive['before']['state'];observedAt:string}>>();
@@ -25,7 +26,7 @@ export class DlmmMarketGraphBuilder {
       if(!promise){promise=(async()=>{
         const cached=(await this.ledger.store.pool.query('SELECT snapshot,observed_at FROM market_root_archive_states WHERE network=$1 AND root=$2 AND seqno=$3',[binding.network,root,seqno])).rows[0];
         if(cached)return {state:cached.snapshot,observedAt:new Date(cached.observed_at).toISOString()};
-        if(!this.source.getAccountStateAtSeqno || this.source.network!==binding.network)throw Error('root_archive_provider_unavailable');
+        if(this.source.network!==binding.network)throw Error('root_archive_provider_unavailable');
         const state=await this.source.getAccountStateAtSeqno(root,seqno),observedAt=new Date().toISOString();
         if(state.accountState!=='active' || !state.codeBoc || !state.dataBoc || !state.lastTxLt || !state.lastTxHash)throw Error('root_archive_state_unavailable');
         const inserted=await this.ledger.store.pool.query('INSERT INTO market_root_archive_states(network,root,seqno,snapshot,observed_at) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT DO NOTHING RETURNING snapshot,observed_at',[binding.network,root,seqno,JSON.stringify(state),observedAt]);
@@ -75,16 +76,18 @@ export class DlmmMarketGraphBuilder {
       if (loaded.has(account)) return nodes.filter(node => node.account === account);
       if (loaded.size >= this.maxAccounts) { issues.add('market_related_account_limit'); return []; }
       loaded.add(account);
-      try { await this.ledger.syncAccount(account, false); } catch { issues.add('market_chain_refresh_unavailable'); }
-      const state = await this.ledger.store.account(binding.network, account);
-      const generation = state?.latest_generation ?? state?.current_generation;
+      const refreshed = await this.ledger.refreshDependency(account, cycle);
+      if (!refreshed.atBoundary) issues.add('market_chain_refresh_unavailable');
+      const state = await this.ledger.store.physicalAccount(binding.network, account);
+      const generation = refreshed.generation;
       if (!generation) { issues.add('market_related_history_unavailable'); return []; }
       const run = (await this.ledger.store.pool.query('SELECT generation,network,account,head_lt::text,head_hash,complete,source_complete,head_observed_at,verified_through FROM ledger_runs WHERE generation=$1', [generation])).rows[0];
       if (!run || run.network !== binding.network || run.account !== account || !run.head_lt || !run.head_hash || !run.head_observed_at) {
         issues.add('market_related_history_unavailable'); return [];
       }
-      const checkedThrough = generation === state.current_generation && state.checked_at ? state.checked_at : run.verified_through ?? run.head_observed_at;
-      dependencies.push({ account, generation, historyComplete: Boolean(run.complete && run.source_complete), headLt: run.head_lt,
+      const previousCheck = generation === state?.current_generation && state.checked_at ? state.checked_at : run.verified_through ?? run.head_observed_at;
+      const checkedThrough = refreshed.atBoundary ? new Date(Math.max(Date.now(), cycle.boundary.utime * 1000, new Date(previousCheck).getTime())).toISOString() : previousCheck;
+      dependencies.push({ account, generation, historyComplete: Boolean(run.complete && run.source_complete && refreshed.atBoundary), headLt: run.head_lt,
         headHash: Buffer.from(canonicalLedgerHash(run.head_hash), 'base64').toString('hex'), checkedThrough: new Date(checkedThrough).toISOString() });
       const rows: MarketNode[] = await this.ledger.store.rawHistory(generation); nodes.push(...rows); return rows;
     };

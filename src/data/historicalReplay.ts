@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { Address, Cell, CellType, loadShardAccount, loadTransaction } from '@ton/core';
+import { Address, Cell, CellType, loadShardAccount, loadTransaction, loadCurrencyCollection } from '@ton/core';
 import { Executor, type IExecutor } from '@ton/sandbox';
+import { provenDictionaryValue } from './liteProof';
 import type { AccountStateResponse, TransactionCursor } from './dataSource';
 
 export const MAX_HISTORICAL_REPLAY_TRANSACTIONS = 32;
@@ -38,17 +39,27 @@ export function replayBlockContext(block: Cell) {
   return { masterRef, randomSeed: extra.loadBuffer(32) };
 }
 
-export function cellTreeContains(root: Cell, hash: Buffer): boolean {
-  const pending = [root], seen = new Set<string>();
-  while (pending.length) {
-    const cell = pending.pop()!;
-    const key = cell.hash().toString('hex');
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (cell.hash().equals(hash)) return true;
-    pending.push(...cell.refs);
-  }
-  return false;
+/** Membership in the executed account/LT dictionary, not arbitrary cell-tree
+ * reachability: messages may legitimately carry a serialized Transaction Cell. */
+export function blockContainsExecutedTransaction(block: Cell, transaction: Cell, address: Address): boolean {
+  try {
+    const tx = loadTransaction(transaction.beginParse());
+    const accountKey = BigInt(`0x${address.hash.toString('hex')}`);
+    if (tx.address !== accountKey) return false;
+    const extra = block.refs[3].beginParse();
+    if (extra.loadUint(32) !== 0x4a33f6fd) return false;
+    extra.loadRef(); extra.loadRef();
+    const accounts = extra.loadRef().beginParse();
+    if (!accounts.loadBit()) return false;
+    const accountBlock = provenDictionaryValue(accounts.loadRef(), accountKey, 256);
+    if (!accountBlock) return false;
+    loadCurrencyCollection(accountBlock); // HashmapAug leaf augmentation.
+    if (accountBlock.loadUint(4) !== 5 || accountBlock.loadUintBig(256) !== accountKey) return false;
+    const entry = provenDictionaryValue(accountBlock.asCell(), tx.lt, 64);
+    if (!entry) return false;
+    loadCurrencyCollection(entry);
+    return entry.loadRef().equals(transaction);
+  } catch { return false; }
 }
 
 export type HistoricalReplayStep = { transaction: Cell; block: Cell; config: Cell };
@@ -79,14 +90,17 @@ export async function replayHistoricalAccount(input: {
     finalBeforeShardAccount = shardAccount;
     const before = loadShardAccount(shardAccount.beginParse());
     const tx = loadTransaction(step.transaction.beginParse());
-    if (!before.account?.addr.equals(input.address) ||
+    const absentBefore = !before.account && shardAccount.refs[0]?.type === CellType.Ordinary
+      && shardAccount.refs[0].bits.length === 1 && !shardAccount.refs[0].beginParse().loadBit()
+      && shardAccount.refs[0].refs.length === 0 && before.lastTransactionLt === 0n && before.lastTransactionHash === 0n;
+    if ((!before.account?.addr.equals(input.address) && !absentBefore) ||
         tx.address !== BigInt(`0x${input.address.hash.toString('hex')}`) ||
         tx.prevTransactionLt !== before.lastTransactionLt ||
         tx.prevTransactionHash !== before.lastTransactionHash ||
         !tx.stateUpdate.oldHash.equals(shardAccount.refs[0].hash()) ||
         tx.description.type !== 'generic' || tx.inMessage?.info.type !== 'internal' ||
         !tx.inMessage.info.dest.equals(input.address) ||
-        !cellTreeContains(step.block, step.transaction.hash())) {
+        !blockContainsExecutedTransaction(step.block, step.transaction, input.address)) {
       throw new Error('Historical replay original account/transaction binding mismatch.');
     }
     // Library references require an additional authenticated archive input. Do
@@ -124,6 +138,7 @@ export async function replayHistoricalAccount(input: {
   const account = state.account!;
   const active = account.storage.state.type === 'active' ? account.storage.state.state : null;
   return Object.freeze({
+    shardAccountBoc: shardAccount.toBoc().toString('base64'),
     balance: account.storage.balance.coins.toString(), lastTxLt: input.cursor.lt,
     lastTxHash: final.hash().toString('base64'),
     accountState: active ? 'active' : account.storage.state.type === 'frozen' ? 'frozen' : 'uninitialized',

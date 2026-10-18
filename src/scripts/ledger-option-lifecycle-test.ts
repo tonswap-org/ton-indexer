@@ -1,3 +1,5 @@
+import { installFixtureIdentities } from './support/ledgerGraphFixture';
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -11,8 +13,7 @@ import {
 import type {
   RawMessage,
   RawTransaction,
-  TonDataSource,
-} from "../data/dataSource";
+} from '../data/dataSource';
 import { PGlite } from "@electric-sql/pglite";
 import { PostgresLedgerStore, type LedgerSqlPool } from "../ledger/store";
 import { LedgerService } from "../ledger/service";
@@ -1107,7 +1108,7 @@ async function durableLifecycle() {
       .map((t) => f.states.get(`${account}:${t.lt}`)?.data)
       .find(Boolean);
     return {
-      accountState: "active" as const,
+      accountState: (latest ? "active" : "uninitialized") as "active" | "uninitialized",
       balance: "0",
       lastTxLt: latest?.lt,
       lastTxHash: latest?.hash,
@@ -1123,9 +1124,9 @@ async function durableLifecycle() {
       type: "slice" as const,
       cell: beginCell().storeAddress(A(address)).endCell(),
     });
-  const source: TonDataSource = {
+  const source: FixtureChainSource = fixtureChainSource({ physicalCurrentReads: true,
     network: "testnet",
-    getMasterchainInfo: async () => ({ seqno: 1000 }),
+    head: async () => ({ seqno: 1000 }),
     getAccountState: async (account) => stateAtSeq(account),
     getAccountStateAtSeqno: async (account, seqno) =>
       stateAtSeq(account, seqno),
@@ -1135,11 +1136,11 @@ async function durableLifecycle() {
         .slice()
         .reverse()
         .slice(0, limit),
-    getJettonBalance: async (party, master) =>
+    walletBalance: async (party, master) =>
       master === root && [owner, other, factory, vault].includes(party)
         ? { wallet: wallet(party), balance: "0" }
         : null,
-    getJettonMetadata: async () => ({ decimals: 9 }),
+    jettonMetadata: async () => ({ decimals: 9 }),
     close: async () => {},
     runGetMethod: async (account, method) => {
       const asset = f.input.wallets.get(account);
@@ -1173,7 +1174,7 @@ async function durableLifecycle() {
         throw Error("Latest positions cannot establish lifecycle evidence");
       return null;
     },
-  };
+  });
   const service = new LedgerService(
     "testnet",
     store,
@@ -1191,7 +1192,8 @@ async function durableLifecycle() {
   );
   try {
     await store.initialize();
-    await service.syncAccount(owner);
+    installFixtureIdentities(service, source, f.input.wallets);
+    await service.runOwnerCycle(owner);
     const pending = await store.page("testnet", owner);
     assert.equal(
       pending.coverage.historyComplete,
@@ -1205,7 +1207,7 @@ async function durableLifecycle() {
       JSON.stringify(pending),
     );
     paid = true;
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     const completed = await store.page("testnet", owner),
       event = completed.events.find((e) => e.kind === "option_exercise");
     assert.equal(
@@ -1240,7 +1242,7 @@ async function durableLifecycle() {
         )
       ).rows;
     const before = await count();
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     assert.deepEqual(
       await count(),
       before,
@@ -1251,30 +1253,20 @@ async function durableLifecycle() {
       completed.events,
     );
     await pool.query("DELETE FROM ledger_account_states");
-    await service.syncAccount(owner);
+    await service.runOwnerCycle(owner);
     assert.deepEqual(
       (await store.page("testnet", owner)).events,
       completed.events,
       "cold archive reconstruction preserves already exercised/deleted position",
     );
     wrongVaultCode = true;
-    await service.syncAccount(owner);
+    await pool.query("UPDATE ledger_owner_checks SET unresolved=true WHERE account=$1", [owner]);
+    await service.runOwnerCycle(owner);
     const unsupported = await store.page("testnet", owner);
-    assert(
-      unsupported.coverage.issues.includes(
-        "option_factory_identity_unresolved",
-      ),
-    );
-    assert(
-      !unsupported.events.some(
-        (e) => e.settlement?.optionLifecycle?.payout.status === "completed",
-      ),
-    );
-    assert(
-      unsupported.events.some((e) =>
-        e.issues.includes("option_identity_or_cash_settlement_unverified"),
-      ),
-    );
+    assert.equal(unsupported.coverage.generation, completed.coverage.generation);
+    assert(unsupported.coverage.refreshPending!.length > 0);
+    assert.deepEqual(unsupported.events, completed.events, "a current binding failure preserves exact historical payout evidence");
+
   } finally {
     await service.stop();
     await pool.end();

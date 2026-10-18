@@ -7,7 +7,6 @@
 /README.md @takemiyamakoto
 /docs/release-checklist.md @takemiyamakoto
 /docs/rollback-checklist.md @takemiyamakoto
-/docs/ti-production.md @takemiyamakoto
 /scripts/audit-public-artifacts.sh @takemiyamakoto
 
 /src/api/ @takemiyamakoto

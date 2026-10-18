@@ -1,11 +1,9 @@
 import { fork } from 'node:child_process';
 import type { LoadedManifest } from './config/manifestSource';
 import type { ManifestWorker } from './manifestSupervisor';
-import { ADMISSION_STARTUP_MS } from './data/admission/protocol';
-
-// The authenticated native runtime has its own cold-start deadline. Allow
-// additional time for data-source, ledger and HTTP startup after it succeeds.
-export const MANIFEST_WORKER_STARTUP_TIMEOUT_MS = ADMISSION_STARTUP_MS + 120_000;
+// Readiness notification acknowledges the HTTP listener; admission and chain
+// authentication proceed independently after it has opened.
+export const MANIFEST_WORKER_STARTUP_TIMEOUT_MS = 30_000;
 
 export function launchManifestWorker(entrypoint: string, manifest: LoadedManifest, startupTimeoutMs = MANIFEST_WORKER_STARTUP_TIMEOUT_MS): ManifestWorker {
   const child = fork(entrypoint, ['--manifest-worker'], { execArgv: process.execArgv, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });

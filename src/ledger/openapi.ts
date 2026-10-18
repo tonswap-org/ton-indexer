@@ -341,83 +341,6 @@ export const ledgerSchemas = {
   DlmmDepositMetadata: dlmmDeposit,
   DlmmLiquidityReceipt: dlmmReceipt,
   DlmmLiquidityMetadata: dlmmLiquidity,
-  LedgerT3RefundGetter: {
-    type: "object",
-    required: ["account", "method", "args", "result", "observedAt"],
-    properties: {
-      account: { type: "string" },
-      method: { type: "string", enum: ["vault_payout_identity", "refund_queue_item", "vault_payout_state"] },
-      args: { type: "array", items: { type: "string" } },
-      result: { type: "array", items: { type: "string" } },
-      observedAt: { type: "string", format: "date-time" },
-    },
-  },
-  LedgerT3BurnRecovery: {
-    type: "object",
-    description:
-      "Historical proof that a later owner REDM recovered the original T3 burn acknowledgement without another burn. Acceptance does not certify receiver payout or wallet journal cleanup.",
-    required: [
-      "status",
-      "binding",
-      "continuationRequestBodyHash",
-      "originalWallet",
-      "originalRoot",
-      "originalProof",
-      "continuation",
-      "rootAcceptance",
-      "walletAcceptance",
-      "evidence",
-    ],
-    properties: {
-      status: { type: "string", enum: ["accepted"] },
-      binding: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "network",
-          "hub",
-          "root",
-          "hubCodeHash",
-          "rootCodeHash",
-          "walletCodeHash",
-          "receiverCodeHash",
-          "reserveRoutes",
-        ],
-        properties: {
-          network: { type: "string", enum: ["localnet", "testnet", "mainnet"] },
-          hub: { type: "string" },
-          root: { type: "string" },
-          hubCodeHash: hash256,
-          rootCodeHash: hash256,
-          walletCodeHash: hash256,
-          receiverCodeHash: hash256,
-          reserveRoutes: {
-            type: "array",
-            minItems: 3,
-            maxItems: 3,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["root", "vault", "discovery"],
-              properties: {
-                root: { type: "string" },
-                vault: { type: "string" },
-                discovery: { type: "string" },
-              },
-            },
-          },
-        },
-      },
-      continuationRequestBodyHash: hash256,
-      originalWallet: t3RecoveryBoundary(t3RecoveryWallet),
-      originalRoot: t3RecoveryBoundary(t3RecoveryRoot),
-      originalProof: t3RecoveryBoundary(t3RecoveryHub),
-      continuation: t3RecoveryBoundary(t3RecoveryHub),
-      rootAcceptance: t3RecoveryBoundary(t3RecoveryRoot),
-      walletAcceptance: t3RecoveryBoundary(t3RecoveryWallet),
-      evidence: { type: "array", items: evidenceRef },
-    },
-  },
   LedgerAsset: {
     type: "object",
     required: ["kind", "id"],
@@ -647,6 +570,7 @@ export const ledgerSchemas = {
               "lp_withdraw",
               "lp_fee_collect",
               "transfer",
+              "option_operation",
               "option_buy",
               "option_exercise",
               "option_refund",
@@ -669,6 +593,23 @@ export const ledgerSchemas = {
             description: "Exact historical swap conservation and independent physical finalization: paid input equals consumed plus returned input. Zero output is a fully returned request, not a trade.",
           },
           dlmmLiquidity: { $ref: "#/components/schemas/DlmmLiquidityMetadata" },
+          currentOptions: {
+            type: "object", additionalProperties: false,
+            description: "Current native Options economics from original authenticated owner dispatch and factory/vault/child boundaries. Right retirement, protocol accounting and physical T3 delivery are independent facts. Cash entries annotate the same LedgerMovement values and must never be added to them. aggregateOwed identifies a combined claim without inventing its original economic source. Missing evidence or the bounded proof limit remains incomplete.",
+            required: ["kind","outcome","factory","vault","owner","seriesId","positionId","queryId","requestBodyHash","dispatch","amountRequestedRaw","premiumNetRaw","protocolFeeRaw","writerBackingRaw","writerPremiumRaw","rightAcquiredRaw","rightRetiredRaw","paidInRaw","paidOutRaw","pendingOutRaw","aggregateOwed","cash","evidenceHashes"],
+            properties: {
+              kind: {type:"string",enum:["buy","fund","withdraw","payout","owed"]},
+              outcome: {type:"string",enum:["unresolved","rejected","accepted","delivered","refunded"]},
+              factory: {type:"string"}, vault: {type:"string"}, owner: {type:"string"},
+              seriesId: rawAmount, positionId: {type:["string","null"],pattern:"^[0-9]+$"},queryId:rawAmount,
+              requestBodyHash:{type:"string",pattern:"^[0-9a-f]{64}$"},
+              dispatch:{type:"object",additionalProperties:false,required:["lt","hash"],properties:{lt:rawAmount,hash:{type:"string",pattern:"^[0-9a-f]{64}$"}}},
+              amountRequestedRaw:rawAmount,premiumNetRaw:rawAmount,protocolFeeRaw:rawAmount,writerBackingRaw:rawAmount,writerPremiumRaw:rawAmount,
+              rightAcquiredRaw:rawAmount,rightRetiredRaw:rawAmount,paidInRaw:rawAmount,paidOutRaw:rawAmount,pendingOutRaw:rawAmount,aggregateOwed:{type:"boolean"},
+              cash:{type:"array",items:{type:"object",additionalProperties:false,required:["direction","amountRaw","ownerTransaction","debitTransaction","creditTransaction","wallet","otherOwner"],properties:{direction:{type:"string",enum:["in","out"]},amountRaw:rawAmount,ownerTransaction:{type:"string"},debitTransaction:{type:"string"},creditTransaction:{type:"string"},wallet:{type:"string"},otherOwner:{type:"string"}}}},
+              evidenceHashes:{type:"array",uniqueItems:true,items:{type:"string",pattern:"^[0-9a-f]{64}$"}},
+            },
+          },
           optionLifecycle: {
             type: "object",
             required: [
@@ -1138,8 +1079,7 @@ export const ledgerSchemas = {
               "feeBreakdown",
               "localNetworkFees",
             ],
-            description:
-              "T3 mint/root-delivery or completed redemption into a controller-owned receiver. Gross mint debits split principal and verified fee; redemption feeAmountsRaw are withheld before delivery, never an additional debit. Missing exact archive state keeps feeBreakdown unavailable. Receipts or total-supply changes alone do not confirm settlement.",
+            description: "Fresh T3 hub/master settlement. Current receipt membership and SENT/FAILED phases are claims, not cash. Mint credits and reserve payouts require exact authenticated wallet balance transitions and physical message links; absent proof remains incomplete.",
             properties: {
               hub: { type: "string" },
               root: { type: "string" },
@@ -1148,38 +1088,10 @@ export const ledgerSchemas = {
               queryId: rawAmount,
               amountRaw: { type: ["string", "null"] },
               mintedRaw: rawAmount,
-              referrer: { type: ["string", "null"], description: "Original inviter from the strict mint/deposit or redemption request; null means no inviter supplied." },
-              stage: {
-                type: "string",
-                enum: ["minted", "redeemed", "refund_queued", "refund_dispatching", "receiver_credited", "unresolved"],
-              },
-              rootQueryId: rawAmount,
-              wireId: rawAmount,
-              requestHash: { type: "string" },
-              payoutId: rawAmount,
-              receiver: { type: "string" },
-              refund: {
-                type: "object",
-                required: ["kind", "businessQueryId", "payoutId", "token", "amountRaw", "phase", "identityEvidence"],
-                description: "A durable failed-mint refund. Receiver credit proves claimable custody, not a withdrawal into the owner's wallet.",
-                properties: {
-                  kind: { type: "integer", enum: [3, 5] },
-                  businessQueryId: rawAmount,
-                  payoutId: rawAmount,
-                  token: { type: "integer", minimum: 0, maximum: 2 },
-                  amountRaw: rawAmount,
-                  phase: { type: ["integer", "null"] },
-                  sourceAccepted: { type: "boolean" },
-                  receiverCredited: { type: "boolean" },
-                  routeEpoch: { type: "integer", minimum: 0 },
-                  wireId: rawAmount,
-                  receiverWallet: { type: "string" },
-                  identityEvidence: { $ref: "#/components/schemas/LedgerT3RefundGetter" },
-                  queueEvidence: { $ref: "#/components/schemas/LedgerT3RefundGetter" },
-                  payoutEvidence: { $ref: "#/components/schemas/LedgerT3RefundGetter" },
-                  creditEvidence: { type: "array", items: evidenceRef },
-                },
-              },
+              stage: { type: "string", enum: ["minted","redeemed","refunded","swapped","cancelled","claimable","unresolved"] },
+              receipt: { type: "object", required: ["slot","key","hash","recordBoc","root","phase","committed","request"], properties: {
+                slot: {type:"integer",minimum:0,maximum:3}, key:rawAmount, hash:hash256, recordBoc:{type:"string"}, root:hash256,
+                phase:{type:["integer","null"],minimum:0,maximum:4}, committed:{const:true}, request:{type:"object",required:["sourceWallet","bodyHash","owner","queryId","amountRaw","intentHash"],properties:{sourceWallet:{type:["string","null"]},bodyHash:{type:["string","null"]},owner:{type:"string"},queryId:rawAmount,amountRaw:rawAmount,intentHash:{type:["string","null"]}} } } },
               reserveRoots: {
                 type: "array",
                 minItems: 3,
@@ -1227,30 +1139,7 @@ export const ledgerSchemas = {
                   transactions: { type: "array", items: evidenceRef },
                 },
               },
-              burnRecovery: {
-                $ref: "#/components/schemas/LedgerT3BurnRecovery",
-              },
-              identityEvidence: {
-                type: "object",
-                required: ["account", "method", "args", "result", "observedAt"],
-                properties: {
-                  account: { type: "string" },
-                  method: { type: "string", enum: ["redemption_identity"] },
-                  args: {
-                    type: "array",
-                    minItems: 2,
-                    maxItems: 2,
-                    items: { type: "string" },
-                  },
-                  result: {
-                    type: "array",
-                    minItems: 4,
-                    maxItems: 4,
-                    items: rawAmount,
-                  },
-                  observedAt: { type: "string", format: "date-time" },
-                },
-              },
+              walletRecovery: {type:"object",required:["wallet","id","attempt","originLt","recordHash","rootBefore","rootAfter","status","restoredRaw","requestBodyHash","recoveryBodyHash"],properties:{wallet:{type:"string"},id:rawAmount,attempt:rawAmount,originLt:rawAmount,recordHash:hash256,rootBefore:hash256,rootAfter:hash256,status:{const:"cancelled"},restoredRaw:rawAmount,requestBodyHash:{type:["string","null"]},recoveryBodyHash:hash256}},
               localNetworkFees: {
                 type: "array",
                 items: {
@@ -1340,11 +1229,15 @@ export const ledgerSchemas = {
           },
           generation: { type: ["string", "null"], format: "uuid" },
           publishedAt: nullableDate,
+          boundary: { type: ["object", "null"], required: ["seqno", "utime"], properties: {
+            seqno: { type: "integer", minimum: 0 }, utime: { type: "integer", minimum: 0 },
+          }, description: "Chain boundary of the check; chain time is separate from all server observation timestamps." },
+          refreshPending: { type: "array", items: { type: "string" }, description: "Accounts requiring another check. The owner is included for unresolved bindings without a specific pending dependency. Stored history completeness is unchanged." },
           headObservedAt: nullableDate,
           checkedAt: {
             ...nullableDate,
             description:
-              "Conservative observation time of the latest full dependency verification of this generation. Root polling consumers pin this with generation; publication time is never a chain watermark.",
+              "Server-clock time of the latest completed owner check on an uncursored current page. Cursor pages retain their generation observation time; refreshPending reports incomplete refreshes.",
           },
           snapshotComplete: {
             type: "boolean",
@@ -1378,6 +1271,8 @@ export const ledgerSchemas = {
                 account: { type: "string" },
                 generation: { type: ["string", "null"] },
                 historyComplete: { type: "boolean" },
+                headLt: { type: ["string", "null"] }, headHash: { type: ["string", "null"] },
+                atBoundary: { type: "boolean" },
                 role: {
                   type: "string",
                   enum: [

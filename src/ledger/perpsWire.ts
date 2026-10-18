@@ -1,6 +1,7 @@
-import { Address, Cell, beginCell, contractAddress } from "@ton/core";
-import type { RawMessage } from "../data/dataSource";
-import { bodyCell, businessBodyCell } from "./wire";
+import { canonicalLedgerAddress } from "./normalize";
+import { Address, Cell, beginCell, contractAddress, type Slice } from "@ton/core";
+import type { RawMessage, RawTransaction } from "../data/dataSource";
+import { bodyCell, businessBodyCell, tokenWire, TRANSFER } from "./wire";
 import { buildTonswapJettonWalletInitialData } from "../data/jettonAbi";
 // Exact first-release budget split persisted by the current engine. These
 // values bind a paid notification to its continuation; they are not gas quotes.
@@ -175,4 +176,56 @@ export function perpsControl(m: RawMessage | undefined, op: number) {
   } catch {
     return null;
   }
+}
+
+export const PERPS_PROTOCOL_PEER_LIMIT = 32;
+/** Discovery is limited to complete current requests emitted by the qualified
+ * engine. It grants no settlement authority: the projector still checks each
+ * original edge against its exact historical engine state and receipt. */
+export function discoverPerpsPeers(transactions: RawTransaction[], engine: string, engineWallet: string) {
+  const peers = new Set<string>(), custodyOwners = new Set<string>();
+  const end = (s: Slice) => { if (s.remainingBits || s.remainingRefs) throw Error('Trailing request'); };
+  const add = (destination: string, custody: boolean) => {
+    peers.add(destination); if (custody) custodyOwners.add(destination);
+  };
+  for (const tx of transactions) {
+    if (!tx.success || tx.status && tx.status !== 'success') continue;
+    for (const message of tx.outMessages) {
+      try {
+        if (message.bounced || !message.source || !message.destination || canonicalLedgerAddress(message.source) !== engine) continue;
+        const destination = canonicalLedgerAddress(message.destination), body = businessBodyCell(message);
+        if (!body) continue;
+        const s = body.beginParse(), op = s.loadUint(32);
+        if (op === 0x52564c54) { // RVLT: actual reservation request
+          if (!s.loadUintBig(64)) continue;
+          s.loadUint(16); s.loadUintBig(256); s.loadCoins(); s.loadCoins(); s.loadCoins(); end(s);
+          add(destination, true);
+        } else if (op === 0x52565053) { // RVPS: atomic reservation replacement and payout
+          if (!s.loadUintBig(64)) continue;
+          s.loadUint(16); s.loadUintBig(256); s.loadUintBig(64); s.loadUintBig(256); s.loadCoins();
+          const target = s.loadRef().beginParse(); end(s);
+          target.loadCoins(); target.loadCoins(); target.loadCoins(); target.loadAddress(); target.loadRef(); end(target);
+          add(destination, true);
+        } else if (op === 0x52505251) { // RPRQ: policy request and exact callback
+          if (!s.loadUint(32) || !s.loadUintBig(64)) continue; end(s); add(destination, false);
+        } else if (op === 0x43524544) { // CRED: registry credit and acknowledgement
+          if (!s.loadUintBig(64) || !s.loadUint(32)) continue;
+          s.loadAddress(); s.loadCoins(); s.loadMaybeAddress(); end(s); add(destination, false);
+        } else if (op === TRANSFER && destination === engineWallet) {
+          const transfer = tokenWire(message);
+          if (!transfer?.owner || transfer.op !== TRANSFER) continue;
+          const f = transfer.forward.beginParse(), tag = f.loadUint(32);
+          if (tag === 0x5246464c) { // RFFL: physical protocol fee custody
+            if (!f.loadUintBig(64) || !f.loadUintBig(256)) continue;
+            if (f.loadCoins() > BigInt(transfer.amountRaw)) continue; end(f);
+          } else if (tag === 0x52564450) { // RVDP: physical collected trader-loss deposit
+            f.loadUint(16); if (f.loadCoins().toString() !== transfer.amountRaw) continue; f.loadRef(); end(f);
+          } else continue;
+          add(canonicalLedgerAddress(transfer.owner), true);
+        }
+      } catch { /* Malformed output cannot widen the captured graph. */ }
+    }
+    if (peers.size > PERPS_PROTOCOL_PEER_LIMIT) throw Error('perps_range_protocol_account_limit');
+  }
+  return { peers, custodyOwners };
 }

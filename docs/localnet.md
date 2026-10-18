@@ -1,52 +1,25 @@
 # Localnet release indexer
 
-The local release gate runs the same indexer code and release manifest contract as
-testnet without permitting public TON fallback.
+Localnet uses the same manifest contract and local liteserver source as testnet. Supply an absolute reviewed local global-config file or inline peer list; no public endpoint discovery or HTTP chain fallback exists.
 
 ```bash
 TON_NETWORK=localnet \
-TON_DATASOURCE=lite \
-LITESERVER_POOL_LOCALNET=/absolute/path/to/global.config.json \
+LITESERVER_POOL_LOCALNET=/absolute/path/to/reviewed-global.config.json \
 INDEXER_RELEASE_MANIFEST=/absolute/path/to/localnet.manifest.json \
-INDEXER_SERVICE_ID=tonswap-local-indexer \
-INDEXER_PUBLIC_BASE_URL=http://127.0.0.1:8787 \
 INDEXER_ENABLE_WRITE_RPC=false \
 npm run dev:localnet
 ```
 
-The canonical manifest must use schema `tonswap-release-v1`, a non-empty
-`releaseId`, `network: "localnet"`, and a non-empty singleton `contracts` map of
-exact address/codeHash objects. Its `manifestHash` authenticates the recursively
-key-sorted content with that field omitted. All token roots, code pins and
-product bindings come from this one input; there is no registry parity step.
+The current `tonswap-release-v1` manifest authenticates network/globalId, release ID, exact singleton addresses/code hashes, templates, tokens, markets and `services.indexer`. The canonical manifest hash binds all these inputs. Service identity and public mount come only from that manifest. The manifest may be a retained local file, HTTPS URL or loopback HTTP URL; the pool itself must remain local configuration. A five-second manifest poll retires the old worker before starting changed bindings in a fresh process, with separate database/snapshot state.
 
-`INDEXER_RELEASE_MANIFEST` may also be an HTTPS URL or loopback HTTP URL. The
-supervisor polls every five seconds and stops the old child worker before
-starting a changed release in a fresh process. Snapshot files and PostgreSQL
-schemas are scoped to manifestHash, so prior jobs and snapshots cannot be loaded
-under the new binding.
+The listener starts before chain, database and native authentication. Health must expose real component state and readiness must authenticate the compiled catalog and exact release. Missing peers, anchors or storage never produce successful empty evidence. A source-mode dev worker cannot claim authenticated compiled-ledger readiness. For a compiled durable worker, build first and use a fresh canonical database through exactly one of INDEXER_DATABASE_URL or INDEXER_DATABASE_URL_FILE. The `/ledger/readiness` qualification endpoint is restricted to the exact native testnet manifest (globalId -3); localnet must not claim that testnet qualification.
 
-Readiness requires:
+The public mount, network, release ID/hash, contracts and fresh-read context must match the manifest. Balance rows include GRAM and every manifest token with explicit status/precision; ledger incompleteness remains pending. Candle output requires actual successful token movements and exact market metadata, never minimum-output estimates.
 
-- `/health`, `/service-info`, and `/contracts` report `ton:localnet` identity.
-- `/contracts` and `/service-info` expose the expected
-  `release: { releaseId, manifestHash }`.
-- `/markets/{market}/candles` returns only confirmed swaps with real output
-  amounts linked by swap query ID; `minOut` estimates are never accepted as
-  execution prices, and market metadata must match the canonical manifest.
-- Requests without configured local RPC/liteserver endpoints fail instead of
-  discovering testnet or mainnet endpoints.
-
-Run the release-bound smoke after startup:
-
-`MANIFEST_PATH` must resolve to the canonical, single-link retained manifest;
-the CLI has no unbound mode.
+Run release-bound smoke after startup. MANIFEST_PATH must be a canonical stable single-link retained file in a non-symlink, non-group/other-writable parent. With no transport override the manifest's URL is used; an optional TON_INDEXER_BASE_URL must have that exact mount.
 
 ```bash
-TON_INDEXER_BASE_URL=http://127.0.0.1:8787 \
 TON_INDEXER_EXPECTED_NETWORK=localnet \
-TON_INDEXER_EXPECTED_SERVICE_ID=tonswap-local-indexer \
-TON_INDEXER_EXPECTED_PUBLIC_BASE_URL=http://127.0.0.1:8787 \
 TON_INDEXER_EXPECTED_RELEASE_ID="$RELEASE_ID" \
 TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH="$MANIFEST_HASH" \
 TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH="$MANIFEST_PATH" \
@@ -54,7 +27,4 @@ TON_INDEXER_EXPECTED_CORS_ORIGIN=http://127.0.0.1:5173 \
 npm run smoke:production
 ```
 
-Native admission remains mandatory for any registered PerpsEngine. The current
-reviewed runtime supports macOS arm64 testnet only; localnet must not invent a
-perps binding or bypass that requirement. Configure all four admission artifact
-path/hash values together for a supported deployment.
+Native admission remains mandatory for a registered PerpsEngine. The reviewed native runtime supports macOS arm64 testnet; localnet cannot invent a supported binding or bypass qualification. Configure all four admission artifact path/hash settings only for a supported deployment. Gate-only native database tests use INDEXER_TEST_DATABASE_URL and an isolated loopback PostgreSQL server; they do not mutate the localnet application database.

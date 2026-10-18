@@ -99,7 +99,7 @@ function badProjectionCases(p:MarketProjection) {
   return mutations.length;
 }
 async function suite(pool:LedgerSqlPool,label:string) {
-  const store=new PostgresMarketStore(pool);await store.initialize();await store.initialize();
+  const store=new PostgresMarketStore(pool, 'dlmm-market-ledger-v1');await store.initialize();await store.initialize();
   const p=actualProjection(),network=p.binding.network,account=p.binding.pool;
   assert.equal(p.observations.length,5,`actual projector executes full, partial and separately proven funded retry: ${JSON.stringify(p.candidates)}`);
   assert.equal(p.candidates.length,6); assert.equal(p.historyComplete,true); validateMarketProjection(p);
@@ -153,7 +153,7 @@ async function suite(pool:LedgerSqlPool,label:string) {
   // A database write failure after the generation and candidates were inserted must roll them all back.
   let fail=true;const injected:LedgerSqlPool={query:pool.query.bind(pool),end:async()=>{},connect:async()=>{const c=await pool.connect();return {release:()=>c.release?.(),query:async(sql,params)=>{if(fail && sql.startsWith('INSERT INTO market_observations')) {fail=false;throw Error('injected observation failure');}return c.query(sql,params);}};}};
   const count=(await pool.query('SELECT count(*)::int AS n FROM market_generations')).rows[0].n;
-  await assert.rejects(()=>new PostgresMarketStore(injected).publish(changed(q,'rollback'),duplicate[0].generation),/injected/);
+  await assert.rejects(()=>new PostgresMarketStore(injected, 'dlmm-market-ledger-v1').publish(changed(q,'rollback'),duplicate[0].generation),/injected/);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM market_generations')).rows[0].n,count);assert.equal((await store.current(network,account))!.generation,duplicate[0].generation);
   const precise=changed(q,'exact-large-fee-storage');precise.observations[0].fees[0].nativeAmountRaw='9007199254740993123';
   const preciseGeneration=await store.publish(precise,duplicate[0].generation);
@@ -174,7 +174,7 @@ async function suite(pool:LedgerSqlPool,label:string) {
   await pool.query('UPDATE market_generations SET metadata=$2::jsonb WHERE generation=$1',[incompleteGeneration.generation,JSON.stringify(corrupt)]);
   await assert.rejects(()=>store.page(network,account),/Invalid market projection/,'empty pages cannot advertise malformed coverage');
   await pool.query('UPDATE market_generations SET metadata=$2::jsonb WHERE generation=$1',[incompleteGeneration.generation,JSON.stringify(metadata)]);
-  const resumed=new PostgresMarketStore(pool);assert.equal((await resumed.page(network,account,{generation:first.generation})).observations.length,5,'new store instance reads historical generation independently');
+  const resumed=new PostgresMarketStore(pool, 'dlmm-market-ledger-v1');assert.equal((await resumed.page(network,account,{generation:first.generation})).observations.length,5,'new store instance reads historical generation independently');
   console.log(`${label}: actual5-observation/6-candidate persistence, ${malformed} malformed projections, ${cursorCases.length} scoped cursor negatives, concurrent publication fencing/idempotence, immutable history and transactional rollback passed`);
 }
 async function main() {
@@ -183,9 +183,16 @@ async function main() {
   const rawQuery=async(sql:string,params?:unknown[])=>!params && sql.includes(';')?{rows:(await db.exec(sql)).at(-1)?.rows??[]}:db.query(sql,params);
   const embedded:LedgerSqlPool={query:async(sql,params)=>{const unlock=await acquire();try{return await rawQuery(sql,params);}finally{unlock();}},connect:async()=>{const unlock=await acquire();return {query:rawQuery,release:unlock} as LedgerSqlClient;},end:()=>db.close()};
   try {await suite(embedded,'PGlite serialized PostgreSQL session');}finally{await embedded.end();}
-  if(process.env.MARKET_STORE_TEST_SOCKET) {
-    const native=new Pool({host:process.env.MARKET_STORE_TEST_SOCKET,port:Number(process.env.MARKET_STORE_TEST_PORT??5432),database:'postgres',user:process.env.MARKET_STORE_TEST_USER,max:8});
-    try {await suite(native as unknown as LedgerSqlPool,'Native PostgreSQL independent connections');}finally{await native.end();}
+  const connectionString = process.env.INDEXER_TEST_DATABASE_URL;
+  if(connectionString) {
+    if (!['127.0.0.1','localhost','[::1]'].includes(new URL(connectionString).hostname)) throw new Error('Market native tests require loopback PostgreSQL');
+    const schema = 'market_store_' + randomUUID().replace(/-/g, '');
+    const admin = new Pool({connectionString, max:1});
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(connectionString); url.searchParams.set('options', `-c search_path=${schema}`);
+    const native=new Pool({connectionString:url.toString(),max:8});
+    try {await suite(native as unknown as LedgerSqlPool,'Native PostgreSQL independent connections');}
+    finally {await native.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();}
   } else console.log('Native PostgreSQL concurrency not requested; embedded transaction cases do not claim independent connection locking.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

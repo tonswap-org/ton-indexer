@@ -1,3 +1,8 @@
+import { projectCurrentLaunchpad } from './currentLaunchpadProjection';
+import { projectCurrentDlmm } from './currentDlmmProjection';
+import { projectCurrentPerps } from './currentPerpsProjection';
+import { CURRENT_OPTIONS_USER_OPS } from './currentOptions';
+import { projectCurrentOptions, type CurrentOptionLedgerOperation } from './currentOptionsProjection';
 import {
   decodePerps,
   type LedgerPerpsEngine,
@@ -22,7 +27,7 @@ import {
   OPTION_NATIVE_REFUND,
 } from "./optionLifecycleWire";
 import { decodeT3, type LedgerT3Hub, type T3LedgerOperation } from "./t3";
-import { T3_OPS, DEPOSIT_NOTE, RECEIVER_PAYOUT } from "./t3Wire";
+import { CURRENT_T3_OPS, T3_MINT, T3_PAIR, T3_SWAP, T3_HUB_PAYOUT } from "./currentT3Wire";
 import {
   decodeOptionPurchases,
   type LedgerOptionFactory,
@@ -91,6 +96,10 @@ export function chainCoversTransaction(chain: LedgerChain | undefined, tx: RawTr
   return Boolean(chain && (chain.historyComplete || (chain.verifiedRange &&
     tx.utime >= chain.verifiedRange.fromUtime && tx.utime < chain.verifiedRange.toUtime)));
 }
+/** Complete history supports absence only when it also reaches this cycle's boundary. */
+export function chainAtBoundary(chain: LedgerChain | undefined): boolean {
+  return Boolean(chain && chain.historyComplete && chain.atBoundary !== false && !chain.verifiedRange);
+}
 export type LedgerPool = {
   address: string;
   tokenT: string;
@@ -98,6 +107,10 @@ export type LedgerPool = {
   codeHash: string;
 };
 export type ProjectionInput = {
+  currentDlmmBinding?: import("./currentDlmmPhysical").CurrentDlmmProofBinding;
+  currentLaunchpadBinding?: import("./currentLaunchpadProof").CurrentLaunchpadBinding;
+  currentPerpsBinding?: import("./currentPerpsProof").NativePerpsProofBinding;
+  currentOptionsBinding?: import("./currentOptionsProof").NativeOptionProofBinding;
   network: Network;
   owner: string;
   perpsEngines?: Map<string, LedgerPerpsEngine>;
@@ -392,7 +405,7 @@ export async function projectOwnerLedger(
     }
   type Operation = {
     anchor: Node;
-    kind: "swap" | "lp_deposit" | "lp_withdraw" | "lp_fee_collect";
+    kind: "swap" | "lp_deposit" | "lp_withdraw" | "lp_fee_collect" | "dlmm_operation" | "launchpad_operation";
     settlement?: LedgerEvent["settlement"];
     pool?: string;
     queryId?: string;
@@ -402,6 +415,7 @@ export async function projectOwnerLedger(
   };
   const operations: (
     | Operation
+    | CurrentOptionLedgerOperation
     | OptionLedgerOperation
     | OptionLifecycleOperation
     | T3LedgerOperation
@@ -411,7 +425,12 @@ export async function projectOwnerLedger(
   )[] = [];
   const usedFlows = new Set<string>();
   const relatedReady = (members: Node[]) =>
-    members.every((n) => chains.get(n.account)?.historyComplete);
+    members.every((n) => chainCoversTransaction(chains.get(n.account), n.raw));
+  const coveredEvidence = (value: LedgerEvidenceRef) => {
+    const chain = chains.get(value.account);
+    const tx = chain?.transactions.find(raw => raw.lt === value.lt && canonicalLedgerHash(raw.hash) === canonicalLedgerHash(value.hash));
+    return Boolean(tx && chainCoversTransaction(chain, tx));
+  };
   const attach = (a: Node, b: Node) => {
     merge(a, b);
     touched.add(a.id);
@@ -493,6 +512,7 @@ export async function projectOwnerLedger(
     routedCandidates.set(node.id,{operation,flow});operations.push(operation);usedFlows.add(flow.id);
   }
   for (const pool of pools.values()) {
+    if(input.currentDlmmBinding?.pools.some(p=>p.pool===pool.address))continue;
     const poolNodes = nodes.filter((n) => n.account === pool.address);
     let swapProof: ReturnType<typeof createDlmmProofGraph> | null = null;
     const swapGraph = async () => {
@@ -528,7 +548,7 @@ export async function projectOwnerLedger(
         const evidence=uniqueRefs([ref(node),ref(inputFlow.source),ref(inputFlow.recipient),...routingEvidenceRefs(proof.routing),
           ...proof.settlements.flatMap(s=>[s.request,s.debit,s.credit,s.acknowledged,s.walletFinalized,s.poolFinalized,...s.boundaries.map(b=>b.transaction)])]
           .map(value=>({...value,hash:canonicalLedgerHash(value.hash)})));
-        if(!evidence.every(value=>chains.get(value.account)?.historyComplete))throw Error('routed_swap_history_incomplete');
+        if(!evidence.every(coveredEvidence))throw Error('routed_swap_history_incomplete');
         for(const value of evidence) {const member=nodes.find(n=>n.account===value.account&&n.raw.lt===value.lt&&canonicalLedgerHash(n.raw.hash)===value.hash);if(member)attach(inputFlow.source,member);}
         for(const leg of [proof.routing.inputSettlement,terminal,...proof.settlements,...(proof.routing.protocolFeeSettlement?[proof.routing.protocolFeeSettlement]:[]),...(proof.routing.directFeeSettlement?[proof.routing.directFeeSettlement]:[])])for(const flow of matching(leg.debit,leg.credit,leg.amountRaw))usedFlows.add(flow.id);
         operation.pool=pool.address;operation.confirmed=true;operation.evidence=evidence;operation.issue=undefined;
@@ -588,7 +608,7 @@ export async function projectOwnerLedger(
           ...proof.settlements.flatMap(value => [value.request, value.debit, value.credit, value.acknowledged, value.walletFinalized, value.poolFinalized])]
           .map(value => ({...value, hash: canonicalLedgerHash(value.hash)})));
         if (!inputFlow.confirmed || proof.notice.owner !== owner || proof.forward.recipient !== owner ||
-          proof.paid.toString() !== inputFlow.wire.amountRaw || !evidence.every(value => chains.get(value.account)?.historyComplete)) throw Error('swap_history_incomplete');
+          proof.paid.toString() !== inputFlow.wire.amountRaw || !evidence.every(coveredEvidence)) throw Error('swap_history_incomplete');
         for (const {flow} of matched) { attach(inputFlow.source, flow.recipient); usedFlows.add(flow.id); }
         const output = matched.find(value => value.settlement.kind === 'swap_output');
         const refund = matched.find(value => value.settlement.kind === 'unused_input_refund');
@@ -764,7 +784,7 @@ export async function projectOwnerLedger(
             if (!flow.confirmed) candidate.issues.push('related_account_history_incomplete');
           }
         }
-        if (!candidate.evidence.every(value => chains.get(value.account)?.historyComplete)) candidate.issues.push('related_account_history_incomplete');
+        if (!candidate.evidence.every(coveredEvidence)) candidate.issues.push('related_account_history_incomplete');
         for (const issue of candidate.issues) mark(anchor, issue);
         const confirmed = Boolean(metadata && !candidate.issues.length);
         operations.push({anchor, kind: candidate.kind, pool: pool.address, queryId: candidate.queryId ?? undefined, confirmed, evidence: candidate.evidence,
@@ -820,21 +840,44 @@ export async function projectOwnerLedger(
   const t3Results = await decodeT3(input, nodes, flows, receiptFor, attach);
   operations.push(...t3Results.operations);
   for (const id of t3Results.usedFlows) usedFlows.add(id);
-  const perpsResults = await decodePerps(
-    input,
-    nodes,
-    flows,
-    receiptFor,
-    attach,
-  );
-  operations.push(...perpsResults.operations);
-  for (const id of perpsResults.usedFlows) usedFlows.add(id);
+  const currentOptions = await projectCurrentOptions(input, nodes, attach);
+  if (currentOptions.length) {
+    const owned = new Set(currentOptions.flatMap(o => o.evidence.map(r => `${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for (let i = operations.length - 1; i >= 0; i--) {
+      const op = operations[i];
+      if (op.kind === 'transfer' && op.settlement?.protocol === 't3' && op.evidence.every(r => owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`))) operations.splice(i, 1);
+    }
+    operations.push(...currentOptions);
+  }
+  const currentDlmm = await projectCurrentDlmm(input,nodes,attach);
+  if(currentDlmm.length){
+    const owned=new Set(currentDlmm.flatMap(o=>o.evidence.map(r=>`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for(let i=operations.length-1;i>=0;i--){const op=operations[i];if(op.kind==='transfer'&&op.settlement?.protocol==='t3'&&op.evidence.every(r=>owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)))operations.splice(i,1);}
+    operations.push(...currentDlmm);
+  }
+  const currentPerps = await projectCurrentPerps(input, nodes, attach);
+  if (currentPerps.length) {
+    const owned = new Set(currentPerps.flatMap(o => o.evidence.map(r => `${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for (let i = operations.length - 1; i >= 0; i--) {
+      const op = operations[i];
+      if (op.kind === 'transfer' && op.settlement?.protocol === 't3' && op.evidence.every(r => owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`))) operations.splice(i, 1);
+    }
+    operations.push(...currentPerps);
+  }
+  const currentLaunchpad=await projectCurrentLaunchpad(input,nodes,attach);
+  if(currentLaunchpad.length){
+    const owned=new Set(currentLaunchpad.flatMap(o=>o.evidence.map(r=>`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)));
+    for(let i=operations.length-1;i>=0;i--){const op=operations[i];if(op.kind==='transfer'&&op.settlement?.protocol==='t3'&&op.evidence.every(r=>owned.has(`${r.account}:${r.lt}:${canonicalLedgerHash(r.hash)}`)))operations.splice(i,1);}
+    operations.push(...currentLaunchpad);
+  }
+  if(!input.currentLaunchpadBinding){
   const participationResults = await decodeLaunchpadContributions(input, nodes, flows, receiptFor, attach);
   operations.push(...participationResults.operations);
   for (const id of participationResults.usedFlows) usedFlows.add(id);
   const launchpadResults = await decodeLaunchpadRefunds(input, nodes, flows, receiptFor, attach);
   operations.push(...launchpadResults.operations);
   for (const id of launchpadResults.usedFlows) usedFlows.add(id);
+  }
   // Retain unmatched exact receipt evidence, including unknown asset amounts.
   // Discard a notification only when its exact emitting wallet transaction is
   // represented by a verified credit or root mint, never merely by the same query ID.
@@ -892,13 +935,15 @@ export async function projectOwnerLedger(
           [null, 0].includes(opcode(msg)) ||
           TOKEN_CONTROL_OPS.has(businessOpcode(msg)!) ||
           nativeFundingRefund(msg) !== null ||
+          (groupOps.some(op => op.kind === 'option_operation') &&
+            (CURRENT_OPTIONS_USER_OPS.has(businessOpcode(msg)!) || CURRENT_T3_OPS.has(businessOpcode(msg)!) || (msg.bounced === true && opcode(msg) === 0xfffffffe))) ||
           (groupOps.some((op) => op.kind === "launchpad_refund") && opcode(msg) === 0x434c414d) ||
           (groupOps.some((op) => op.kind === "perps_operation") &&
             PERPS_USER_OPS.has(opcode(msg)!)) ||
           (groupOps.some(
-            (op) => op.kind === "t3_mint" || op.kind === "t3_redeem",
+            (op) => op.settlement?.protocol === "t3",
           ) &&
-            T3_OPS.has(businessOpcode(msg)!)) ||
+            CURRENT_T3_OPS.has(businessOpcode(msg)!)) ||
           (groupOps.length > 0 &&
             [REMOVE, COLLECT, COLLECT_TO, WITHDRAW_COMPLETE].includes(opcode(msg)!)) ||
           (groupOps.some((op) =>
@@ -921,11 +966,8 @@ export async function projectOwnerLedger(
         .filter(
           (issue) =>
             !(
-              (hasToken ||
-                groupOps.some(
-                  (op) => op.kind === "option_exercise" && op.confirmed,
-                )) &&
               knownMessages &&
+              (hasToken || (groupOps.length > 0 && groupOps.every(op => op.confirmed))) &&
               basicIssues.has(issue)
             ),
         ),
@@ -956,7 +998,7 @@ export async function projectOwnerLedger(
       (flow) =>
         !usedFlows.has(flow.id) &&
         flow.wire.forward.bits.length >= 32 &&
-        [DEPOSIT_NOTE, RECEIVER_PAYOUT].includes(
+        [T3_MINT,T3_PAIR,T3_SWAP,T3_HUB_PAYOUT].includes(
           flow.wire.forward.beginParse().preloadUint(32),
         ),
     );

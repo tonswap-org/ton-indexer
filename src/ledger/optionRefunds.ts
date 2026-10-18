@@ -1,3 +1,4 @@
+import { chainCoversTransaction } from "./project";
 import type { ProjectionInput, Node, Flow } from "./project";
 import {
   optionBoundary,
@@ -216,7 +217,7 @@ export async function decodeOptionRefunds(
       if (receipts.length !== 1) continue;
       group.push(...cash.nodes, ...receipts);
       if (
-        unique(group).some((o) => !input.chains.get(o.account)?.historyComplete)
+        unique(group).some((o) => !chainCoversTransaction(input.chains.get(o.account), o.raw))
       )
         continue;
       const flow = flows.find(

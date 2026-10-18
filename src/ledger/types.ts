@@ -78,6 +78,9 @@ export type DlmmLiquidityMetadata = {
 };
 export type LedgerRelatedAccount = {
   account: string;
+  headLt?: string | null;
+  headHash?: string | null;
+  atBoundary?: boolean;
   generation: string | null;
   historyComplete: boolean;
   role:
@@ -189,12 +192,15 @@ export type LedgerEvent = {
   kind:
     | TxKind
     | "lp_fee_collect"
+    | "option_operation"
     | "option_buy"
     | "option_exercise"
     | "option_refund"
     | "t3_mint"
     | "t3_redeem"
     | "perps_operation"
+    | "dlmm_operation"
+    | "launchpad_operation"
     | "launchpad_refund"
     | "launchpad_participation";
   totalFeesRaw: string | null;
@@ -211,12 +217,15 @@ export type LedgerEvent = {
       | "lp_withdraw"
       | "lp_fee_collect"
       | "transfer"
+      | "option_operation"
       | "option_buy"
       | "option_exercise"
       | "option_refund"
       | "t3_mint"
       | "t3_redeem"
       | "perps_operation"
+      | "dlmm_operation"
+      | "launchpad_operation"
       | "launchpad_refund"
       | "launchpad_participation";
     dlmmSwap?: {
@@ -229,6 +238,10 @@ export type LedgerEvent = {
     dlmmLiquidity?: DlmmLiquidityMetadata;
     launchpad?: import("./launchpad").LaunchpadRefundMetadata;
     launchpadParticipation?: import("./launchpadContributions").LaunchpadParticipationMetadata;
+    currentPerps?: import("./currentPerps").CurrentPerpsEconomics;
+    currentDlmm?: import("./currentDlmmEconomics").CurrentDlmmEconomics;
+    currentLaunchpad?: import("./currentLaunchpad").CurrentLaunchpadEconomics;
+    currentOptions?: import("./currentOptions").CurrentOptionsEconomics;
     optionLifecycle?: import("./optionLifecycle").OptionLifecycleMetadata;
     perps?: {
       engine: string;
@@ -298,38 +311,16 @@ export type LedgerEvent = {
       queryId: string;
       amountRaw: string | null;
       mintedRaw?: string;
-      referrer?: string | null;
-      stage: "minted" | "redeemed" | "refund_queued" | "refund_dispatching" | "receiver_credited" | "unresolved";
-      rootQueryId?: string;
-      wireId?: string;
-      requestHash?: string;
-      payoutId?: string;
-      receiver?: string;
-      refund?: {
-        kind: 3 | 5;
-        businessQueryId: string;
-        payoutId: string;
-        token: number;
-        amountRaw: string;
-        phase: number | null;
-        sourceAccepted?: boolean;
-        receiverCredited?: boolean;
-        routeEpoch?: number;
-        wireId?: string;
-        receiverWallet?: string;
-        identityEvidence: NonNullable<LedgerMovement["evidence"]["getter"]>;
-        queueEvidence?: NonNullable<LedgerMovement["evidence"]["getter"]>;
-        payoutEvidence?: NonNullable<LedgerMovement["evidence"]["getter"]>;
-        creditEvidence?: LedgerEvidenceRef[];
-      };
+      stage: "minted" | "redeemed" | "refunded" | "swapped" | "cancelled" | "claimable" | "unresolved";
       reserveRoots: string[];
       basketRaw: string[];
       deliveredRaw: string[];
       feeBreakdown: "verified" | "unavailable";
       feeAmountsRaw?: string[];
       feeEvidence?: LedgerMovement["evidence"];
-      identityEvidence?: LedgerMovement["evidence"]["getter"];
-      burnRecovery?: import("./t3Recovery").T3BurnRecovery;
+      receipt?: { slot: number; key: string; hash: string; recordBoc: string; root: string; phase: number | null; committed: true;
+        request: { sourceWallet: string | null; bodyHash: string | null; owner: string; queryId: string; amountRaw: string; intentHash: string | null } };
+      walletRecovery?: { wallet: string; id: string; attempt: string; originLt: string; recordHash: string; rootBefore: string; rootAfter: string; status: 'cancelled'; restoredRaw: string; requestBodyHash: string | null; recoveryBodyHash: string };
       localNetworkFees: {
         transaction: LedgerEvidenceRef;
         amountRaw: string | null;
@@ -374,6 +365,8 @@ export type LedgerRangeCoverage = {
   retryAfter: string | null;
 };
 export type LedgerCoverage = {
+  boundary?: { seqno: number; utime: number } | null;
+  refreshPending?: string[];
   range?: LedgerRangeCoverage;
   projectionScope: LedgerProjectionScope | null;
   generation: string | null;

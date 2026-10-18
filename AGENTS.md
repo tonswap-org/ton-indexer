@@ -9,25 +9,104 @@ This repository contains a **TypeScript TONSWAP indexer service** plus the desig
 - `INDEXER_RELEASE_MANIFEST`: required native-deployer `tonswap-release-v1` file path or HTTPS URL (loopback HTTP allowed); no static registries or manual ledger pin inputs.
 - `src/`: TypeScript implementation (server, store, data source, workers, API).
 - Snapshots: `SNAPSHOT_PATH` is a prefix for manifest-hash-scoped JSON snapshots; old releases retain separate files. PostgreSQL ledger schemas also isolate releases.
-- `src/ledger/` and `sql/ledger.sql`: PostgreSQL account ledger with independent chain-verified backfill, immutable cursor snapshots, and explicit decoding gaps. Configure `INDEXER_DATABASE_URL`; run `npm run bootstrap:ledger` and `npm run test:ledger`. T3 settlement uses manifest T3/T3Root identities and exact receipt/credit evidence, including deterministic controller-owned receiver custody. A queued redemption receipt is never final delivery. Lost-ACK recovery uses manifest-approved hub/root/wallet/receiver hashes and reserve roots, independently authenticated root/emitter and deterministic vault identities, plus exact historical wallet/root/hub state transitions. Unconfigured or conflicting release code and missing archives remain unresolved; acceptance does not prove payout or journal cleanup. Perps requires the exact current-network PerpsEngine identity/code hash supplied by the manifest; exact historical code/state and typed payout evidence are mandatory. Booked collateral/funding are contract claims, while position margin is a subset and must not be counted twice. Financial amounts are atomic strings. Never infer a product settlement from a transfer request or claim portfolio/tax completeness from account history alone.
+- `src/ledger/` and `sql/ledger.sql`: PostgreSQL account ledger with independent chain-verified backfill, immutable cursor snapshots, and explicit decoding gaps. Configure `INDEXER_DATABASE_URL`; run `npm run bootstrap:ledger` and `npm run test:ledger`. Fresh T3 uses the manifest T3Hub as both hub/master, T3Wallet and T3RecoveryProof templates, per-reserve master/wallet code pins and immutable profiles. Authenticate exact historical code/data and physical wallet balance changes; receipt membership and SENT/FAILED status are not cash. Hub and wallet recovery witness reconstruction requires complete linked initialization-to-head history and every current tree root. Missing original evidence is explicit unavailable. Perps requires the exact current-network PerpsEngine identity/code hash supplied by the manifest; exact historical code/state and typed payout evidence are mandatory. Booked collateral/funding are contract claims, while position margin is a subset and must not be counted twice. Financial amounts are atomic strings. Never infer a product settlement from a transfer request or claim portfolio/tax completeness from account history alone.
 
 ## What This Repo Is (and Isn’t)
 
-T3 discovery requires the sole current 18-field `vault_routes` getter: epoch,
-receiver code, wallet code, then the three five-field reserve routes. Root slots
-are 3, 8 and 13. Recovery bindings authenticate both code cells; the old 17-field
-layout is unsupported. Receiver discovery failures remain custody gaps without
-hiding independently verified mint hub/root identities.
+T3 discovery authenticates current hub storage and per-reserve canonical TEP-74
+wallet getters at one head. The hub is the token master; no separate root or
+receiver ABI is supported. An optional undiscovered KUSD slot does not block the
+core pair. Observed code never enrolls a new decoder. Current receipt candidates
+are not physical payout evidence. Keep the runtime qualification fence until the
+fresh capture and original-source closure checks pass.
 
-Option lifecycle qualification uses manifest-approved factory, vault, Shout, Outperformance and wallet Cell hashes. Deployment identities and historical state must match. Exercise right retirement, actual holder payout and RiskVault reimbursement are separate facts. `ReleaseCollateral` never supplies a cash refund. An early OCRC receipt never proves a completed claim. Preserve raw fees and explicit archive/related-history gaps; owner-OBAR unwind requires original funding, historical cancellation and exact independent factory/vault cash finalizers. Initial BOYR/BBUY bounce recovery additionally requires the actual qualified failed product transaction, exact standard VM bounce, historical series/index unwind and independent physical factory return. Other automatic abort/retry recovery and expiry-only paths remain unsupported and must not fabricate payouts.
+Current Options ledger qualification uses the exact current factory/vault/manager,
+Shout/Outperformance, T3Wallet and T3RecoveryProof release pins. Infer owner
+requests from original dispatches, then authenticate historical controller and
+canonical child state independently from physical T3 transfers. Premium/fee and
+writer backing are accounting components, never additional cash. Right retirement
+can precede payout; failed transfers retain pending cash and retry never debits
+twice. Aggregate owed claims do not invent the original income source. Original
+archive, cash projection and related-history gaps remain incomplete. The current
+native suite replaces old Options ABI positive tests in the ordinary gate; retain
+old evidence without admitting it as current. Run ledger-current-options-test.ts,
+including native default/x6 economics, graph, refusal and missing-evidence cases.
 - **Is**: a runnable indexer service with in-memory storage and background workers, plus release-manifest bindings.
-- **Isn’t**: a production-hardened indexer yet (liteserver pool adapter and full swap/LP decoding remain partial).
+- Product settlement support is deliberately bounded by the exact historical proof rules below; unqualified or missing evidence stays unresolved.
 
 ## Release Manifest
-- The sole runtime input is required `INDEXER_RELEASE_MANIFEST`, using schema `tonswap-release-v1`. Singleton entries are exact address/codeHash objects; reserves use USDT/USDC/KUSD token roles and the hub role is T3. Network/globalId and manifestHash must validate. No registry files, ledger pin environment variables, opcode file loading or parity checks are supported.
+
+Fresh-consumer integration uses the current native `T3Hub` identity and explicit
+per-token `masterCodeHash` and `walletCodeHash`; no global wallet template, legacy
+role alias or obsolete storage fallback is allowed. Validate the entire current
+manifest before deriving instruments or advertising fresh reads. The keeper is a
+mandatory, unique `orderKeeper: { address }` identity; obsolete tuning fields and
+null are invalid. Public indexer
+mounts are exactly `/api/indexer`; responses and optional request fences bind
+`x-tonswap-release` to that manifest hash. Historical product qualification notes
+below do not authorize old decoders for the fresh native release. Keep the runtime
+qualification fence until each current product has its own accepted evidence.
+
+Current open-order discovery uses original authenticated factory and child
+transaction boundaries plus exact same-head account envelopes. Durable snapshots
+and bounded cursors preserve one release and masterchain boundary; only
+genesis-linked factory history with no gaps can be complete. Current state does
+not establish physical cash delivery or keeper admission. Preserve immutable
+evidence across release changes and restarts, use the separate bounded orders
+pool, and never replace newer publications with late work. Configuration-price
+reads authenticate the original config dictionary at the exact requested current
+head and select storage prices active at chain time. Do not substitute public RPC
+prices, hardcoded defaults or a different head. Run `test:current-release` and
+`test:current-orders` plus the retained-capture collector/discovery checks after
+these changes; transport proof tests remain independent.
+
+The current wallet-claim endpoint accepts the exact saved T3 redemption request.
+Reconstruct complete original wallet history and both current sparse trees before
+returning request-selected witnesses. Bind origin LT to the original owner body,
+and match failure evidence only to the current attempt cell hash. The burn
+WalletTerms recipient is the wallet owner; the payout recipient belongs to its
+custom intent. Keep the 32-claim/32-failure and shared work limits, with explicit
+incomplete coverage on overflow. Account-storage reads expose original active
+ShardAccount and full configuration BOCs at the exact requested current head;
+never replace storage-price history with today's price or synthesize StorageInfo.
+Run the current release/API, native T3 collector and account-storage checks.
+
+Order-wallet claim evidence uses its own exact order-settlement request and
+only the current T3 input-wallet protocol. Authenticate the closed derived order,
+original initialization/terms and actual funding credit before selecting failed
+non-burn attempts. Preserve original transferTransaction at the first origin LT,
+including across retry generations. Full order/input-wallet history and current
+claim/failure roots are mandatory; unmarked failure membership requires a
+separate resolved mark before retry. One aggregate 10,000-row history budget,
+64 new archive boundaries and 32/32 witness limits share the evidence gate.
+
+Current Spot operation evidence accepts the reviewed direct body, original
+order-create terms or whole-order terms with an exact resolved funding dispatch.
+Derive all wallet and pool identities from the current
+manifest and same-head getters. Return original transaction/before/after account
+cells, bounded current envelopes and explicit gaps. Normalize only legal TL-B
+message placement while preserving every message field; query/body matches alone
+do not link physical deliveries. The browser must separately bind the original
+wallet dispatch. Factory-time startAt clamping requires the original request,
+actual factory execution and exact child StateInit/initialization; mutable order
+state or events alone never prove token receipt. Whole-order evidence requires
+complete original order/input-wallet histories and exact funding LT/hash/body/value.
+Only authenticated dictionary absence enters `absentAccounts`; missing or merely
+uninitialized state never does. The narrow never-funded, zero-execution withdrawal
+exception requires that absence and the original order bounce, and never invents
+a wallet transaction or token credit. Historical permissionless keepers require
+successful pinned order transitions. Clients retain unresolved action locks and
+independently prove conservation and each physical output/refund. Spot and T3 share the live
+request cap and immutable release store. Keep explicit work/size bounds and never
+publish truncated-complete evidence. Run the focused Spot request, API and
+retained-capture tests after changing this seam, including the current whole-order
+capture matrix. Normal ten-slice captures fit the bounds; repeated failures and
+larger histories remain incomplete rather than truncated-complete.
+
+- The sole release/deployment identity input is required `INDEXER_RELEASE_MANIFEST`, using schema `tonswap-release-v1`. Singleton entries are exact address/codeHash objects; reserves use USDT/USDC/KUSD token roles and the hub role is T3Hub. Network/globalId and manifestHash must validate. No registry files, ledger pin environment variables, opcode file loading or parity checks are supported.
 - Poll every five seconds. Stop the old child worker before starting a changed manifest in a fresh process. Snapshots and PostgreSQL schemas are scoped to manifestHash; never resume old jobs under new bindings or delete retained release state.
 - `/contracts` and `/service-info` expose `release: { releaseId, manifestHash }`. Opcode definitions are bundled. Runtime ledger limits use `INDEXER_MAX_WATCHED_ACCOUNTS`, `INDEXER_MAX_PAGES_PER_SYNC` and `INDEXER_MAX_RELATED_ACCOUNTS`.
-- Native service metadata derives its public URL and service ID from the current manifest's `services.indexer`; config identity/URL only describes standalone services. Advertise fresh reads only with exact current native network/release/hash bindings. Never default metadata to an unrelated public deployment. Public discovery, OpenAPI paths and docs use that exact manifest mount. Backend routes remain `/api/indexer`; an externally reviewed proxy maps a distinct public mount to them without redirecting to another release. Production smoke derives the mount and public identity from its pinned manifest, and rejects a conflicting explicit mount. Run `npm run test:public-mount` and `npx tsx src/scripts/production-smoke-adversarial-test.ts` after mount changes.
+- Service metadata derives its public URL and service ID solely from the current manifest's `services.indexer`. There are no standalone identity/URL inputs. Advertise fresh reads only with exact current native network/release/hash bindings. Never default metadata to an unrelated public deployment. Public discovery, OpenAPI paths and docs use that exact manifest mount. Backend routes remain `/api/indexer`; an externally reviewed proxy maps a distinct public mount to them without redirecting to another release. Production smoke derives the mount and public identity from its pinned manifest, and rejects a conflicting explicit mount. Run `npm run test:public-mount` and `npx tsx src/scripts/production-smoke-adversarial-test.ts` after mount changes.
 - First-release perps instruments bind the declared market ID and symbol to
   the explicit spot pool and `templates.DlmmPool` code hash. Oracle pool candles use the canonical
   `perps-oracle:{marketId}` key; never substitute a spot pool by symbol. Current
@@ -165,14 +244,15 @@ The current oracle journal stores count:uint16, nextWireQueryId:uint64, an eligi
 Registered testnet perps engines require the reviewed macOS arm64 admission runtime.
 Configure all four `PERPS_ADMISSION_BINARY_PATH`, `PERPS_ADMISSION_BINARY_SHA256`,
 `PERPS_ADMISSION_CONFIG_PATH`, and `PERPS_ADMISSION_CONFIG_SHA256` values together.
-Startup authenticates the chain, fresh exact-block engine state and configured code
-before readiness. OPEN/CLOSE admission uses only the bounded native workers, with
+The HTTP listener opens before native authentication. Readiness requires the chain,
+fresh exact-block engine state and configured code to authenticate; failed native
+startup retries with bounded backoff without replaying an admission request. OPEN/CLOSE admission uses only the bounded native workers, with
 authenticated account/configuration/context, a hard gas maximum, and no generic
 remote-getter fallback or response cache. Preserve actual economic denial, VM exit
 and gas usage separately from typed infrastructure errors. Run `npm run test:admission`
 and the complete `npm test`; the ordinary build must retain owned clean-dist cleanup.
-The native package is qualified and installed separately; the Linux Docker image
-does not provide it or support a registered perps engine.
+The native package is qualified and installed separately on its supported host.
+There is no generic container deployment for this release.
 
 Current routed DLMM observations require strict RTR1/extras5/RSJ8 historical router
 state and the sole RSWI/RPSX/RPSC/RPCA ordinary single-pool wire. Payer funding,
@@ -203,7 +283,11 @@ queue transition; never count two allocations as a second user payment or accept
 an old one-record/immediate-dispatch layout.
 
 Capture qualification uses retained pure-build manifests and per-target Tolk
-import closures (`src/scripts/capture-build.ts`), not a union of producer sources.
+import closures, not a union of producer sources. `src/scripts/capture-build.ts`
+retains the old verifier; `current-capture-build.ts` independently qualifies 1.5
+virtual opcode/vendor closures, original manifests/artifacts and completion receipts.
+Never route a current capture through an old manifest or reconstruct missing producer
+history.
 Authenticate every executed/embedded compiled identity and its original bytes;
 keep transaction BOCs, state commitments and historical rejection fixtures intact.
 Never import removed native scripts/release helpers, trust transient build output,
@@ -212,3 +296,196 @@ bypass. Capture evidence and runtime admission are separate: this migration does
 not relax the macOS arm64 admission binary/configuration requirements. Run
 `npm run test:capture-build`, all ledger checks, the full suite and the ordinary
 clean-dist build after capture verifier changes.
+
+
+## Current chain, API and ledger contract
+
+The sole chain source is the reviewed local liteserver pool. The selected network requires an absolute local global-config file or an explicit inline peer list. No HTTP source, remote pool URL, public endpoint default, discovery service or alternate RPC proxy is supported. Configuration and admission artifacts validate before listen; chain, database and admission initialization start after listen. Listener availability never establishes ledger or native readiness. Namespace/catalog/release conflicts remain unavailable without resetting operational data.
+
+One monotonic network-authenticated head pins each current batch. Current block time must be within 30 seconds of local time, at most five seconds ahead, with a consistent peer clock; the one-second process-head reuse window cannot extend block freshness. Unpinned preflight batches recheck block age at completion. An already pinned concurrent batch retains its original boundary without lowering the process head. Failed batches cancel active siblings and stop queued reads. Accounts carry real shard-block anchors and chain creation times; server time never supplies a chain anchor. Completed getters and balances are not cached. Snapshot reuse must be explicit and retain its original asOfSeqno; time-dependent values cannot enable completed reuse. Cancellation and bounded deadlines apply to callers and underlying shared work. Typed REST failures use flat `{error,code}` with honest 400/404/415/429/500/503/504 statuses and no-store; retryable 429/503/504 responses include Retry-After. JSON-RPC uses the same source and authentic anchors. Enabled BOC submission is single-attempt and never retried or hedged.
+
+Balance rows always include GRAM and every manifest root in manifest order, with manifest decimals, atomic strings, exact head sequence/time and complete. Verified values are ok, qualified undeployed wallets are not_deployed with zero, and failed or unqualified reads are unavailable with null amounts. SSE shares one HeadFeed and at most eight simultaneous owner reads; unavailable transitions never fabricate balance changes. Display metadata is never accounting precision.
+
+The in-process limiter accepts a visitor IP only with a valid X-TONSwap-Edge-Key and X-TONSwap-Client-IP. Otherwise it keys on the raw socket address. X-Forwarded-For is never trusted. INDEXER_EDGE_KEY requires at least 32 characters. The proxy template forwards the two headers, blocks operational endpoints, preserves application errors and streams, and supplies the exact static JSON 503 only for an unavailable backend. It does not run a second limiter.
+
+Stored historyComplete means genesis-linked physical history, separately from current-boundary coverage. Every owner cycle pins one head; coverage.boundary uses chain time while checkedAt, headObservedAt and publishedAt are server observations. Every previously published physical graph account must remain at an equal-or-later head with exact hash at equal LT, and every prior resolved binding must stay resolved. An unresolved refresh retains the immutable publication. Positive evidence needs its concrete transactions; negative conclusions require current-boundary coverage. Current root pages merge only the completed owner check for that publication; cursor generations never change. Related generation IDs, timestamps and mutable refresh-pending diagnostics never change the exact-ledger-v21 economic fingerprint.
+
+The priority scheduler reserves one foreground slot, uses independent per-account page allowances and retries after 2–60 seconds. A thirty-second sweep schedules recent or unresolved owner watches. Singleton prewarm does not consume watch capacity. INDEXER_LEDGER_WORKERS is 2–8 (default 3), worker-pool capacity is workers × 5 + 4 and the separate read pool has 10 connections; budget both pools across every worker process. Perps bounded-range read/admission work uses the read pool while collection and sweeps use workers, retaining the independent bounded-range schema and locks.
+
+Cross-repository qualification relies on unchanged createReleaseLedgerPool(url,hash,options?), PostgresLedgerStore constructor/initialize/begin/append/project/complete/page surfaces, exact readiness success keys and build identity inputs, canonical schema and immutable cursor behavior. Use a fresh canonical database for this first-release schema; do not migrate, reset or weaken the native qualification contract. Qualification reads stored physical history independently from owner publication and orders logical times numerically.
+
+Only gate packages start an isolated native PostgreSQL test server. Native sections use the sole INDEXER_TEST_DATABASE_URL and create their own random loopback schema. npm run test:ledger passes with only PATH and LANG; server-dependent sections stay optional. Package acceptance runs only owned scripts and a scoped typecheck. The phase does not read the npm registry or modify worktree node_modules. Dependency edits are manual and proved by an offline install/test in a separate scratch copy, with the documented fallback if the local cache cannot complete it.
+
+Disk monitoring never deletes operational data. Unknown capacity is critical; low/critical capacity skips snapshot saves and critical health returns 503. Snapshots serialize through the asynchronous writer, use one owned temporary file per target and are awaited during shutdown. Logs and metric series are bounded and expose dropped counts. Runtime metrics include source/database/phase timing, scheduler depth, foreground age, pool wait, first-publication latency and database size; additive concurrent I/O totals need not equal wall-clock phases.
+
+Publish this phase's web first, then switch the indexer within one release window. Keep the old indexer/database available for proxy rollback; the new web stays. No acceptance run or release announcement belongs between those two cutover steps.
+
+
+Current Options/faucet evidence starts at the exact original owner TON wallet
+transaction, never a target first-hop cursor. Verify full outgoing-to-incoming
+message identity, current release pins and complete bounded product/token-wallet
+histories. Retain original transaction and before/after account cells unchanged.
+Current Options permits OVBY/OVFD funding, OSWW, FEXC/OFEX and slot0 CLMJ only;
+CLMJ uses seriesId0 and null series/sourceWallet/notionalRaw/tokenId. Faucet FCLM
+grant amount and allocated wire are facts of the original faucet boundary.
+No event/receipt or current-balance comparison proves payout. These collectors
+share the live gate and aggregate work/byte bounds, preserve explicit incomplete
+coverage and never create a truncated-complete response. Exact manifest-pinned
+library-reference executable code is valid; pruned/Merkle cells are not code
+identity. Run current product parser/API/graph checks and original native capture
+checks; synthetic source/head adapters never qualify a public deployment.
+
+Options wallet-claim discovery reuses the exact saved Options operation request.
+Only original causal vault commands and actual original source debits select
+non-burn failures. Reconstruct complete current claim/failure roots, preserve
+original recipient/WalletDetails, and return exact original transferTransaction.
+Do not select unrelated history by query ID or count a current sparse witness as
+payment. Faucet recovery reconstructs every holder receipt transition from full
+original faucet history and binds release supplyBase; direct refusal targets its
+same positive source transaction, while a lost bounce targets the later holder
+transaction. Raw transaction cells alone do not authenticate proof-session chain
+anchors. Run current release routes, native product/claim/recovery captures and
+missing/wrong-history negatives after modifying these seams.
+
+
+Current public project tokens require the explicit JettonV21Minter/JettonV21Wallet
+pair or the separate vendor stablecoin minter/wallet pair. Known manifest roots
+retain their own paired code pins and precision. The TS master must match the V21
+minter template. Authenticate original same-head master storage and exact current
+getters, with explicit bounded on-chain decimals; no observed-code enrollment,
+remote metadata or implicit precision. Retained old manifest bytes are evidence,
+not an accepted current schema. Run current project-token and release checks.
+
+Current Launchpad operation transport uses canonical factory-derived sale, LP and
+vesting children, exact saved owner TON dispatch and reviewed assets. Every
+physical leg still needs original linked account transactions. Sales discovery is
+a bounded original factory page: complete means this page is gap-free, and null
+nextCursor requires a verified zero predecessor. Pool operations use listed
+release pools or exact current factory-derived public PoolId with approved token
+families; current sparse T3 claims must link to the saved operation's causal
+original debit. Native captures qualify these seams independently of the old
+business decoders and the global ledger fence. Run current Launchpad/Pool request,
+API and complete native capture checks before declaring them qualified.
+
+Current Perps transport decodes only PxStorage and current RiskVault layouts,
+with the exact installed peers, bucket1 controller/hook and market pool pins.
+The original owner request fixes generation, deposit and collateral-wallet
+authority. Shared sparse selection requires complete wallet history and links
+the original first debit to the exact causal emitter; retries preserve recipient
+and WalletDetails. Multi-wallet limits are aggregate, and any missing root or
+limit stays explicitly incomplete. Recipient interval seeds preserve every
+current-to-dispatch boundary while avoiding unrelated lifetime history.
+
+Current Launchpad archived owed discovery is Sale-only. Authenticate canonical factory-derived child identity and paired slot token/wallet, then reconstruct complete original history. Owed live leaves use inline domain1, consumed leaves domain2, and pairs domain3; T3 receipt leaf encoding is incompatible. Bind JARC hints to every original archive count/root/total/frontier transition, and consume only successful exact CLMA with its original witness. Missing logs/history or overflow stays incomplete; no current-root/list approximation or invented payout. Run independent archive tree/API checks and native append/consume/append-after-consumption capture checks.
+
+
+Large Sale archive histories use request-driven durable verified boundary
+checkpoints. Scope them by exact release, decoder version, canonical holder/slot
+and code identity. Each slice fully verifies original transaction and account
+commitments; each request follows its exact current anchor through predecessor
+and before/after account hashes. Preserve the shared20-second limit and bounded
+64-boundary/8-second slices. Return retryable503 until genesis and every current
+root/count/total/frontier transition agree; never publish a partial tree or cache
+a ready current answer. Immutable SQL checkpoints retain their original evidence
+foreign key. No unowned background loops, reset or deletion of retained progress.
+Run archive SQL restart/concurrency/cancellation/fork checks and retained native
+append/consume/append-after-consumption with the unchanged shared deadline.
+
+Current Perps business projection accepts only the PxStorage six-operation wire,
+exact manifest engine/RiskVault/pool/T3 pins, original owner dispatch and
+authenticated before/after cells. Independent integer arithmetic checks margin,
+entry principal, 2N reserve, remaining entitlement, signed funding, fees and
+unpaid loss; overlapping position facts never create spendable cash. Original
+source debit and recipient credit separately prove T3 cash, including sparse
+retry and whole owed recovery. Bounded range uses the same decoder; frozen
+identities require complete original StateInit-linked history. Missing originals,
+payout or coverage remain incomplete. Run `npm run test:ledger:perps` for
+`ledger-current-perps-test.ts`, `current-perps-economics-test.ts`,
+`ledger-current-perps-range-test.ts` and the retained generic range/retry/recovery
+tests. The fresh source-locked native producer passed 18 tests with 66 default/x6
+captures; the portable originals and receipt remain unchanged. Sandbox heads do
+not qualify public deployment. `currentLedgerDecodersQualified` remains false
+until all current business-decoder gates are independently accepted. The earlier
+Perps ABI positive tests remain historical evidence, outside the ordinary gate.
+
+
+Current Launchpad business projection binds the original owner command to exact
+factory-derived Sale, LP and Vesting children and independent historical account
+boundaries. Empty-forward supply discovery authenticates the canonical child;
+current discovery hints never replace original financial evidence. Missing child
+originals preserve an unresolved current intent with unknown identity fields.
+Project token master boundaries participate in coverage, so incomplete master
+history cannot confirm settlement. Failed-sale claims use the original paid
+amount and separately proved T3 cash to classify refunds. Holder and archived
+owed recovery require their exact original command, witness and physical payout;
+archive accounting does not fabricate complete ordinary ledger history.
+
+Run `npm run test:ledger:launchpad` for the current native business, discovery,
+holder, recovery and archive suites. The portable v2 corpus retains 44 unchanged
+native capture files, all 180 source files and the passing producer receipt.
+All eight worlds qualify the actual discovery graph from exact same-head current
+account envelopes and canonical getters, including explicit original cold-wallet
+states. Sandbox heads do not qualify a public deployment. The global current
+ledger qualification fence remains in place until all product gates pass.
+
+
+Fresh market observations use `dlmm-market-ledger-v2` and the current Pool/T3/X
+bindings derived from the release manifest. Each token keeps its own reviewed
+master/wallet family. The current service dispatches only the current graph and
+projector and refuses historical v1 publications. The store requires an explicit schema at construction and rejects mismatched
+publication, head and page metadata before invoking a decoder. Archived evidence
+tests explicitly select v1; no current request falls back to that decoder.
+
+A v2 observation independently verifies original owner dispatch, physical input
+and recipient credit, exact pool reserve/fee changes and historical token
+precision. `settlementMode: physical-credit` makes `finalizedUtime` the actual
+recipient credit time; it does not invent a retired acknowledgement/finalizer.
+Missing original cash or precision remains incomplete. Publication and page reads
+reverify original economics and exact dependency coverage. Immutable generation,
+scoped cursor, compare-and-publish and transactional rollback rules remain intact.
+Run `src/scripts/ledger-current-dlmm-market-test.ts` and
+`src/scripts/current-market-store-test.ts` for native economics and embedded
+PostgreSQL persistence; synthetic archive/head adapters are not public consensus
+qualification. Keep the global ledger fence until the full current suite and
+native release qualification are accepted.
+
+Current runtime excludes the retired Cover, volatility-index and old farm tuple
+snapshot endpoints and decoders. These routes return 404. Current pool farming
+uses `get_farm`, `get_farm_pending` and `get_next_farm_id` through the maintained
+exact-head getter transport, with separate original evidence for physical cash.
+Do not restore obsolete positive fixtures as current API coverage; retain their
+raw historical evidence and test retired routes for refusal.
+
+
+Current DLMM business qualification uses exact current Pool/SpotOrderFactory/SpotOrder
+storage and per-token T3, V21 or vendor-stablecoin families. Original owner
+dispatches, factory/child initialization, pool state changes and separate wallet
+debit/credit boundaries authorize economics. Pool LP shares and fee allocations
+are accounting components, never additional cash; ordinary projections check
+all token movements for duplication. Order funding, consumed input, physical
+outputs and returned custody remain separate. Discovery retains the full owner
+chain while selecting only exact OCRT dispatches as child-creation authority.
+
+Run `npm run test:ledger:market`, `npm run test:ledger:liquidity` and
+`npm run test:ledger:orders`. Current native positives replace old DLMM ABI
+positives in these ordinary aliases. The portable originals and limitations are
+documented in `src/scripts/fixtures/current-dlmm-native/README.md`. Protected
+Order-input-wallet retry and never-funded cancellation do not yet qualify as
+positive financial completion in this business corpus; missing physical evidence
+remains unresolved. Keep the global current-decoder qualification fence.
+
+Market precision retains the configured source's original `sourceMasterchain`
+context and the exact execution account envelope plus independent shard anchor.
+The persisted after-root context must equal the execution masterchain identity;
+the before-root context must be the explicitly requested preceding masterchain
+sequence. Use canonical signed-decimal shard IDs and verify tagged-shard account
+membership; shard and masterchain sequence numbers are independent. Original
+root LT/hash must remain unchanged across the bracket. Old cached states lacking
+source context are refreshed from the configured source, never repaired locally.
+Missing context stays unresolved. This retained source binding is not a standalone
+consensus proof. Current native test brackets remain explicitly synthetic.
+
+Bound identity reads before RPC, original graphs to 10,000 transactions/64 MiB,
+and each execution proof including its account envelope to 256 transactions/8 MiB.
+Each token's retained precision archive has a separate 8 MiB pre-parse budget.
+Limits and missing boundaries yield explicit incomplete coverage.

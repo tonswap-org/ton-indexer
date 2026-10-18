@@ -6,7 +6,7 @@ import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import type { RawTransaction } from '../data/dataSource';
 import { selectActivePoolCutoffHistory, type PoolCutoffHistoryRequest } from '../ledger/activePoolCutoffHistory';
 
-// These are retained current-source local VM executions. Their original cells
+// These are retained original local VM executions. Their original cells
 // prove the account chain under test; they are not masterchain archive proofs.
 const fixturePath = `${__dirname}/fixtures/dlmm-referral-market-current/dlmm-market-precision.json`;
 const fixtureBytes = readFileSync(fixturePath);

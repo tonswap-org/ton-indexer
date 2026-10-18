@@ -35,6 +35,7 @@ async function main() {
     // An event published before enrollment can still be a candidate if the
     // particular chain stage reaches enrollment; publication is not its time.
     await pool.query('UPDATE ledger_discovery_events SET discovered_at=$1 WHERE generation=$2', [new Date(Date.parse(since) - 1000).toISOString(), first]);
+    assert.deepEqual(await store.firstPublicationLatencies(first), [Date.parse(since)-1000-original.utime*1000], 'first publication latency uses the event chain time');
     assert.deepEqual((await store.discoveries('testnet', owner, { since })).revisions, []);
     const confirmed = structuredClone(original);
     confirmed.settlement!.status = 'confirmed';
@@ -86,9 +87,12 @@ async function main() {
     await publish([getter], other);
     assert.equal((await store.discoveries('testnet', other, { since })).throughRevision, '1', 'getter timestamp-only refresh cannot create economic discovery');
     const app = fastify();
-    registerLedgerRoutes(app, { discoveries: (account: string, query: any) => store.discoveries('testnet', account, query) } as LedgerService);
+    let rangeQuery: any;
+    registerLedgerRoutes(app, { page: async (_account: string, query: any) => {rangeQuery = query; return {accepted: true};}, discoveries: (account: string, query: any) => store.discoveries('testnet', account, query) } as unknown as LedgerService);
     assert.equal((await app.inject(`/api/indexer/v1/accounts/${owner}/ledger/discoveries?since=${encodeURIComponent(since)}`)).statusCode, 200);
     assert.equal((await app.inject(`/api/indexer/v1/accounts/${owner}/ledger/discoveries?since=invalid`)).statusCode, 400);
+    const range = await app.inject(`/api/indexer/v1/accounts/${owner}/ledger?scope=perps&from_utime=${epoch-10}&to_utime=${epoch}`);
+    assert.equal(range.statusCode, 200); assert.deepEqual(rangeQuery, {scope: 'perps', fromUtime: epoch-10, toUtime: epoch, limit: undefined, cursor: undefined});
     await app.close();
     console.log('Ledger discovery assertions passed (late settlement, independent clocks, dedup, cursor pinning/restart, wallet/network isolation, rollback and exact revisions).');
   } finally { await db.close(); }

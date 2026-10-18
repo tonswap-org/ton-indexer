@@ -1,16 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+
 import assert from 'node:assert/strict';
-import { Address, Cell, beginCell, loadTransaction, serializeTuple } from '@ton/core';
-import { RawTransaction, TonDataSource } from '../data/dataSource';
-import { LiteClientDataSource } from '../data/liteClientSource';
+import { Address, beginCell } from '@ton/core';
+import {RawTransaction} from '../data/dataSource';
 import { evaluateTransactionStatus } from '../data/transactionEvidence';
-import { ResilientTonDataSource } from '../data/resilientSource';
-import {
-  createTonClient4CompatibilityAdapter,
-  TonClient4DataSource,
-  type TonClient4HttpAdapter
-} from '../data/tonClient4Source';
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 
@@ -204,187 +196,6 @@ const testDirectActionsUseMatchedMessagePool = () => {
   assertPool(directTransaction(0x44524d56, withdrawBody), 'lp_withdraw');
 };
 
-const makeSource = (
-  getTransactions: TonDataSource['getTransactions']
-): TonDataSource => ({
-  network: 'testnet',
-  async getMasterchainInfo() {
-    return { seqno: 1 };
-  },
-  async getAccountState() {
-    return { balance: '0' };
-  },
-  getTransactions,
-  async runGetMethod() {
-    return null;
-  },
-  async getJettonBalance() {
-    return null;
-  },
-  async getJettonMetadata() {
-    return null;
-  },
-  async close() {
-    return;
-  },
-});
-
-const testExplicitCursorFallsBackOnEmptyPrimary = async () => {
-  let primaryCalls = 0;
-  let fallbackCalls = 0;
-  const fallbackPage = [makeRawTransaction({ lt: '10' })];
-  const primary = makeSource(async () => {
-    primaryCalls += 1;
-    return [];
-  });
-  const fallback = makeSource(async () => {
-    fallbackCalls += 1;
-    return fallbackPage;
-  });
-  const resilient = new ResilientTonDataSource(primary, fallback);
-
-  const explicitPage = await resilient.getTransactions(
-    account.toRawString(),
-    20,
-    '10',
-    Buffer.alloc(32, 10).toString('base64')
-  );
-  assert.equal(explicitPage, fallbackPage);
-  assert.equal(primaryCalls, 1);
-  assert.equal(fallbackCalls, 1);
-
-  const latestPage = await resilient.getTransactions(account.toRawString(), 20);
-  assert.deepEqual(latestPage, []);
-  assert.equal(primaryCalls, 2);
-  assert.equal(fallbackCalls, 1);
-};
-
-const testPartialActiveStateUsesFallbackCells = async () => {
-  const readMerged = async (
-    primaryCells: { codeBoc: string | null; dataBoc: string | null },
-    fallbackCells: { codeBoc: string | null; dataBoc: string | null }
-  ) => {
-    let fallbackCalls = 0;
-    const primary: TonDataSource = {
-      ...makeSource(async () => []),
-      async getAccountState() {
-        return {
-          balance: '10',
-          lastTxLt: '10',
-          accountState: 'active',
-          ...primaryCells,
-        };
-      },
-    };
-    const fallback: TonDataSource = {
-      ...makeSource(async () => []),
-      async getAccountState() {
-        fallbackCalls += 1;
-        return { balance: '9', accountState: 'active', ...fallbackCells };
-      },
-    };
-    const merged = await new ResilientTonDataSource(primary, fallback).getAccountState(account.toRawString());
-    assert.equal(fallbackCalls, 1);
-    assert.equal(merged.balance, '10');
-    assert.equal(merged.lastTxLt, '10');
-    return merged;
-  };
-
-  const missingData = await readMerged(
-    { codeBoc: 'primary-code', dataBoc: null },
-    { codeBoc: null, dataBoc: 'fallback-data' }
-  );
-  assert.equal(missingData.codeBoc, 'primary-code');
-  assert.equal(missingData.dataBoc, 'fallback-data');
-
-  const missingCode = await readMerged(
-    { codeBoc: null, dataBoc: 'primary-data' },
-    { codeBoc: 'fallback-code', dataBoc: null }
-  );
-  assert.equal(missingCode.codeBoc, 'fallback-code');
-  assert.equal(missingCode.dataBoc, 'primary-data');
-};
-
-const testTonClient4HashRoundTrip = async () => {
-  // Original sandbox transaction cells also exercise the SDK's raw-cell ABI.
-  const fixture = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/dlmm-market-precision.json'), 'utf8'));
-  const saved = fixture.transactions.find((row: any) => {
-    const tx = loadTransaction(Cell.fromBase64(row.transactionBoc).beginParse());
-    return tx.prevTransactionLt > 0n && tx.outMessages.size > 0;
-  });
-  const tx = loadTransaction(Cell.fromBase64(saved.transactionBoc).beginParse());
-  const requestedHashes: Buffer[] = [];
-  const address = Address.parse(saved.account);
-  const fakeClient = {
-    async getAccountTransactions(_address: Address, _lt: bigint, hash: Buffer) {
-      requestedHashes.push(Buffer.from(hash));
-      return [{ tx, block: { workchain: address.workChain } }];
-    },
-  };
-  const source = new (TonClient4DataSource as any)('testnet', fakeClient, ['test']) as TonClient4DataSource;
-  const page = await source.getTransactions(address.toRawString(), 1, tx.lt.toString(), tx.hash().toString('hex'));
-  assert.ok(requestedHashes[0]?.equals(tx.hash()));
-  assert.equal(page[0]?.hash, tx.hash().toString('base64'));
-  assert.equal(page[0]?.prevTransactionHash, Buffer.from(tx.prevTransactionHash.toString(16).padStart(64, '0'), 'hex').toString('base64'));
-  assert.equal(page[0]?.totalFeesRaw, tx.totalFees.coins.toString());
-  assert.equal(page[0]?.rawBoc, tx.raw.toBoc().toString('base64'));
-  await assert.rejects(source.getTransactions(address.toRawString(), 1, tx.lt.toString(), Buffer.alloc(32, 7).toString('base64')), /exact cursor-inclusive linked/);
-};
-
-const testTonClient4StorageStatCompatibility = async () => {
-  const fixture = {
-    account: {
-      state: { type: 'uninit' },
-      balance: { coins: '123' },
-      last: null,
-      storageStat: {
-        lastPaid: 1,
-        duePayment: null,
-        used: { bits: 2, cells: 3 }
-      }
-    },
-    block: {
-      workchain: 0,
-      shard: '0',
-      seqno: 1,
-      rootHash: Buffer.alloc(32).toString('base64'),
-      fileHash: Buffer.alloc(32).toString('base64')
-    }
-  };
-  const fixtureAdapter: TonClient4HttpAdapter = async (config) => ({
-    data: JSON.stringify(fixture),
-    status: 200,
-    statusText: 'OK',
-    headers: {},
-    config
-  });
-  type TestClient = {
-    getAccount(seqno: number, address: Address): Promise<any>;
-  };
-  type TestClientConstructor = new (args: {
-    endpoint: string;
-    httpAdapter: TonClient4HttpAdapter;
-  }) => TestClient;
-  const InstalledTonClient4 = require('ton').TonClient4 as TestClientConstructor;
-
-  const incompatibleClient = new InstalledTonClient4({
-    endpoint: 'https://fixture.invalid',
-    httpAdapter: fixtureAdapter
-  });
-  await assert.rejects(incompatibleClient.getAccount(1, account), /Mailformed response/);
-
-  const compatibleClient = new InstalledTonClient4({
-    endpoint: 'https://fixture.invalid',
-    httpAdapter: createTonClient4CompatibilityAdapter(fixtureAdapter)
-  });
-  const response = await compatibleClient.getAccount(1, account);
-  assert.deepEqual(response.account.storageStat.used, {
-    bits: 2,
-    cells: 3,
-    publicCells: 0
-  });
-};
-
 const testFinalizedStorageStatus = () => {
   assert.deepEqual(evaluateTransactionStatus({ description: { type: 'storage' } }), {
     status: 'success',
@@ -402,10 +213,6 @@ const run = async () => {
   testCanonicalTransferDirection();
   testUnknownOpWithValueIsContractCall();
   testDirectActionsUseMatchedMessagePool();
-  await testExplicitCursorFallsBackOnEmptyPrimary();
-  await testPartialActiveStateUsesFallbackCells();
-  await testTonClient4HashRoundTrip();
-  await testTonClient4StorageStatCompatibility();
   testFinalizedStorageStatus();
 };
 
