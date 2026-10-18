@@ -311,6 +311,30 @@ The `exact-ledger-v20` projection fingerprint forces fresh decoder generations
 on recheck, including quiet accounts, while preserving previous cursor snapshots.
 Run `npx tsx src/scripts/ledger-test.ts` for persisted decoder invalidation.
 
+### Exact 24-hour pool history dependency
+
+`src/ledger/activePoolCutoffHistory.ts` selects the inclusive state transaction at
+an exact chain observation minus 24 hours. It re-decodes original transaction
+BOCs, binds the supplied current account pointer and retains every intervening
+pool transaction, including failed transactions. A transaction on the cutoff
+second is included at the highest applicable account logical time; an unchanged
+current pointer establishes an idle interval. Missing original cells, broken
+links, future or nonmonotonic times remain explicit unavailable results. Returned
+evidence owns frozen copies and a deterministic content identity.
+
+This is a history dependency, not an authenticated block archive or a price
+quote. The price producer must independently authenticate the current observation
+at its exact masterchain head and the selected historical account boundary,
+retain masterchain/shard provenance, and qualify the same manifest, Pool/root
+code, decimal precision, bin spacing and T3 quote orientation. Current archive
+interfaces do not yet retain that complete provenance. No percentage-alert API
+or capability is enabled by this dependency. The retained native regression
+fixture contains original local VM transactions and account commitments; its
+adapter observation times are test inputs, not live masterchain proofs.
+
+Run `npm run test:ledger:cutoff-history`; `npm run test:ledger:market` and `npm test`
+include it. The check performs no network read, signing or deployment.
+
 ### Historical market execution ledger
 
 The release manifest's `spotMarkets`, token root code pins, DLMM wallet/pool
