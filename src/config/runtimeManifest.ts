@@ -8,7 +8,7 @@ export const RUNTIME_CONTRACT_ROLES = [
   'CoverVault', 'ParisianPolicyManager', 'CoverAutomationUpkeep',
   'GenesisDistributor', 'TSMinter', 'MerkleClaim', 'Remint', 'TestnetFaucet',
 ] as const;
-export const RUNTIME_TEMPLATES = ['T3Wallet', 'T3RecoveryProof', 'JettonV21Wallet', 'DlmmPool', 'SpotOrder', 'ShoutOption', 'OutperformanceOption', 'SaleFixed', 'SaleBonding', 'SaleAuction', 'VestingVault', 'LpVault'] as const;
+export const RUNTIME_TEMPLATES = ['T3Wallet', 'T3RecoveryProof', 'JettonV21Wallet', 'DlmmPool', 'SpotOrder', 'ShoutOption', 'OutperformanceOption', 'SaleFixed', 'SaleBonding', 'SaleAuction', 'VestingVault', 'LpVault', 'JettonV21Minter'] as const;
 
 export type RuntimeRole = typeof RUNTIME_CONTRACT_ROLES[number];
 export type RuntimeTemplate = typeof RUNTIME_TEMPLATES[number];
@@ -139,6 +139,7 @@ export function validateReleaseManifest(x: unknown): { ok: true; m: RuntimeRelea
         const role = token.symbol === 'T3' ? 'T3Hub' : token.symbol === 'TS' ? 'TSMinter' : token.symbol;
         need(token.root === x.contracts[role]?.address && token.masterCodeHash === x.contracts[role]?.codeHash, `tokens.${token.symbol} master`);
         if (token.symbol === 'T3' || token.symbol === 'TS') need(token.walletCodeHash === x.templates?.[token.symbol === 'T3' ? 'T3Wallet' : 'JettonV21Wallet'], `tokens.${token.symbol} wallet`);
+        if (token.symbol === 'TS') need(token.masterCodeHash === x.templates?.JettonV21Minter, 'tokens.TS master template');
     }
 
     const spots: any[] = Array.isArray(x.spotMarkets) ? x.spotMarkets : [];

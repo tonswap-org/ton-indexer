@@ -346,3 +346,12 @@ same positive source transaction, while a lost bounce targets the later holder
 transaction. Raw transaction cells alone do not authenticate proof-session chain
 anchors. Run current release routes, native product/claim/recovery captures and
 missing/wrong-history negatives after modifying these seams.
+
+
+Current public project tokens require the explicit JettonV21Minter/JettonV21Wallet
+pair or the separate vendor stablecoin minter/wallet pair. Known manifest roots
+retain their own paired code pins and precision. The TS master must match the V21
+minter template. Authenticate original same-head master storage and exact current
+getters, with explicit bounded on-chain decimals; no observed-code enrollment,
+remote metadata or implicit precision. Retained old manifest bytes are evidence,
+not an accepted current schema. Run current project-token and release checks.

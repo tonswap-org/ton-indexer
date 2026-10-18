@@ -1915,3 +1915,11 @@ the later faucet transaction. These proofs concern inventory and cooldown
 recovery. A separate physical grant graph establishes receipt of tokens. Native
 certificate sessions additionally require authenticated original chain anchors;
 fixture proofs and synthetic sandbox heads cannot provide that authority.
+
+Public project-token reads authenticate the original current master and exact
+`get_jetton_data` at one head. Only the installed `JettonV21Minter`/
+`JettonV21Wallet` pair or the separate stablecoin minter/wallet pair is accepted.
+Known manifest roots retain their exact pair and precision. Explicit bounded
+on-chain decimals are required; remote metadata and implicit precision do not
+authorize token funding. The TS master must match the mandatory V21 minter pin.
+Run `npm run test:current-project-token` and `npm run test:runtime-manifest`.

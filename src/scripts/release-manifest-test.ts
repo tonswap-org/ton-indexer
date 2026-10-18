@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { buildRuntimeManifestBundle, hashRegistry, hashReleaseManifest, parseCanonicalReleaseManifest, readCanonicalReleaseManifest } from '../config/releaseManifest';
 import { validateReleaseManifest } from '../config/runtimeManifest';
 import { deriveRuntimeManifestBindings } from '../config/runtimeManifestBindings';
-import { nativeLocalnetManifestText, runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
+import { nativeLocalnetManifestText, retainedNativeLocalnetManifestText, runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'ton-indexer-release-manifest-')));
 const writeManifest = (name: string, overrides: Record<string, unknown> = {}) => {
@@ -38,13 +38,20 @@ try {
   assert.equal(nativeBindings.network, 'localnet');
   assert.equal(nativeBindings.currentSpotMarkets.length, native.runtime.spotMarkets.length);
   assert.equal(nativeBindings.t3Hub, native.runtime.contracts.T3Hub!.address);
-  assert.equal(native.manifestHash, 'd83b6ab905f17bb363ca88504358a3a3840e1fae9c301ecb4c7eeceb32f59b56');
+  assert.equal(native.manifestHash, '50ab97938efad54a000298046e308d0f8f3911e15a6ddbd335797a1a6527ba64');
+  assert.equal(JSON.parse(retainedNativeLocalnetManifestText).manifestHash, 'd83b6ab905f17bb363ca88504358a3a3840e1fae9c301ecb4c7eeceb32f59b56');
+  assert.throws(() => parseCanonicalReleaseManifest(retainedNativeLocalnetManifestText, 'localnet'), /templates/);
   assert.equal(native.runtime.source.contracts, '0'.repeat(40), 'native fixture remains sandbox evidence');
   assert.deepEqual(native.runtime.orderKeeper, { address: '0:6e99eb37460359d88a06cc351a874e619c6f78c6773671cd1490173e64d1bba5' });
   assert.equal(nativeBindings.jettonRoots[0].walletCodeHash, native.runtime.templates.T3Wallet);
   assert.equal(nativeBindings.perpsEngine, native.runtime.contracts.PerpsEngine!.address);
   assert.equal(nativeBindings.currentLedgerDecodersQualified, false);
   assert.equal(nativeBindings.optionCodeHashes, undefined);
+  assert.equal(nativeBindings.currentOptionsBinding.options.factory.toRawString(), native.runtime.contracts.OptionFactory!.address);
+  assert.equal(nativeBindings.currentOptionsBinding.options.vaultHash, native.runtime.contracts.OptionVault!.codeHash);
+  assert.equal(nativeBindings.currentOptionsBinding.proofCodeHash, native.runtime.templates.T3RecoveryProof);
+  assert.equal(nativeBindings.currentOptionsBinding.manifestHash, native.runtime.manifestHash);
+  assert.equal(nativeBindings.currentLedgerDecodersQualified, false);
   if (process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE) {
     const current = readCanonicalReleaseManifest(process.env.TONSWAP_NATIVE_MANIFEST_FIXTURE, 'localnet');
     assert.equal(deriveRuntimeManifestBindings(current.runtime).t3Hub, current.runtime.contracts.T3Hub!.address);
@@ -130,7 +137,10 @@ try {
   for (const key of ['optionCodeHashes', 'launchpadCodeHashes', 't3CodeHashes', 't3RedemptionBinding'])
     assert.equal((bound as any)[key], undefined);
   assert.equal(bound.walletTemplateCodeHash, null, 'there is no global JTW1 wallet code');
-  assert.deepEqual(deriveRuntimeManifestBindings(parsed.runtime), bound);
+  assert.deepEqual(JSON.parse(JSON.stringify(deriveRuntimeManifestBindings(parsed.runtime))), JSON.parse(JSON.stringify(bound)),
+    'runtime values remain deterministic; current Options addresses have per-instance methods');
+  fail('missing-v21-minter-template', { templates: Object.fromEntries(Object.entries(fixture.templates).filter(([role]) => role !== 'JettonV21Minter')) });
+  fail('wrong-v21-minter-template', { templates: { ...fixture.templates, JettonV21Minter: 'f'.repeat(64) } });
   fail('omitted-master', { contracts: Object.fromEntries(Object.entries(fixture.contracts).filter(([role]) => role !== 'USDT')) });
   fail('non-root-token', { tokens: fixture.tokens.map(token => token.symbol === 'USDT' ? { ...token, root: contracts.PerpsEngine } : token) });
   fail('wrong-master-pin', { tokens: fixture.tokens.map(token => token.symbol === 'USDT' ? { ...token, masterCodeHash: 'f'.repeat(64) } : token) });
