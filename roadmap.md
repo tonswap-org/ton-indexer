@@ -125,3 +125,16 @@ remain open until their exact sources and original state captures close.
 The current `/api/indexer/v1/governance/{governance}/snapshot` endpoint is bound to the manifest Governance singleton and code. One fresh head authenticates original active account storage and `get_params` for all three classes. The decoder reads current locks and proposals; it rejects the retired Voting layout. Pages scan at most 64 uint32 IDs against the authenticated monotonic counter. Absent allocated IDs are pruned with unknown removal reason, while IDs at or above the counter were never allocated. The endpoint cannot establish historical completeness or target execution.
 
 Proposal close, delay and expiry follow the current class parameters and chain time, including the strict `now > expiresAt` expiry cutoff. A closed proposal may still need a permissionless advance; queued status is never payment or target execution. Missing original state, mismatched code/head or a failed getter makes the whole page unavailable. Completed snapshots are not reused. The API shape and original native default/x6 qualification are documented in README and OpenAPI.
+
+### Current two-pool Spot evidence
+
+`POST /api/indexer/v1/spot/operation-evidence` also accepts `kind: route` for
+manifest-installed A→T3→B routes. The exact reviewed transfer body and resolved
+source-wallet first-hop LT/hash select a bounded original causal graph. Both
+pools, the coordinator and all token wallets retain current manifest/same-head
+identity binding. The route response uses `tonswap-spot-route-evidence-v1` and
+returns original owner dispatch, transaction and account-state cells; it does not
+classify settlement. Consumers independently verify both reserve boundaries,
+physical input and final output/refund credits. Intermediate T3 returned to the
+owner is a refund, not successful delivery of B. Missing evidence and exhausted
+work/size bounds remain explicitly incomplete.

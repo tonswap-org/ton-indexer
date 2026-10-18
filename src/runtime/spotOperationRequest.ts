@@ -7,6 +7,11 @@ export type CurrentDirectSpotRequest = RequestIdentity & {
   kind: 'direct'; payRoot: string; receiveRoot: string; sourceWallet: string;
   valueNano: string; bodyBoc: string; bodyHash: string;
 };
+export type CurrentRouteSpotRequest = Omit<CurrentDirectSpotRequest, 'kind'> & {
+  kind: 'route'; pool2: string; coordinator: string;
+  /** Exact source jetton-wallet first hop resolved from the original owner dispatch. */
+  dispatch: { lt: string; hash: string };
+};
 export type CurrentOrderCreateSpotRequest = RequestIdentity & {
   kind: 'order-create'; factory: string; order: string; nonce: string;
   inputRoot: string; termsBoc: string; termsHash: string;
@@ -15,12 +20,16 @@ export type SpotOrderFunding = { sourceWallet: string; valueNano: string; bodyBo
 export type CurrentOrderSettlementSpotRequest = Omit<CurrentOrderCreateSpotRequest, 'kind'> & {
   kind: 'order-settlement'; funding: SpotOrderFunding | null;
 };
-export type CurrentSpotRequest = CurrentDirectSpotRequest | CurrentOrderCreateSpotRequest | CurrentOrderSettlementSpotRequest;
+export type CurrentSpotRequest = CurrentDirectSpotRequest | CurrentRouteSpotRequest | CurrentOrderCreateSpotRequest | CurrentOrderSettlementSpotRequest;
 type Market = RuntimeReleaseManifest['spotMarkets'][number];
 type Token = RuntimeReleaseManifest['tokens'][number];
 export type ParsedDirectSpotOperationRequest = {
   request: CurrentDirectSpotRequest; body: Cell; payload: Cell; market: Market;
   payToken: Token; receiveToken: Token; queryId: string; amountRaw: string; minimumRaw: string; deadline: number;
+};
+export type ParsedRouteSpotOperationRequest = Omit<ParsedDirectSpotOperationRequest, 'request'> & {
+  request: CurrentRouteSpotRequest; market2: Market; continuation: Cell; finalPayload: Cell;
+  finalMinimumRaw: string; intermediateToken: Token;
 };
 export type ParsedOrderCreateSpotOperationRequest = {
   request: CurrentOrderCreateSpotRequest; terms: OrderTerms; termsCell: Cell; market: Market; inputToken: Token;
@@ -28,7 +37,7 @@ export type ParsedOrderCreateSpotOperationRequest = {
 export type ParsedOrderSettlementSpotOperationRequest = Omit<ParsedOrderCreateSpotOperationRequest, 'request'> & {
   request: CurrentOrderSettlementSpotRequest; fundingBody: Cell | null;
 };
-export type ParsedSpotOperationRequest = ParsedDirectSpotOperationRequest | ParsedOrderCreateSpotOperationRequest | ParsedOrderSettlementSpotOperationRequest;
+export type ParsedSpotOperationRequest = ParsedDirectSpotOperationRequest | ParsedRouteSpotOperationRequest | ParsedOrderCreateSpotOperationRequest | ParsedOrderSettlementSpotOperationRequest;
 
 export class SpotEvidenceError extends Error {
   constructor(readonly status: 400 | 409 | 503, readonly code: 'bad_request' | 'release_mismatch' | 'upstream_unavailable') {
@@ -76,10 +85,10 @@ export function readSpotOperationRequest(value: unknown, manifest: RuntimeReleas
   try {
     requireRequest(value && typeof value === 'object' && !Array.isArray(value));
     const x = value as Record<string, unknown>;
-    requireRequest(x.kind === 'direct' || x.kind === 'order-create' || x.kind === 'order-settlement');
+    requireRequest(x.kind === 'direct' || x.kind === 'route' || x.kind === 'order-create' || x.kind === 'order-settlement');
     const common = ['kind', 'network', 'releaseId', 'manifestHash', 'owner', 'pool'];
-    const fields = x.kind === 'direct'
-      ? ['payRoot', 'receiveRoot', 'sourceWallet', 'valueNano', 'bodyBoc', 'bodyHash']
+    const fields = x.kind === 'direct' || x.kind === 'route'
+      ? ['payRoot', 'receiveRoot', 'sourceWallet', 'valueNano', 'bodyBoc', 'bodyHash', ...(x.kind === 'route' ? ['pool2', 'coordinator', 'dispatch'] : [])]
       : ['factory', 'order', 'nonce', 'inputRoot', 'termsBoc', 'termsHash', ...(x.kind === 'order-settlement' ? ['funding'] : [])];
     requireRequest(Object.keys(x).sort().join() === [...common, ...fields].sort().join());
     if (x.network !== manifest.network.slice(4) || x.releaseId !== manifest.releaseId || x.manifestHash !== manifest.manifestHash)
@@ -91,11 +100,22 @@ export function readSpotOperationRequest(value: unknown, manifest: RuntimeReleas
     const paired = manifest.tokens.find(token => token.symbol === market.symbol);
     requireRequest(t3 && paired && t3.root === manifest.contracts.T3Hub?.address && t3.root !== paired.root);
 
-    if (x.kind === 'direct') {
+    if (x.kind === 'direct' || x.kind === 'route') {
       const payRoot = address(x.payRoot), receiveRoot = address(x.receiveRoot);
       address(x.sourceWallet); uint(x.valueNano, 120, true);
-      requireRequest((payRoot === t3.root && receiveRoot === paired.root) || (payRoot === paired.root && receiveRoot === t3.root));
-      const payToken = payRoot === t3.root ? t3 : paired, receiveToken = receiveRoot === t3.root ? t3 : paired;
+      const market2 = x.kind === 'route' ? manifest.spotMarkets.find(item => item.pool === address(x.pool2)) : undefined;
+      const routeToken = market2 && manifest.tokens.find(token => token.symbol === market2.symbol);
+      if (x.kind === 'route') {
+        requireRequest(market2 && routeToken && pool !== market2.pool && paired.root !== routeToken.root
+          && payRoot === paired.root && receiveRoot === routeToken.root && receiveRoot !== t3.root);
+        if (address(x.coordinator) !== manifest.contracts.SwapCoordinator?.address) throw new SpotEvidenceError(409, 'release_mismatch');
+        requireRequest(new Set([owner, pool, x.pool2, x.coordinator, t3.root, payRoot, receiveRoot]).size === 7);
+        requireRequest(x.dispatch && typeof x.dispatch === 'object' && !Array.isArray(x.dispatch));
+        const dispatch = x.dispatch as Record<string, unknown>;
+        requireRequest(Object.keys(dispatch).sort().join() === 'hash,lt'); uint(dispatch.lt, 64, true);
+        requireRequest(typeof dispatch.hash === 'string' && /^[0-9a-f]{64}$/.test(dispatch.hash));
+      } else requireRequest((payRoot === t3.root && receiveRoot === paired.root) || (payRoot === paired.root && receiveRoot === t3.root));
+      const payToken = payRoot === t3.root ? t3 : paired, receiveToken = routeToken ?? (receiveRoot === t3.root ? t3 : paired);
       const body = originalCell(x.bodyBoc, x.bodyHash), transfer = body.beginParse();
       requireRequest(transfer.loadUint(32) === 0x0f8a7ea5);
       const queryId = transfer.loadUintBig(64), amount = transfer.loadCoins();
@@ -104,13 +124,30 @@ export function readSpotOperationRequest(value: unknown, manifest: RuntimeReleas
       const referenced = transfer.loadBit();
       const payload = referenced ? transfer.loadRef() : beginCell().storeSlice(transfer).endCell();
       if (referenced) transfer.endParse();
-      requireRequest(!payload.isExotic && payload.refs.length === 0);
+      requireRequest(!payload.isExotic && payload.refs.length === (x.kind === 'route' ? 1 : 0));
       const swap = payload.beginParse();
       requireRequest(swap.loadUint(32) === 0x53575033);
       const minimum = swap.loadCoins(), deadline = swap.loadUint(32);
-      requireRequest(minimum > 0n && deadline > 0 && wireAddress(swap) === owner && wireAddress(swap) === owner
-        && !swap.loadBit() && swap.loadCoins() === 0n && swap.loadCoins() === 0n && !swap.loadMaybeRef());
+      requireRequest(minimum > 0n && deadline > 0 && wireAddress(swap) === (x.kind === 'route' ? x.coordinator : owner)
+        && wireAddress(swap) === owner && !swap.loadBit());
+      const forward = swap.loadCoins(); requireRequest(x.kind === 'route' ? forward > 0n : forward === 0n);
+      requireRequest(swap.loadCoins() === 0n);
+      const user = swap.loadMaybeRef();
       swap.endParse();
+      if (x.kind === 'route') {
+        requireRequest(user && !user.isExotic); const cont = user.beginParse();
+        requireRequest(cont.loadUint(32) === 0x52435433 && wireAddress(cont) === x.pool2);
+        const finalPayload = cont.loadRef(); cont.endParse(); requireRequest(!finalPayload.isExotic);
+        const final = finalPayload.beginParse(); requireRequest(final.loadUint(32) === 0x53575033);
+        const finalMinimum = final.loadCoins(); requireRequest(finalMinimum > 0n && final.loadUint(32) === deadline
+          && wireAddress(final) === owner && wireAddress(final) === owner && !final.loadBit()
+          && final.loadCoins() === 0n && final.loadCoins() === 0n && !final.loadMaybeRef()); final.endParse();
+        return { request: structuredClone(x) as CurrentRouteSpotRequest, body, payload, market, market2: market2!,
+          payToken, receiveToken, intermediateToken: t3, continuation: user, finalPayload,
+          queryId: queryId.toString(), amountRaw: amount.toString(), minimumRaw: minimum.toString(),
+          finalMinimumRaw: finalMinimum.toString(), deadline };
+      }
+      requireRequest(!user);
       return { request: structuredClone(x) as CurrentDirectSpotRequest, body, payload, market, payToken, receiveToken,
         queryId: queryId.toString(), amountRaw: amount.toString(), minimumRaw: minimum.toString(), deadline };
     }

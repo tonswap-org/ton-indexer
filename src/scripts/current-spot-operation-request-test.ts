@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Address, beginCell, Cell } from '@ton/core';
 import { orderTermsToCell, type OrderTerms } from '../orders/state';
 import {
-  readSpotOperationRequest, SpotEvidenceError, type CurrentDirectSpotRequest, type CurrentOrderCreateSpotRequest, type CurrentOrderSettlementSpotRequest,
+  readSpotOperationRequest, SpotEvidenceError, type CurrentDirectSpotRequest, type CurrentRouteSpotRequest, type CurrentOrderCreateSpotRequest, type CurrentOrderSettlementSpotRequest,
 } from '../runtime/spotOperationRequest';
 import { runtimeAddress, runtimeManifestFixture } from './fixtures/runtimeManifest';
 
@@ -44,6 +44,22 @@ export function directSpotOperationRequestFixture(reverse = false) {
   return { request, manifest, market, body, fields };
 }
 
+export function routeSpotOperationRequestFixture(reverse = false) {
+  const manifest = runtimeManifestFixture(), [market, market2] = reverse ? [manifest.spotMarkets[1], manifest.spotMarkets[0]] : manifest.spotMarkets;
+  const owner = runtimeAddress(700), coordinator = manifest.contracts.SwapCoordinator!.address;
+  const finalPayload = payloadCell({ minimum: 7n });
+  const continuation = beginCell().storeUint(0x52435433, 32).storeAddress(Address.parse(market2.pool)).storeRef(finalPayload).endCell();
+  const payload = payloadCell({ recipient: Address.parse(coordinator), forward: 100n, user: continuation });
+  const fields: TransferFields = { op: 0x0f8a7ea5, queryId: 42n, amount: 10n, destination: Address.parse(market.pool),
+    response: Address.parse(owner), custom: null, forward: 500n, payload };
+  const body = transferCell(fields);
+  const request: CurrentRouteSpotRequest = { kind: 'route', network: 'testnet', releaseId: manifest.releaseId, manifestHash: manifest.manifestHash,
+    owner, pool: market.pool, pool2: market2.pool, coordinator, sourceWallet: runtimeAddress(701),
+    payRoot: manifest.tokens.find(t => t.symbol === market.symbol)!.root, receiveRoot: manifest.tokens.find(t => t.symbol === market2.symbol)!.root,
+    valueNano: '1000', dispatch: { lt: '100', hash: 'a'.repeat(64) }, ...encoded(body) };
+  return { request, manifest, market, market2, body, fields, finalPayload, continuation };
+}
+
 export function orderCreateSpotOperationRequestFixture(reverse = false) {
   const direct = directSpotOperationRequestFixture(reverse), { manifest, request: d, market } = direct;
   const terms: OrderTerms = { inputMaster: Address.parse(d.payRoot), pool: Address.parse(d.pool), sellIndex: reverse ? 1 : 0,
@@ -74,6 +90,35 @@ function main() {
       && error.status === status && error.code === (status === 409 ? 'release_mismatch' : 'bad_request'));
     rejected++;
   };
+  for (const reverse of [false, true]) {
+    const f = routeSpotOperationRequestFixture(reverse), parsed = readSpotOperationRequest(f.request, f.manifest);
+    assert('finalPayload' in parsed); assert.deepEqual(parsed.request, f.request); assert(parsed.finalPayload.equals(f.finalPayload));
+    assert.equal(parsed.minimumRaw, '5'); assert.equal(parsed.finalMinimumRaw, '7'); assert.equal(parsed.amountRaw, '10');
+    assert.equal(parsed.payToken.root, f.request.payRoot); assert.equal(parsed.receiveToken.root, f.request.receiveRoot);
+    for (const key of Object.keys(f.request)) { const value = { ...f.request } as Record<string, unknown>; delete value[key]; bad(value, f.manifest); }
+    for (const patch of [{ extra: 1 }, { pool2: f.request.pool }, { pool2: runtimeAddress(999) }, { payRoot: f.request.receiveRoot },
+      { receiveRoot: parsed.intermediateToken.root }, { owner: f.request.coordinator }, { bodyHash: '0'.repeat(64) }, { bodyBoc: f.request.bodyBoc + '\n' },
+      { dispatch: null }, { dispatch: { lt: '0', hash: 'a'.repeat(64) } }, { dispatch: { lt: '01', hash: 'a'.repeat(64) } },
+      { dispatch: { lt: (1n << 64n).toString(), hash: 'a'.repeat(64) } }, { dispatch: { lt: '100', hash: 'A'.repeat(64) } },
+      { dispatch: { ...f.request.dispatch, valueNano: '1000' } }]) bad({ ...f.request, ...patch }, f.manifest);
+    for (const patch of [{ network: 'mainnet' }, { releaseId: 'other' }, { manifestHash: '0'.repeat(64) }, { coordinator: runtimeAddress(999) }])
+      bad({ ...f.request, ...patch }, f.manifest, 409);
+    const fromOuter = (payload: Cell) => ({ ...f.request, ...encoded(transferCell({ ...f.fields, payload })) });
+    const fromFinal = (payload: Cell) => fromOuter(payloadCell({ recipient: Address.parse(f.request.coordinator), forward: 100n,
+      user: beginCell().storeUint(0x52435433, 32).storeAddress(Address.parse(f.request.pool2)).storeRef(payload).endCell() }));
+    for (const patch of [{ minimum: 0n }, { recipient: Address.parse(f.request.owner) }, { refundTo: Address.parse(f.request.coordinator) },
+      { notify: true }, { forward: 0n }, { refundForward: 1n }, { user: null }])
+      bad(fromOuter(payloadCell({ recipient: Address.parse(f.request.coordinator), forward: 100n, user: f.continuation, ...patch })), f.manifest);
+    for (const patch of [{ minimum: 0n }, { deadline: 1_900_000_001 }, { recipient: Address.parse(f.request.coordinator) },
+      { refundTo: Address.parse(f.request.pool) }, { notify: true }, { forward: 1n }, { refundForward: 1n }, { user: Cell.EMPTY }])
+      bad(fromFinal(payloadCell(patch)), f.manifest);
+    for (const continuation of [Cell.EMPTY, beginCell().storeUint(0x52435433, 32).storeAddress(Address.parse(f.request.pool)).storeRef(f.finalPayload).endCell(),
+      beginCell().storeSlice(f.continuation.beginParse()).storeBit(false).endCell(), beginCell().storeSlice(f.continuation.beginParse()).storeRef(Cell.EMPTY).endCell()])
+      bad(fromOuter(payloadCell({ recipient: Address.parse(f.request.coordinator), forward: 100n, user: continuation })), f.manifest);
+    bad(fromFinal(beginCell().storeSlice(f.finalPayload.beginParse()).storeBit(false).endCell()), f.manifest);
+    for (const patch of [{ amount: 0n }, { destination: Address.parse(f.request.pool2) }, { response: null }, { custom: Cell.EMPTY }, { forward: 0n }])
+      bad({ ...f.request, ...encoded(transferCell({ ...f.fields, ...patch })) }, f.manifest);
+  }
   for (const reverse of [false, true]) {
     const f = directSpotOperationRequestFixture(reverse), p = readSpotOperationRequest(f.request, f.manifest);
     assert('body' in p); assert.deepEqual(p.request, f.request); assert.notEqual(p.request, f.request);
@@ -178,6 +223,6 @@ function main() {
       bad({ ...f.request, funding: { ...f.request.funding, ...encoded(body) } }, f.manifest);
     }
   }
-  console.log(`Current Spot direct/order-create/order-settlement parser passed both market directions, original wire binding, strict release/terms checks and ${rejected} invalid requests.`);
+  console.log(`Current Spot direct/route/order-create/order-settlement parser passed both market directions, original wire binding, strict release/terms checks and ${rejected} invalid requests.`);
 }
 if (require.main === module) main();

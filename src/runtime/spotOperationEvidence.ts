@@ -1,56 +1,33 @@
-import { Address, Cell, TupleReader, beginCell, contractAddress, loadMessage, storeStateInit } from '@ton/core';
+import { Address, Cell, beginCell, contractAddress, loadMessage, storeStateInit } from '@ton/core';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
-import type { AccountStateResponse, ChainHead, ChainSource } from '../data/dataSource';
+import type { AccountStateResponse, ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
 import { createJettonWalletReader } from '../data/jettonWallet';
 import { activeOrderAccount, orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { canonicalOrderTerms, decodeOrderState, orderInitialData } from '../orders/state';
 import { canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
-import { SpotEvidenceError, type ParsedSpotOperationRequest } from './spotOperationRequest';
+import { SpotEvidenceError, type ParsedDirectSpotOperationRequest, type ParsedRouteSpotOperationRequest, type ParsedSpotOperationRequest } from './spotOperationRequest';
+import { collectSpotRouteEvidence, type CurrentSpotRouteEvidence } from './spotRouteEvidence';
+import { assertPoolIdentity, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
+export { assertPoolIdentity, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
 
-export const SPOT_EVIDENCE_LIMITS = Object.freeze({ accounts: 16, historyTransactions: 256, returnedTransactions: 256,
-  newTransactions: 64, messageEdges: 1024, responseBytes: 8 * 1024 * 1024, gaps: 256 });
 type PinnedAccount = { address: string; codeBoc: string; dataBoc: string };
 type CommonEvidence = { schema: 'tonswap-spot-operation-evidence-v1'; releaseId: string; manifestHash: string;
   asOf: { masterchainSeqno: number; unixTime: number; blockRootHash: string };
   coverage: { complete: boolean; gaps: PhysicalGap[] }; pool: PinnedAccount;
   accounts: Array<{ address: string; shardAccountBoc: string }>; transactions: OrderTransactionEvidence[] };
-export type CurrentSpotOperationEvidence = CommonEvidence & (
+type SinglePoolSpotOperationEvidence = CommonEvidence & (
   { request: { kind: 'direct'; owner: string; bodyHash: string }; wallets: { pay: string; receive: string; poolPay: string; poolReceive: string } }
   | { request: { kind: 'order-create'; owner: string; nonce: string; termsHash: string }; factory: PinnedAccount; order: PinnedAccount }
   | { request: { kind: 'order-settlement'; owner: string; nonce: string; termsHash: string; fundingBodyHash: string | null };
     factory: PinnedAccount; order: PinnedAccount; absentAccounts: string[];
     wallets: { ownerPay: string; ownerReceive: string; orderPay: string; poolPay: string; poolReceive: string } });
+export type CurrentSpotOperationEvidence = SinglePoolSpotOperationEvidence | CurrentSpotRouteEvidence;
 const unavailable = () => new SpotEvidenceError(503, 'upstream_unavailable');
 function pinnedAccount(address: string, state: AccountStateResponse, hash: string): PinnedAccount {
   if (!state.shardAccountBoc) throw unavailable();
   const active = activeOrderAccount(orderShard(state.shardAccountBoc, address).shard, hash);
   return { address, codeBoc: active.code.toBoc().toString('base64'), dataBoc: active.data.toBoc().toString('base64') };
-}
-const budgetWidths = [['senderGas', 32], ['walletBounceGas', 32], ['burnWalletGas', 32], ['smallPayloadCells', 16],
-  ['largeWalletGas', 32], ['largeSenderGas', 32], ['rentSeconds', 32], ['rentBits', 32], ['rentCells', 16],
-  ['initBits', 32], ['initCells', 16], ['initCopies', 8], ['transferBits', 16], ['transferCells', 8], ['transferCopies', 8]] as const;
-export async function assertPoolIdentity(manifest: RuntimeReleaseManifest, source: ChainSource, head: ChainHead,
-  market: RuntimeReleaseManifest['spotMarkets'][number], signal?: AbortSignal) {
-  const x = manifest.tokens.find(token => token.symbol === market.symbol), t3 = manifest.tokens.find(token => token.symbol === 'T3');
-  if (!x || !t3) throw unavailable();
-  const budget = beginCell(); for (const [key, width] of budgetWidths) budget.storeUint(market.walletBudgetX[key], width);
-  const id = beginCell().storeAddress(Address.parse(x.root)).storeUint(market.binSpacing, 16).storeUint(market.feePips, 32)
-    .storeUint(market.xDecimals, 8).storeUint(market.walletGasX, 32).storeCoins(BigInt(market.walletGramX))
-    .storeRef(budget.storeBit(market.walletBudgetX.creditProtection).endCell()).endCell();
-  const result = await source.runGetMethod(market.pool, 'get_pool_info', [], { at: head, signal });
-  if (!result || result.exitCode !== 0 || result.stack.length !== 14) throw unavailable();
-  const s = new TupleReader(result.stack);
-  if (!s.readCell().equals(id)) throw unavailable();
-  for (const address of [manifest.contracts.DlmmPoolFactory?.address, manifest.contracts.FeeRouter?.address, manifest.contracts.Treasury?.address, t3.root])
-    if (!address || s.readAddress().toRawString() !== address) throw unavailable();
-  // Consume the current bounded getter shape. Readiness/amounts are observations,
-  // never evidence that a prior swap paid its recipient.
-  const flags = s.readBigNumber(), ready = s.readBigNumber(), activeBin = s.readBigNumber();
-  if (flags < 0n || flags > 255n || ![0n, -1n].includes(ready) || activeBin < -2147483648n || activeBin > 2147483647n) throw unavailable();
-  for (let i = 0; i < 3; i++) { const amount = s.readBigNumber(); if (amount < 0n || amount >= 1n << 120n) throw unavailable(); }
-  for (const width of [16n, 16n, 8n]) { const count = s.readBigNumber(); if (count < 0n || count >= 1n << width) throw unavailable(); }
-  if (s.remaining) throw unavailable();
 }
 
 /** Returns original physical facts and their current authenticated boundary.
@@ -58,6 +35,7 @@ export async function assertPoolIdentity(manifest: RuntimeReleaseManifest, sourc
  * initialized; events and mutable accounting never become settlement labels. */
 export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManifest, source: ChainSource,
   store: PhysicalEvidenceStore, parsed: ParsedSpotOperationRequest, signal?: AbortSignal): Promise<CurrentSpotOperationEvidence> {
+  if (parsed.request.kind === 'route') return collectSpotRouteEvidence(manifest, source, store, parsed as ParsedRouteSpotOperationRequest, signal);
   if (`ton:${source.network}` !== manifest.network) throw unavailable();
   signal?.throwIfAborted();
   const head = await source.head({ signal }); assertFreshHeadTime(head.utime);
@@ -99,7 +77,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
   const common: CommonEvidence = { schema: 'tonswap-spot-operation-evidence-v1', releaseId: manifest.releaseId, manifestHash: manifest.manifestHash,
     asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex },
     coverage: { complete: false, gaps }, pool, accounts: [], transactions: [] };
-  const finish = (response: CurrentSpotOperationEvidence) => {
+  const finish = (response: SinglePoolSpotOperationEvidence) => {
     signal?.throwIfAborted(); assertFreshHeadTime(head.utime);
     const unique = [...new Map(gaps.map(gap => [JSON.stringify(gap), gap])).values()];
     response.coverage.gaps = unique.length <= limits.gaps ? unique : [...unique.slice(0, limits.gaps - 1), { code: 'coverage_gap_limit', account: pool.address }];
@@ -115,7 +93,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
   };
   if (parsed.request.kind === 'direct') {
     // TypeScript does not narrow a union through a nested discriminant.
-    const direct = parsed as Extract<ParsedSpotOperationRequest, { body: Cell }>, request = direct.request;
+    const direct = parsed as ParsedDirectSpotOperationRequest, request = direct.request;
     const wallets = createJettonWalletReader({ source, tokens: manifest.tokens.map(token => ({ master: token.root, masterCodeHash: token.masterCodeHash, walletCodeHash: token.walletCodeHash })) });
     const selected = await Promise.all([[request.payRoot, request.owner], [request.receiveRoot, request.owner],
       [request.payRoot, request.pool], [request.receiveRoot, request.pool]].map(([root, owner]) => wallets.wallet(root, owner, { at: head, signal })));
@@ -126,7 +104,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
     // dictionary absence has no original ShardAccount envelope to manufacture.
     // Every wallet reached by the physical graph still needs its actual history.
     await Promise.all([...new Set([request.owner, ...selected.filter(wallet => wallet.status === 'ok').map(wallet => wallet.wallet!)])].map(current));
-    const response: CurrentSpotOperationEvidence = { ...common, request: { kind: 'direct', owner: request.owner, bodyHash: request.bodyHash },
+    const response: SinglePoolSpotOperationEvidence = { ...common, request: { kind: 'direct', owner: request.owner, bodyHash: request.bodyHash },
       wallets: { pay: addresses[0], receive: addresses[1], poolPay: addresses[2], poolReceive: addresses[3] } };
     const isOrigin = (row: PhysicalBoundary) => {
       const message = checked(row).tx.inMessage;
@@ -166,7 +144,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
   const order = pinnedAccount(request.order, await current(request.order), manifest.templates.SpotOrder);
   const currentOrder = decodeOrderState(orderCell(order.dataBoc));
   if (currentOrder.factory.toRawString() !== request.factory || currentOrder.owner.toRawString() !== request.owner || currentOrder.nonce.toString() !== request.nonce) throw unavailable();
-  let response: CurrentSpotOperationEvidence;
+  let response: SinglePoolSpotOperationEvidence;
   const absent = new Set<string>();
   if (request.kind === 'order-settlement') {
     const t3 = manifest.tokens.find(token => token.symbol === 'T3')!, x = manifest.tokens.find(token => token.symbol === parsed.market.symbol)!;

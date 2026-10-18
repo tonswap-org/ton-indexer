@@ -9,7 +9,7 @@ import type { IndexerService } from '../indexerService';
 import { OrderPageError, type CurrentOrdersRuntime } from '../runtime/ordersRuntime';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 import { operationRequestFixture } from './current-t3-operation-request-test';
-import { directSpotOperationRequestFixture, orderCreateSpotOperationRequestFixture, orderSettlementSpotOperationRequestFixture } from './current-spot-operation-request-test';
+import { directSpotOperationRequestFixture, routeSpotOperationRequestFixture, orderCreateSpotOperationRequestFixture, orderSettlementSpotOperationRequestFixture } from './current-spot-operation-request-test';
 import { SpotEvidenceError } from '../runtime/spotOperationRequest';
 import { T3EvidenceError } from '../runtime/t3OperationRequest';
 
@@ -77,6 +77,14 @@ async function main() {
       asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex },
       coverage: { complete: false, gaps: [{ code: 'original_request_unobserved', account: request.owner }] },
       pool: { address: request.pool, codeBoc: '', dataBoc: '' }, accounts: [], transactions: [] };
+    if (request.kind === 'route') {
+      const { pool, ...route } = common;
+      return { ...route, schema: 'tonswap-spot-route-evidence-v1', request: { kind: 'route', owner: request.owner, bodyHash: request.bodyHash },
+        pools: { first: pool, second: { address: request.pool2, codeBoc: '', dataBoc: '' } },
+        coordinator: { address: request.coordinator, codeBoc: '', dataBoc: '' },
+        wallets: { pay: request.sourceWallet, receive: request.owner, pool1Pay: request.pool, pool1T3: request.pool,
+          coordinatorT3: request.coordinator, pool2T3: request.pool2, pool2Receive: request.pool2, refundT3: request.owner } };
+    }
     return request.kind === 'direct' ? { ...common, request: { kind: 'direct' as const, owner: request.owner, bodyHash: request.bodyHash },
       wallets: { pay: request.sourceWallet, receive: request.owner, poolPay: request.pool, poolReceive: request.pool } }
       : request.kind === 'order-create' ? { ...common, request: { kind: 'order-create' as const, owner: request.owner, nonce: request.nonce, termsHash: request.termsHash },
@@ -156,7 +164,7 @@ async function main() {
     check(await app.inject({ method: 'POST', url: orderClaimPath, payload: orderClaim }), 200); assert.equal(orderClaimReads, 2);
     orderClaimUnavailable = true; check(await app.inject({ method: 'POST', url: orderClaimPath, payload: orderClaim }), 503, 'upstream_unavailable');
     const spotPath = '/api/indexer/v1/spot/operation-evidence';
-    for (const spot of [directSpotOperationRequestFixture().request, orderCreateSpotOperationRequestFixture().request, orderSettlementSpotOperationRequestFixture().request, orderSettlementSpotOperationRequestFixture(false).request]) {
+    for (const spot of [directSpotOperationRequestFixture().request, routeSpotOperationRequestFixture().request, orderCreateSpotOperationRequestFixture().request, orderSettlementSpotOperationRequestFixture().request, orderSettlementSpotOperationRequestFixture(false).request]) {
       const observed = await app.inject({ method: 'POST', url: spotPath, payload: spot }); check(observed, 200);
       assert.equal(observed.json().request.kind, spot.kind); assert.equal(observed.json().coverage.complete, false);
       const count = spotReads;

@@ -88,6 +88,15 @@ claim/failure roots are mandatory; unmarked failure membership requires a
 separate resolved mark before retry. One aggregate 10,000-row history budget,
 64 new archive boundaries and 32/32 witness limits share the evidence gate.
 
+Current two-pool Spot transport uses the exact saved SWP3→RCT3→SWP3 body and
+resolved source-wallet first hop. Bind both installed pools, the manifest
+SwapCoordinator, positive first/final minima, one deadline and owner destinations.
+Return the original owner dispatch and full-message-linked A/T3/B transactions
+under `tonswap-spot-route-evidence-v1`. Canonical identity-only getters permit
+frozen or unused recipient wallets; missing actual delivery stays incomplete.
+No event, coordinator dispatch or intermediate T3 refund proves final B credit.
+Run the focused Spot parser/API and source-bound native route collector checks.
+
 Current Spot operation evidence accepts the reviewed direct body, original
 order-create terms or whole-order terms with an exact resolved funding dispatch.
 Derive all wallet and pool identities from the current

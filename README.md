@@ -133,6 +133,16 @@ input conservation and every output/refund, and resolve every saved wallet actio
 before treating an order as terminal. A null funding request does not clear an
 unresolved local wallet action.
 
+Two-pool requests use `kind: route` with the exact saved A→T3→B body, distinct
+installed pools, the manifest coordinator and the resolved pay-wallet first-hop
+LT/hash. The parser binds both positive minima, one deadline and the owner refund
+and final-output destinations. `tonswap-spot-route-evidence-v1` returns both
+current pools, the coordinator, canonical A/T3/B wallet identities and original
+linked transactions, including the original owner dispatch. Missing originals
+remain incomplete. Consumers independently verify both reserve transitions and
+actual final B credit; a coordinator continuation or intermediate T3 refund is
+never final-output delivery. This endpoint does not sign or retry a route.
+
 Spot evidence shares the release pool, immutable physical store and live request
 limit with T3. Per request it bounds current accounts to 16, scanned and returned
 transactions to 256, new archive boundaries to 64, message edges to 1,024 and the
