@@ -74,7 +74,7 @@ const openApi = () => ({
 const balanceBody = (account: string, network: string, tokens: Array<{root:string;symbol:string;decimals:number}> = []) => ({
   address: account, network, head_seqno: 123, head_utime: 1700000000, complete: true,
   assets: [{kind:'native',symbol:'GRAM',status:'ok',balance_raw:'1000000000',decimals:9},
-    ...tokens.map(token => ({kind:'jetton',...token,wallet:address(900),status:'not_deployed',balance_raw:'0'}))],
+    ...tokens.map(({ root, symbol, decimals }) => ({kind:'jetton',root,symbol,decimals,wallet:address(900),status:'not_deployed',balance_raw:'0'}))],
 });
 
 const basicRoutes = (): Routes => ({
@@ -105,7 +105,7 @@ const basicRoutes = (): Routes => ({
     body: {
       network: 'mainnet',
       count: 1,
-      contracts: { T3Root: address(1) },
+      contracts: { T3Hub: address(1) },
       release: { releaseId: null, manifestHash: null },
     },
   },
@@ -130,8 +130,8 @@ const writeReleaseManifest = (
 ) => {
   const manifest = runtimeManifestFixture({
     services: { ...runtimeManifestFixture().services, indexer },
-    contracts: Object.fromEntries(Object.entries(contracts).map(([role, address]) => [role, { address, codeHash: 'a'.repeat(64) }])),
-    spotMarkets: spots.map(({ symbol, pool, binSpacing, feePips }) => ({ symbol, pool, binSpacing, feePips })),
+    contracts: Object.fromEntries(Object.entries(contracts).map(([role, address]) => [role, { address, codeHash: runtimeManifestFixture().contracts[role as keyof ReturnType<typeof runtimeManifestFixture>['contracts']]!.codeHash }])),
+    spotMarkets: spots.map(({ symbol, pool, binSpacing, feePips, xDecimals, walletGasX, walletGramX, walletBudgetX }) => ({ symbol, pool, binSpacing, feePips, xDecimals, walletGasX, walletGramX, walletBudgetX })),
     perpsMarkets: markets.map((market, i) => ({ marketId: i + 1, symbol: market.symbol, pool: market.pool })),
   });
   const manifestPath = join(root, name);
@@ -187,7 +187,7 @@ const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://
     },
     '/api/indexer/v1/openapi.json': { body: openApi() },
   };
-  routes[`/api/indexer/v1/accounts/${parsed.contracts.T3Root}/balances`] = {body:balanceBody(parsed.contracts.T3Root!, 'testnet', parsed.runtime.tokens)};
+  routes[`/api/indexer/v1/accounts/${parsed.contracts.T3Hub}/balances`] = {body:balanceBody(parsed.contracts.T3Hub!, 'testnet', parsed.runtime.tokens)};
   for (const [index, market] of parsed.spotMarkets.entries()) {
     const routePath = `/api/indexer/v1/markets/${encodeURIComponent(market.marketKey)}/candles`;
     routes[routePath] = {
@@ -437,51 +437,33 @@ const main = async () => {
       (corrupted[comparisonPath].body as Record<string, unknown>)[field] = value;
       await assertSmokeRejects(corrupted, /history_complete must be true|mismatch/, paired.options, {corsOrigins: [expectedCorsOrigin]});
     }
-    // A release on a distinct public mount uses only that mount, including preflight
-    // and encoded market queries. These route expectations do not call the URL helper.
-    const r2 = strictFixture(root, false, 'https://test.tonswap.org/api/indexer-r2');
-    const mountR2Routes = (source: Routes): Routes => {
-      const routes = Object.fromEntries(Object.entries(cloneRoutes(source)).map(([path, route]) =>
-        [path.replace('/api/indexer/', '/api/indexer-r2/'), route]));
-      (routes['/api/indexer-r2/v1/service-info'].body as { endpoints: { openapi: string } }).endpoints.openapi =
-        '/api/indexer-r2/v1/openapi.json';
-      const spec = routes['/api/indexer-r2/v1/openapi.json'].body as { paths: Record<string, unknown> };
-      spec.paths = Object.fromEntries(Object.entries(spec.paths).map(([path, operation]) =>
-        [path.replace('/api/indexer/', '/api/indexer-r2/'), operation]));
-      return routes;
-    };
-    const r2Routes = mountR2Routes(r2.routes);
+    // The current release has one stable public mount. Invalid native mounts
+    // are rejected before any smoke traffic; a wrong target also fails locally.
+    for (const invalid of ['https://test.tonswap.org/api/indexer-r2', 'https://test.tonswap.org/api/indexer/'])
+      assert.throws(() => strictFixture(root, false, invalid), /services.indexer/);
+    const stable = strictFixture(root, false, 'https://test.tonswap.org/api/indexer');
     const requests: string[] = [];
-    await withServer(r2Routes, async baseUrl => {
-      await runProductionSmoke(baseUrl, r2.options);
-      await runProductionSmoke(`${baseUrl}/api/indexer-r2`, r2.options);
-      await runProductionSmoke(`${baseUrl}/api/indexer-r2/`, r2.options);
+    await withServer(stable.routes, async baseUrl => {
+      await runProductionSmoke(baseUrl, stable.options);
+      await runProductionSmoke(`${baseUrl}/api/indexer`, stable.options);
+      await runProductionSmoke(`${baseUrl}/api/indexer/`, stable.options);
       const before = requests.length;
-      await assert.rejects(() => runProductionSmoke(`${baseUrl}/api/indexer`, r2.options), /target path differs/);
-      assert.equal(requests.length, before, 'A wrong mount must fail before any request');
-      await assert.rejects(() => runProductionSmoke(baseUrl, { ...r2.options, expectedPublicBaseUrl: 'https://test.tonswap.org/api/indexer' }), /public URL differs/);
-      assert.equal(requests.length, before, 'A conflicting advertised URL must fail before any request');
-    }, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2', requests });
-    assert.ok(requests.includes('OPTIONS /api/indexer-r2/v1/runGetMethod'));
-    assert.ok(requests.some(request => request.startsWith('GET /api/indexer-r2/v1/markets/')));
-    assert.ok(requests.every(request => /^(GET|OPTIONS) \/api\/indexer-r2\/v1\//.test(request)));
-    assert.equal(requests.some(request => request.includes('/api/indexer-r2/api/indexer')), false);
-    await assertSmokeRejects(r2.routes, /HTTP 404|returned 404|failed.*404/i, r2.options, { corsOrigins: [expectedCorsOrigin] });
-    const staleDiscovery = cloneRoutes(r2Routes);
-    (staleDiscovery['/api/indexer-r2/v1/service-info'].body as { endpoints: { openapi: string } }).endpoints.openapi = '/api/indexer/v1/openapi.json';
-    await assertSmokeRejects(staleDiscovery, /openapi endpoint/, r2.options, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2' });
-    const staleSpec = cloneRoutes(r2Routes);
-    staleSpec['/api/indexer-r2/v1/openapi.json'].body = openApi();
-    await assertSmokeRejects(staleSpec, /missing.*indexer-r2|indexer-r2.*missing/i, r2.options, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2' });
-
-    const trailing = strictFixture(root, false, 'https://test.tonswap.org/api/indexer-r2/');
-    await withServer(mountR2Routes(trailing.routes), async baseUrl => {
-      await runProductionSmoke(baseUrl, trailing.options);
-      await runProductionSmoke(`${baseUrl}/api/indexer-r2/`, trailing.options);
-      await assert.rejects(() => runProductionSmoke(baseUrl, {
-        ...trailing.options, expectedPublicBaseUrl: 'https://test.tonswap.org/api/indexer-r2',
-      }), /public URL differs/, 'Metadata must retain the exact native string even though route joining removes its trailing slash');
-    }, { corsOrigins: [expectedCorsOrigin], mount: '/api/indexer-r2' });
+      await assert.rejects(() => runProductionSmoke(`${baseUrl}/api/indexer-r2`, stable.options), /target path differs/);
+      assert.equal(requests.length, before);
+      await assert.rejects(() => runProductionSmoke(baseUrl, { ...stable.options, expectedPublicBaseUrl: 'https://test.tonswap.org/api/indexer-r2' }), /public URL differs/);
+      assert.equal(requests.length, before);
+    }, { corsOrigins: [expectedCorsOrigin], requests });
+    assert(requests.includes('OPTIONS /api/indexer/v1/runGetMethod'));
+    assert(requests.some(request => request.startsWith('GET /api/indexer/v1/markets/')));
+    assert(requests.every(request => /^(GET|OPTIONS) \/api\/indexer\/v1\//.test(request)));
+    const staleDiscovery = cloneRoutes(stable.routes);
+    (staleDiscovery['/api/indexer/v1/service-info'].body as { endpoints: { openapi: string } }).endpoints.openapi = '/api/indexer-r2/v1/openapi.json';
+    await assertSmokeRejects(staleDiscovery, /openapi endpoint/, stable.options, { corsOrigins: [expectedCorsOrigin] });
+    const staleSpec = cloneRoutes(stable.routes);
+    const stalePaths = (staleSpec['/api/indexer/v1/openapi.json'].body as { paths: Record<string, unknown> }).paths;
+    stalePaths['/api/indexer-r2/v1/accounts/{addr}/balances'] = stalePaths['/api/indexer/v1/accounts/{addr}/balances'];
+    delete stalePaths['/api/indexer/v1/accounts/{addr}/balances'];
+    await assertSmokeRejects(staleSpec, /OpenAPI is missing/, stable.options, { corsOrigins: [expectedCorsOrigin] });
 
     const strict = strictFixture(root);
     await withServer(
@@ -589,7 +571,7 @@ const main = async () => {
       count: number;
       contracts: Record<string, string>;
     };
-    delete shortContractBody.contracts.ControlMesh;
+    delete shortContractBody.contracts.Governance;
     shortContractBody.count -= 1;
     await assertSmokeRejects(
       shortContracts,

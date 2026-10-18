@@ -22,12 +22,12 @@ async function main() {
   for (const network of ['mainnet', 'testnet', 'localnet'] as Network[]) {
     const metadata = runtimeMetadataFixture(network), runtime = metadata.runtime!, app = Fastify();
     registerRoutes(app, { network, enableWriteRpc: false }, service, undefined, undefined, undefined, undefined,
-      { T3Root: runtime.contracts.T3Root!.address }, metadata);
+      { T3Hub: runtime.contracts.T3Hub!.address }, metadata);
     try {
       const healthResponse = await app.inject('/api/indexer/v1/health'); assert.equal(healthResponse.statusCode, 200);
       const health = healthResponse.json();
       const info = (await app.inject('/api/indexer/v1/service-info')).json();
-      assert.equal(info.schemaVersion, 1); assert.equal(info.serviceId, 'indexer.example/api/indexer');
+      assert.equal(info.schemaVersion, 1); assert.equal(info.serviceId, 'test.tonswap.org/api/indexer');
       assert.equal(info.publicBaseUrl, runtime.services.indexer); assert.equal(info.ecosystem, 'ton');
       assert.equal(info.chainId, `ton:${network}`); assert.equal(info.network, network); assert.equal(info.readOnly, true);
       assert.equal(health.serviceId, info.serviceId); assert.equal(health.chainId, info.chainId); assert.equal(health.network, network);
@@ -76,7 +76,7 @@ async function main() {
       }
       assert.equal(spec.components.schemas.ServiceInfoResponse.properties.publicBaseUrl.type, 'null');
       const unavailable = await app.inject({ method: 'POST', url: '/api/indexer/v1/readFresh',
-        payload: { calls: [{ kind: 'account', address: runtime.contracts.T3Root!.address }] } });
+        payload: { calls: [{ kind: 'account', address: runtime.contracts.T3Hub!.address }] } });
       assert.equal(unavailable.statusCode, 503, 'Unbound or mismatched metadata must never serve fresh reads');
     } finally { await app.close(); }
   }

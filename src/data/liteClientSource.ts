@@ -3,17 +3,14 @@ import {
   Address,
   Cell,
   CellType,
-  Dictionary,
-  type DictionaryValue,
   TupleItem,
   beginCell,
-  loadAccount,
-  loadDepthBalanceInfo,
-  loadShardStateUnsplit,
+  loadShardAccount,
   loadTransaction,
   parseTuple,
   serializeTuple,
 } from '@ton/core';
+import { provenShardAccount, provenConfig, proofRoots } from './liteProof';
 import { LiteClient, type LiteEngine } from 'ton-lite-client';
 import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError } from './boundedLiteEngine';
 import type { LiteserverPeer } from './liteserverPool';
@@ -21,7 +18,7 @@ import { HeadTracker } from './headTracker';
 import { assertFreshHeadTime } from './freshHead';
 import { createLiteClientCache } from './liteAccountCache';
 import { readAccountAnchor, blockHeaderTime } from './accountAnchor';
-import { assertFreshBlock, assertFreshNetwork, executeFreshCalls, freshMasterchainBlock,
+import { executeFreshCalls, freshMasterchainBlock,
   FreshReadUnavailableError, type FreshReadCall } from './freshRead';
 import { errorDiagnostic, type Logger } from '../utils/logger';
 import { Functions } from 'ton-lite-client/dist/schema';
@@ -36,13 +33,6 @@ import {
   MAX_HISTORICAL_REPLAY_TRANSACTIONS, replayHistoricalAccount, replayBlockContext,
   verifiedReplayBlock, type HistoricalReplayStep,
 } from './historicalReplay';
-const cellToBase64 = (cell: Cell | null | undefined): string | undefined => {
-  if (!cell) return undefined;
-  return cell.toBoc({ idx: false }).toString('base64');
-};
-
-
-
 type LiteBlockId = {
   seqno: number;
   workchain: number;
@@ -62,173 +52,6 @@ const assertBlockId = (actual: LiteBlockId, expected: LiteBlockId, label: string
   if (!blockIdsEqual(actual, expected)) {
     throw new Error(`${label} does not match the requested block.`);
   }
-};
-
-const decodeTaggedShard = (raw: string) => {
-  const tagged = BigInt.asUintN(64, BigInt(raw));
-  if (tagged === 0n) throw new Error('Tagged shard identifier cannot be zero.');
-  const terminator = tagged & -tagged;
-  let trailingZeroes = 0;
-  for (let cursor = terminator; (cursor & 1n) === 0n; cursor >>= 1n) {
-    trailingZeroes += 1;
-  }
-  const shardPrefixBits = 63 - trailingZeroes;
-  if (shardPrefixBits < 0 || shardPrefixBits > 60) {
-    throw new Error('Tagged shard identifier has an invalid prefix length.');
-  }
-  return {
-    shardPrefixBits,
-    shardPrefix: tagged ^ terminator,
-  };
-};
-
-const assertShardStateIdentity = (cell: Cell, expected: LiteBlockId, label: string) => {
-  if (cell.type !== CellType.Ordinary) {
-    throw new Error(`${label} does not contain an ordinary shard-state root.`);
-  }
-  const expectedShard = decodeTaggedShard(expected.shard);
-  const state = loadShardStateUnsplit(cell.beginParse());
-  if (
-    state.seqno !== expected.seqno ||
-    state.shardId.workchainId !== expected.workchain ||
-    state.shardId.shardPrefixBits !== expectedShard.shardPrefixBits ||
-    state.shardId.shardPrefix !== expectedShard.shardPrefix
-  ) {
-    throw new Error(`${label} shard-state identity does not match the requested block.`);
-  }
-};
-
-const parseMerkleProofRoots = (proof: Buffer, expectedRoots: number, label: string) => {
-  if (!Buffer.isBuffer(proof) || proof.length === 0) {
-    throw new Error(`${label} is empty.`);
-  }
-  const roots = Cell.fromBoc(proof);
-  if (roots.length !== expectedRoots) {
-    throw new Error(`${label} must contain exactly ${expectedRoots} Merkle-proof root(s).`);
-  }
-  for (const root of roots) {
-    if (root.type !== CellType.MerkleProof || root.refs.length !== 1) {
-      throw new Error(`${label} contains a malformed Merkle-proof root.`);
-    }
-  }
-  return roots;
-};
-
-const assertBlockProofRoot = (root: Cell, expected: LiteBlockId, label: string) => {
-  if (!root.refs[0].hash(0).equals(expected.rootHash)) {
-    throw new Error(`${label} does not bind the requested block root hash.`);
-  }
-};
-
-const shardAccountReferenceValue: DictionaryValue<Cell> = {
-  parse: (slice) => {
-    loadDepthBalanceInfo(slice);
-    const accountRef = slice.loadRef();
-    slice.loadUintBig(256);
-    slice.loadUintBig(64);
-    return accountRef;
-  },
-  serialize: () => {
-    throw new Error('Shard-account proof values are read-only.');
-  },
-};
-
-const loadShardAccountsRoot = (shardStateRoot: Cell) => {
-  const slice = shardStateRoot.beginParse();
-  if (slice.loadUint(32) !== 0x9023afe2) throw new Error('Invalid shard-state root.');
-  slice.loadInt(32);
-  if (slice.loadUint(2) !== 0) throw new Error('Invalid shard identifier prefix.');
-  slice.loadUint(6);
-  slice.loadInt(32);
-  slice.loadUintBig(64);
-  slice.loadUint(32);
-  slice.loadUint(32);
-  slice.loadUint(32);
-  slice.loadUintBig(64);
-  slice.loadUint(32);
-  slice.loadRef();
-  slice.loadBit();
-  return slice.loadRef();
-};
-
-const parseBoundAccountRoot = (raw: Buffer, jettonMaster: Address) => {
-  const roots = Cell.fromBoc(raw);
-  if (roots.length !== 1 || roots[0].type !== CellType.Ordinary) {
-    throw new Error('Jetton-master account state must contain exactly one ordinary root.');
-  }
-  const accountRoot = roots[0];
-  const slice = accountRoot.beginParse();
-  if (!slice.loadBit()) throw new Error('Jetton-master account is absent from the account-state response.');
-  const account = loadAccount(slice);
-  if (slice.remainingBits !== 0 || slice.remainingRefs !== 0) {
-    throw new Error('Jetton-master account state contains trailing data.');
-  }
-  if (!account.addr.equals(jettonMaster)) {
-    throw new Error('Jetton-master account state belongs to another address.');
-  }
-  const storage = account.storage.state;
-  if (storage.type !== 'active' || !storage.state.code || !storage.state.data) {
-    throw new Error('Jetton-master account state is not active with exact code and data.');
-  }
-  return accountRoot;
-};
-
-const graftAccountIntoShardState = (
-  shardStateRoot: Cell,
-  accountRoot: Cell,
-  jettonMaster: Address
-) => {
-  const accountsRoot = loadShardAccountsRoot(shardStateRoot);
-  const accountRefs = Dictionary.load(
-    Dictionary.Keys.BigUint(256),
-    shardAccountReferenceValue,
-    accountsRoot.beginParse()
-  );
-  const accountId = BigInt(`0x${jettonMaster.hash.toString('hex')}`);
-  const provenAccountRef = accountRefs.get(accountId);
-  if (!provenAccountRef || provenAccountRef.type !== CellType.PrunedBranch) {
-    throw new Error('Jetton-master account proof does not contain one pruned account branch.');
-  }
-  if (
-    !provenAccountRef.hash(0).equals(accountRoot.hash(0)) ||
-    provenAccountRef.depth(0) !== accountRoot.depth(0)
-  ) {
-    throw new Error('Jetton-master account state does not match its proven pruned branch.');
-  }
-
-  let replacements = 0;
-  const graft = (cell: Cell): Cell => {
-    if (cell === provenAccountRef) {
-      replacements += 1;
-      return accountRoot;
-    }
-    const refs = cell.refs.map(graft);
-    if (refs.every((ref, index) => ref === cell.refs[index])) return cell;
-    const next = new Cell({ exotic: cell.isExotic, bits: cell.bits, refs });
-    if (!next.hash(0).equals(cell.hash(0)) || next.depth(0) !== cell.depth(0)) {
-      throw new Error('Account-proof graft changed a proven ancestor hash or depth.');
-    }
-    return next;
-  };
-  const expanded = graft(shardStateRoot);
-  if (replacements !== 1) {
-    throw new Error('Jetton-master account proof must expose exactly one bound account branch.');
-  }
-  if (!expanded.hash(0).equals(shardStateRoot.hash(0)) || expanded.depth(0) !== shardStateRoot.depth(0)) {
-    throw new Error('Expanded shard-state proof changed its root hash or depth.');
-  }
-
-  const verified = loadShardStateUnsplit(expanded.beginParse()).accounts?.get(accountId)?.shardAccount.account;
-  if (
-    !verified ||
-    !verified.addr.equals(jettonMaster) ||
-    verified.storage.state.type !== 'active' ||
-    !verified.storage.state.state.code ||
-    !verified.storage.state.state.data
-  ) {
-    throw new Error('Expanded shard-state proof does not reveal the bound active jetton master.');
-  }
-  return expanded;
 };
 
 const bigintToBuffer = (value: bigint, bytes = 32) => {
@@ -333,13 +156,16 @@ export class LiteClientDataSource implements ChainSource {
     });
   }
   private async lookupMasterchainBlock(seqno: number) {
-    return this.queryLite(() =>
+    const block = await this.queryLite(() =>
       this.client.lookupBlockByID({
         workchain: -1,
         shard: '-9223372036854775808',
         seqno,
       })
     );
+    if (block.id.seqno !== seqno) throw new Error('Masterchain lookup returned another sequence number.');
+    freshMasterchainBlock(block.id);
+    return block;
   }
 
   private async getBlockData(block: {
@@ -387,11 +213,43 @@ export class LiteClientDataSource implements ChainSource {
     );
   }
 
+  private async readConfigAtBlock(expected: LiteBlockId, signal: AbortSignal, expectedTime?: number): Promise<Cell> {
+    const owned = new AbortController();
+    const combined = AbortSignal.any([signal, owned.signal]);
+    const fail = (error: unknown): never => { owned.abort(error); throw error; };
+    // Drain both physical calls on either failure before releasing this read.
+    const [blockResult, configResult] = await this.ensure().withOptions({ signal: combined, awaitSeqno: expected.seqno }, () =>
+      Promise.allSettled([this.getBlockData(expected).catch(fail), this.getMasterchainConfigProof(expected).catch(fail)]));
+    if (blockResult.status === 'rejected') throw blockResult.reason;
+    if (configResult.status === 'rejected') throw configResult.reason;
+    const blockResponse = blockResult.value, configResponse = configResult.value;
+    assertBlockId(blockResponse.id, expected, 'Config block response');
+    assertBlockId(configResponse.id, expected, 'Config proof response');
+    const block = verifiedReplayBlock(blockResponse.data, expected);
+    const [blockProof] = proofRoots(configResponse.stateProof, 1);
+    if (!blockProof.hash(0).equals(block.hash(0))) throw new Error('Config block proof identity mismatch.');
+    const [state] = proofRoots(configResponse.configProof, 1);
+    return provenConfig(block, state, expected, expectedTime ?? blockHeaderTime(block, expected));
+  }
+
+  async getConfig(options: ReadOptions = {}): Promise<{ head: ChainHead; configBoc: string }> {
+    return this.scope(options, async signal => {
+      const head = { ...(options.at ?? await this.head({ signal })) };
+      const expected = liteBlock(head);
+      // Re-resolve the requested masterchain identity. Caller-supplied labels
+      // alone never authenticate config, including a caller-supplied timestamp.
+      const selected = await this.lookupMasterchainBlock(head.seqno);
+      assertBlockId(selected.id, expected, 'Config selected masterchain block');
+      const config = await this.readConfigAtBlock(expected, signal, head.utime);
+      return { head: { ...head }, configBoc: config.toBoc().toString('base64') };
+    });
+  }
+
   async getAccountState(address: string, options: ReadOptions = {}): Promise<AccountStateResponse> {
     return this.scope(options, async signal => {
       const head = options.at ?? await this.head({ signal });
       const normalized = Address.parse(address).toRawString();
-      return this.shared(`account:${head.rootHashHex}:${normalized}`, signal, signal =>
+      return this.shared(`account:${head.seqno}:${head.rootHashHex}:${head.fileHashHex}:${head.utime}:${normalized}`, signal, signal =>
         this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, () => this.readAccountStateAtBlock(normalized, liteBlock(head), head)));
     });
   }
@@ -429,15 +287,25 @@ export class LiteClientDataSource implements ChainSource {
         !/^[1-9][0-9]*$/.test(cursor.lt)) throw new Error('Invalid exact archival cursor.');
     const parsed = Address.parse(address);
     if (parsed.workChain !== 0) throw new Error('Intermediate replay supports basechain accounts only.');
-    const beforeBlock = (await this.lookupMasterchainBlock(containingSeqno - 1)).id;
+    const beforeHeader = await this.lookupMasterchainBlock(containingSeqno - 1);
+    const beforeBlock = beforeHeader.id;
+    const [beforeHeaderRoot] = proofRoots(beforeHeader.headerProof, 1);
+    const beforeHead = { ...freshMasterchainBlock(beforeBlock), utime: blockHeaderTime(beforeHeaderRoot, beforeBlock) };
     const before = await this.call((client) => client.getAccountStateRaw(parsed, beforeBlock));
-    assertBlockId(before.block, beforeBlock, 'Historical predecessor masterchain block');
-    if (!before.lastTx || before.lastTx.lt >= BigInt(cursor.lt)) {
+    const original = provenShardAccount(before, beforeHead, parsed);
+    // An absent dictionary entry has no serialized ShardAccount to preserve.
+    // Only authenticated absence permits the canonical empty genesis boundary.
+    const predecessor = original ?? beginCell().storeRef(beginCell().storeBit(false).endCell())
+      .storeUint(0, 256).storeUint(0, 64).endCell();
+    const beforePointer = loadShardAccount(predecessor.beginParse());
+    if (beforePointer.lastTransactionLt >= BigInt(cursor.lt)) {
       throw new Error('Historical predecessor is not before the requested cursor.');
     }
-    const accountRoot = parseBoundAccountRoot(before.raw, parsed);
-    const predecessor = beginCell().storeRef(accountRoot)
-      .storeUint(before.lastTx.hash, 256).storeUint(before.lastTx.lt, 64).endCell();
+    const containingHeader = await this.lookupMasterchainBlock(containingSeqno);
+    const [containingRoot] = proofRoots(containingHeader.headerProof, 1);
+    const containingHead = { ...freshMasterchainBlock(containingHeader.id), utime: blockHeaderTime(containingRoot, containingHeader.id) };
+    const containing = await this.call(client => client.getAccountStateRaw(parsed, containingHeader.id));
+    provenShardAccount(containing, containingHead, parsed);
     const hash = /^[0-9a-f]{64}$/i.test(cursor.hash)
       ? Buffer.from(cursor.hash, 'hex') : Buffer.from(cursor.hash, 'base64');
     if (hash.length !== 32) throw new Error('Invalid exact archival hash.');
@@ -451,8 +319,12 @@ export class LiteClientDataSource implements ChainSource {
     let complete = false;
     for (let index = 0; index < roots.length; index++) {
       const tx = loadTransaction(roots[index].beginParse());
+      // Until an explicit shard ancestry proof is available, support only the
+      // block selected by this authenticated masterchain account boundary.
+      // Transaction-page block labels alone are not proof of chain membership.
+      assertBlockId(page.ids[index], containing.shardBlock, 'Historical transaction containing shard block');
       selected.push({ transaction: roots[index], blockId: page.ids[index] });
-      if (tx.prevTransactionLt === before.lastTx.lt && tx.prevTransactionHash === before.lastTx.hash) {
+      if (tx.prevTransactionLt === beforePointer.lastTransactionLt && tx.prevTransactionHash === beforePointer.lastTransactionHash) {
         complete = true; break;
       }
     }
@@ -468,22 +340,8 @@ export class LiteClientDataSource implements ChainSource {
         assertBlockId(blockResponse.id, item.blockId, 'Historical shard block');
         const block = verifiedReplayBlock(blockResponse.data, item.blockId);
         const { masterRef } = replayBlockContext(block);
-        const [masterResponse, configResponse] = await Promise.all([
-          this.getBlockData(masterRef), this.getMasterchainConfigProof(masterRef),
-        ]);
-        assertBlockId(masterResponse.id, masterRef, 'Historical config masterchain block');
-        assertBlockId(configResponse.id, masterRef, 'Historical config response');
-        const master = verifiedReplayBlock(masterResponse.data, masterRef);
-        const stateProof = parseMerkleProofRoots(configResponse.stateProof, 1, 'Historical config block proof')[0];
-        assertBlockProofRoot(stateProof, masterRef, 'Historical config block proof');
-        const configRoot = parseMerkleProofRoots(configResponse.configProof, 1, 'Historical config state proof')[0].refs[0];
-        if (master.refs[2]?.type !== CellType.MerkleUpdate ||
-            !master.refs[2].refs[1].hash(0).equals(configRoot.hash(0))) {
-          throw new Error('Historical config is not committed by its masterchain block.');
-        }
-        const state = loadShardStateUnsplit(configRoot.beginParse());
-        if (state.seqno !== masterRef.seqno || !state.extras) throw new Error('Historical config state identity.');
-        context = { block, config: beginCell().storeDictDirect(state.extras.config).endCell() };
+        const config = await this.readConfigAtBlock(masterRef, signal);
+        context = { block, config };
         contexts.set(key, context);
       }
       steps.push({ transaction: item.transaction, ...context });
@@ -500,14 +358,11 @@ export class LiteClientDataSource implements ChainSource {
     const state = await this.call(client => client.getAccountStateRaw(parsed, block));
     assertBlockId(state.block, block, 'Account masterchain block');
     const anchor = await readAccountAnchor(state, head, shard => this.client.getBlockHeader(shard), address);
-    if (state.state === undefined || typeof state.balance?.coins !== 'bigint' || state.balance.coins < 0n)
-      throw new Error('Invalid current lite account state.');
-    const lastTx = state.lastTx;
-    if (lastTx !== null && (typeof lastTx?.lt !== 'bigint' || lastTx.lt < 0n || lastTx.lt > 0xffffffffffffffffn
-      || typeof lastTx.hash !== 'bigint' || lastTx.hash < 0n || lastTx.hash >= (1n << 256n)
-      || (lastTx.lt === 0n) !== (lastTx.hash === 0n))) throw new Error('Invalid current lite account transaction pointer.');
-    const account = state.state ?? null;
-    if (account && !account.addr.equals(parsed)) throw new Error('Current lite account belongs to another address.');
+    const exact = provenShardAccount(state, head, parsed);
+    const proven = exact ? loadShardAccount(exact.beginParse()) : null;
+    const lastTx = proven ? { lt: proven.lastTransactionLt, hash: proven.lastTransactionHash } : null;
+    if (lastTx && (lastTx.lt === 0n) !== (lastTx.hash === 0n)) throw new Error('Invalid proven account transaction pointer.');
+    const account = proven?.account ?? null;
     const storageState = account?.storage?.state;
     const storageType = storageState?.type;
     if (account && !['uninit', 'active', 'frozen'].includes(storageType ?? '')) throw new Error('Invalid current lite account storage state.');
@@ -522,7 +377,9 @@ export class LiteClientDataSource implements ChainSource {
     const dataCell = activeState?.data ?? null;
     return {
       anchor,
-      balance: state.balance.coins.toString(),
+      balance: account?.storage.balance.coins.toString() ?? '0',
+      shardAccountBoc: exact?.toBoc().toString('base64'),
+      ...(exact === null ? { provenAbsent: true as const } : {}),
       lastTxLt: lastTx?.lt?.toString(),
       lastTxHash: lastTx ? bigintToBuffer(lastTx.hash).toString('base64') : undefined,
       accountState,

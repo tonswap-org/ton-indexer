@@ -6,7 +6,7 @@ import { PUBLIC_RPC_ZERO_STATES } from '../api/rpcNetwork';
 import { loadConfig } from '../config';
 import type { ChainSource } from '../data/dataSource';
 import { fakeChainSource } from './support/fakeChainSource';
-import { FakeLiteEngine, masterAnswer, proofBlock } from './support/fakeLiteEngine';
+import { FakeLiteEngine, masterAnswer, proofBlock, proofMasterchain } from './support/fakeLiteEngine';
 
 import { assertFreshReadBatch, type FreshReadBatch, type FreshReadCall } from '../data/freshRead';
 import { createLiteChainSource } from '../data/liteClientSource';
@@ -42,11 +42,11 @@ const makeService = (source: ChainSource) => {
 
 async function liteCases() {
   let wrongBlock = false;
-  const master = proofBlock(101, currentTime + 1, -1), shard = proofBlock(80, currentTime);
+  const shard = proofBlock(80, currentTime), master = proofMasterchain(101, currentTime + 1, shard);
   const engine = new FakeLiteEngine(async request => {
     if (request.kind === 'liteServer.getMasterchainInfoExt') return masterAnswer(master);
     if (request.kind === 'liteServer.getAccountState') return { id: wrongBlock ? proofBlock(100, currentTime, -1).id : request.id,
-      shardblk: shard.id, state: Buffer.alloc(0), proof: shard.proof, shardProof: Buffer.alloc(0) };
+      shardblk: shard.id, state: Buffer.alloc(0), proof: shard.proof, shardProof: master.proof };
     if (request.kind === 'liteServer.runSmcMethod') return { id: wrongBlock ? proofBlock(100, currentTime, -1).id : request.id,
       shardblk: shard.id, exitCode: 17, result: serializeTuple([{ type: 'int', value: BigInt(request.id.seqno) }]).toBoc() };
     throw Error('unexpected wire request');

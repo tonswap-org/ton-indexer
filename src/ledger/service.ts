@@ -13,6 +13,7 @@ import type { LedgerQuery, LedgerDiscoveryQuery, LedgerEvent } from './types';
 import { LedgerGraphBuilder } from './graph';
 import { projectOwnerLedger } from './project';
 import { WalletIdentityStore } from './identities';
+import type { JettonTokenPin } from '../data/jettonWallet';
 import { createRefreshDependency, syncOwnerChain, type ChainSyncDeps } from './chainSync';
 import type { OwnerCycle } from './cycle';
 import { decidePublication, countConfirmedRegressions, encodeBindings, decodeBindings, parseArchiveBindingKey, type PublicationInputs } from './publication';
@@ -56,8 +57,7 @@ export class LedgerService {
     private concurrency = 2,
     private options: {
       jettonRoots?: string[];
-      walletTemplateCodeHash?: string | null;
-      tokens?: Array<{ master: string; symbol?: string; decimals?: number }>;
+      tokens?: Array<JettonTokenPin & { symbol?: string; decimals?: number }>;
       dlmmRegistry?: string;
       marketBindings?: import("./marketTypes").DlmmMarketBinding[];
       optionFactory?: string;
@@ -92,7 +92,7 @@ export class LedgerService {
     } });
     this.refreshDependency = async (account, cycle) => {
       this.identities ??= new WalletIdentityStore({ network, store, source: this.source,
-        walletTemplateCodeHash: options.walletTemplateCodeHash ?? null, tokens: options.tokens });
+        tokens: options.tokens ?? [] });
       return createRefreshDependency({ network, store, source: this.source, opcodes, logger,
         maxPagesPerAccount: options.maxPagesPerSync ?? 20, metrics: options.metrics,
         resolveIdentity: wallet => this.identities!.resolve(wallet, cycle) })(account, cycle);
@@ -263,7 +263,7 @@ export class LedgerService {
           } catch { /* Retry each dependency; a failed batch never certifies quiet. */ }
         }
         this.identities ??= new WalletIdentityStore({ network: this.network, store: this.store, source: this.source,
-          walletTemplateCodeHash: this.options.walletTemplateCodeHash ?? null, tokens: this.options.tokens });
+          tokens: this.options.tokens ?? [] });
         const deps: ChainSyncDeps = { network: this.network, store: this.store, source: this.source, opcodes: this.opcodes,
           logger: this.logger, metrics: this.options.metrics, maxPagesPerAccount: this.options.maxPagesPerSync ?? 20,
           resolveIdentity: wallet => this.identities!.resolve(wallet, cycle!) };

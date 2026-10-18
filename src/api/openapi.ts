@@ -2,6 +2,7 @@ import type { RegistryMetadata } from '../config/releaseManifest';
 import { ledgerPaths, ledgerSchemas } from '../ledger/openapi';
 import { currentNativeRuntime, resolveServiceMetadata, type ServiceMetadataConfig } from './serviceMetadata';
 import { publicIndexerPath } from './publicMount';
+import { currentReleasePaths, currentReleaseSchemas } from './currentReleaseOpenapi';
 
 export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryMetadata) => {
   const { serviceId } = resolveServiceMetadata(config, metadata);
@@ -46,6 +47,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
       },
       schemas: {
         ...ledgerSchemas,
+        ...currentReleaseSchemas,
         ErrorResponse: {
           type: 'object',
           additionalProperties: false, properties: { error: { type: 'string' }, code: { type: 'string' } },
@@ -631,7 +633,8 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
       },
     },
     paths: {
-      ...ledgerPaths,
+      ...structuredClone(ledgerPaths),
+      ...structuredClone(currentReleasePaths),
       '/api/indexer/v1/health': {
         get: {
           summary: 'Health check',
@@ -1029,7 +1032,11 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
   // Every overload/unavailable/deadline response exposes the same flat retry contract.
   for (const path of Object.values(spec.paths)) for (const operation of Object.values(path)) {
     if (!operation || typeof operation !== 'object' || !('responses' in operation)) continue;
+    const documented = operation as { parameters?: unknown[] };
+    documented.parameters = [...(documented.parameters ?? []), { name: 'x-tonswap-release', in: 'header', required: false,
+      description: 'Expected current manifest hash. A mismatch returns 409 before route work.', schema: { type: 'string', pattern: '^[0-9a-f]{64}$' } }];
     const responses = operation.responses as Record<string, unknown>;
+    if (!responses[409]) responses[409] = { description: 'Release mismatch', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } };
     for (const [status, description] of [[429, 'Rate limit exceeded'], [503, 'Read unavailable'], [504, 'Read deadline exceeded']] as const) {
       if (status === 503 && path === spec.paths['/api/indexer/v1/health']) {
         responses[status] = {description:'Runtime dependency unavailable',headers:{'Retry-After':{schema:{type:'integer',minimum:1}}},content:{'application/json':{schema:{$ref:'#/components/schemas/HealthStatus'}}}};

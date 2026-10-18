@@ -3,6 +3,166 @@ Indexer for faster/more reliable data from TON.
 
 This TypeScript service provides pinned TON chain reads, current balances, bounded activity history and durable product settlement evidence. The runtime requires one reviewed release manifest and a locally configured liteserver pool.
 
+The fresh native manifest uses `T3Hub`, per-token master and wallet code pins,
+current spot wallet profiles, a mandatory unique `orderKeeper: { address }`,
+and the stable `services.indexer` mount
+`https://test.tonswap.org/api/indexer` for public testnet. The localnet fixture is
+sandbox evidence and never a public deployment identity. Every API response,
+including errors and readiness, carries `x-tonswap-release` when the manifest is
+valid. Clients may send that header to reject a stale release with HTTP 409 before
+route work. CORS permits and exposes it.
+
+`GET /api/indexer/v1/orders/open` returns a release-bound immutable snapshot of
+current `ACTIVE` and `EXECUTING` orders. Omit the first cursor; `limit` is 1–100
+(default 50) and must remain unchanged across pages. A cursor retains its original
+head and rows, expires when that chain boundary becomes older than 30 seconds,
+and returns HTTP 409 if it is stale or mismatched. Missing fresh evidence returns
+503. `coverage.complete` requires genesis-linked factory history, authenticated
+current account boundaries and no discovery gaps; an incomplete page remains
+explicitly incomplete. An order state is neither a cash settlement nor keeper
+admission proof. Current capture coverage lacks factory genesis and live
+masterchain boundaries, and still needs INPUT_OWED/JCLR, expiry and cancellation
+during execution qualification.
+
+The orders collector starts after the HTTP listener, reads through the configured
+liteserver source, and retains original verified transaction boundaries in the
+release-scoped PostgreSQL schema. Its separate pool has three connections and a
+five-second statement timeout. Collection is bounded to 64 new transaction
+boundaries, 10,000 history rows and 256 child accounts per cycle; unmet bounds
+produce coverage gaps. Immutable snapshots survive restarts, and late workers
+cannot replace a newer publication. No current account or getter result is cached.
+Use `INDEXER_DATABASE_URL` and the ordinary `npm run build`; the canonical database
+catalog includes the orders tables. This adds no readiness success keys and does
+not bypass native admission or the current product-decoder qualification fence.
+
+`GET /api/indexer/v1/config-prices?masterchainSeqno=N&blockRootHash=HEX` authenticates
+config parameters 18, 21 and 25 at the same current masterchain boundary used by
+the account read. The response includes release identity, `asOf`, and exact
+`basechain.gas`, `basechain.forward` and `basechain.storage` prices as unsigned
+decimal strings. Storage prices use the schedule active at chain time. A changed
+head returns HTTP 409 `head_mismatch`; the client must refresh its current read.
+These GET endpoints use `Cache-Control: no-store`.
+
+`GET /api/indexer/v1/account-storage?address=RAW&masterchainSeqno=N&blockRootHash=HEX`
+returns the original active `ShardAccount` and complete authenticated configuration
+dictionary BOCs at the exact requested head. The browser independently decodes
+`StorageInfo`, balance and the whole configuration-18 storage price schedule,
+then compares code/data to its same-head contract snapshot before funding a
+recovery. No rounded storage summaries, defaults or current-price-only history
+are substituted. Missing, uninitialized or pruned data is unavailable; changed
+heads return `409 head_mismatch`. Responses are release-bound, uncached and
+limited to 8 MiB. Run `tsx src/scripts/current-account-storage-test.ts` after changes.
+
+`POST /api/indexer/v1/t3/wallet-claim-evidence` accepts only the exact saved
+redemption variant of the T3 request. It reconstructs the current wallet claim
+and failure trees from complete linked original wallet history, then returns at
+most 32 matching burn claims and 32 failures for their current attempt hashes.
+The original owner-to-wallet body and origin LT, exact custom intent, owner and
+amount bind each result. Burn `WalletTerms.recipient` is the wallet owner; the
+payout beneficiary is inside the custom intent. Roots/counts describe the whole
+tree even though records select one operation. Missing history and overflow
+produce explicit incomplete coverage. The endpoint shares the live evidence gate,
+10,000-history/64-new-boundary work limits, and 8 MiB response bound. A membership
+witness never proves cash delivery; clients revalidate current wallet identity and
+roots before submitting mark, retry or cancellation.
+
+`POST /api/indexer/v1/t3/operation-evidence` is read-only and accepts the exact
+current mint or redemption request, including the original `bodyBoc` and
+`bodyHash`. It returns the requested release and body identity, one authenticated
+`asOf` head, current pinned hub code/data, owner/request receipt witnesses and
+original transaction plus before/after ShardAccount BOCs. Receipt candidates
+establish membership only; the browser independently checks physical delivery.
+The service reconstructs complete hub receipt history at each current boundary
+using retained original transaction facts, never cached current roots. Missing
+history produces explicit `coverage.gaps` and `complete: false`.
+
+T3 and Spot evidence share a maximum of two concurrent requests and a 20-second
+collection deadline. T3 permits
+64 new historical boundaries per request, 10,000 internal hub-history rows,
+256 scanned related transactions, 16 related accounts, 32 selected receipt
+candidates, 256 returned physical boundaries and an 8 MiB response limit. Hitting
+a limit never produces a truncated complete response. Requests exceeding 192 KiB
+are rejected. Original immutable boundaries and their authenticated containing
+sequence numbers share the release-scoped physical store with order discovery;
+current hub, wallet and configuration reads remain fresh. These runtime limits
+do not certify the native capture set or remove the ordinary ledger decoder fence.
+
+`POST /api/indexer/v1/spot/order-wallet-claim-evidence` accepts the exact
+`order-settlement` request for an order whose input is T3. It authenticates the
+closed deterministic order, original initialization and immutable terms, resolved
+funding and actual input credit, plus complete original order and input-wallet
+histories. Each returned non-burn record includes `transferTransaction`, the
+original wallet transaction and before/after account cells at its first
+`originLt`, linked to the pinned order's exact outgoing message. Later retries
+retain that origin while incrementing the attempt. Current failure membership may
+precede marking; the browser must resolve its mark action and refresh before
+submitting `OWDR`. This endpoint has one 10,000-row aggregate history budget,
+64 newly replayed boundaries, 32 claim/32 failure witness limits and an 8 MiB
+response limit, using the shared evidence gate. Incomplete original evidence or
+limit overflow never returns a complete partial witness set. Other token wallet
+protocols are not interpreted as T3 sparse trees.
+
+`POST /api/indexer/v1/spot/operation-evidence` accepts the exact current
+`direct` transfer body, `order-create` reviewed terms, or `order-settlement`
+terms with an optional resolved funding dispatch. Direct requests qualify
+both token masters, four canonical wallets and the current pool at one head;
+responses include those wallet addresses, current original account envelopes,
+and original linked transaction boundaries. Full message comparison preserves
+all headers, amounts, StateInit and body while normalizing legal TL-B
+inline/reference placement. The client must bind its retained wallet dispatch to
+the source-wallet LT/hash before interpreting those facts as its own outcome.
+The endpoint never treats a pool event or closed order as delivered tokens.
+
+Order creation retains the original owner-to-factory request and actual factory
+execution, exact child StateInit and first initialization. The only allowed
+change to reviewed terms is the native `startAt = max(startAt, factory.tx.now)`
+clamp. The current child terms must still match that actual initialization.
+Creation responses contain only the pinned factory/order/pool, their current
+account envelopes and original factory/child transactions.
+
+Whole-order evidence binds a supplied funding dispatch to its exact source-wallet
+LT, transaction hash, value and body. It retains the complete original order and
+input-wallet histories, five canonical wallet identities and their related
+physical message graph. Historical permissionless keepers enter that bounded
+graph only through successful pinned order transitions. `absentAccounts` derives
+only from authenticated dictionary absence, never missing or uninitialized state.
+A never-funded closed order with zero executed slices may account for its failed
+withdrawal through that proven wallet absence and the original order bounce; no
+wallet transaction or token credit is fabricated. Clients independently verify
+input conservation and every output/refund, and resolve every saved wallet action
+before treating an order as terminal. A null funding request does not clear an
+unresolved local wallet action.
+
+Spot evidence shares the release pool, immutable physical store and live request
+limit with T3. Per request it bounds current accounts to 16, scanned and returned
+transactions to 256, new archive boundaries to 64, message edges to 1,024 and the
+response to 8 MiB. Missing history, unmatched delivery or any exhausted limit
+remains explicit incomplete coverage. Current observations are never cached.
+Requests exceeding 192 KiB are rejected; responses use `Cache-Control: no-store`
+and the manifest-bound release header. Run `npm run test:current-spot-evidence`
+for strict request/route cases and `npm run test:current-spot-evidence:capture --
+/absolute/direct-capture.json /absolute/retained/orders` for the original captured
+boundary adapter. Sandbox consensus labels and test issuing authority never
+qualify a live release. Run `npm run test:current-order-settlement:capture --
+/absolute/native-order-capture.json` for whole-order evidence. The retained native
+matrix covers both directions, three-slice completion, cancellation, partial
+execution, refusal/refund, unfunded cancellation, expiry and ten-slice completion.
+The ten-slice graphs fit the bounds; longer histories or repeated failures may
+remain explicitly incomplete. This does not qualify unbounded recovery or remove
+the ordinary ledger decoder fence.
+
+Run `npm run test:current-release` for manifest, wallet, header and API checks and
+`npm run test:current-orders` for durable publication and endpoint checks. Run
+`npx tsx src/scripts/current-order-chain-test.ts /absolute/path/to/retained/orders`
+and `npx tsx src/scripts/current-order-discovery-test.ts /absolute/path/to/retained/orders`
+against the retained producer evidence; their synthetic masterchain labels do not
+qualify a live chain. Transport proof tests separately verify exact authenticated
+config and account bindings. Run `npm run test:current-t3-evidence` for strict
+request and API cases, and `npm run test:current-t3-evidence:capture --
+/absolute/path/to/retained/t3Recovery` for original native mint/redemption
+collection under an explicitly synthetic chain/getter adapter. This bounded
+operation graph test does not qualify a live release or full account histories.
+
 The first-release chain schema requires TVM12 or newer. Raw internal messages expose
 `extraFlagsRaw`; the upstream SDK/toncenter compatibility wire key `ihrFee`/`ihr_fee`
 contains those flags and is never added to native fees. Fee evidence consists of
@@ -406,85 +566,49 @@ is the actual debit. Excess refund attribution remains explicit and unresolved.
 This proves purchase activation, not a cash-equivalent asset valuation, taxation,
 or a later exercise, settlement, payout, cancellation or refund.
 
-T3 mint and redemption use the release manifest's `T3` and `T3Root` singleton roles.
-Their receipts contain only fixed inline fields; the current ABI has no optional
-payload bit or reference. Mint journals validate that exact receipt and its query,
-recipient and amount, including failed and completed entries. Trailing payload
-data is rejected. Optional request payloads remain accepted and are ignored by
-the Hub.
-The graph verifies the hub's tagged storage root, root emitter, three immutable
-reserve root/vault identities, and the deterministic receiver code/address and
-controller. Its related accounts include the hub, root, reserve vaults, and all
-identified user-controlled receiver wallets. A receiver wallet retains its actual
-`asset.owner`; `asset.controller` identifies the user and `custody: t3_receiver`
-identifies that custody. Internal transfers among these owned accounts cancel;
-their actual transaction and forwarding fees remain separate movements.
+Fresh T3 uses the manifest's `T3Hub` as both hub and jetton master, with
+`T3Wallet` and `T3RecoveryProof` code pins. Reserve identities carry each master's
+and wallet's code hash, precision and immutable wallet budget profile. USDT/USDC
+use six decimals and KUSD uses its declared precision; amounts remain atomic
+strings. Current derivation authenticates all account/getter reads at one head.
+The optional third slot may remain undiscovered without disabling the core pair.
+There is no separate root, receiver contract or global wallet template.
 
-`t3_mint` requires exact original owner/query collateral deliveries matching the
-business receipt basket and a typed root mint request, canonical recipient wallet
-credit, wallet/root acknowledgements, hub consumption, and root finalization.
-The root query/wire/hash is distinct from the business query. Replayed root
-messages add no second mint credit. A parked mint retry additionally requires
-the current Hub's exact transaction archives: the unique original funded admission,
-each authenticated failure into `failedMints`, and each owner/query retry that
-rotates the unchanged liability into the live lane. Code, transaction LT/hash,
-receipt and refund authority must match; missing or conflicting boundaries keep
-settlement incomplete. Recovery retains original fees and invitation data and
-the physical native fees across attempts. Staged deposits and unresolved
-failed/bounced attempts retain observed gross debits and fees. Run
-`npx tsx src/scripts/ledger-t3-test.ts` and `npm run test:ledger` after changes.
-Mint protocol fees come from the original execution's exact six-coin fee-bucket
-transition, unchanged single buckets, and matching supply and gross reserve
-changes. Missing or conflicting fee states retain unavailable attribution.
-`t3_redeem` requires the original owner burn intent, authenticated root-to-hub
-proof and acknowledgement round trip, durable `redemption_identity` payout ID,
-and every actual receiver wallet credit and credited acknowledgement. Receipt
-amounts must sum to the exact burn; delivered reserves must equal every receipt
-basket, including all slices. An early receipt, queued payout, unrelated global
-supply delta or incomplete custody history cannot confirm redemption.
+`currentT3State`, `currentT3Wire` and `currentT3Proof` decode the current cells and
+require exact original transaction summaries and before/after LT/hash, code and
+data boundaries, including the original ShardAccount commitments in the transaction.
+Unfreezing requires the exact incoming StateInit committed by the frozen account;
+its prior token balance is preserved. An external receipt log is only a candidate: its leaf must
+match the authenticated receipt tree. Successful mint, reserve payout and private
+wallet delivery additionally require matched physical messages and exact source
+and recipient balance changes. Burn retry does not debit the original wallet a
+second time. A `SENT`, `FAILED`, accepted receipt or changed supply alone never
+proves cash. Missing fee attribution remains `feeBreakdown: unavailable`.
 
-A lost initial burn acknowledgement can be recovered by the owner's explicit
-`REDM` continuation. The release manifest supplies the active network, approved
-hub/root/wallet/receiver code hashes and ordered USDT/USDC/KUSD reserve roots.
-Startup authenticates the current root code and emitter, checks its wallet code
-against the approved template and derives each hub-owned reserve wallet. The
-ledger independently checks the stored hub routes and vault identities against
-that binding. Missing or conflicting code, configuration or archive evidence
-leaves recovery unresolved; observed code never becomes an approved release pin.
+`settlement.t3.receipt` includes the physical tree slot/key, exact record BOC,
+record/root commitments and original request binding. `localNetworkFees` is
+non-additive metadata; owned transaction fees already appear as movements.
+`currentT3Receipts` reconstructs current hub witnesses and wallet recovery records
+from complete initialization-to-head original history, authenticating every
+historical code/state and checking every resulting tree root. It returns explicit
+`unavailable` for gaps or missing logs that prevent reconstruction. These witnesses
+authorize claim/recovery requests; they never establish payment.
 
-Recovery requires exact archive code/data boundaries for the original wallet
-burn, root supply debit and receipt, hub's unconsumed proof, later proof
-consumption, root acknowledgement, and wallet journal `4 → 5`. The original
-wallet and root each debit once; acknowledgement changes neither balance nor
-supply. The proof may be recorded before hub activation; the later continuation
-must run while enabled. Historical and current payout identities must agree.
-`settlement.t3.burnRecovery` contains all six boundaries, qualified binding,
-continuation body hash and transaction references. Missing archives, changed
-identities, incomplete histories and unreceived acknowledgements remain explicit
-issues. Recovered burn acceptance still requires every receiver credit for
-redemption confirmation; token-free journal cleanup remains a separate action.
+Run `tsx src/scripts/runtime-t3-binding-test.ts`,
+`tsx src/scripts/ledger-identities-test.ts` and
+`tsx src/scripts/ledger-current-t3-test.ts` for the focused current port.
+Retained G14 hub cases establish receipt/state correspondence. The six native
+recovery cases retain 806 original transactions and exercise paired/direct mint,
+transfer, redemption, reserve payout retry, refund, burn cancellation and mint
+failure/retry. Their treasury funding and two forced wallet GRAM drains are
+explicit sandbox preconditions: transaction pointers are linked, but those
+mutated account boundaries do not establish complete physical history. The
+reconstructor rejects the two injected wallet histories; unaffected account
+trees and individual original transaction boundaries remain independently
+verifiable. Source-closure qualification must pass before enabling the runtime
+ledger fence. Run the dependency-refresh, boundary and platform-contract tests
+after changing the shared native mint publication fixture.
 
-`settlement.protocol: t3` includes `t3` metadata with authenticated hub/root,
-owner/recipient, business query, root query/wire/hash or payout ID, reserve roots,
-receipt basket and delivered reserve basket. `amountRaw` is null for an unresolved
-mint with unknown output; confirmed mint carries `mintedRaw`. Reserve arrays use
-the hub route order (USDT, USDC, KUSD) and exact atomic strings; mint's delivered
-reserve basket is zero because its output is T3. Evidence includes all linked
-transaction identities and the persistent redemption getter observation.
-`localNetworkFees` is non-additive transaction metadata: owned fees are already
-movement entries and nonowned protocol fees are not another user debit.
-
-Exact immediate before/after archive boundaries and unchanged hub code/root allow
-mint fee splitting: collateral principal plus `protocol_fee` equals each actual
-gross input debit. A replay's state cannot replace the original fee-assessment
-state. Healthy redemption fee math follows the contract integer invariant and
-haircut rules and must reproduce the full authenticated net receipt basket.
-Redemption `feeAmountsRaw` is withheld before delivery and is **metadata only**,
-not an extra fee debit from the user's already-net custody balance. Missing
-archive boundaries, unsupported state layouts and outage redistribution retain
-`t3_protocol_fee_breakdown_unavailable`; principal settlement can still be
-individually confirmed. Refund lifecycle attribution, custody-funded minting,
-third-party redemption recipients and unsupported routes stay unresolved.
 Known perps OPEN/ADMG/MDIF funding and unverified T3 forwarding retain their exact
 wallet transfers but cannot fall through to ordinary confirmed transfer settlement.
 
@@ -656,7 +780,7 @@ Native assets expose `GRAM` with nine decimals. `TON` names the network. Native 
 
 `GET /api/indexer/v1/accounts/{addr}/balances` returns `{address, network, head_seqno, head_utime, complete, assets}`. Assets are GRAM then every manifest token in manifest order, always with manifest symbol and decimals. A verified row is `status: "ok"` with an atomic `balance_raw` string; a qualified undeployed wallet is `not_deployed` with `"0"`; an unavailable row retains its identity with `balance_raw: null` and a reason. Native read failure fails the whole request. `complete` is true only when all rows are verified or undeployed. There is no completed balance cache.
 
-The wallet reader authenticates root code and the canonical root getter. Current-template wallet addresses derive locally from the exact StateInit; other roots use their canonical address getter. Wallet code, owner/root identity and transaction pointers must qualify at the same head. A read failure never means zero; display metadata never supplies accounting precision.
+Each manifest token carries its own `masterCodeHash` and `walletCodeHash`. The wallet reader authenticates the master account and `get_jetton_data`, resolves the owner with `get_wallet_address`, and reads active wallet balances through `get_wallet_data`. T3Wallet, Jetton v2.1 and vendor stablecoin wallets keep their separate pins; no global wallet template or JTW1 storage assumption is used. Master code, wallet code, owner/root identity and transaction pointers qualify at the same head on every read, with no completed qualification or wallet-address cache. A read failure never means zero; display metadata never supplies accounting precision.
 
 SSE `/stream/balances` accepts `address` and comma-separated `addresses`; `wallet` has no effect. One HeadFeed subscriber shares per-owner reads, with at most eight owners running and slow owners coalescing to the newest head. Each client gets an initial snapshot. Later verified amount changes emit `balances_changed` before a snapshot. Unavailable rows keep the previous verified comparison value, so availability flapping does not fabricate changes; the first verified value after initial unavailability does count.
 
@@ -726,14 +850,15 @@ old ledger jobs and cursor generations cannot resume under new bindings.
 
 The manifest contains `network`, `globalId`, `releaseId`, source/build identity,
 services, singleton `contracts`, child-code `templates`, `tokens`, `spotMarkets`,
-`perpsMarkets`, `options`, and `manifestHash`. Singleton entries are exact
+`perpsMarkets`, `options`, content-addressed vendor assets, campaign proof identity, `supplyBase`, `orderKeeper`, and `manifestHash`. Token entries contain exact master and wallet code pins; spot entries include X-token precision and its complete wallet gas/rent profile. Singleton entries are exact
 address/codeHash objects. The SHA-256 digest authenticates recursively key-sorted
 manifest content with `manifestHash` omitted. `/contracts` and `/service-info`
 expose `release: { releaseId, manifestHash }` for the running worker. There is no
-static registry, registry sync, secondary pin source or registry parity check.
+static registry, registry sync, secondary pin source or registry parity check. The stable public service mount is `/api/indexer` (testnet: `https://test.tonswap.org/api/indexer`); release IDs never enter its path. `/contracts` also returns the current templates, token pins and spot/perps/options inventories. These are deployment identities, not proof of current product readiness.
 
-Manifest pins configure perps, options, launchpad, T3 recovery and spot ledger
-bindings. External token roots without a manifest code hash remain unqualified.
+Every API response, including validation errors, preflight and ledger readiness, carries `x-tonswap-release` with the bound manifest hash. A request may supply the same header. A different hash returns HTTP 409 with `cache-control: no-store` before route work; an unavailable binding returns HTTP 503. CORS allows and exposes this header, including when custom header lists are configured.
+
+During the fresh contract port, discovery identities do not authorize older business-state decoders. The runtime refuses ledger initialization before allocating a database while `currentLedgerDecodersQualified` is false; ledger readiness remains unavailable. The product ledger descriptions below require current decoder qualification before they can be accepted for this release. Unlisted token roots remain unqualified.
 Reserve wallet custody still requires exact on-chain identity and archive
 evidence. Native perps admission artifacts and chain/genesis authentication
 remain required. Deployed identities do not establish fresh oracle depth, mint
@@ -1041,7 +1166,7 @@ The focused producer checks run with
 run with `npx tsx src/scripts/ledger-option-factory-state-test.ts`.
 
 Regenerate the canonical cross-service abort fixtures with
-`npx tsx src/scripts/export-option-abort-fixtures.ts ../tonswap-platform/test/fixtures`.
+`npx tsx src/scripts/export-option-abort-fixtures.ts services/platform/test/fixtures`.
 The exporter runs the actual ledger projector over archived-state/message fixtures
 for committed, failed and unobserved deposits, independently pending cash legs,
 existing populated buckets, and complete/pending initial-bounce returns for both
@@ -1726,3 +1851,12 @@ protocol fee leg. A same-wallet beneficiary payout is tied to the fee finalizer
 that advances the Router's source queue. Verify this path with
 `npm run test:ledger:market`; `npm run test:ledger:liquidity` also checks the
 current Pool protection mask and rejection of obsolete metadata.
+
+
+## Platform service
+
+The optional notification, public price and historical FX service is maintained in
+[`services/platform`](services/platform/README.md). It has its own dependencies,
+configuration and build. From that directory, run `npm ci` and `npm run verify`;
+follow its README for database migrations and API/worker deployment. The indexer
+build and runtime remain separate from this service.

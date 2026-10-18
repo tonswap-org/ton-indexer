@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { createReleaseLedgerPool, type ReleasePoolOptions } from '../ledger/releasePool';
 import { deriveT3RedemptionBinding } from '../ledger/runtimeT3Binding';
+import { createReleaseLedgerPool, type ReleasePoolOptions } from '../ledger/releasePool';
 import { PostgresLedgerStore, type LedgerSqlPool } from '../ledger/store';
 import { LedgerService } from '../ledger/service';
 import { DlmmMarketService } from '../ledger/marketService';
@@ -30,6 +30,7 @@ export function createLedgerRuntime(deps: RuntimeDeps, options: {
     let candidate: LedgerSqlPool | undefined, readCandidate: LedgerSqlPool | undefined;
     try {
       status = 'connecting';
+      if (!bindings.currentLedgerDecodersQualified) throw new Error('Current contract ledger decoders are not qualified');
       candidate = await (options.poolFactory ?? createReleaseLedgerPool)(config.databaseUrl!, manifest.runtime.manifestHash, { size: config.ledgerWorkers * 5 + 4, metrics: deps.metrics, role: 'worker' });
       const store = new PostgresLedgerStore(candidate);
       await store.initialize();
@@ -43,11 +44,11 @@ export function createLedgerRuntime(deps: RuntimeDeps, options: {
       if (stopped) return;
       ledger = new LedgerService(config.network, store, source, opcodes, logger, config.ledgerWorkers, {
         readStore, metrics: deps.metrics, router: registry.DexRouter, dependencyPools: manifest.runtime.spotMarkets.map(market => market.pool),
-        walletTemplateCodeHash: bindings.walletTemplateCodeHash, tokens: bindings.jettonRoots,
+        tokens: bindings.jettonRoots,
         jettonRoots: bindings.jettonRoots.map(root => root.master), dlmmRegistry: registry.DlmmRegistry,
         marketBindings: bindings.marketBindings, optionFactory: registry.OptionFactory, optionVault: registry.OptionVault,
         optionCodeHashes: bindings.optionCodeHashes, launchpadCodeHashes: bindings.launchpadCodeHashes,
-        launchpadControllers: bindings.launchpadControllers, t3Hub: registry.T3, t3Root: registry.T3Root, t3RedemptionBinding,
+        launchpadControllers: bindings.launchpadControllers, t3Hub: bindings.t3Hub, t3Root: bindings.t3Hub, t3RedemptionBinding,
         perpsEngine: registry.PerpsEngine, perpsEngineCodeHash: bindings.perpsEngineCodeHash,
         maxWatchedAccounts: config.ledgerMaxWatchedAccounts, maxPagesPerSync: config.ledgerMaxPagesPerSync,
         maxRelatedAccounts: config.ledgerMaxRelatedAccounts,
@@ -68,7 +69,7 @@ export function createLedgerRuntime(deps: RuntimeDeps, options: {
       if (message !== lastError) logger.warn('durable ledger unavailable', { error: errorDiagnostic(error) });
       lastError = message;
       // An incompatible first-release catalog cannot be repaired by a reconnect.
-      const terminal = ['Durable ledger catalog differs from the canonical SQL schema',
+      const terminal = ['Current contract ledger decoders are not qualified', 'Durable ledger catalog differs from the canonical SQL schema',
         'Durable ledger namespace differs from the release', 'Durable ledger full release identity differs',
         'Canonical compiled ledger catalog is unavailable', 'Release database search path does not match the manifest namespace',
         'Release database namespace belongs to a different manifest', 'Running compiled build changed after authentication'].includes(message)

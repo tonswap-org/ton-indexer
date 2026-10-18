@@ -35,8 +35,16 @@ import type { BalanceStreamHub } from '../balances/balanceStream';
 import type { RuntimeMetrics } from '../runtimeMetrics';
 import { isAdmissionMethod } from '../data/admission/protocol';
 import type { FreshReadCall } from '../data/freshRead';
-import { currentNativeRuntime, resolveServiceMetadata } from './serviceMetadata';
+import { currentNativeRuntime, resolveServiceMetadata, installReleaseIdentity } from './serviceMetadata';
 import { errorDiagnostic, type Logger } from '../utils/logger';
+import { OrderPageError, type CurrentOrdersRuntime } from '../runtime/ordersRuntime';
+import { readT3OperationRequest, T3EvidenceError } from '../runtime/t3OperationRequest';
+import { readT3WalletClaimRequest } from '../runtime/t3WalletClaimEvidence';
+import { readAccountStorage } from '../runtime/accountStorage';
+import { readOrderWalletClaimRequest } from '../runtime/orderWalletClaimEvidence';
+import { readSpotOperationRequest, SpotEvidenceError } from '../runtime/spotOperationRequest';
+import { currentJettonConfigPrices } from '../data/configPrices';
+import { assertFreshHeadTime } from '../data/freshHead';
 
 const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
 const BALANCE_STREAM_MAX_ADDRESSES = 8;
@@ -262,9 +270,10 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
+  installReleaseIdentity(app, config.network, registryMetadata);
   const network = config.network;
   if (network !== 'mainnet' && network !== 'testnet' && network !== 'localnet') {
     throw new Error('Routes require an explicit mainnet, testnet, or localnet network.');
@@ -307,7 +316,8 @@ export const registerRoutes = (
     return null;
   };
   const { serviceId, publicBaseUrl, freshReads } = resolveServiceMetadata(config, registryMetadata);
-  const indexer = currentNativeRuntime(config.network, registryMetadata)?.services.indexer;
+  const nativeRuntime = currentNativeRuntime(config.network, registryMetadata);
+  const indexer = nativeRuntime?.services.indexer;
   const serviceIdentity = {
     serviceId,
     ecosystem: 'ton',
@@ -326,6 +336,10 @@ export const registerRoutes = (
       'account-state',
       'run-get-method',
       ...(freshReads ? ['fresh-read'] : []),
+      ...(freshReads && runtime.orders ? ['open-orders'] : []),
+      ...(freshReads && runtime.source ? ['config-prices'] : []),
+      ...(freshReads && runtime.orders?.operationEvidence ? ['t3-operation-evidence'] : []),
+      ...(freshReads && runtime.orders?.spotOperationEvidence ? ['spot-operation-evidence'] : []),
       'market-candles'
     ],
     endpoints: Object.fromEntries(Object.entries({
@@ -336,11 +350,18 @@ export const registerRoutes = (
       state: '/api/indexer/v1/accounts/{addr}/state',
       runGetMethod: '/api/indexer/v1/runGetMethod',
       ...(freshReads ? { readFresh: '/api/indexer/v1/readFresh' } : {}),
+      ...(freshReads && runtime.orders ? { openOrders: '/api/indexer/v1/orders/open' } : {}),
+      ...(freshReads && runtime.source ? { configPrices: '/api/indexer/v1/config-prices' } : {}),
+      ...(freshReads && runtime.orders?.operationEvidence ? { t3OperationEvidence: '/api/indexer/v1/t3/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.walletClaimEvidence ? { t3WalletClaimEvidence: '/api/indexer/v1/t3/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.orderWalletClaimEvidence ? { orderWalletClaimEvidence: '/api/indexer/v1/spot/order-wallet-claim-evidence' } : {}),
+      ...(freshReads ? { accountStorage: '/api/indexer/v1/account-storage' } : {}),
+      ...(freshReads && runtime.orders?.spotOperationEvidence ? { spotOperationEvidence: '/api/indexer/v1/spot/operation-evidence' } : {}),
       marketCandles: '/api/indexer/v1/markets/{market}/candles'
     }).map(([name, route]) => [name, publicIndexerPath(indexer, route)])),
     release: {
-      releaseId: registryMetadata?.releaseId ?? null,
-      manifestHash: registryMetadata?.manifestHash ?? null
+      releaseId: nativeRuntime?.releaseId ?? null,
+      manifestHash: nativeRuntime?.manifestHash ?? null
     }
   };
 
@@ -379,11 +400,139 @@ export const registerRoutes = (
       network: config.network ?? null,
       count: contractEntries.length,
       contracts: contractMap,
-      release: serviceInfo.release
+      release: serviceInfo.release,
+      ...(nativeRuntime ? { templates: nativeRuntime.templates, tokens: nativeRuntime.tokens,
+        spotMarkets: nativeRuntime.spotMarkets, perpsMarkets: nativeRuntime.perpsMarkets,
+        options: nativeRuntime.options } : {})
     };
   });
 
   app.get('/api/indexer/v1/service-info', async () => serviceInfo);
+
+  app.post('/api/indexer/v1/t3/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.operationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current T3 evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The T3 evidence endpoint has no query parameters.');
+      const parsed = readT3OperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.operationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof T3EvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current T3 evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current T3 evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current T3 evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/t3/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.walletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current T3 wallet claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The T3 wallet claim endpoint has no query parameters.');
+      const parsed = readT3WalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.walletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof T3EvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current T3 wallet claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current T3 wallet claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current T3 wallet claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/spot/order-wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.orderWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current order wallet claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The order wallet claim endpoint has no query parameters.');
+      const parsed = readOrderWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.orderWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof SpotEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current order wallet claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current order wallet claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current order wallet claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/spot/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.spotOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Spot evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The Spot evidence endpoint has no query parameters.');
+      const parsed = readSpotOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.spotOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof SpotEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Spot evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Spot evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Spot evidence is unavailable.');
+    }
+  });
+
+  app.get('/api/indexer/v1/orders/open', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const query = asRecord(request.query) ?? {};
+    if (Object.keys(query).some(key => !['cursor', 'limit'].includes(key))
+      || (query.cursor !== undefined && (typeof query.cursor !== 'string' || !query.cursor || query.cursor.length > 1024))
+      || (query.limit !== undefined && (typeof query.limit !== 'string' || !/^[1-9][0-9]{0,2}$/.test(query.limit) || Number(query.limit) > 100)))
+      return sendError(reply, 400, 'invalid_cursor', 'Use an optional cursor and a limit from 1 to 100.');
+    if (!nativeRuntime || !runtime.orders) return sendError(reply, 503, 'upstream_unavailable', 'Current order evidence is unavailable.');
+    try {
+      const page = await runtime.orders.page({ cursor: query.cursor as string | undefined,
+        limit: query.limit === undefined ? undefined : Number(query.limit) });
+      for (const [name, value] of Object.entries(page.headers)) reply.header(name, value);
+      return page.body;
+    } catch (error) {
+      if (error instanceof OrderPageError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current order page unavailable', { error: errorDiagnostic(error) });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current order evidence is unavailable.');
+    }
+  });
+
+  app.get('/api/indexer/v1/account-storage', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const query = asRecord(request.query) ?? {};
+    if (Object.keys(query).sort().join(',') !== 'address,blockRootHash,masterchainSeqno'
+      || typeof query.address !== 'string' || !/^0:[0-9a-f]{64}$/.test(query.address)
+      || typeof query.masterchainSeqno !== 'string' || !/^[1-9][0-9]{0,9}$/.test(query.masterchainSeqno)
+      || Number(query.masterchainSeqno) > 0xffffffff || typeof query.blockRootHash !== 'string' || !/^[0-9a-f]{64}$/.test(query.blockRootHash))
+      return sendError(reply, 400, 'bad_request', 'Supply the raw basechain address and exact current masterchainSeqno and blockRootHash.');
+    if (!nativeRuntime || !runtime.source) return sendError(reply, 503, 'upstream_unavailable', 'Current account storage is unavailable.');
+    const signal = requestDeadline(request, ROUTE_DEADLINE_MS.fresh);
+    try {
+      const head = await runtime.source.head({ signal }); assertFreshHeadTime(head.utime);
+      if (head.seqno !== Number(query.masterchainSeqno) || head.rootHashHex !== query.blockRootHash)
+        return sendError(reply, 409, 'head_mismatch', 'The chain head changed. Refresh the current read.');
+      return await readAccountStorage(nativeRuntime, runtime.source, query.address, head, signal);
+    } catch (error) {
+      runtime.logger?.warn('current account storage unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current account storage is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current account storage is unavailable.');
+    }
+  });
+
+  app.get('/api/indexer/v1/config-prices', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const query = asRecord(request.query) ?? {};
+    if (Object.keys(query).sort().join(',') !== 'blockRootHash,masterchainSeqno'
+      || typeof query.masterchainSeqno !== 'string' || !/^[1-9][0-9]{0,9}$/.test(query.masterchainSeqno)
+      || Number(query.masterchainSeqno) > 0xffffffff || typeof query.blockRootHash !== 'string' || !/^[0-9a-f]{64}$/.test(query.blockRootHash))
+      return sendError(reply, 400, 'bad_request', 'Supply the exact masterchainSeqno and blockRootHash from the current read.');
+    if (!nativeRuntime || !runtime.source) return sendError(reply, 503, 'upstream_unavailable', 'Current network prices are unavailable.');
+    const signal = requestDeadline(request, ROUTE_DEADLINE_MS.fresh);
+    try {
+      const head = await runtime.source.head({ signal }); assertFreshHeadTime(head.utime);
+      if (head.seqno !== Number(query.masterchainSeqno) || head.rootHashHex !== query.blockRootHash)
+        return sendError(reply, 409, 'head_mismatch', 'The chain head changed. Refresh the current read.');
+      const config = await runtime.source.getConfig({ at: head, signal });
+      if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex', 'utime'] as const).some(key => config.head[key] !== head[key]))
+        throw new ChainReadError('upstream_unavailable');
+      const basechain = currentJettonConfigPrices(config.configBoc, head.utime); assertFreshHeadTime(head.utime);
+      return { schema: 'tonswap-config-prices-v1', releaseId: nativeRuntime.releaseId, manifestHash: nativeRuntime.manifestHash,
+        asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex }, basechain };
+    } catch (error) {
+      runtime.logger?.warn('current config prices unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current network prices are unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current network prices are unavailable.');
+    }
+  });
 
   const sendToncenterCompat = <T>(
     reply: FastifyReply,

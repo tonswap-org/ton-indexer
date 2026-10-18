@@ -41,6 +41,13 @@ export type RegistrySpotMarketMetadata = Pick<RegistryMarketMetadata,
   'marketKey' | 'marketAddress' | 'tokenRoot' | 'assetSymbol' | 'quoteSymbol' |
   'assetDecimals' | 'quoteDecimals' | 'configuration' | 'oracle'> & {
     tokenRootCodeHash?: string;
+    tokenWalletCodeHash?: string;
+    quoteRoot?: string;
+    quoteRootCodeHash?: string;
+    quoteWalletCodeHash?: string;
+    walletGasX?: number;
+    walletGramX?: string;
+    walletBudgetX?: RuntimeReleaseManifest['spotMarkets'][number]['walletBudgetX'];
     poolCodeHash: string;
   };
 export type RegistryApprovedComparison = {
@@ -218,10 +225,12 @@ const instrumentMetadata = (manifest: RuntimeReleaseManifest) => {
   };
   const spotMarkets: RegistrySpotMarketMetadata[] = manifest.spotMarkets.map(spot => {
     const base = token(spot.symbol);
-    const rootCodeHash = Object.entries(manifest.contracts).find(([role, c]) =>
-      ['T3Root', 'TSRoot', 'USDT', 'USDC', 'KUSD'].includes(role) && c?.address === base.root)?.[1]?.codeHash;
+    const quote = token('T3');
     return { marketKey: `spot:${spot.symbol}-T3`, marketAddress: spot.pool, tokenRoot: base.root,
-      ...(rootCodeHash ? { tokenRootCodeHash: rootCodeHash } : {}), poolCodeHash: manifest.templates.DlmmPool,
+      tokenRootCodeHash: base.masterCodeHash, tokenWalletCodeHash: base.walletCodeHash,
+      quoteRoot: quote.root, quoteRootCodeHash: quote.masterCodeHash, quoteWalletCodeHash: quote.walletCodeHash,
+      walletGasX: spot.walletGasX, walletGramX: spot.walletGramX, walletBudgetX: structuredClone(spot.walletBudgetX),
+      poolCodeHash: manifest.templates.DlmmPool,
       assetSymbol: spot.symbol, quoteSymbol: 'T3', assetDecimals: base.decimals, quoteDecimals: token('T3').decimals };
   }).sort((a, b) => a.marketKey.localeCompare(b.marketKey));
   const markets: RegistryMarketMetadata[] = manifest.perpsMarkets.map(market => {

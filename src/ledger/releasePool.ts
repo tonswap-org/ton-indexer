@@ -4,7 +4,7 @@ import { Pool } from 'pg';
 import { releaseDatabaseSchema } from '../releaseState';
 import { RELEASE_IDENTITY_DDL } from './schemaReadiness';
 
-export type ReleasePoolOptions = { size?: number; metrics?: RuntimeMetrics; role?: 'worker' | 'read' };
+export type ReleasePoolOptions = { size?: number; metrics?: RuntimeMetrics; role?: 'worker' | 'read'; statementTimeoutMs?: number };
 export function releasePoolConfig(connectionString: string, manifestHash: string, options: ReleasePoolOptions = {}) {
   const max = options.size ?? 10;
   if (!Number.isSafeInteger(max) || max < 1 || max > 100) throw new Error('Invalid release pool size');
@@ -13,6 +13,11 @@ export function releasePoolConfig(connectionString: string, manifestHash: string
   // into the URL itself so an old ?options=search_path cannot override it.
   const url = new URL(connectionString);
   url.searchParams.set('options', `-c search_path=${schema}`);
+  if (options.statementTimeoutMs !== undefined) {
+    if (!Number.isSafeInteger(options.statementTimeoutMs) || options.statementTimeoutMs < 1 || options.statementTimeoutMs > 30_000)
+      throw Error('Invalid release statement timeout');
+    url.searchParams.set('statement_timeout', String(options.statementTimeoutMs));
+  }
   return { connectionString: url.toString(), max, connectionTimeoutMillis: 10_000 };
 }
 

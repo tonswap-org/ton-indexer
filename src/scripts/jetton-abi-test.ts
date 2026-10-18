@@ -87,7 +87,7 @@ const readFixtureBalance = async (reader: {
       return result;
     },
   });
-  const result = await createJettonWalletReader({ source, walletTemplateCodeHash: null }).wallet(reader.master, reader.owner);
+  const result = await createJettonWalletReader({ source, tokens: [{ master: reader.master, masterCodeHash: walletCode.hash().toString('hex'), walletCodeHash: walletCode.hash().toString('hex') }] }).wallet(reader.master, reader.owner);
   return result.status === 'ok' ? { wallet: result.wallet, balance: result.balanceRaw } : null;
 };
 

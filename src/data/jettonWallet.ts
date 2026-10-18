@@ -1,59 +1,52 @@
-import { Address, Cell, beginCell, contractAddress } from '@ton/core';
+import { Address, Cell, beginCell } from '@ton/core';
 import type { JettonMetadata } from '../models';
-import { readCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 import { parseJettonMetadata } from '../utils/jettonMetadata';
 import { ChainReadError, type AccountStateResponse, type ChainSource, type ReadOptions } from './dataSource';
 import { assertAccountTransactionPointer } from './accountState';
-import { buildTonswapJettonWalletInitialData, cellFromAccountCodeBoc, isSuccessfulGetterResult,
+import { cellFromAccountCodeBoc, isSuccessfulGetterResult,
   parseCanonicalJettonRootData, parseCanonicalJettonWalletAddress, parseCanonicalJettonWalletData } from './jettonAbi';
 
 export type JettonWalletRead =
   | { status: 'ok'; root: string; wallet: string; balanceRaw: string; lastTxLt: string; lastTxHash: string }
   | { status: 'not_deployed'; root: string; wallet: string; balanceRaw: '0' }
   | { status: 'unavailable'; root: string; wallet: string | null; reason: 'timeout' | 'upstream' | 'code_mismatch' | 'root_unqualified' };
-type Qualification = { code: Cell; template: boolean };
+export type JettonTokenPin = { master: string; masterCodeHash: string; walletCodeHash: string };
+type Qualification = { code: Cell };
 type Resolved = { root: string; owner: Address; wallet: string; qualified: Qualification };
 const unavailable = (root: string, wallet: string | null, reason: Extract<JettonWalletRead, { status: 'unavailable' }>['reason']): JettonWalletRead =>
   ({ status: 'unavailable', root, wallet, reason });
 const reason = (error: unknown) => error instanceof ChainReadError && error.code === 'upstream_timeout' ? 'timeout' as const : 'upstream' as const;
 
-/** Only successful root qualifications and addresses are retained. Balances are
- * always read from accounts at the caller's single selected chain head. */
-export function createJettonWalletReader({ source, walletTemplateCodeHash }: {
-  source: ChainSource; walletTemplateCodeHash: string | null;
+/** Every qualification, wallet address and balance is read at the same current
+ * head. No completed root/getter observation is reused under a later boundary. */
+export function createJettonWalletReader({ source, tokens }: {
+  source: ChainSource; tokens: readonly JettonTokenPin[];
 }) {
-  const roots = new Map<string, Qualification>();
-  const addresses = new Map<string, string>();
+  const pins = new Map(tokens.map(token => [Address.parse(token.master).toRawString(), Object.freeze({ ...token })]));
+  if (pins.size !== tokens.length || tokens.some(token => ![token.masterCodeHash, token.walletCodeHash].every(hash => /^[0-9a-f]{64}$/.test(hash))))
+    throw Error('Current token code pins are invalid');
+  async function qualify(root: string, options: ReadOptions) {
+    const pin = pins.get(root);
+    if (!pin) return null;
+    const [state, result] = await Promise.all([
+      source.getAccountState(root, options), source.runGetMethod(root, 'get_jetton_data', [], options),
+    ]);
+    const code = cellFromAccountCodeBoc(state.codeBoc);
+    const data = isSuccessfulGetterResult(result) ? parseCanonicalJettonRootData(result.stack) : null;
+    if (state.accountState !== 'active' || !code || code.isExotic || code.hash().toString('hex') !== pin.masterCodeHash
+      || !data || data.walletCode.isExotic || data.walletCode.hash().toString('hex') !== pin.walletCodeHash) return null;
+    return data;
+  }
   async function resolve(rootInput: string, owner: Address, options: ReadOptions): Promise<Resolved | JettonWalletRead> {
     let root = rootInput;
     try {
       root = Address.parse(root).toRawString();
-      let qualified = roots.get(root);
-      if (!qualified) {
-        const [state, result] = await Promise.all([
-          source.getAccountState(root, options), source.runGetMethod(root, 'get_jetton_data', [], options),
-        ]);
-        const rootCode = cellFromAccountCodeBoc(state.codeBoc);
-        const data = isSuccessfulGetterResult(result) ? parseCanonicalJettonRootData(result.stack) : null;
-        if (state.accountState !== 'active' || !rootCode || rootCode.isExotic || !data || data.walletCode.isExotic)
-          return unavailable(root, null, 'root_unqualified');
-        qualified = { code: data.walletCode, template: data.walletCode.hash().toString('hex') === walletTemplateCodeHash };
-        roots.set(root, qualified);
-      }
-      const key = `${root}:${owner.toRawString()}`;
-      let wallet = addresses.get(key);
-      if (!wallet) {
-        if (qualified.template) wallet = contractAddress(0, { code: qualified.code,
-          data: buildTonswapJettonWalletInitialData(owner, Address.parse(root)) }).toRawString();
-        else {
-          const result = await source.runGetMethod(root, 'get_wallet_address', [{ type: 'slice', cell: beginCell().storeAddress(owner).endCell() }], options);
-          const address = isSuccessfulGetterResult(result) ? parseCanonicalJettonWalletAddress(result.stack) : null;
-          if (!address) return unavailable(root, null, 'root_unqualified');
-          wallet = address.toRawString();
-        }
-        addresses.set(key, wallet);
-      }
-      return { root, owner, wallet, qualified };
+      const data = await qualify(root, options);
+      if (!data) return unavailable(root, null, 'root_unqualified');
+      const result = await source.runGetMethod(root, 'get_wallet_address', [{ type: 'slice', cell: beginCell().storeAddress(owner).endCell() }], options);
+      const address = isSuccessfulGetterResult(result) ? parseCanonicalJettonWalletAddress(result.stack) : null;
+      if (!address) return unavailable(root, null, 'root_unqualified');
+      return { root, owner, wallet: address.toRawString(), qualified: { code: data.walletCode } };
     } catch (error) { return unavailable(root, null, reason(error)); }
   }
   async function decode(resolved: Resolved, state: AccountStateResponse, options: ReadOptions): Promise<JettonWalletRead> {
@@ -63,19 +56,10 @@ export function createJettonWalletReader({ source, walletTemplateCodeHash }: {
       const code = cellFromAccountCodeBoc(state.codeBoc);
       if (state.accountState !== 'active' || !code || !code.hash().equals(qualified.code.hash()))
         return unavailable(root, wallet, 'code_mismatch');
-      let balance: bigint;
-      if (qualified.template) {
-        const data = cellFromAccountCodeBoc(state.dataBoc);
-        if (!data) return unavailable(root, wallet, 'upstream');
-        const storage = readCurrentJettonWalletStorage(data);
-        if (!storage.owner.equals(owner) || !storage.root.equals(Address.parse(root))) return unavailable(root, wallet, 'upstream');
-        balance = storage.balance;
-      } else {
-        const result = await source.runGetMethod(wallet, 'get_wallet_data', [], options);
-        const data = isSuccessfulGetterResult(result) ? parseCanonicalJettonWalletData(result.stack, { owner, root: Address.parse(root), walletCode: qualified.code }) : null;
-        if (!data) return unavailable(root, wallet, 'upstream');
-        balance = data.balance;
-      }
+      const result = await source.runGetMethod(wallet, 'get_wallet_data', [], options);
+      const data = isSuccessfulGetterResult(result) ? parseCanonicalJettonWalletData(result.stack, { owner, root: Address.parse(root), walletCode: qualified.code }) : null;
+      if (!data) return unavailable(root, wallet, 'upstream');
+      const balance = data.balance;
       assertAccountTransactionPointer(state.lastTxLt, state.lastTxHash);
       if (!state.lastTxLt || state.lastTxLt === '0' || !state.lastTxHash) return unavailable(root, wallet, 'upstream');
       return { status: 'ok', root, wallet, balanceRaw: balance.toString(), lastTxLt: state.lastTxLt, lastTxHash: state.lastTxHash };
@@ -130,8 +114,8 @@ export function createJettonWalletReader({ source, walletTemplateCodeHash }: {
     },
     async metadata(root: string, options: ReadOptions = {}): Promise<JettonMetadata | null> {
       try {
-        const result = await source.runGetMethod(root, 'get_jetton_data', [], options);
-        const data = isSuccessfulGetterResult(result) ? parseCanonicalJettonRootData(result.stack) : null;
+        const pinned = { ...options, at: options.at ?? await source.head(options) };
+        const data = await qualify(Address.parse(root).toRawString(), pinned);
         return data ? parseJettonMetadata(data.content) : null;
       } catch { return null; }
     },

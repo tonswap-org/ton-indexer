@@ -6,6 +6,8 @@ import { FreshReadUnavailableError } from '../data/freshRead';
 export type ErrorCode = AdmissionErrorCode
   | 'upstream_timeout' | 'upstream_unavailable' | 'indexer_unavailable' | 'ledger_unavailable' | 'internal_error'
   | 'invalid_address'
+  | 'head_mismatch'
+  | 'release_mismatch'
   | 'invalid_cursor'
   | 'cursor_mismatch'
   | 'invalid_method'

@@ -1,11 +1,18 @@
 import type { Network } from './index';
-import type { RuntimeReleaseManifest } from './runtimeManifest';
+import type { RuntimeReleaseManifest, JettonWalletBudget } from './runtimeManifest';
 import type { DlmmMarketBinding } from '../ledger/marketTypes';
-import type { LedgerOptionsCodeHashes, LedgerLaunchpadCodeHashes, LedgerT3RedemptionBinding } from '../ledger/bindings';
+import type { LedgerOptionsCodeHashes, LedgerLaunchpadCodeHashes } from '../ledger/bindings';
 
+export type CurrentSpotMarketBinding = {
+  network: Network; pool: string; poolCodeHash: string; symbol: string; binSpacing: number; feePips: number;
+  tokenT: RuntimeReleaseManifest['tokens'][number]; tokenX: RuntimeReleaseManifest['tokens'][number];
+  xDecimals: number; walletGasX: number; walletGramX: string; walletBudgetX: JettonWalletBudget;
+};
 export type RuntimeManifestBindings = {
   network: Network;
-  jettonRoots: Array<{ master: string; symbol: string; decimals: number }>;
+  jettonRoots: Array<{ master: string; symbol: string; decimals: number; masterCodeHash: string; walletCodeHash: string }>;
+  currentSpotMarkets: CurrentSpotMarketBinding[];
+  currentLedgerDecodersQualified: false;
   walletTemplateCodeHash: string | null;
   dlmmRegistry?: string;
   optionFactory?: string;
@@ -14,55 +21,33 @@ export type RuntimeManifestBindings = {
   launchpadControllers: string[];
   launchpadCodeHashes?: LedgerLaunchpadCodeHashes;
   t3Hub?: string;
-  t3Root?: string;
-  t3CodeHashes?: Pick<LedgerT3RedemptionBinding, 'hubCodeHash' | 'rootCodeHash' | 'walletCodeHash' | 'receiverCodeHash'>;
   perpsEngine?: string;
   perpsEngineCodeHash?: string;
   marketBindings: DlmmMarketBinding[];
 };
 
-/** Every trust pin comes from the parsed manifest, never current RPC code or
- * environment overrides. Actual archived state and custody remain independent. */
+/** Current discovery identities are not authorization for an older business-state decoder. */
 export function deriveRuntimeManifestBindings(manifest: RuntimeReleaseManifest): RuntimeManifestBindings {
-  const contracts = manifest.contracts, templates = manifest.templates;
-  const network = manifest.network.slice(4) as Network;
-  const rootHash = (root: string) => Object.entries(contracts).find(([role, c]) =>
-    ['T3Root', 'TSRoot', 'USDT', 'USDC', 'KUSD'].includes(role) && c?.address === root)?.[1]?.codeHash;
-  const tokenT = manifest.tokens.find(t => t.symbol === 'T3')!.root;
-  const marketBindings: DlmmMarketBinding[] = [];
-  for (const spot of manifest.spotMarkets) {
-    const token = manifest.tokens.find(t => t.symbol === spot.symbol);
-    if (!token) throw Error('Release manifest spot token binding is unavailable');
-    const tokenX = token.root;
-    const tokenTCodeHash = rootHash(tokenT), tokenXCodeHash = rootHash(tokenX);
-    // External roots are not deployed singletons. Their omitted trusted code
-    // hash remains a qualification gap; today's RPC code is never enrolled.
-    if (!tokenTCodeHash || !tokenXCodeHash) continue;
-    marketBindings.push({ network, pool: spot.pool, poolCodeHash: templates.DlmmPool,
-      walletCodeHash: templates.JettonWallet, tokenT, tokenX, tokenTCodeHash, tokenXCodeHash,
-      router: contracts.DexRouter?.address ?? null, routerCodeHash: contracts.DexRouter?.codeHash ?? null });
-  }
+  const contracts = manifest.contracts, network = manifest.network.slice(4) as Network;
+  const tokenT = manifest.tokens.find(token => token.symbol === 'T3');
+  if (!tokenT) throw Error('Release manifest T3 token binding is unavailable');
+  const currentSpotMarkets = manifest.spotMarkets.map(spot => {
+    const tokenX = manifest.tokens.find(token => token.symbol === spot.symbol);
+    if (!tokenX) throw Error('Release manifest spot token binding is unavailable');
+    return { ...structuredClone(spot), network, poolCodeHash: manifest.templates.DlmmPool,
+      tokenT: { ...tokenT }, tokenX: { ...tokenX } };
+  });
   return {
     network,
-    jettonRoots: manifest.tokens.map(token => ({ master: token.root, symbol: token.symbol, decimals: token.decimals })),
-    walletTemplateCodeHash: templates.JettonWallet ?? null,
-    dlmmRegistry: contracts.DlmmRegistry?.address,
-    optionFactory: contracts.OptionFactory?.address,
-    optionVault: contracts.OptionVault?.address,
-    optionCodeHashes: contracts.OptionFactory && contracts.OptionVault ? {
-      factoryCodeHash: contracts.OptionFactory.codeHash, vaultCodeHash: contracts.OptionVault.codeHash,
-      shoutCodeHash: templates.ShoutOption, outperformanceCodeHash: templates.OutperformanceOption,
-      walletCodeHash: templates.JettonWallet,
-    } : undefined,
-    launchpadControllers: contracts.SaleFactory ? [contracts.SaleFactory.address] : [],
-    launchpadCodeHashes: contracts.SaleFactory ? { fixedCodeHash: templates.SaleFixed, bondingCodeHash: templates.SaleBonding,
-      auctionCodeHash: templates.SaleAuction, walletCodeHash: templates.JettonWallet } : undefined,
-    t3Hub: contracts.T3?.address,
-    t3Root: contracts.T3Root?.address,
-    t3CodeHashes: contracts.T3 && contracts.T3Root ? { hubCodeHash: contracts.T3.codeHash,
-      rootCodeHash: contracts.T3Root.codeHash, walletCodeHash: templates.JettonWallet, receiverCodeHash: templates.T3Receiver } : undefined,
-    perpsEngine: contracts.PerpsEngine?.address,
-    perpsEngineCodeHash: contracts.PerpsEngine?.codeHash,
-    marketBindings,
+    jettonRoots: manifest.tokens.map(token => ({ master: token.root, symbol: token.symbol, decimals: token.decimals,
+      masterCodeHash: token.masterCodeHash, walletCodeHash: token.walletCodeHash })),
+    currentSpotMarkets,
+    // The previous JTW1/T3Root/DexRouter ledger must not receive fresh code pins.
+    // This intermediate fence is removed only with current decoder qualification.
+    currentLedgerDecodersQualified: false,
+    walletTemplateCodeHash: null, marketBindings: [], launchpadControllers: [],
+    t3Hub: contracts.T3Hub?.address,
+    optionFactory: contracts.OptionFactory?.address, optionVault: contracts.OptionVault?.address,
+    perpsEngine: contracts.PerpsEngine?.address, perpsEngineCodeHash: contracts.PerpsEngine?.codeHash,
   };
 }

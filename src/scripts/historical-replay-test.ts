@@ -82,6 +82,12 @@ async function main() {
   await check('a shard block without the original transaction is rejected', async () => {
     await assert.rejects(replayHistoricalAccount({ ...input, steps: [{ ...steps[0], block: Cell.EMPTY }] }, executor), /binding mismatch/);
   });
+  await check('a transaction embedded only as arbitrary block payload is not executed membership', async () => {
+    const extra = beginCell().storeUint(0x4a33f6fd, 32).storeRef(steps[0].transaction).storeRef(Cell.EMPTY)
+      .storeRef(beginCell().storeBit(false).storeCoins(0).storeBit(false).endCell()).storeBuffer(Buffer.alloc(32)).endCell();
+    const payloadOnly = new Cell({ bits: block.bits, refs: [...block.refs.slice(0, 3), extra] });
+    await assert.rejects(replayHistoricalAccount({ ...input, steps: [{ ...steps[0], block: payloadOnly }] }, executor), /binding mismatch/);
+  });
   await check('missing historical config does not substitute sandbox defaults', async () => {
     await assert.rejects(replayHistoricalAccount({ ...input, steps: [{ ...steps[0], config: Cell.EMPTY }] }, executor));
   });

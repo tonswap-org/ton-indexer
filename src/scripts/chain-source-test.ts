@@ -4,18 +4,18 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createLiteChainSource } from '../data/liteClientSource';
 import { ChainReadError, type ChainHead } from '../data/dataSource';
 import { HeadTracker } from '../data/headTracker';
-import { FakeLiteEngine, masterAnswer, proofBlock } from './support/fakeLiteEngine';
+import { FakeLiteEngine, masterAnswer, proofBlock, proofMasterchain } from './support/fakeLiteEngine';
 
 const currentTime = Math.floor(Date.now() / 1_000);
 const logger = { info() {}, debug() {}, error() {}, warn() {} };
 const address = `0:${'a'.repeat(64)}`;
-const mc = proofBlock(100, currentTime, -1), shard = proofBlock(80, currentTime - 1);
+const shard = proofBlock(80, currentTime - 1), mc = proofMasterchain(100, currentTime, shard);
 const at: ChainHead = { workchain: -1, shard: mc.id.shard, seqno: mc.id.seqno, rootHashHex: mc.id.rootHash.toString('hex'),
   fileHashHex: mc.id.fileHash.toString('hex'), utime: currentTime };
 function answer(req: any): unknown {
   if (req.kind === 'liteServer.getMasterchainInfoExt') return masterAnswer(mc);
   if (req.kind === 'liteServer.runSmcMethod') return { id: req.id, shardblk: shard.id, exitCode: 3001, result: serializeTuple([]).toBoc() };
-  if (req.kind === 'liteServer.getAccountState') return { id: req.id, shardblk: shard.id, state: Buffer.alloc(0), proof: shard.proof, shardProof: Buffer.alloc(0) };
+  if (req.kind === 'liteServer.getAccountState') return { id: req.id, shardblk: shard.id, state: Buffer.alloc(0), proof: shard.proof, shardProof: mc.proof };
   throw new Error(`unexpected wire ${req.kind}`);
 }
 const sourceFor = (...engines: FakeLiteEngine[]) => createLiteChainSource({ network: 'testnet', logger,

@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
-import { Address, beginCell, contractAddress, type Cell, type TupleItem } from '@ton/core';
+import { Address, beginCell, type Cell, type TupleItem } from '@ton/core';
 import { BalanceService } from '../balances/balanceService';
 import { createJettonWalletReader } from '../data/jettonWallet';
 import { ChainReadError, type AccountStateResponse, type ReadOptions } from '../data/dataSource';
-import { buildTonswapJettonWalletInitialData } from '../data/jettonAbi';
-import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
 import { fakeChainSource } from './support/fakeChainSource';
 import { fixtureHead } from './support/chainFixture';
 
@@ -12,7 +10,7 @@ const owner = Address.parse(`0:${'1'.repeat(64)}`);
 const roots = ['T3','USDC','USDT'].map((symbol,index)=>({master:`0:${String(index+2).repeat(64)}`,symbol,decimals:index===0?9:6}));
 const walletCode = beginCell().storeUint(0xaabb,16).endCell(), rootCode=beginCell().storeUint(0xccdd,16).endCell();
 const boc = (cell:Cell)=>cell.toBoc().toString('base64');
-const addresses = roots.map(root=>contractAddress(0,{code:walletCode,data:buildTonswapJettonWalletInitialData(owner,Address.parse(root.master))}).toRawString());
+const addresses = roots.map((_, index)=>`0:${String(index+5).repeat(64)}`);
 const head = fixtureHead(100,1_700_000_100), next = fixtureHead(101,1_700_000_101);
 let unavailable=true, nativeFailure=false, batches=0, getters=0;
 const pinned=(options?:ReadOptions)=>{assert(options?.at);assert(options.signal);return options.at;};
@@ -23,19 +21,22 @@ const state=async(address:string,options?:ReadOptions):Promise<AccountStateRespo
   const index=addresses.indexOf(address);assert(index>=0);
   if(index===1)return {balance:'0',accountState:'uninitialized'};
   if(index===2&&unavailable)throw new ChainReadError('upstream_timeout');
-  const initial=buildTonswapJettonWalletInitialData(owner,Address.parse(roots[index].master));
-  return {balance:'0',accountState:'active',codeBoc:boc(walletCode),lastTxLt:'1000',lastTxHash:'a'.repeat(64),
-    dataBoc:boc(writeCurrentJettonWalletStorage({...readCurrentJettonWalletStorage(initial),balance:BigInt(at.seqno)*(index===0?1000n:1n)}))};
+  return {balance:'0',accountState:'active',codeBoc:boc(walletCode),lastTxLt:'1000',lastTxHash:'a'.repeat(64)};
 };
 const source=fakeChainSource({head:async()=>head,getAccountState:state,
-  runGetMethod:async(_address,method,_args,options)=>{pinned(options);getters++;assert.equal(method,'get_jetton_data');return {exitCode:0,stack:[
-    {type:'int',value:100n},{type:'int',value:-1n},{type:'null'},
-    {type:'cell',cell:beginCell().storeUint(0,8).storeBit(false).endCell()},{type:'cell',cell:walletCode}] as TupleItem[]};},
+  runGetMethod:async(address,method,_args,options)=>{const at=pinned(options);getters++;
+    const addressItem=(value:string):TupleItem=>({type:'slice',cell:beginCell().storeAddress(Address.parse(value)).endCell()});
+    if(method==='get_jetton_data')return {exitCode:0,stack:[{type:'int',value:100n},{type:'int',value:-1n},{type:'null'},
+      {type:'cell',cell:beginCell().storeUint(0,8).storeBit(false).endCell()},{type:'cell',cell:walletCode}] as TupleItem[]};
+    if(method==='get_wallet_address')return {exitCode:0,stack:[addressItem(addresses[roots.findIndex(root=>root.master===address)])]};
+    assert.equal(method,'get_wallet_data');const index=addresses.indexOf(address);assert(index>=0);
+    return {exitCode:0,stack:[{type:'int',value:BigInt(at.seqno)*(index===0?1000n:1n)},addressItem(owner.toRawString()),
+      addressItem(roots[index].master),{type:'cell',cell:walletCode}] as TupleItem[]};},
   read:async(calls,options)=>{batches++;const at=pinned(options);return {head:at,results:await Promise.all(calls.map(async call=>{
     assert.equal(call.kind,'account');return {kind:'account' as const,address:call.address,state:await state(call.address,options)};
   }))};}});
 async function main(){
-  const reader=createJettonWalletReader({source,walletTemplateCodeHash:walletCode.hash().toString('hex')});
+  const reader=createJettonWalletReader({source,tokens:roots.map(root=>({...root,masterCodeHash:rootCode.hash().toString('hex'),walletCodeHash:walletCode.hash().toString('hex')}))});
   const service=new BalanceService({reader,roots,network:'testnet'});
   const first=await service.read(owner.toString(),{at:head});
   assert.deepEqual(first,{address:owner.toRawString(),network:'testnet',head_seqno:100,head_utime:head.utime,complete:false,assets:[
@@ -45,7 +46,7 @@ async function main(){
     {kind:'jetton',symbol:'USDT',root:roots[2].master,wallet:addresses[2],status:'unavailable',balance_raw:null,decimals:6,reason:'timeout'}]});
   unavailable=false;batches=0;getters=0;
   const reads=await Promise.all(Array.from({length:10},()=>service.read(owner.toRawString(),{at:next})));
-  assert.equal(batches,1,'one warm batch shared by ten concurrent readers');assert.equal(getters,0);assert(reads.every(value=>value.complete&&value.head_seqno===101));
+  assert.equal(batches,1,'one warm batch shared by ten concurrent readers');assert.equal(getters,8,'three root and address getters plus two active wallet getters share one current read');assert(reads.every(value=>value.complete&&value.head_seqno===101));
   assert.deepEqual(reads[0].assets.map(row=>row.balance_raw),['5011771086','101000','0','101']);
   reads[0].assets[0].balance_raw='1';assert.equal(reads[1].assets[0].balance_raw,'5011771086','one caller cannot mutate another answer');
   await service.read(owner.toRawString(),{at:next});assert.equal(batches,2,'no completed balance cache, even at the same head');

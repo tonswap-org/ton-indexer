@@ -20,9 +20,10 @@ import { PoolTracker } from '../poolTracker';
 import type { AdmissionExecutor } from '../data/admission/nativePool';
 import type { RuntimeDeps } from './worker';
 import type { LedgerRuntime } from './ledgerRuntime';
+import type { CurrentOrdersRuntime } from './ordersRuntime';
 
 export type ApiRuntime = { app: FastifyInstance; listen(): Promise<string>; start(): void; close(): Promise<void> };
-export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; admission?: AdmissionExecutor }): ApiRuntime {
+export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; orders: CurrentOrdersRuntime; admission?: AdmissionExecutor }): ApiRuntime {
   const { config, logger, source, registry, manifest, bindings, opcodes, ledger, disk } = deps;
   const poolTracker = new PoolTracker(registry), store = new MemoryStore(config);
   if (config.snapshotPath) {
@@ -34,7 +35,7 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
   const metricsCollector = new MetricsCollector();
   const service = new IndexerService(config, store, source, opcodes, bindings.jettonRoots, metricsCollector, poolTracker, { ledgerStatus: () => ledger.status(), diskState: () => disk.state() });
   if (deps.admission) service.setAdmissionExecutor(deps.admission);
-  const balances = new BalanceService({ reader: createJettonWalletReader({ source, walletTemplateCodeHash: bindings.walletTemplateCodeHash }), roots: bindings.jettonRoots, network: config.network });
+  const balances = new BalanceService({ reader: createJettonWalletReader({ source, tokens: bindings.jettonRoots }), roots: bindings.jettonRoots, network: config.network });
   const streams = new BalanceStreamHub({ service: balances, heads: deps.heads });
   const backfillWorker = new BackfillWorker(config, store, source, opcodes, logger, metricsCollector, poolTracker);
   const blockFollower = new BlockFollower(config, store, source, opcodes, logger, service, poolTracker, deps.heads);
@@ -48,7 +49,7 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; ad
   });
   const metrics = new MetricsService(config, store, backfillWorker, service, metricsCollector, deps.metrics);
   registerRoutes(app, config, service, metrics, new SnapshotService(config, store),
-    new DebugService(config, store, backfillWorker, poolTracker), new RateLimiter(config), registry, { ...manifest }, { source, balances, streams, metrics: deps.metrics, logger });
+    new DebugService(config, store, backfillWorker, poolTracker), new RateLimiter(config), registry, { ...manifest }, { source, balances, streams, orders: deps.orders, metrics: deps.metrics, logger });
   ledger.registerRoutes(app);
   app.addHook('onRequest', async request => { (request as any).startTime = process.hrtime.bigint(); });
   app.addHook('onResponse', async request => {

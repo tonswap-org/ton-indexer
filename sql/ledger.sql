@@ -219,3 +219,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS ledger_perps_ranges_active
   WHERE status IN ('pending','running');
 CREATE INDEX IF NOT EXISTS ledger_perps_ranges_pending
   ON ledger_perps_ranges(network,created_at,generation_order) WHERE status IN ('pending','running');
+
+-- Current products share immutable authenticated transaction boundaries. Order
+-- publications retain exact heads. Release identity is never inferred from names.
+CREATE TABLE IF NOT EXISTS current_transaction_evidence (
+  manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  account text NOT NULL CHECK (account ~ '^0:[0-9a-f]{64}$'),
+  lt numeric(20,0) NOT NULL CHECK (lt > 0),
+  hash text NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
+  evidence jsonb NOT NULL,
+  containing_seqno bigint NOT NULL CHECK (containing_seqno >= 0),
+  PRIMARY KEY (manifest_hash, account, lt, hash)
+);
+CREATE TABLE IF NOT EXISTS current_order_snapshots (
+  manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  snapshot_id text NOT NULL CHECK (snapshot_id ~ '^[0-9a-f]{64}$'),
+  masterchain_seqno bigint NOT NULL CHECK (masterchain_seqno >= 0),
+  block_root_hash text NOT NULL CHECK (block_root_hash ~ '^[0-9a-f]{64}$'),
+  unix_time bigint NOT NULL CHECK (unix_time >= 0),
+  snapshot jsonb NOT NULL,
+  PRIMARY KEY (manifest_hash, snapshot_id)
+);
+CREATE TABLE IF NOT EXISTS current_order_publication (
+  manifest_hash text PRIMARY KEY CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+  snapshot_id text NOT NULL,
+  FOREIGN KEY (manifest_hash, snapshot_id) REFERENCES current_order_snapshots(manifest_hash, snapshot_id)
+);

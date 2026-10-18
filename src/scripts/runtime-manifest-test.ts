@@ -144,7 +144,7 @@ async function main() {
     const processWorker = launchManifestWorker(__filename, parseCanonicalReleaseManifest(first, 'testnet'));
     await processWorker.ready;
     await processWorker.stop(); await processWorker.stop(); await processWorker.exited;
-    const wrongReady = runtimeManifestFixture({ services: { ...first.services, indexer: 'https://wrong-ready.test' } });
+    const wrongReady = runtimeManifestFixture({ services: { ...first.services, indexer: 'https://wrong-ready.test/api/indexer' } });
     const rejectedWorker = launchManifestWorker(__filename, parseCanonicalReleaseManifest(wrongReady, 'testnet'), 1_000);
     await assert.rejects(rejectedWorker.ready, /timed out/);
     await rejectedWorker.stop(); await rejectedWorker.exited;
@@ -158,7 +158,7 @@ if (process.argv.includes('--manifest-worker')) {
   process.once('message', (message: any) => {
     assert.equal(message.type, 'manifest-start');
     const manifest = parseCanonicalReleaseManifest(message.manifest, 'testnet');
-    process.send?.({ type: 'manifest-ready', manifestHash: manifest.runtime.services.indexer === 'https://wrong-ready.test'
+    process.send?.({ type: 'manifest-ready', manifestHash: manifest.runtime.services.indexer === 'https://wrong-ready.test/api/indexer'
       ? '0'.repeat(64) : manifest.runtime.manifestHash });
     setInterval(() => undefined, 1_000);
     process.on('SIGTERM', () => process.exit(0));

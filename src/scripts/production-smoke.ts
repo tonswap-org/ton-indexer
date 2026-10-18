@@ -584,7 +584,7 @@ export async function runProductionSmoke(
     );
   }
 
-  const account = Address.parse(String((contracts.contracts as Record<string,string>).T3Root ?? Object.values(contracts.contracts as Record<string,string>)[0])).toRawString();
+  const account = Address.parse(String((contracts.contracts as Record<string,string>).T3Hub ?? Object.values(contracts.contracts as Record<string,string>)[0])).toRawString();
   const balances = await fetchJson(baseUrl, `/api/indexer/v1/accounts/${account}/balances`) as Record<string, any>;
   assert.deepEqual(Object.keys(balances).sort(), ['address','assets','complete','head_seqno','head_utime','network']);
   assert.equal(balances.address, account); assert.equal(balances.network, expectedNetwork);

@@ -1,5 +1,7 @@
 import type { Config } from '../config';
 
+const releaseHeader = (headers: string) => [...new Set([...headers.split(',').map(value => value.trim()).filter(Boolean), 'x-tonswap-release'])].join(',');
+
 type CorsRequest = {
   headers: {
     origin?: string;
@@ -10,7 +12,7 @@ type CorsReply = {
   header(name: string, value: string | number): unknown;
 };
 
-export const setCorsHeaders = (request: CorsRequest, reply: CorsReply, config: Config) => {
+export const setCorsHeaders = (request: CorsRequest, reply: CorsReply, config: Pick<Config, 'corsAllowOrigin' | 'corsAllowOrigins' | 'corsAllowMethods' | 'corsAllowHeaders' | 'corsExposeHeaders' | 'corsMaxAge'>) => {
   const origin = request.headers.origin;
   const configuredOrigin = config.corsAllowOrigin.trim();
   const exactOrigins = config.corsAllowOrigins;
@@ -42,7 +44,7 @@ export const setCorsHeaders = (request: CorsRequest, reply: CorsReply, config: C
     }
   }
   reply.header('access-control-allow-methods', config.corsAllowMethods);
-  reply.header('access-control-allow-headers', config.corsAllowHeaders);
-  reply.header('access-control-expose-headers', config.corsExposeHeaders);
+  reply.header('access-control-allow-headers', releaseHeader(config.corsAllowHeaders));
+  reply.header('access-control-expose-headers', releaseHeader(config.corsExposeHeaders));
   reply.header('access-control-max-age', config.corsMaxAge);
 };

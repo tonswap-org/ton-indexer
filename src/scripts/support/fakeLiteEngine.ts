@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
-import { beginCell, Cell, CellType, storeShardIdent } from '@ton/core';
+import { beginCell, Cell, CellType, Dictionary, loadTransaction, storeShardIdent } from '@ton/core';
 import { topologicalSort } from '@ton/core/dist/boc/cell/utils/topologicalSort';
 import { getRefsDescriptor, getBitsDescriptor } from '@ton/core/dist/boc/cell/descriptor';
 import { bitsToPaddedBuffer } from '@ton/core/dist/boc/utils/paddedBits';
@@ -9,6 +9,7 @@ import type { TLFunction } from 'ton-tl';
 import type { LiteQueryOptions } from '../../data/boundedLiteEngine';
 import { ChainReadError } from '../../data/dataSource';
 import { PUBLIC_RPC_ZERO_STATES } from '../../api/rpcNetwork';
+import type { ProofBlockId } from '../../data/liteProof';
 
 export class FakeLiteEngine extends EventEmitter implements LiteEngine {
   ready = true;
@@ -52,19 +53,50 @@ export function multiProof(...roots: Cell[]): Buffer {
     ...roots.map(root => word(sorted.findIndex(row => row.cell.equals(root)), 2)), bytes]);
 }
 
-export function proofBlock(seqno: number, utime: number, workchain = 0) {
+/** A one-account/one-transaction native augmented dictionary for synthetic tests. */
+export function transactionAccountBlocks(transaction: Cell): Cell {
+  const tx = loadTransaction(transaction.beginParse());
+  // Both dictionaries use explicit long labels; augmentation is zero fees.
+  const txs = beginCell().storeUint(2, 2).storeUint(64, 7).storeUint(tx.lt, 64)
+    .storeCoins(0).storeBit(false).storeRef(transaction).endCell();
+  const update = beginCell().storeUint(0x72, 8).storeBuffer(tx.stateUpdate.oldHash).storeBuffer(tx.stateUpdate.newHash).endCell();
+  const leaf = beginCell().storeUint(2, 2).storeUint(256, 9).storeUint(tx.address, 256)
+    .storeCoins(0).storeBit(false).storeUint(5, 4).storeUint(tx.address, 256)
+    .storeSlice(txs.beginParse()).storeRef(update).endCell();
+  return beginCell().storeBit(true).storeRef(leaf).storeCoins(0).storeBit(false).endCell();
+}
+
+export function proofBlock(seqno: number, utime: number, workchain = 0, options: {
+  accounts?: Cell; extras?: Cell; masterRef?: ProofBlockId; transaction?: Cell; randomSeed?: Buffer;
+} = {}) {
   const shard = { workchainId: workchain, shardPrefixBits: 0, shardPrefix: 0n };
   const state = beginCell().storeUint(0x9023afe2, 32).storeInt(-3, 32).store(storeShardIdent(shard))
     .storeUint(seqno, 32).storeUint(0, 32).storeUint(utime, 32).storeUint(0, 64).storeUint(0, 32)
-    .storeRef(Cell.EMPTY).storeBit(false).storeRef(beginCell().storeBit(false).endCell()).storeRef(Cell.EMPTY).storeBit(false).endCell();
+    .storeRef(Cell.EMPTY).storeBit(false).storeRef(options.accounts ?? beginCell().storeBit(false).storeUint(0, 5).storeCoins(0).storeBit(false).endCell())
+    .storeRef(Cell.EMPTY).storeMaybeRef(options.extras).endCell();
   const update = beginCell().storeUint(CellType.MerkleUpdate, 8).storeBuffer(state.hash(0)).storeBuffer(state.hash(0))
     .storeUint(state.depth(0), 16).storeUint(state.depth(0), 16).storeRef(state).storeRef(state).endCell({ exotic: true });
   const info = beginCell().storeUint(0x9bc7a987, 32).storeUint(0, 32).storeUint(workchain === -1 ? 0 : 128, 8).storeUint(0, 8)
-    .storeUint(seqno, 32).storeUint(0, 32).store(storeShardIdent(shard)).storeUint(utime, 32).endCell();
-  const cell = beginCell().storeUint(0x11ef55aa, 32).storeInt(-3, 32).storeRef(info).storeRef(Cell.EMPTY).storeRef(update).storeRef(Cell.EMPTY).endCell();
+    .storeUint(seqno, 32).storeUint(0, 32).store(storeShardIdent(shard)).storeUint(utime, 32);
+  if (options.masterRef) info.storeRef(beginCell().storeUint(0, 64).storeUint(options.masterRef.seqno, 32)
+    .storeBuffer(options.masterRef.rootHash).storeBuffer(options.masterRef.fileHash).endCell());
+  const extra = options.transaction ? beginCell().storeUint(0x4a33f6fd, 32).storeRef(Cell.EMPTY).storeRef(Cell.EMPTY)
+    .storeRef(transactionAccountBlocks(options.transaction)).storeBuffer(options.randomSeed ?? Buffer.alloc(32)).endCell() : Cell.EMPTY;
+  const cell = beginCell().storeUint(0x11ef55aa, 32).storeInt(-3, 32).storeRef(info).storeRef(Cell.EMPTY).storeRef(update).storeRef(extra).endCell();
   const id = { kind: 'tonNode.blockIdExt' as const, workchain, shard: '-9223372036854775808', seqno,
     rootHash: cell.hash(), fileHash: createHash('sha256').update(cell.toBoc()).digest() };
   return { cell, state, id, headerProof: merkleProof(cell).toBoc(), proof: multiProof(merkleProof(cell), merkleProof(state)) };
+}
+/** Synthetic, cryptographically linked MC→shard proof; never release evidence. */
+export function proofMasterchain(seqno: number, utime: number, shard: ReturnType<typeof proofBlock>, config = Cell.EMPTY) {
+  const desc = beginCell().storeBit(false).storeUint(0xa, 4).storeUint(shard.id.seqno, 32).storeUint(seqno, 32)
+    .storeUint(0, 64).storeUint(1, 64).storeBuffer(shard.id.rootHash).storeBuffer(shard.id.fileHash)
+    .storeUint(0, 8).storeUint(0, 32).storeUint(0, 64).storeUint(0, 32).storeUint(utime, 32).storeBit(false)
+    .storeRef(beginCell().storeCoins(0).storeBit(false).storeCoins(0).storeBit(false).endCell()).endCell();
+  const shards = Dictionary.empty(Dictionary.Keys.Int(32), Dictionary.Values.Cell()).set(shard.id.workchain, desc);
+  const extras = beginCell().storeUint(0xcc26, 16).storeDict(shards).storeUint(0, 256).storeRef(config)
+    .storeRef(Cell.EMPTY).storeCoins(0).storeBit(false).endCell();
+  return proofBlock(seqno, utime, -1, { extras });
 }
 export const masterAnswer = (block: ReturnType<typeof proofBlock>) => ({ kind: 'liteServer.masterchainInfoExt', mode: 0, version: 0, capabilities: '0',
   last: block.id, lastUtime: blockHeaderUtime(block), now: blockHeaderUtime(block), stateRootHash: Buffer.alloc(32),

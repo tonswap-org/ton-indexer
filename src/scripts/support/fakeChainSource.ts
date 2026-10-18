@@ -4,6 +4,7 @@ export function fakeChainSource(overrides: Partial<ChainSource> = {}): ChainSour
   const unexpected = (name: string): never => { throw new Error(`unexpected chain read: ${name}`); };
   return {
     network: 'testnet', head: async () => unexpected('head'), read: async () => unexpected('read'),
+    getConfig: async () => unexpected('getConfig'),
     getAccountState: async () => unexpected('getAccountState'), runGetMethod: async () => unexpected('runGetMethod'),
     getAccountStateAtSeqno: async () => unexpected('getAccountStateAtSeqno'),
     getAccountStateAtTransaction: async () => unexpected('getAccountStateAtTransaction'),

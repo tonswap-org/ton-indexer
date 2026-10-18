@@ -10,7 +10,7 @@ try {
   const fixture = runtimeManifestFixture();
   const manifest = parseCanonicalReleaseManifest(fixture, 'testnet');
   assert.equal(manifest.runtime.manifestHash, fixture.manifestHash);
-  assert.equal(manifest.contracts.T3Root, fixture.contracts.T3Root!.address);
+  assert.equal(manifest.contracts.T3Hub, fixture.contracts.T3Hub!.address);
   assert.equal('registryPath' in config, false);
   assert.equal('opcodesPath' in config, false);
   const opcodes = loadOpcodes();

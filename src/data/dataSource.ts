@@ -173,6 +173,12 @@ export const transactionPageReachesHistoryStart = (
 
 export type AccountStateResponse = {
   anchor?: AccountAnchor;
+  /** Original authenticated ShardAccount envelope, with its hash-bound Account
+   * reference expanded. Absent accounts have no dictionary envelope. */
+  shardAccountBoc?: string;
+  /** Exact requested account key is absent from the authenticated shard
+   * dictionary. Missing/unavailable state or an uninitialized account is not absence. */
+  provenAbsent?: true;
   balance: string;
   lastTxLt?: string;
   lastTxHash?: string;
@@ -210,6 +216,7 @@ export interface ChainSource {
   readonly network: Network;
   head(options?: { signal?: AbortSignal }): Promise<ChainHead>;
   read(calls: import('./freshRead').FreshReadCall[], options?: ReadOptions): Promise<{ head: ChainHead; results: import('./freshRead').FreshReadResult[] }>;
+  getConfig(options?: ReadOptions): Promise<{ head: ChainHead; configBoc: string }>;
   getAccountState(address: string, options?: ReadOptions): Promise<AccountStateResponse>;
   runGetMethod(address: string, method: string, args?: TupleItem[], options?: ReadOptions): Promise<{ exitCode: number; stack: TupleItem[] }>;
   getAccountStateAtSeqno(address: string, seqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
