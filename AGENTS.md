@@ -545,3 +545,13 @@ Keep limits of 64 original boundaries, 16 ancestor hops and 256 observations. Ev
 successful calls never confirm physical delivery, target execution or supply totals.
 Run `test:ledger:protocol` after this boundary changes; retained filtered native
 rows qualify event decoding, not public consensus or complete route settlement.
+
+Current T3 basket transport adds paired mint and reserve swap only. Paired requests retain both exact deposits, opposite core reserve slots, matching owner/minimum intents and separately resolved source-wallet first hops. Bind each non-null hop to its original owner message. Null dispatch is no evidence of non-delivery; browser wallet closure and physical refunds remain separate. Preserve aggregate bounds and full hub receipt reconstruction at one head. Native source-bound default/x6 cases qualify only exact current originals; current claims never establish cash. Run the basket collector/API/parser and browser physical-proof/journal gates.
+
+A manifest-bound optional slot2 canonical wallet may be proved undeployed only
+when the hub has zero backing, zero pending credits and zero total/direct/archive
+owed liabilities for that slot, with admission/frozen bits clear. This is current
+cold-wallet identity, not an unknown-state fallback. Require exactly three slots,
+the slot2 optional flag and master-selected address; unknown, frozen, noncanonical
+or indebted wallets remain unavailable. Run the source-bound basket collector's
+positive/negative binding cases and `runtime-t3-binding-test.ts` after changes.

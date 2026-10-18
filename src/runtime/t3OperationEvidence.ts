@@ -10,13 +10,13 @@ import { readCurrentT3Hub } from '../ledger/currentT3State';
 import { canonicalLedgerHash } from '../ledger/normalize';
 import { orderCell, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { boundaryState, boundaryTransaction, canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
-import { T3EvidenceError, type readT3OperationRequest } from './t3OperationRequest';
+import { T3EvidenceError, t3DepositRequests, type readT3OperationRequest } from './t3OperationRequest';
 
 export const T3_EVIDENCE_LIMITS = Object.freeze({ receiptCandidates: 32, relatedTransactions: 256, responseBytes: 8 * 1024 * 1024,
   hubHistory: 10_000, newTransactions: 64, relatedAccounts: 16 });
 export type CurrentT3OperationEvidence = { schema: 'tonswap-t3-operation-evidence-v1'; releaseId: string; manifestHash: string;
   asOf: { masterchainSeqno: number; unixTime: number; blockRootHash: string };
-  request: { kind: 'mint' | 'redeem'; owner: string; bodyHash: string }; coverage: { complete: boolean; gaps: PhysicalGap[] };
+  request: { kind: 'mint' | 'pair' | 'swap' | 'redeem'; owner: string; bodyHash: string }; coverage: { complete: boolean; gaps: PhysicalGap[] };
   hub: { address: string; codeBoc: string; dataBoc: string }; receipts: CurrentT3ReceiptCandidate[]; transactions: OrderTransactionEvidence[] };
 const identity = (boundary: PhysicalBoundary) => {
   const row = verifyOrderTransaction(boundary.evidence); return `${boundary.evidence.account}:${row.tx.lt}:${row.hash}`;
@@ -25,7 +25,7 @@ const identity = (boundary: PhysicalBoundary) => {
  * never converts receipt status, counters or logs into a cash conclusion. */
 export async function collectT3OperationEvidence(manifest: RuntimeReleaseManifest, source: ChainSource, store: PhysicalEvidenceStore,
   parsed: ReturnType<typeof readT3OperationRequest>, signal?: AbortSignal): Promise<CurrentT3OperationEvidence> {
-  const { request, body, intent } = parsed, limits = T3_EVIDENCE_LIMITS;
+  const { request } = parsed, deposits = t3DepositRequests(parsed), limits = T3_EVIDENCE_LIMITS;
   if (`ton:${source.network}` !== manifest.network) throw new T3EvidenceError(503, 'upstream_unavailable');
   const head = await source.head({ signal }); assertFreshHeadTime(head.utime);
   const binding = await deriveT3RedemptionBinding(manifest, source, { at: head, signal });
@@ -54,11 +54,13 @@ export async function collectT3OperationEvidence(manifest: RuntimeReleaseManifes
     return response;
   };
   const tokens = manifest.tokens.map(token => ({ master: token.root, masterCodeHash: token.masterCodeHash, walletCodeHash: token.walletCodeHash }));
-  const sourceRoot = request.kind === 'mint' ? request.collateralRoot : binding.hub;
-  const sourceAddress = request.kind === 'mint' ? request.sourceWallet : request.wallet;
-  const selectedWallet = await createJettonWalletReader({ source, tokens }).wallet(sourceRoot, request.owner, { at: head, signal });
-  if (selectedWallet.status === 'unavailable') throw new T3EvidenceError(503, 'upstream_unavailable');
-  if (selectedWallet.wallet !== sourceAddress) throw new T3EvidenceError(400, 'bad_request');
+  for (const { request: deposit } of deposits) {
+    const sourceRoot = deposit.kind !== 'redeem' ? deposit.collateralRoot : binding.hub;
+    const sourceAddress = deposit.kind !== 'redeem' ? deposit.sourceWallet : deposit.wallet;
+    const selectedWallet = await createJettonWalletReader({ source, tokens }).wallet(sourceRoot, deposit.owner, { at: head, signal });
+    if (selectedWallet.status === 'unavailable') throw new T3EvidenceError(503, 'upstream_unavailable');
+    if (selectedWallet.wallet !== sourceAddress) throw new T3EvidenceError(400, 'bad_request');
+  }
   const hubHistory = await reader.history(binding.hub, hubState, limits.hubHistory); gaps.push(...hubHistory.gaps);
   if (!hubHistory.complete) { gaps.push({ code: 'hub_history_incomplete', account: binding.hub }); return finish(); }
   const states = new Map<string, ReturnType<typeof boundaryState>>();
@@ -75,31 +77,61 @@ export async function collectT3OperationEvidence(manifest: RuntimeReleaseManifes
     currentState: { seqno: head.seqno, state: hubState }, stateAt: async (account, lt, hash) => states.get(key(account, lt, hash)) ?? null,
     maxTransactions: limits.hubHistory, signal });
   if (reconstructed.status !== 'ok') { gaps.push({ code: 'receipt_history_unavailable', account: binding.hub }); return finish(); }
-  const wantedSlot = request.kind === 'mint' ? request.input : 3;
-  const candidates = reconstructed.trees.flatMap(tree => tree.records).filter(candidate => {
-    if (candidate.owner !== request.owner || candidate.slot !== wantedSlot) return false;
+  const candidates = reconstructed.trees.flatMap(tree => tree.records).filter(candidate => deposits.some(({ request: deposit, intent }) => {
+    const wantedSlot = deposit.kind !== 'redeem' ? deposit.input : 3;
+    if (candidate.owner !== deposit.owner || candidate.slot !== wantedSlot) return false;
     const receipt = t3Receipt(candidate.slot, orderCell(candidate.recordBoc));
-    return receipt.kind === 'credit' ? request.kind === 'mint' && receipt.credit.queryId.toString() === request.queryId
-      && receipt.credit.amount.toString() === request.amountRaw && receipt.credit.intent.equals(intent)
-      : request.kind === 'redeem' && receipt.attempt.queryId.toString() === request.queryId
-      && receipt.attempt.amount.toString() === request.amountRaw && !!receipt.attempt.customPayload?.equals(intent);
-  });
+    return receipt.kind === 'credit' ? deposit.kind !== 'redeem' && receipt.credit.queryId.toString() === deposit.queryId
+      && receipt.credit.amount.toString() === deposit.amountRaw && receipt.credit.intent.equals(intent)
+      : deposit.kind === 'redeem' && receipt.attempt.queryId.toString() === deposit.queryId
+      && receipt.attempt.amount.toString() === deposit.amountRaw && !!receipt.attempt.customPayload?.equals(intent);
+  }));
   if (candidates.length > limits.receiptCandidates) gaps.push({ code: 'receipt_candidate_limit', account: binding.hub });
   response.receipts = candidates.slice(0, limits.receiptCandidates);
-  const sourceState = await reader.current(sourceAddress);
-  const isOrigin = (boundary: PhysicalBoundary) => {
-    const row = verifyOrderTransaction(boundary.evidence); if (!row.incoming) return false;
-    const message = loadMessage(row.incoming.beginParse());
-    return message.info.type === 'internal' && message.info.src.toRawString() === request.owner && !message.info.bounced
-      && message.body.equals(body) && (request.kind !== 'mint' || message.info.value.coins.toString() === request.valueNano);
-  };
-  const sourceHistory = await reader.history(sourceAddress, sourceState, limits.relatedTransactions, isOrigin); gaps.push(...sourceHistory.gaps);
-  const origin = sourceHistory.rows.find(isOrigin);
-  if (!origin) { gaps.push({ code: 'original_request_unobserved', account: sourceAddress }); return finish(); }
-  const originLt = verifyOrderTransaction(origin.evidence).tx.lt;
-  let remainingRelatedReads = limits.relatedTransactions - sourceHistory.rows.length;
-  const accountHistory = new Map<string, PhysicalBoundary[]>([[binding.hub, hubHistory.rows], [sourceAddress, sourceHistory.rows]]);
-  const pending: PhysicalBoundary[] = [origin], selected = new Map<string, PhysicalBoundary>();
+  let remainingRelatedReads: number = limits.relatedTransactions;
+  const accountHistory = new Map<string, PhysicalBoundary[]>([[binding.hub, hubHistory.rows]]);
+  const pending: PhysicalBoundary[] = [], selected = new Map<string, PhysicalBoundary>(), origins: PhysicalBoundary[] = [];
+  for (const { request: deposit, body } of deposits) {
+    if((deposit.kind==='pair'||deposit.kind==='swap')&&!deposit.dispatch)continue;
+    const sourceAddress = deposit.kind !== 'redeem' ? deposit.sourceWallet : deposit.wallet;
+    const isOrigin = (boundary: PhysicalBoundary) => {
+      const row = verifyOrderTransaction(boundary.evidence); if (!row.incoming) return false;
+      if((deposit.kind==='pair'||deposit.kind==='swap')&&(row.tx.lt.toString()!==deposit.dispatch?.lt||row.hash!==deposit.dispatch?.hash))return false;
+      const message = loadMessage(row.incoming.beginParse());
+      return message.info.type === 'internal' && message.info.src.toRawString() === deposit.owner && !message.info.bounced
+        && message.body.equals(body) && (deposit.kind === 'redeem' || message.info.value.coins.toString() === deposit.valueNano);
+    };
+    if (remainingRelatedReads <= 0) { gaps.push({ code: 'related_transaction_limit', account: sourceAddress }); continue; }
+    const sourceState = await reader.current(sourceAddress);
+    const history = await reader.history(sourceAddress, sourceState, remainingRelatedReads, isOrigin);
+    remainingRelatedReads -= history.rows.length; accountHistory.set(sourceAddress, history.rows); gaps.push(...history.gaps);
+    const origin = history.rows.find(isOrigin);
+    if (origin) { origins.push(origin); pending.push(origin); }
+    else gaps.push({ code: 'original_request_unobserved', account: sourceAddress });
+  }
+  if (!origins.length) return finish();
+  const originLt = origins.reduce((lt, row) => { const next = verifyOrderTransaction(row.evidence).tx.lt; return next < lt ? next : lt; }, verifyOrderTransaction(origins[0].evidence).tx.lt);
+  if (request.kind === 'pair' || request.kind === 'swap') {
+    // New basket operations bind each original source hop to the full original
+    // owner message. Query IDs or notification receipts are never that authority.
+    const matches = (owner: PhysicalBoundary, origin: PhysicalBoundary) => {
+      const a = verifyOrderTransaction(owner.evidence), b = verifyOrderTransaction(origin.evidence);
+      return b.tx.lt > a.tx.lt && b.incoming && a.outgoing.values().some(raw => canonicalPhysicalMessage(raw).equals(canonicalPhysicalMessage(b.incoming!)));
+    };
+    if (remainingRelatedReads <= 0) gaps.push({ code: 'related_transaction_limit', account: request.owner });
+    else {
+      const seen: PhysicalBoundary[] = [];
+      const history = await reader.history(request.owner, await reader.current(request.owner), remainingRelatedReads, row => {
+        seen.push(row); return origins.every(origin => seen.some(owner => matches(owner, origin)));
+      });
+      remainingRelatedReads -= history.rows.length; accountHistory.set(request.owner, history.rows); gaps.push(...history.gaps);
+      for (const origin of origins) {
+        const owners = history.rows.filter(owner => matches(owner, origin));
+        if (owners.length === 1) selected.set(identity(owners[0]), owners[0]);
+        else gaps.push({ code: 'original_owner_dispatch_unavailable', account: request.owner });
+      }
+    }
+  }
   for (const candidate of response.receipts) {
     // Credit keys name the reserve-wallet receiving LT, not the hub LT. Use
     // original authenticated receipt logs and retain subsequent updates too.

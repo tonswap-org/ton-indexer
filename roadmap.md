@@ -138,3 +138,5 @@ classify settlement. Consumers independently verify both reserve boundaries,
 physical input and final output/refund credits. Intermediate T3 returned to the
 owner is a refund, not successful delivery of B. Missing evidence and exhausted
 work/size bounds remain explicitly incomplete.
+
+Current T3 paired-mint and reserve-swap consumers use the same bounded operation-evidence transport. Pairs carry both immutable deposits and source first hops; the UI separately reviews bind, seal, accept, unlink and refund actions. Reserve swaps preserve exact output/minimum and use physical reserve credits. Partial wallet requests retain funded claims and require authenticated closure for unsent legs. Current hub membership, original owner dispatch and physical output remain independent checks.

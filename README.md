@@ -67,7 +67,7 @@ witness never proves cash delivery; clients revalidate current wallet identity a
 roots before submitting mark, retry or cancellation.
 
 `POST /api/indexer/v1/t3/operation-evidence` is read-only and accepts the exact
-current mint or redemption request, including the original `bodyBoc` and
+current mint, paired mint, reserve swap or redemption request, including the original `bodyBoc` and
 `bodyHash`. It returns the requested release and body identity, one authenticated
 `asOf` head, current pinned hub code/data, owner/request receipt witnesses and
 original transaction plus before/after ShardAccount BOCs. Receipt candidates
@@ -2186,3 +2186,22 @@ order child initializes. The decoder still requires original owner CREATE and
 funding messages, canonical initialization and all physical delivery boundaries.
 Run `npx tsx src/scripts/ledger-current-dlmm-order-delayed-init-test.ts` for the
 eight source-bound normal/x6 batch-scheduling and missing-original regressions.
+
+Paired T3 operation evidence retains both exact collateral transfers and their
+resolved original source-wallet dispatches. Reserve swaps retain the selected
+output and positive minimum. Each provided first hop must link to the full
+original owner message. A null basket dispatch denotes an unresolved or unsent
+leg, never absence of cash; the client separately verifies wallet closure before
+retiring it. All legs share one head and the existing aggregate history/response
+bounds. Run `npx tsx src/scripts/current-t3-basket-evidence-test.ts` for source-bound
+normal/x6 original collectors, request pins and missing-evidence refusals.
+
+The basket collector gate is
+`npx tsx src/scripts/current-t3-basket-evidence-test.ts`; its checked-in portable
+package verifies the complete original producer/source/59-target build closure
+before all eight default/x6 collector cases. Run
+`npx tsx src/scripts/current-t3-operation-request-test.ts`,
+`npx tsx src/scripts/runtime-t3-binding-test.ts`,
+`npx tsx src/scripts/current-release-routes-test.ts` and `npx tsc --noEmit` as well.
+The narrow optional KUSD cold-wallet case requires zero backing, pending and all
+owed liabilities. Missing or impaired wallet state never becomes a zero balance.

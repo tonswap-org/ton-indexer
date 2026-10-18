@@ -133,11 +133,12 @@ async function main() {
     const t3 = operationRequestFixture().request, t3Path = '/api/indexer/v1/t3/operation-evidence';
     const pending = await app.inject({ method: 'POST', url: t3Path, payload: t3 }); check(pending, 200);
     assert.equal(pending.json().coverage.complete, false); assert.equal(pending.json().request.bodyHash, t3.bodyHash);
+    for(const kind of ['pair','swap'] as const){const basket=operationRequestFixture(kind).request;check(await app.inject({method:'POST',url:t3Path,payload:basket}),200);check(await app.inject({method:'POST',url:t3Path,payload:{...basket,dispatch:{lt:'0',hash:'1'.repeat(64)}}}),400,'bad_request');}
     check(await app.inject({ method: 'POST', url: t3Path, payload: { ...t3, extra: 1 } }), 400, 'bad_request');
     check(await app.inject({ method: 'POST', url: t3Path + '?unexpected=1', payload: t3 }), 400, 'bad_request');
     check(await app.inject({ method: 'POST', url: t3Path, payload: { ...t3, manifestHash: '0'.repeat(64) } }), 409, 'release_mismatch');
     check(await app.inject({ method: 'POST', url: t3Path, payload: t3, headers: { 'x-tonswap-release': '0'.repeat(64) } }), 409, 'release_mismatch');
-    assert.equal(t3Reads, 1, 'invalid or mismatched T3 requests cannot collect evidence');
+    assert.equal(t3Reads, 3, 'only the three valid mint, pair and swap requests collect evidence');
     const claim = operationRequestFixture('redeem').request, claimPath = '/api/indexer/v1/t3/wallet-claim-evidence';
     const claimed = await app.inject({ method: 'POST', url: claimPath, payload: claim }); check(claimed, 200);
     assert.equal(claimed.json().request.bodyHash, claim.bodyHash); assert.equal(claimed.json().coverage.complete, false);
