@@ -54,14 +54,20 @@ async function main() {
     const numeric = createLogger('info', fd);
     closeSync(fd);
     numeric.error('closed fd');
-    await until(() => numeric.dropped() === 1);
-    const recovered = openSync(file, 'a');
+    assert.equal(numeric.dropped(), 1, 'numeric logging reports write failure synchronously');
+    // tsx/runtime workers can release lower descriptors independently. Retain
+    // those owned filler handles until the exact failed descriptor is reopened.
+    const reopened: number[] = [];
     try {
-      assert.equal(recovered, fd, 'test reopens the same descriptor');
+      while (reopened.at(-1) !== fd) {
+        assert.ok(reopened.length < 1024, 'bounded descriptor-reuse setup');
+        const current = openSync(file, 'a'); reopened.push(current);
+        assert.ok(current <= fd, 'failed descriptor is still free for the recovery test');
+      }
       numeric.info('fd recovered');
       await until(() => readFileSync(file, 'utf8').includes('fd recovered'));
       assert.equal(numeric.dropped(), 1);
-    } finally { closeSync(recovered); }
+    } finally { for (const recovered of reopened) closeSync(recovered); }
   } finally { rmSync(directory, { recursive: true, force: true }); }
   console.log('Logger survives ENOSPC, synchronous errors and closed descriptors, counts dropped lines, and recovers');
 }

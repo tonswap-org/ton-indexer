@@ -2205,3 +2205,8 @@ before all eight default/x6 collector cases. Run
 `npx tsx src/scripts/current-release-routes-test.ts` and `npx tsc --noEmit` as well.
 The narrow optional KUSD cold-wallet case requires zero backing, pending and all
 owed liabilities. Missing or impaired wallet state never becomes a zero balance.
+
+The ordinary, current-release and current-T3 evidence gates include the portable
+paired-mint and reserve-swap collector corpus. Numeric logger recovery tests retain
+owned filler descriptors so unrelated runtime closes cannot change the tested
+descriptor identity. Run `npx tsx src/scripts/logger-enospc-test.ts` after changes.
