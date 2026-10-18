@@ -1,0 +1,334 @@
+{
+  "schema": "tonswap-current-t3-source-closure-v1",
+  "originalManifestSha256": "366e72a3593a321128bb6744018e51599980c9d7f40af9c063417f23d1320a4b",
+  "originalBuildHash": "e7c9ea2bfb0cdff6375b72d64599eeefd39c00330a4050e8e26e737cc038cebf",
+  "targets": [
+    "JettonV21Minter",
+    "JettonV21Wallet",
+    "T3Hub",
+    "T3RecoveryProof",
+    "T3Wallet"
+  ],
+  "files": [
+    {
+      "file": "source/config/opcodes.json",
+      "sha256": "e34259d8c3fa0561088d6fb2cd238b1cca1498e4df905992738406863549fc64",
+      "bytes": 27797,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/config/opcodes.json"
+    },
+    {
+      "file": "source/contracts/generated/op/governance.tolk",
+      "sha256": "bfa1c2bfa74d49fe9fb0a2addda0f34184706133280ca62ad41b6a45c3d19bca",
+      "bytes": 1583,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/generated/op/governance.tolk"
+    },
+    {
+      "file": "source/contracts/generated/op/jetton.tolk",
+      "sha256": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+      "bytes": 543,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/generated/op/jetton.tolk"
+    },
+    {
+      "file": "source/contracts/generated/op/restricted_owed_claim_receipt.tolk",
+      "sha256": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+      "bytes": 101,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/generated/op/restricted_owed_claim_receipt.tolk"
+    },
+    {
+      "file": "source/contracts/generated/op/t3.tolk",
+      "sha256": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+      "bytes": 1065,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/generated/op/t3.tolk"
+    },
+    {
+      "file": "source/contracts/generated/op/tep.tolk",
+      "sha256": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+      "bytes": 450,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/generated/op/tep.tolk"
+    },
+    {
+      "file": "source/contracts/shared/governance/module_gate.tolk",
+      "sha256": "afb1612ff159d5a083680a7a8e7dd2a3cf3cdf62963c1a41cfb0ffeedacdf2de",
+      "bytes": 1542,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/governance/module_gate.tolk"
+    },
+    {
+      "file": "source/contracts/shared/jetton/jetton_quotes.tolk",
+      "sha256": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+      "bytes": 5839,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/jetton/jetton_quotes.tolk"
+    },
+    {
+      "file": "source/contracts/shared/jetton/jetton_slots.tolk",
+      "sha256": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+      "bytes": 24539,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/jetton/jetton_slots.tolk"
+    },
+    {
+      "file": "source/contracts/shared/jetton/owed_archive.tolk",
+      "sha256": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+      "bytes": 3799,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/jetton/owed_archive.tolk"
+    },
+    {
+      "file": "source/contracts/shared/jetton/protected_credit.tolk",
+      "sha256": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+      "bytes": 1119,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/jetton/protected_credit.tolk"
+    },
+    {
+      "file": "source/contracts/shared/jetton/tep74_codec.tolk",
+      "sha256": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+      "bytes": 10352,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/jetton/tep74_codec.tolk"
+    },
+    {
+      "file": "source/contracts/shared/jetton/tep89_codec.tolk",
+      "sha256": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+      "bytes": 5374,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/jetton/tep89_codec.tolk"
+    },
+    {
+      "file": "source/contracts/shared/math/full_math.tolk",
+      "sha256": "d2b0ea2d3dd311fa76f57fc85d88faab310c8d85281abf6f238a3b09bdbffd4f",
+      "bytes": 1138,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/math/full_math.tolk"
+    },
+    {
+      "file": "source/contracts/shared/utils/error_codes.tolk",
+      "sha256": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+      "bytes": 5484,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/utils/error_codes.tolk"
+    },
+    {
+      "file": "source/contracts/shared/utils/rich_bounce.tolk",
+      "sha256": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8",
+      "bytes": 1566,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/shared/utils/rich_bounce.tolk"
+    },
+    {
+      "file": "source/contracts/t3/deposit_intent.tolk",
+      "sha256": "5ddb880bfaf21ebfa6c1f1cb921bcd8d42ebc97cd1fe1c61ff5bdb0bf96a5861",
+      "bytes": 1585,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/deposit_intent.tolk"
+    },
+    {
+      "file": "source/contracts/t3/fresh_math.tolk",
+      "sha256": "ec9f410fc3c7a173c154a514cf4ff850af5422b72c321a682dbab176cdbcaa3c",
+      "bytes": 12794,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/fresh_math.tolk"
+    },
+    {
+      "file": "source/contracts/t3/hub.tolk",
+      "sha256": "919ecdf7aebf2b9e7d30e5c9c0232eba120c431bf07394025e9356c1dfe808ac",
+      "bytes": 26743,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/hub.tolk"
+    },
+    {
+      "file": "source/contracts/t3/hub_helpers.tolk",
+      "sha256": "788923c34db6e3747ebcb1d95c1f285e8d68593108746d253fec73140b396155",
+      "bytes": 7305,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/hub_helpers.tolk"
+    },
+    {
+      "file": "source/contracts/t3/hub_types.tolk",
+      "sha256": "a2c9f9d7317bc993212d6708e6d7f55883d62dc9e9e89b4d858f2b234527482c",
+      "bytes": 5464,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/hub_types.tolk"
+    },
+    {
+      "file": "source/contracts/t3/receipt_tree.tolk",
+      "sha256": "22a916c4b730336d7f4464f30468c7a2f6919b49b790753daeddb6c9b1650216",
+      "bytes": 5035,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/receipt_tree.tolk"
+    },
+    {
+      "file": "source/contracts/t3/recovery_proof.tolk",
+      "sha256": "72da137d95ff3d1b1257af1c42e0794a02401700133015f127f16090862f1576",
+      "bytes": 31822,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/recovery_proof.tolk"
+    },
+    {
+      "file": "source/contracts/t3/recovery_types.tolk",
+      "sha256": "8985e0572cfefb4f43fa2c40b3eea71331b80a44c615d2cb560db94a81a96b2d",
+      "bytes": 1414,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/recovery_types.tolk"
+    },
+    {
+      "file": "source/contracts/t3/reserve_credit.tolk",
+      "sha256": "a53bbc326a5b7c3fabca4985cf88abbeff1559ab81b3c4783603ebd9082c13f5",
+      "bytes": 2616,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/reserve_credit.tolk"
+    },
+    {
+      "file": "source/contracts/t3/wallet.tolk",
+      "sha256": "541047231bf34b54ae8b1a6f162ef05db6009e0f1fa7414389f4623105757373",
+      "bytes": 15147,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/wallet.tolk"
+    },
+    {
+      "file": "source/contracts/t3/wallet_budget.tolk",
+      "sha256": "83e7fb8b154c72e496e2666c7a0c2366c4145163b3c6a32b179aa810de39c107",
+      "bytes": 4974,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/wallet_budget.tolk"
+    },
+    {
+      "file": "source/contracts/t3/wallet_tree.tolk",
+      "sha256": "689f119d58bbcc11afb768fc613295ef2be22895931ae804f7ccde58938440f4",
+      "bytes": 3744,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/wallet_tree.tolk"
+    },
+    {
+      "file": "source/contracts/t3/wallet_types.tolk",
+      "sha256": "43d30a774779dd49ec5b1032a84c722c3cf14302724848a43892dffc0f21cd72",
+      "bytes": 2403,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/t3/wallet_types.tolk"
+    },
+    {
+      "file": "source/contracts/targets.ts",
+      "sha256": "8035d586ce27840c380875b2cb30cc6d55cc184929fab112ab8c158c5a032146",
+      "bytes": 4210,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/targets.ts"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/JettonMinter.tolk",
+      "sha256": "1f2706111e63d5fe4241e1c362d271f2038e6612a1b6418cd5bdaddd3e6819bd",
+      "bytes": 7515,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/JettonMinter.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/JettonWallet.tolk",
+      "sha256": "53d5b55e04da9c09a94d306a19454b5817cce2499f6d82b53fa1ae24b5c12f7d",
+      "bytes": 6276,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/JettonWallet.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/LICENSE",
+      "sha256": "f668e6538d3e3bddf985af87f9b74fd6da1784115395157ea2f70d6c7aab439d",
+      "bytes": 1065,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/LICENSE"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/PROVENANCE.json",
+      "sha256": "b7a048c6cdda3e7524f00394109c3c784a52cd6ac2a47b0a427e8de914c18650",
+      "bytes": 2114,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/PROVENANCE.json"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/errors.tolk",
+      "sha256": "480df1ae5d924bac198579a80daae2d1f3bf90d7385cee83f0c0a1dcac5be91e",
+      "bytes": 249,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/errors.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/fees-management.tolk",
+      "sha256": "8676718dffaf33c0f01e1126743e25272bb20c7fad49ef52a9309de6c115acf8",
+      "bytes": 3764,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/fees-management.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/jetton-utils.tolk",
+      "sha256": "a693f71e69017a524c963e2cb3a3eb6caeec3747bf7a20bbcdd173c34e59fe1d",
+      "bytes": 776,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/jetton-utils.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/messages.tolk",
+      "sha256": "c1ba257033aa9e9dcb823fc8970ac7df37722c0af2976a0bcffd6238ade5c39b",
+      "bytes": 2594,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/messages.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/sharding.tolk",
+      "sha256": "b5f0df1edc90bcfea0a9b155255c4e6ddddf3d0d468a01a152aea0b7dafdedca",
+      "bytes": 325,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/sharding.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/storage.tolk",
+      "sha256": "bea2c27d85738a293d8b30801ec40462fdb45da6ecdb26755450f98820645fb1",
+      "bytes": 1023,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/storage.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/jetton-v2.1/types.tolk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/jetton-v2.1/types.tolk"
+    },
+    {
+      "file": "source/contracts/vendor/stablecoin/JettonMinter.code.boc",
+      "sha256": "107d8c83ec97394964b1413cb8a4c0afe2a8a69639017150ca1077b2a0c78fcb",
+      "bytes": 1483,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/stablecoin/JettonMinter.code.boc"
+    },
+    {
+      "file": "source/contracts/vendor/stablecoin/JettonWallet.code.boc",
+      "sha256": "b3675b699237150e722ca3106c2d0203aaabd835468e4a29894207cdc58efb3e",
+      "bytes": 989,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/stablecoin/JettonWallet.code.boc"
+    },
+    {
+      "file": "source/contracts/vendor/stablecoin/LICENSE",
+      "sha256": "f600c131414b70552efca80f8da027ad8d4a5e0cc76e6140e45181729820fbec",
+      "bytes": 1065,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/stablecoin/LICENSE"
+    },
+    {
+      "file": "source/contracts/vendor/stablecoin/PROVENANCE.json",
+      "sha256": "959df08a8f3e73d14a29a727f3f6ef82da588d29f9b3f8c988bfc83fe9090668",
+      "bytes": 3837,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/contracts/vendor/stablecoin/PROVENANCE.json"
+    },
+    {
+      "file": "source/scripts/build/compiler.json",
+      "sha256": "73fb0f058cd4959f65d5f9f55ebd85aed63003d2a7ff1aed66be525de177200a",
+      "bytes": 139,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/scripts/build/compiler.json"
+    },
+    {
+      "file": "manifest.json",
+      "sha256": "366e72a3593a321128bb6744018e51599980c9d7f40af9c063417f23d1320a4b",
+      "bytes": 117245,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/build/manifest.json"
+    },
+    {
+      "file": "artifacts/JettonV21Minter.boc",
+      "sha256": "e6e9ca2348b06b4414b966592fd895f4fcd7bbfc0ca3290bf9ad3c0722292234",
+      "bytes": 1590,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/build/JettonV21Minter.boc"
+    },
+    {
+      "file": "artifacts/JettonV21Wallet.boc",
+      "sha256": "332b673ea75b5d30f7b467299ea8c6b8814dc6f439f573184843ee3ed640152c",
+      "bytes": 707,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/build/JettonV21Wallet.boc"
+    },
+    {
+      "file": "artifacts/T3Hub.boc",
+      "sha256": "36175ba5d3e434bcc16904ccbe0c3c054e8513f23052c3c776e348a826323d03",
+      "bytes": 22507,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/build/T3Hub.boc"
+    },
+    {
+      "file": "artifacts/T3RecoveryProof.boc",
+      "sha256": "bd8fb94194ff50ec733290a98677a0bf0f6ce5dfcb8e81bddcc443316240b60b",
+      "bytes": 5664,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/build/T3RecoveryProof.boc"
+    },
+    {
+      "file": "artifacts/T3Wallet.boc",
+      "sha256": "9bfaea10002418ef0f9714783ebaa72745bf46a7dedd5cb861900fbb711a38e7",
+      "bytes": 7276,
+      "originalPath": "/Users/mtakemiya/dev/tonswap/.work/cw/system-fresh/tonswap_tolk/build/T3Wallet.boc"
+    }
+  ],
+  "virtualInputsWithoutPhysicalFile": [
+    "contracts/generated/JettonWallet.code.tolk"
+  ],
+  "limitations": [
+    "The original receipts contain no historical TypeScript producer-source lock or compiler-binary lock; neither is inferred.",
+    "The existing verifier derives virtual opcode and vendored-code compiler inputs from the original registry and artifact bytes and checks their exact manifest input hashes.",
+    "Sandbox account-map/block anchors and intentional account injections do not qualify public consensus or continuous physical history across injected boundaries."
+  ]
+}

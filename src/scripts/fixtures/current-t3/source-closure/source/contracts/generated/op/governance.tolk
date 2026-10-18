@@ -1,0 +1,40 @@
+tolk 1.5.0
+
+// Auto-generated. Do not edit manually.
+const OP_CLAIMED_REPORT: int = 0x4d435250;
+const OP_GENESIS_EVENT: int = 0x474e4556;
+const OP_GENESIS_SEND: int = 0x47454e53;
+const OP_GOV_ADVANCE: int = 0x47414456;
+const OP_GOV_BOOTSTRAP: int = 0x47424f54;
+const OP_GOV_HANDOFF: int = 0x47484e44;
+const OP_GOV_HANDOFF_EVENT: int = 0x47484556;
+const OP_GOV_LOCK: int = 0x474c434b;
+const OP_GOV_LOCK_EVENT: int = 0x474c4556;
+const OP_GOV_LOCK_EVICT: int = 0x474c4558;
+const OP_GOV_LOCK_EXTEND: int = 0x474c5854;
+const OP_GOV_POLICY: int = 0x47504f4c;
+const OP_GOV_POLICY_SHRINK: int = 0x47505348;
+const OP_GOV_PROPOSAL_EVENT: int = 0x47504556;
+const OP_GOV_PROPOSE: int = 0x4750524f;
+const OP_GOV_ROLL: int = 0x47524f4c;
+const OP_GOV_TOKEN: int = 0x47544f4b;
+const OP_GOV_UNLOCK: int = 0x47554e4c;
+const OP_GOV_VOTE: int = 0x47565445;
+const OP_GOV_VOTE_EVENT: int = 0x47564556;
+const OP_MERKLE_CLAIM: int = 0x4d434c4d;
+const OP_MERKLE_CLAIM_EVENT: int = 0x4d434556;
+const OP_MERKLE_LEAF: int = 0x4d434c46;
+const OP_REMINT_BURN: int = 0x524d4252;
+const OP_REMINT_CLAIM_ADMIN: int = 0x524d434c;
+const OP_REMINT_DAY: int = 0x524d4459;
+const OP_REMINT_EVENT: int = 0x524d4556;
+const OP_REMINT_RATE: int = 0x524d5254;
+const OP_TREASURY_BIND: int = 0x54424e44;
+const OP_TREASURY_BIND_EXTRA: int = 0x54424558;
+const OP_TREASURY_CLAIM: int = 0x54434c4d;
+const OP_TREASURY_EVENT: int = 0x54504556;
+const OP_TREASURY_PAY_GRAM: int = 0x5450544e;
+const OP_TREASURY_PAY_JETTON: int = 0x54504a54;
+const OP_WITHDRAWALS_ONLY_OFF: int = 0x57444f46;
+const OP_WITHDRAWALS_ONLY_ON: int = 0x57444f4e;
+

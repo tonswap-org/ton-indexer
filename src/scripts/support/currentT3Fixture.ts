@@ -14,23 +14,34 @@ import { loadOpcodes } from '../../utils/opcodes';
 import type { LedgerT3RedemptionBinding } from '../../ledger/bindings';
 import type { LedgerStateSnapshot } from '../../ledger/archive';
 import { canonicalLedgerHash } from '../../ledger/normalize';
+import { assertCurrentCaptureProducer, readCurrentCaptureManifest } from '../current-capture-build';
 const sha = (v: Buffer) => createHash('sha256').update(v).digest('hex');
+const producers = {
+    hub: { producer: 'hub', suite: 'tests/system/ReleaseUserSmoke.spec.ts', tests: 2,
+        receiptSha256: 'd495ae80936273751a10d6f2243e17cb4e6b0c6288901ff2b2df67397c15502c',
+        bindingSha256: 'ba53be0c33d58a8b64905043056d56bfd501f32fe612e624f9de07870dd57077' },
+    recovery: { producer: 't3Recovery', suite: 'tests/system/T3RecoveryCapture.spec.ts', tests: 6,
+        receiptSha256: '74acbd059b2a4e4c35a85f36748e23b0c93c572cc7e1d666b09864dfa7fee295',
+        bindingSha256: '9be45cd6c2429512aec47c21c120caa314a7cadb6747541b9a37996484d3b365' },
+} as const;
 export function currentT3Fixture(name = 'case-01.json', directory = 'hub') {
+    assert(directory === 'hub' || directory === 'recovery', 'Unknown current T3 producer');
     const root = join(__dirname, '../fixtures/current-t3', directory), bytes = (name: string) => readFileSync(join(root, name));
-    const receipt = JSON.parse(bytes('producer-receipt.json').toString()), binding = JSON.parse(bytes('build-binding.json').toString());
-    assert.equal(receipt.schema, 'tonswap-capture-producer-v1');
-    assert.equal(receipt.exitCode, 0);
-    assert.equal(receipt.runtime.tolk, '1.5.0');
-    for (const path of [name, 'build-binding.json', ...Object.values(receipt.compiled).flatMap((v: any) => [v.file, v.boc])])
-        assert.equal(sha(bytes(path)), receipt.artifacts[path], path + ' retained bytes');
-    for (const [role, entry] of Object.entries(receipt.compiled) as [
-        string,
-        any
-    ][]) {
-        const cell = Cell.fromBoc(bytes(entry.boc))[0];
-        assert.equal(cell.hash().toString('hex'), entry.codeHash);
-        assert.equal(entry.codeHash, binding.targets[role].codeHash);
+    const closure = join(root, '../source-closure'), inventoryBytes = readFileSync(join(closure, 'inventory.json'));
+    assert.equal(sha(inventoryBytes), '6ffd0e2f27380bc1dfe112fe4cc5e66cd2c18c6a4bde21b53a79652e725afbf8');
+    const inventory = JSON.parse(inventoryBytes.toString());
+    for (const entry of inventory.files) {
+        const original = readFileSync(join(closure, entry.file));
+        assert.equal(original.length, entry.bytes);
+        assert.equal(sha(original), entry.sha256, `${entry.file}: original T3 source/artifact bytes`);
     }
+    const snapshot = readCurrentCaptureManifest({ nativeRoot: join(closure, 'source'),
+        manifestPath: join(closure, 'manifest.json'), artifactRoot: join(closure, 'artifacts'),
+        expectedManifestSha256: '366e72a3593a321128bb6744018e51599980c9d7f40af9c063417f23d1320a4b' });
+    const { binding } = assertCurrentCaptureProducer(snapshot, {
+        ...producers[directory], directory: root, log: bytes('producer.log'),
+    });
+    assert(Object.hasOwn(binding.captures, name), 'T3 case must belong to the authenticated original producer');
     const captured = JSON.parse(bytes(name).toString()), states = new Map<string, LedgerStateSnapshot>(), ambiguousStates = new Set<string>(), afterStates = new Set<string>();
     const key = (account: string, lt: string, hash: string) => `${account}:${lt}:${canonicalLedgerHash(hash)}`;
     const rows = captured.transactions.map((row: any) => {

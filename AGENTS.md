@@ -20,6 +20,14 @@ core pair. Observed code never enrolls a new decoder. Current receipt candidates
 are not physical payout evidence. Keep the runtime qualification fence until the
 fresh capture and original-source closure checks pass.
 
+The portable current T3 hub/recovery cases retain their exact original 1.5
+manifest and source/artifact closure. `currentT3Fixture` must authenticate both
+original producer receipts and passing logs through `current-capture-build`.
+Keep the original manifest authoritative; matching newer target hashes never
+replace producer provenance. Historical TypeScript producer/compiler-binary
+locks are not claimed. Synthetic sandbox anchors and injected account boundaries
+remain outside public-consensus and continuous-history qualification.
+
 Current Options ledger qualification uses the exact current factory/vault/manager,
 Shout/Outperformance, T3Wallet and T3RecoveryProof release pins. Infer owner
 requests from original dispatches, then authenticate historical controller and

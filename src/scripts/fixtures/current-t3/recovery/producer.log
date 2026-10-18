@@ -1,0 +1,14 @@
+59 targets, 0 compiled, buildHash e7c9ea2bfb0cdff6375b72d64599eeefd39c00330a4050e8e26e737cc038cebf
+PASS default tests/system/T3RecoveryCapture.spec.ts (32.986 s)
+  ✓ captures initialization, real mint, transfer, redeem, refund and verified burn cancellation (default) (3661 ms)
+  ✓ captures initialization, real mint, transfer, redeem, refund and verified burn cancellation (x6) (3502 ms)
+  ✓ keeps each redeemed reserve leg fixed through source and downstream refusal (default) (6965 ms)
+  ✓ keeps each redeemed reserve leg fixed through source and downstream refusal (x6) (7032 ms)
+  ✓ isolates a failed A mint while B mints and redeems, then permits one public same-recipient retry (default) (5332 ms)
+  ✓ isolates a failed A mint while B mints and redeems, then permits one public same-recipient retry (x6) (5438 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       6 passed, 6 total
+Snapshots:   0 total
+Time:        33.033 s
+Ran all test suites within paths "tests/system/T3RecoveryCapture.spec.ts".

@@ -640,8 +640,14 @@ explicit sandbox preconditions: transaction pointers are linked, but those
 mutated account boundaries do not establish complete physical history. The
 reconstructor rejects the two injected wallet histories; unaffected account
 trees and individual original transaction boundaries remain independently
-verifiable. Source-closure qualification must pass before enabling the runtime
-ledger fence. Run the dependency-refresh, boundary and platform-contract tests
+verifiable. The portable `current-t3/source-closure` retains the exact original
+1.5 manifest, source inputs and artifacts. The current verifier authenticates both
+original producer receipts and their passing logs, including each target's full
+Tolk import closure and virtual opcode/vendor inputs. Historical TypeScript
+producer-source locks and compiler-binary locks were not recorded and are not
+claimed. This source qualification does not authenticate public consensus or
+remove the runtime fence; all current product and release gates remain required.
+Run the dependency-refresh, boundary and platform-contract tests
 after changing the shared native mint publication fixture.
 
 Known perps OPEN/ADMG/MDIF funding and unverified T3 forwarding retain their exact

@@ -170,6 +170,6 @@ async function main() {
     missingArchive.input.stateAt = async (a, l, h) => a === missingArchive.config.vaults[0] ? null : stateAt(a, l, h);
     assert(!(await projectOwnerLedger(missingArchive.input)).events.some(e => e.settlement?.t3?.stage === 'minted' && e.settlement.status === 'confirmed'), 'missing reserve boundary cannot certify collateral');
     console.log(`current T3 native: ${nativeTransactions} original transactions, ${hubTrees} reconstructed hub trees, ${walletHistories} wallet histories, ${failureWitnesses} independent failure witnesses, ${injectedWalletGaps} explicit injected-state gaps; physical mint/pair/transfer/redeem/refund/cancel and negative evidence checks passed`);
-    console.log(`current T3: ${commitments} authenticated G14 receipt commitments, ${negative} negative boundaries, sparse witness/update checks passed; partial source-closure qualification explicitly retained`);
+    console.log(`current T3: ${commitments} authenticated G14 receipt commitments, ${negative} negative boundaries, sparse witness/update checks passed; exact original 1.5 source/artifact closure and both producer receipts/logs verified; historical TypeScript producer/compiler-binary locks are not claimed`);
 }
 void main().catch(e => { console.error(e); process.exitCode = 1; });
