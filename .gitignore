@@ -1,4 +1,5 @@
 # Node/TypeScript
+/.local/
 node_modules/
 dist/
 coverage/
