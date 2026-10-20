@@ -12,7 +12,7 @@
     "migrate": "tsx src/migrate.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:native-options": "node scripts/test-native-postgres.mjs",
+    "test:native-ledger": "node scripts/test-native-postgres.mjs",
     "verify": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

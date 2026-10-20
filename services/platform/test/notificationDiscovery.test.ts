@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,7 +13,7 @@ import { PushSender } from '../src/push.js';
 import type { Database } from '../src/db.js';
 import { database, config, address, secondAddress, session } from './helpers.js';
 import { perpsEvent } from './fixtures/perps.js';
-import { ledgerEventSchema } from '../src/ledger.js';
+import { currentSwap } from './fixtures/currentLedger.js';
 
 let db: Database, store: Store, indexerDb: PGlite, ledger: PostgresLedgerStore;
 const app = fastify(), cfg = config(), queries: URL[] = [];
@@ -22,14 +21,7 @@ let scope: Awaited<ReturnType<typeof session>>;
 const hash = Buffer.alloc(32, 11).toString('base64');
 const base = Math.floor(Date.now() / 1000) - 86_400;
 function swap(id: string, requested: number, settled: number | null): LedgerEvent {
-  return { id, network: 'testnet', account: address, lt: String(requested), hash, txId: `${requested}:${hash}`,
-    utime: requested, status: 'success', kind: 'swap', actions: [], issues: [], totalFeesRaw: '0', movements: settled === null ? [] : [
-      { id: 'out', direction: 'out', amountRaw: '10', asset: { kind: 'native', id: 'testnet:native' }, evidence: { kind: 'native_message' } },
-      { id: 'in', direction: 'in', amountRaw: '9', asset: { kind: 'jetton', id: `testnet:jetton:${secondAddress}` }, evidence: { kind: 'jetton_transfer' } },
-    ], settlement: { status: settled === null ? 'incomplete' : 'confirmed', protocol: 'dlmm', operation: 'swap', pool: secondAddress, queryId: '1', evidence: [
-      { account: address, lt: String(requested), hash, utime: requested },
-      ...(settled === null ? [] : [{ account: secondAddress, lt: String(settled), hash, utime: settled }]),
-    ] } };
+  return currentSwap(address, requested, settled, id);
 }
 async function publish(events: LedgerEvent[]) {
   const generation = randomUUID();
@@ -94,18 +86,9 @@ describe('actual durable indexer to notification discovery', () => {
 });
 
 describe('stage time comes from qualified evidence', () => {
-  it('retains a future Launchpad revision until its unchanged qualified stage time arrives', async () => {
-    const fixture = JSON.parse(readFileSync(new URL('./fixtures/launchpad-fixed-refund-confirmed.json', import.meta.url), 'utf8'));
-    const event = ledgerEventSchema.parse(fixture.events.find((row: any) => row.kind === 'launchpad_refund'));
+  it('retains a future current revision until its unchanged qualified stage time arrives', async () => {
     const initial = Date.now(), future = Math.floor(initial / 1000) + 30;
-    const offset = future - Math.max(event.utime, ...event.settlement!.evidence.map(ref => ref.utime));
-    const retime = (value: any) => {
-      if (!value || typeof value !== 'object') return;
-      for (const [key, child] of Object.entries(value)) {
-        if (key === 'utime' && typeof child === 'number') value[key] = child + offset; else retime(child);
-      }
-    };
-    retime(event); // One offset preserves every original physical identity, ordering and time difference.
+    const event = swap('future-stage', Math.floor(initial / 1000), future);
     const localDb = await database(), localStore = new Store(localDb, cfg), current = await session(localStore, event.account);
     try {
       await localStore.setPreferences(current, { activity: true });
@@ -124,28 +107,19 @@ describe('stage time comes from qualified evidence', () => {
       vi.spyOn(Date, 'now').mockReturnValue(initial + 40_000);
       await worker.pollWallet(job);
       expect(await localStore.checkpoint(`ledger-discovery:testnet:${event.account}`)).toMatchObject({ afterRevision: '1' });
-      expect((await localStore.inbox(current, 100)).notifications).toMatchObject([{ title: 'Launchpad refund received', occurredAt: new Date(future * 1000).toISOString() }]);
+      expect((await localStore.inbox(current, 100)).notifications).toMatchObject([{ title: 'Swap confirmed', occurredAt: new Date(future * 1000).toISOString() }]);
     } finally { vi.restoreAllMocks(); await localDb.close(); }
   });
-  it('does not let an unrelated later transaction re-date a booked perps operation', () => {
+  it('refuses an unrelated later transaction outside the current proof set', () => {
     const event = perpsEvent(address, base - 100);
+    expect(ledgerNotifications(event)[0]?.occurredAt).toBe(new Date((base - 100) * 1000).toISOString());
     event.settlement!.evidence.push({ account: address, lt: '999', hash, utime: base + 500 });
-    const [notice] = ledgerNotifications(event);
-    expect(notice!.occurredAt).toBe(new Date((base - 100) * 1000).toISOString());
-    expect(notice!.evidence.stageTransactions).toEqual(event.settlement!.perps!.stateEvidence!.transactions);
-  });
-  it('uses payout evidence for the separately identified perps cash stage', () => {
-    const event = perpsEvent(address, base - 100), p = event.settlement!.perps!;
-    const credit = { account: p.ownerWallet!, lt: '1000', hash, utime: base + 100 };
-    event.settlement!.evidence.push(credit);
-    p.payout = { status: 'completed', wireId: '7', amountRaw: '5', evidence: [credit] };
-    event.movements.push({ direction: 'in', amountRaw: '5', purpose: 'perps_payout', asset: { kind: 'jetton', id: `testnet:jetton:${p.root}`, master: p.root, owner: address }, evidence: { kind: 'perps_payout' } });
-    expect(ledgerNotifications(event)[0]).toMatchObject({ title: 'Perps payout confirmed', occurredAt: new Date((base + 100) * 1000).toISOString() });
+    expect(ledgerNotifications(event)).toEqual([]);
   });
   it('rejects future or contradictory chain time instead of substituting publication time', () => {
     expect(() => ledgerNotifications(swap('future', base - 10, Math.floor(Date.now() / 1000) + 60))).toThrow('notification_stage_time_invalid');
     const broken = swap('contradiction', base - 10, base + 10);
     broken.settlement!.evidence.push({ ...broken.settlement!.evidence[1]!, utime: base + 11 });
-    expect(() => ledgerNotifications(broken)).toThrow('notification_stage_time_contradiction');
+    expect(ledgerNotifications(broken)).toEqual([]);
   });
 });

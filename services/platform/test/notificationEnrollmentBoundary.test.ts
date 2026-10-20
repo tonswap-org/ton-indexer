@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { currentSwap } from './fixtures/currentLedger.js';
 import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { postgres, type Database } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
@@ -45,12 +46,7 @@ function event(time: number, kind: 'activity' | 'walletProtocol' = 'activity'): 
   const hash = Buffer.alloc(32, 5).toString('base64'), id = `${kind}:${time}`, lt = String(time);
   const base: LedgerEvent = { id, network: 'testnet', account: address, lt, hash, txId: `${lt}:${hash}`, utime: time,
     status: kind === 'walletProtocol' ? 'failed' : 'success', kind: kind === 'walletProtocol' ? 'transfer' : 'swap', movements: [], actions: [], issues: [] };
-  if (kind === 'activity') {
-    base.movements = [{ direction: 'out', amountRaw: '10', asset: { kind: 'native', id: 'testnet:native' } },
-      { direction: 'in', amountRaw: '9', asset: { kind: 'jetton', id: `testnet:jetton:${secondAddress}` } }];
-    base.settlement = { status: 'confirmed', protocol: 'dlmm', operation: 'swap', pool: secondAddress, queryId: '1', evidence: [
-      { account: address, lt, hash, utime: time }, { account: secondAddress, lt: String(time + 1), hash, utime: time }] };
-  }
+  if (kind === 'activity') return currentSwap(address, time, time, id);
   return base;
 }
 function response(events: LedgerEvent[], since: string, afterRevision = '0') {

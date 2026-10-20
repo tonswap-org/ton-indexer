@@ -32,7 +32,7 @@ try {
   if (!ready) throw Error('Owned PostgreSQL did not become ready.');
   await run(path.join(bin, 'createdb'), ['-h', '127.0.0.1', '-p', String(port), '-U', 'platform_test', 'tonswap_platform_test_options']);
   console.log(`Native option lifecycle integration: ${version}`);
-  const result = await run(process.execPath, [path.join(root, 'node_modules/vitest/vitest.mjs'), 'run', 'test/optionLifecycleWorker.test.ts'], {
+  const result = await run(process.execPath, [path.join(root, 'node_modules/vitest/vitest.mjs'), 'run', 'test/currentLedgerNative.test.ts'], {
     cwd: root, env: { ...process.env, PLATFORM_TEST_DATABASE_URL: `postgresql://platform_test@127.0.0.1:${port}/tonswap_platform_test_options` }, maxBuffer: 2_000_000,
   });
   process.stdout.write(result.stdout); process.stderr.write(result.stderr);

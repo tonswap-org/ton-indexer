@@ -1,10 +1,8 @@
 import { stageTime } from './notificationEvidence.js';
+import { currentLedgerNotification } from './currentLedgerNotifications.js';
 import { governanceNotificationLink, NOTIFICATION_DESTINATIONS, walletNotificationLink } from './notificationLinks.js';
 import { ledgerDiscoverySchema, type LedgerEvent } from './ledger.js';
 export type { LedgerEvent } from './ledger.js';
-import { protocolLedgerNotification, optionLifecycleNotifications } from './protocolNotifications.js';
-import { isLaunchpadCandidate, launchpadNotification } from './launchpadNotifications.js';
-import { dlmmLiquidityNotification } from './dlmmNotifications.js';
 import { randomUUID } from 'node:crypto';
 import { Decimal } from './decimal.js';
 import { z } from 'zod';
@@ -29,15 +27,8 @@ export function ledgerNotification(event: LedgerEvent): NewNotification | null {
   if (event.status === 'failed') return { ...common, category: 'walletProtocol', sourceEventId: `ledger:${event.id}:failed`,
     title: 'Wallet transaction failed', body: 'A transaction failed on-chain. Open your wallet history for details.' };
   const settlement = event.settlement;
-  if ([event.kind, settlement?.operation].some(kind => kind === 'lp_fee_collect' || kind === 'lp_withdraw')) return dlmmLiquidityNotification(event, common);
-  // Contributions require an exact acceptance; claims require independent cash.
-  // Unsupported Launchpad evidence cannot announce generic transaction success.
-  if (isLaunchpadCandidate(event)) return launchpadNotification(event, common);
-  const protocolNotice = protocolLedgerNotification(event, common);
-  if (protocolNotice) return protocolNotice;
-  // Lifecycle notices require their own historical proof. Unsupported paths cannot
-  // fall through to a generic transaction-success notification.
-  if (settlement?.protocol === 'options' && settlement.operation !== 'option_buy') return null;
+  const currentNotice = currentLedgerNotification(event, common);
+  if (currentNotice !== undefined) return currentNotice;
   const bridge = settlement?.bridge;
   if (settlement?.status === 'confirmed' && settlement.protocol === 'sccp' && bridge?.tonOwner === event.account &&
     bridge.counterpartyStatus === 'unverified' && BigInt(bridge.amountRaw) > 0n && event.kind === settlement.operation &&
@@ -53,72 +44,10 @@ export function ledgerNotification(event: LedgerEvent): NewNotification | null {
       evidence: { ...stageTime(common, settlement.evidence).evidence, settlement, movements: event.movements },
     };
   }
-  if (settlement?.status === 'confirmed' && settlement.protocol === 'options' && settlement.operation === 'option_buy' && event.kind === 'option_buy' &&
-    settlement.factory && settlement.series && settlement.seriesId && settlement.positionId && settlement.wireId && settlement.queryId && settlement.positionHash &&
-    settlement.notionalRaw && BigInt(settlement.notionalRaw) > 0n && settlement.collateralRaw && BigInt(settlement.collateralRaw) > 0n &&
-    settlement.premiumRaw !== undefined && settlement.protocolFeeRaw !== undefined) {
-    const right = event.movements.find(item => item.direction === 'in' && item.amountRaw === '1' && item.asset.kind === 'option_position' &&
-      item.asset.id === `${event.network}:option-position:${settlement.factory}:${settlement.seriesId}:${settlement.positionId}` &&
-      item.asset.factory === settlement.factory && item.asset.series === settlement.series && item.asset.seriesId === settlement.seriesId &&
-      item.asset.positionId === settlement.positionId && item.asset.owner === event.account && item.asset.decimals === 0 &&
-      item.evidence?.kind === 'option_activation' && item.evidence.bodyHash === settlement.positionHash);
-    const proof = right?.evidence, position = proof?.optionPosition;
-    const beforeState = position ? BigInt(position.beforeBuyStateRaw) : 0n;
-    const afterState = position ? BigInt(position.buyStateRaw) : 0n;
-    const activated = position && position.factory === settlement.factory && position.owner === event.account &&
-      position.seriesId === settlement.seriesId && position.positionId === settlement.positionId && position.seriesWireId === settlement.wireId &&
-      position.notionalRaw === settlement.notionalRaw && position.premiumRaw === settlement.premiumRaw && position.collateralRaw === settlement.collateralRaw &&
-      position.protocolFeeRaw === settlement.protocolFeeRaw && BigInt(position.custodyWireId) > 0n &&
-      proof?.stateBeforeHash && proof.stateAfterHash && proof.beforeSeqno !== undefined && proof.afterSeqno !== undefined && proof.afterSeqno >= proof.beforeSeqno &&
-      beforeState <= 65535n && afterState <= 65535n && (beforeState & 269n) === 269n && (beforeState & 512n) === 0n &&
-      (afterState & 525n) === 525n && ((beforeState | afterState) & (16n | 32n | 128n)) === 0n;
-    const funding = event.movements.filter(item => ['option_premium', 'option_collateral', 'protocol_fee'].includes(item.purpose ?? ''));
-    const walletProof = funding.length > 0 && funding.every(item => item.asset.kind === 'jetton' && item.asset.owner === event.account &&
-      item.source === event.account && item.destination === settlement.factory && item.evidence?.transactions?.length === 2 &&
-      item.asset.wallet === item.evidence.transactions[0]!.account && position?.sourceWallet === item.evidence.transactions[1]!.account &&
-      item.evidence.transactions.every(ref => settlement.evidence.some(s => s.account === ref.account && s.lt === ref.lt && s.hash === ref.hash)));
-    const funded = ([['option_premium', 'out', settlement.premiumRaw], ['option_collateral', 'out', settlement.collateralRaw],
-      ['protocol_fee', 'fee', settlement.protocolFeeRaw]] as const).every(([purpose, direction, amount]) =>
-        event.movements.filter(item => item.purpose === purpose && item.direction === direction && item.asset.kind === 'jetton' &&
-          item.asset.owner === event.account)
-          .reduce((sum, item) => sum + BigInt(item.amountRaw), 0n) === BigInt(amount));
-    const fundingAssets = new Set(event.movements.filter(item => ['option_premium', 'option_collateral', 'protocol_fee'].includes(item.purpose ?? '')).map(item => item.asset.id));
-    const references = settlement.evidence;
-    const hasRoundTrip = new Set(references.map(item => `${item.account}:${item.lt}:${item.hash}`)).size === references.length &&
-      references.filter(item => item.account === settlement.factory).length >= 3 &&
-      references.filter(item => item.account === settlement.series).length >= 2 &&
-      references.every(item => right?.evidence?.transactions?.some(proof => proof.account === item.account && proof.lt === item.lt && proof.hash === item.hash));
-    if (right && activated && walletProof && funded && fundingAssets.size === 1 && hasRoundTrip) return { ...stageTime(common, right.evidence!.transactions!, settlement.evidence), category: 'activity',
-      sourceEventId: `option:${settlement.factory}:${settlement.seriesId}:${settlement.positionId}:${settlement.positionHash}:activated`,
-      title: 'Option purchase confirmed', body: 'Your option position was activated and its ownership confirmed on-chain.',
-      evidence: { ...stageTime(common, settlement.evidence).evidence, settlement, movements: event.movements } };
-  }
-  const known = (direction: 'in' | 'out') => event.movements.filter(movement => movement.direction === direction &&
-    (movement.asset.kind === 'native' || movement.asset.kind === 'jetton') && BigInt(movement.amountRaw) > 0n);
-  const position = (direction: 'in' | 'out') => event.movements.some(movement => movement.direction === direction &&
-    movement.asset.kind === 'lp_position' && movement.asset.pool === settlement?.pool && BigInt(movement.amountRaw) > 0n);
-  const poolTransaction = settlement?.evidence.find(item => item.account === settlement.pool);
-  if (settlement?.status === 'confirmed' && settlement.protocol === 'dlmm' && settlement.pool && settlement.queryId &&
-    poolTransaction && settlement.evidence.length >= 2 && event.kind === settlement.operation) {
-    const description = settlement.operation === 'swap' && known('out').some(out => known('in').some(input => input.asset.id !== out.asset.id))
-      ? { title: 'Swap confirmed', body: 'Your swap output was confirmed on-chain. Open your wallet history for details.' }
-      : settlement.operation === 'lp_deposit' && position('in') && known('out').length > 0
-        ? { title: 'Liquidity deposit confirmed', body: 'Your liquidity position was confirmed on-chain.' }
-        : null;
-    if (description) return { ...stageTime(common, settlement.evidence), ...description, category: 'activity',
-      // Pool transaction identity remains stable when later projection generations merge owner-wallet events.
-      sourceEventId: `settlement:${settlement.pool}:${poolTransaction.lt}:${poolTransaction.hash}:${settlement.operation}`,
-      evidence: { ...stageTime(common, settlement.evidence).evidence, settlement, movements: event.movements } };
-  }
   return { ...common, category: 'walletProtocol', sourceEventId: `ledger:${event.id}:confirmed`,
     title: 'Wallet transaction confirmed', body: 'A transaction was confirmed on-chain. Product settlement may still be pending.' };
 }
 export function ledgerNotifications(event: LedgerEvent): NewNotification[] {
-  if (event.settlement?.protocol === 'options' && ['option_exercise', 'option_refund'].includes(event.kind)) {
-    return optionLifecycleNotifications(event, { href: walletNotificationLink(event.txId),
-      occurredAt: new Date(event.utime * 1000).toISOString(), evidence: { ledgerEventId: event.id, account: event.account,
-        lt: event.lt, hash: event.hash, txId: event.txId, transactionStatus: event.status, decodingIssues: event.issues } });
-  }
   const notice = ledgerNotification(event);
   return notice ? [notice] : [];
 }

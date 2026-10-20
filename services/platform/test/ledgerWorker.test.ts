@@ -9,6 +9,7 @@ import { PushSender } from '../src/push.js';
 import { Worker, ledgerNotification, type LedgerEvent } from '../src/worker.js';
 import { address, secondAddress, config, database, session } from './helpers.js';
 import { perpsEvent } from './fixtures/perps.js';
+import { currentSwap, currentOption } from './fixtures/currentLedger.js';
 
 let db: Database; let store: Store; let current: Session; let job: Job; let floor: number;
 let revision = 0; let since: string;
@@ -32,37 +33,9 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 function event(overrides: Partial<LedgerEvent> = {}): LedgerEvent {
   const utime = Math.floor(Date.now() / 1000) - 10;
-  return { id: 'owner-transaction', network: 'testnet', account: address, lt: '123', hash, txId: `123:${hash}`,
-    utime, status: 'success', kind: 'swap', actions: [{ kind: 'swap', minOut: '999999999999' }], issues: [],
-    movements: [
-      { direction: 'out', amountRaw: '100000000000000001', asset: { kind: 'jetton', id: `testnet:jetton:${'0:' + '2'.repeat(64)}` } },
-      { direction: 'in', amountRaw: '95000000000000007', asset: { kind: 'jetton', id: `testnet:jetton:${'0:' + '3'.repeat(64)}` } },
-    ],
-    settlement: { status: 'confirmed', protocol: 'dlmm', operation: 'swap', pool, queryId: '42', evidence: [
-      { account: pool, lt: '125', hash: Buffer.alloc(32, 0xbb).toString('base64'), utime }, { account: address, lt: '123', hash, utime },
-    ] }, ...overrides };
+  return { ...currentSwap(address, utime, utime), ...overrides };
 }
-function optionEvent(): LedgerEvent {
-  const utime = Math.floor(Date.now() / 1000) - 10; const series = `0:${'4'.repeat(64)}`;
-  const ownerWallet = `0:${'5'.repeat(64)}`, factoryWallet = `0:${'6'.repeat(64)}`;
-  const evidence = [pool, pool, pool, series, series, address, ownerWallet, factoryWallet].map((account, index) => ({ account, lt: String(100 + index), hash, utime }));
-  const positionHash = 'c'.repeat(64);
-  return event({ kind: 'option_buy', settlement: { status: 'confirmed', protocol: 'options', operation: 'option_buy',
-    factory: pool, series, seriesId: '7', positionId: '3', wireId: '55', queryId: '42', positionHash,
-    notionalRaw: '10000', premiumRaw: '100', collateralRaw: '1100', protocolFeeRaw: '20', evidence }, movements: [
-    ...(['option_premium', 'option_collateral', 'protocol_fee'] as const).map((purpose, index) => ({ purpose,
-      direction: index === 2 ? 'fee' as const : 'out' as const, amountRaw: ['100', '1100', '20'][index]!,
-      source: address, destination: pool, asset: { kind: 'jetton' as const, id: `testnet:jetton:${'0:' + '2'.repeat(64)}`, owner: address, wallet: ownerWallet },
-      evidence: { kind: 'jetton_transfer', transactions: evidence.slice(-2) } })),
-    { direction: 'in', amountRaw: '1', asset: { kind: 'option_position', id: `testnet:option-position:${pool}:7:3`,
-      owner: address, factory: pool, series, seriesId: '7', positionId: '3', decimals: 0 }, evidence: {
-        kind: 'option_activation', bodyHash: positionHash, transactions: evidence,
-        stateBeforeHash: 'ab'.repeat(32), stateAfterHash: 'cd'.repeat(32), beforeSeqno: 2, afterSeqno: 3,
-        optionPosition: { factory: pool, factoryCodeHash: 'de'.repeat(32), seriesId: '7', positionId: '3', owner: address, sourceWallet: factoryWallet,
-          notionalRaw: '10000', premiumRaw: '100', collateralRaw: '1100', seriesWireId: '55', custodyWireId: '56', protocolFeeRaw: '20', excessRaw: '0', beforeBuyStateRaw: '269', buyStateRaw: '525' },
-      } },
-  ] });
-}
+function optionEvent(): LedgerEvent { return currentOption(address, Math.floor(Date.now() / 1000) - 10); }
 function page(events: LedgerEvent[] = [event()]) {
   const timestamp = new Date(Date.now()).toISOString(), publication = generation;
   const revisions = events.map(event => ({ revision: String(++revision), generation: publication,
@@ -78,29 +51,16 @@ function polling(fetcher: typeof fetch, push = new PushSender(pushConfig())) {
 async function notices() { return (await store.inbox(current, 100)).notifications; }
 
 describe('durable authoritative settlement polling', () => {
-  it('continues tracking accepted perps orders until a later payout and deduplicates each stage', async () => {
-    const accepted = perpsEvent(address, Math.floor(Date.now() / 1000) - 10);
-    let response = page([accepted]);
-    const urls: URL[] = [];
-    const worker = polling(vi.fn(async input => { urls.push(new URL(String(input))); return new Response(JSON.stringify(response)); }));
-    await worker.pollWallet(job);
+  it('waits for complete current Perps settlement and deduplicates its immutable request', async () => {
+    const complete = perpsEvent(address, Math.floor(Date.now() / 1000) - 10), pending = structuredClone(complete);
+    pending.settlement!.status = 'incomplete'; pending.settlement!.currentPerps!.outcome = 'unresolved';
+    let response = page([pending]);
+    const worker = polling(vi.fn(async () => new Response(JSON.stringify(response))));
+    await worker.pollWallet(job); expect(await notices()).toHaveLength(0);
+    response = page([complete]); await worker.pollWallet(job);
+    response = page([{ ...complete, id: 'rebuilt-current-perps' }]); await worker.pollWallet(job);
     expect((await notices()).filter(n => n.category === 'activity')).toMatchObject([{ title: 'Position opening confirmed' }]);
     expect(await store.checkpoint(checkpoint)).toMatchObject({ afterRevision: String(revision), cursor: null });
-
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 600_000);
-    job = (await store.lease('perps-later-poll-worker', 10)).find(item => item.id === job.id)!;
-    const received = structuredClone(accepted), p = received.settlement!.perps!;
-    p.payout = { status: 'completed', wireId: '87', amountRaw: '5', evidence: p.stateEvidence!.transactions };
-    received.movements.push({ purpose: 'perps_payout', direction: 'in', amountRaw: '5',
-      asset: { kind: 'jetton', id: `testnet:jetton:${p.root}`, master: p.root, owner: address }, evidence: { kind: 'perps_payout' } });
-    response = page([received]); response.coverage.generation = randomUUID();
-    await worker.pollWallet(job);
-    expect(urls[1]!.searchParams.get('after_revision')).toBe(String(revision - 1));
-    expect((await notices()).filter(n => n.category === 'activity').map(n => n.title).sort()).toEqual(['Perps payout confirmed', 'Position opening confirmed']);
-    expect(await store.checkpoint(checkpoint)).toMatchObject({ afterRevision: String(revision), cursor: null });
-    response = page([{ ...received, id: 'rebuilt-perps-event', utime: Math.floor(Date.now() / 1000) - 1 }]); response.coverage.generation = randomUUID();
-    await worker.pollWallet(job);
-    expect((await notices()).filter(n => n.category === 'activity')).toHaveLength(2);
   });
 
   it('records SCCP TON-local stages without claiming destination receipt or a completed bridge transfer', async () => {
@@ -121,23 +81,6 @@ describe('durable authoritative settlement polling', () => {
     expect(recorded[0]?.evidence.settlement).toMatchObject({ bridge: { counterpartyStatus: 'unverified' } });
   });
 
-  it('requires exact activated option ownership, split funding, and the identified activation round trip', () => {
-    const option = optionEvent();
-    expect(ledgerNotification(option)).toMatchObject({ category: 'activity', title: 'Option purchase confirmed' });
-    const noRight = structuredClone(option); noRight.movements.pop();
-    const otherOwner = structuredClone(option); otherOwner.movements[3]!.asset.owner = pool;
-    const unactivated = structuredClone(option); unactivated.movements[3]!.evidence!.optionPosition!.buyStateRaw = '13';
-    const missingPrerequisites = structuredClone(option); missingPrerequisites.movements[3]!.evidence!.optionPosition!.buyStateRaw = '512';
-    const aborted = structuredClone(option); aborted.movements[3]!.evidence!.optionPosition!.buyStateRaw = '541';
-    const wrongPosition = structuredClone(option); wrongPosition.movements[3]!.evidence!.optionPosition!.positionId = '4';
-    const underfunded = structuredClone(option); underfunded.movements[0]!.amountRaw = '99';
-    const wrongAsset = structuredClone(option); wrongAsset.movements[1]!.asset.id = 'different-asset';
-    const noRoundTrip = structuredClone(option); noRoundTrip.settlement!.evidence.pop(); noRoundTrip.settlement!.evidence.pop();
-    const incomplete = structuredClone(option); incomplete.settlement!.status = 'incomplete';
-    for (const unresolved of [noRight, otherOwner, unactivated, missingPrerequisites, aborted, wrongPosition, underfunded, wrongAsset, noRoundTrip, incomplete])
-      expect(ledgerNotification(unresolved)?.category).toBe('walletProtocol');
-  });
-
   it('keeps an option funding request pending, then emits its activated position once across projection generations', async () => {
     const option = optionEvent(); const pending = structuredClone(option); pending.settlement!.status = 'incomplete'; pending.movements.pop();
     let response = page([pending]);
@@ -149,26 +92,13 @@ describe('durable authoritative settlement polling', () => {
     response = page([{ ...option, id: 'merged-option-event' }]); response.coverage.generation = randomUUID(); await worker.pollWallet(job);
     const activity = (await notices()).filter(notice => notice.category === 'activity');
     expect(activity).toHaveLength(1); expect(activity[0]).toMatchObject({ title: 'Option purchase confirmed' });
-    expect(activity[0]?.evidence.settlement).toMatchObject({ factory: pool, seriesId: '7', positionId: '3', notionalRaw: '10000' });
+    expect(activity[0]?.evidence.settlement).toMatchObject({ seriesId: '7', positionId: '3', currentOptions: { rightAcquiredRaw: '10000' } });
   });
 
-  it('requires identified DLMM settlement and real asset legs, including minted/burned LP position evidence', () => {
-    const swap = event();
-    expect(ledgerNotification(swap)?.title).toBe('Swap confirmed');
-    for (const incomplete of [event({ settlement: undefined }), event({ movements: [swap.movements[0]!] }),
-      event({ settlement: { ...swap.settlement!, status: 'incomplete' } }),
-      event({ settlement: { ...swap.settlement!, protocol: 'jetton' } })]) {
-      expect(ledgerNotification(incomplete)?.category).toBe('walletProtocol');
-    }
-    for (const operation of ['lp_deposit', 'lp_withdraw'] as const) {
-      const deposit = operation === 'lp_deposit';
-      const projected = event({ kind: operation, settlement: { ...swap.settlement!, operation }, movements: [
-        { ...swap.movements[0]!, direction: deposit ? 'out' : 'in' },
-        { direction: deposit ? 'in' : 'out', amountRaw: '100000000000000001', asset: { kind: 'lp_position', id: `testnet:lp:${pool}:0`, pool } },
-      ] });
-      if (deposit) expect(ledgerNotification(projected)?.title).toBe('Liquidity deposit confirmed');
-      else expect(ledgerNotification(projected)).toBeNull(); // Aggregate cash and shares cannot replace canonical withdrawal delivery/finalization proof.
-    }
+  it('refuses current DLMM completion without its cash records', () => {
+    const swap = event(); expect(ledgerNotification(swap)?.title).toBe('Swap confirmed');
+    expect(ledgerNotification(event({ movements: [swap.movements[0]!] }))).toBeNull();
+    expect(ledgerNotification(event({ settlement: { ...swap.settlement!, status: 'incomplete' } }))).toBeNull();
     expect(ledgerNotification(event({ status: 'pending' }))).toBeNull();
     expect(ledgerNotification(event({ status: 'failed' }))?.title).toBe('Wallet transaction failed');
   });
@@ -218,7 +148,7 @@ describe('durable authoritative settlement polling', () => {
     const urls: URL[] = [];
     const worker = polling(vi.fn(async input => { urls.push(new URL(String(input))); return new Response(JSON.stringify(response)); }));
     await worker.pollWallet(job);
-    expect((await notices())[0]?.category).toBe('walletProtocol');
+    expect(await notices()).toHaveLength(0);
     expect(await store.checkpoint(checkpoint)).toMatchObject({ afterRevision: String(revision), cursor: null });
     const later = Date.now() + 600_000; vi.spyOn(Date, 'now').mockReturnValue(later);
     job = (await store.lease('later-poll-worker', 10)).find(item => item.id === job.id)!;
@@ -261,7 +191,7 @@ describe('durable authoritative settlement polling', () => {
     const worker = polling(vi.fn(async () => new Response(JSON.stringify(page()))), push);
     await worker.pollWallet(job);
     const [notice] = await notices();
-    expect(notice).toMatchObject({ category: 'activity', href: `/wallet?tx=${encodeURIComponent(`123:${hash}`)}`, readAt: null });
+    expect(notice).toMatchObject({ category: 'activity', href: `/wallet?tx=${encodeURIComponent(event().txId)}`, readAt: null });
     expect(notice?.evidence.movements).toMatchObject([{ amountRaw: '100000000000000001' }, { amountRaw: '95000000000000007' }]);
     await worker.tick();
     expect((await db.query<{ state: string }>("SELECT state FROM platform_jobs WHERE kind='deliver_push'")).rows[0]?.state).toBe('ready');
