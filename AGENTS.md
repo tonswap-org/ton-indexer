@@ -55,6 +55,14 @@ mounts are exactly `/api/indexer`; responses and optional request fences bind
 below do not authorize old decoders for the fresh native release. Current product
 bindings are qualified by their accepted original-source and native evidence.
 
+The standalone platform service validates the complete current native manifest
+before deriving DEX prices: T3Hub, explicit token code pins, spot wallet profiles,
+vendor assets, campaign/supply and unique keeper identity. Keep its strict schema
+aligned with the indexer's current manifest; no T3Root or old field shapes.
+Run `npm --prefix services/platform run verify` after changing these bindings.
+The retained native fixture and its synthetic testnet startup translation prove
+schema compatibility only, never public deployment or price readiness.
+
 Current open-order discovery uses original authenticated factory and child
 transaction boundaries plus exact same-head account envelopes. Durable snapshots
 and bounded cursors preserve one release and masterchain boundary; only

@@ -78,7 +78,19 @@ FX quote: `{symbol,rate,observedAt,observationDate,requestedDate,source,provider
 
 Current token prices come only from the manifest-bound TONSwap DEX. `GET /v1/prices?network=testnet&assets=<canonical roots>` returns `currency:'T3'`, the exact `quoteAssetId`, release identity and per-asset decimal prices with `source:'tonswap-dex'`. A single current-head indexer read verifies the release, deployed pool/root code hashes, token precision, pool configuration, active-bin Q64 price and usable liquidity. Evidence retains the raw Q64 value, exact ratio, head and separate last market activity timestamp. These are indicative pool-state prices, not completed trades or guaranteed execution amounts. A head older than two minutes or mismatched evidence cannot admit a current price. No external current-price requests or old external spot-cache fallback exist.
 
-The r2 release contains USDT/T3 and USDC/T3 pools. These testnet roots do not establish USD value. Monetary USD fields stay null; the `dex` member carries T3 quotes separately. GRAM and other unconnected assets remain unavailable. A T3/T3 identity is not a market observation. Percentage changes remain unavailable without qualified history at the 24-hour boundary.
+Startup validates the complete current native manifest: `T3Hub`, each token's
+`masterCodeHash` and `walletCodeHash`, current spot wallet budgets, vendor assets,
+campaign, `supplyBase` and the unique `orderKeeper`. The canonical manifest hash
+covers all fields, including instruments the DEX display does not price. Token
+roots and code pins must match their declared roles; spot precision and profiles
+must agree with the token binding. Obsolete `T3Root`, global wallet templates and
+old manifest shapes are rejected. `INDEXER_URL_TESTNET` or `INDEXER_URL_MAINNET`
+must equal the manifest's canonical HTTPS `/api/indexer/v1` endpoint. Run
+`npm run verify` in this directory after changing these bindings. Native-fixture
+startup tests use explicitly synthetic testnet URLs and do not prove a deployed
+release or live price readiness.
+
+The manifest selects the available token/T3 pools. Testnet roots do not establish USD value. Monetary USD fields stay null; the `dex` member carries T3 quotes separately. GRAM and other unconnected assets remain unavailable. A T3/T3 identity is not a market observation. Percentage changes remain unavailable without qualified history at the 24-hour boundary.
 
 Target alert definitions must include `currency:'T3'`, canonical `quoteAssetId` and `releaseManifestHash` from the DEX catalogue. API admission, database storage, worker evaluation and notification text preserve that binding. Clients must display the denomination and send it explicitly; a previous USD-form request is rejected instead of silently becoming a T3 threshold. No current external listed-asset alerts are supported.
 
@@ -111,7 +123,7 @@ Every authenticated write sends the captured session's CSRF token and canonical 
 | `DELETE /v1/push/subscriptions/:id` | Retires one device; other devices keep receiving |
 | `POST /v1/push/test` | `{subscriptionId}` → `{queued:true,notificationId,delivery:'pending'}`; queued is not delivered |
 
-Current alert identities are `{kind:'ton',network:'testnet'|'mainnet',assetId:'native'|'<raw token root>'}`. Valid address presentations normalize to the canonical root. A rule must match the authenticated wallet network and the manifest's quote asset/release. Only manifest assets with qualified DEX liquidity support targets. Native GRAM remains identifiable but has no r2 price market.
+Current alert identities are `{kind:'ton',network:'testnet'|'mainnet',assetId:'native'|'<raw token root>'}`. Valid address presentations normalize to the canonical root. A rule must match the authenticated wallet network and the manifest's quote asset/release. Only manifest assets with qualified DEX liquidity support targets. Native GRAM remains identifiable but has no configured token/T3 price market.
 
 Target rules require a positive decimal-string T3 threshold and an above/below direction. The catalogue and saved rules expose `capabilities:{target,percent}`. Enabling a rule requires a fresh, correctly scoped DEX observation. Percentage rules remain unsupported until qualified 24-hour observations exist; no percentage is synthesized from mismatched snapshots.
 

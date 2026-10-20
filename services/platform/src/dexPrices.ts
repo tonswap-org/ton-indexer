@@ -41,18 +41,45 @@ export interface DexPriceResponse {
 const digest = z.string().regex(HASH);
 const address = z.string().regex(RAW_ADDRESS).refine(value => value !== `0:${'0'.repeat(64)}`);
 const symbol = z.string().regex(/^[A-Z0-9_.$-]{1,32}$/);
-// Read the release format directly; its canonical hash includes instruments we do not price.
+// Validate the complete current native format before deriving any display binding.
+const roles = ['Governance', 'USDT', 'USDC', 'KUSD', 'T3Hub', 'Treasury', 'GasVault', 'BuybackExecutor', 'FeeRouter',
+  'DlmmPoolFactory', 'SwapCoordinator', 'SpotOrderFactory', 'EmissionsSplitter', 'ReferralRegistry', 'SaleFactory',
+  'RiskVault', 'PerpsEngine', 'OptionVault', 'OptionFactory', 'OptionSeriesManager', 'CoverVault', 'ParisianPolicyManager',
+  'CoverAutomationUpkeep', 'GenesisDistributor', 'TSMinter', 'MerkleClaim', 'Remint', 'TestnetFaucet'] as const;
+const templates = ['T3Wallet', 'T3RecoveryProof', 'JettonV21Wallet', 'DlmmPool', 'SpotOrder', 'ShoutOption',
+  'OutperformanceOption', 'SaleFixed', 'SaleBonding', 'SaleAuction', 'VestingVault', 'LpVault', 'JettonV21Minter'] as const;
+const uint = (bits: number, minimum = 0) => z.number().int().min(minimum).max(2 ** bits - 1);
+const atomic = z.string().regex(/^(0|[1-9][0-9]*)$/);
+const asset = z.object({ path: z.string(), sha256: digest, bytes: z.number().int().min(1).max(512 * 1024 * 1024) }).strict();
+const validAssetPath = (value: z.infer<typeof asset>) =>
+  value.path === `release-assets/${value.sha256}.json` || value.path === `release-assets/${value.sha256}.boc`;
+const releaseAsset = asset.refine(validAssetPath);
+const executableAsset = asset.extend({ codeHash: digest }).refine(validAssetPath);
+const walletBudget = z.object({ senderGas: uint(32, 10000), walletBounceGas: uint(32).max(500000), burnWalletGas: uint(32, 1).max(2000000),
+  smallPayloadCells: uint(16, 1), largeWalletGas: uint(32, 1).max(2000000), largeSenderGas: uint(32, 1),
+  rentSeconds: uint(32, 1), rentBits: uint(32, 1), rentCells: uint(16, 1), initBits: uint(32, 1), initCells: uint(16, 1),
+  initCopies: uint(8, 1).max(4), transferBits: uint(16, 880), transferCells: uint(8, 1), transferCopies: uint(8, 3).max(8),
+  creditProtection: z.boolean() }).strict();
 const manifestSchema = z.object({
   schema: z.literal('tonswap-release-v1'), network: z.enum(['ton:testnet', 'ton:mainnet']), globalId: z.number().int(),
   releaseId: z.string().regex(/^[a-z]+-[A-Za-z0-9._-]+-[0-9a-f]{12}$/), createdAt: z.string().datetime(),
   source: z.object({ contracts: z.string().regex(/^[0-9a-f]{40}$/), build: digest }).strict(),
   services: z.object({ indexer: z.string().url(), tonRpc: z.string().url(), platform: z.string().url() }).strict(),
-  contracts: z.record(z.string(), z.object({ address, codeHash: digest }).strict()),
-  templates: z.record(z.string(), digest),
-  tokens: z.array(z.object({ symbol, root: address, decimals: z.number().int().min(0).max(18) }).strict()).min(1).max(100),
+  contracts: z.partialRecord(z.enum(roles), z.object({ address, codeHash: digest }).strict()),
+  templates: z.record(z.enum(templates), digest),
+  tokens: z.array(z.object({ symbol, root: address, decimals: uint(5).max(18), masterCodeHash: digest, walletCodeHash: digest }).strict()).min(1).max(100),
+  vendor: z.object({ stablecoin: z.object({ provenance: releaseAsset, minter: executableAsset, wallet: executableAsset }).strict() }).strict(),
+  campaign: z.object({ id: atomic.refine(value => BigInt(value) < 1n << 256n), root: digest,
+    count: z.number().int().min(1).max(2 ** 24), total: atomic.refine(value => BigInt(value) > 0n && BigInt(value) < 1n << 120n),
+    start: uint(32), leaves: releaseAsset, proofs: releaseAsset }).strict(),
+  supplyBase: atomic, orderKeeper: z.object({ address }).strict(),
   spotMarkets: z.array(z.object({ symbol, pool: address, binSpacing: z.number().int().min(1).max(0x7fffffff),
-    feePips: z.number().int().min(0).max(0xffffffff) }).strict()).min(1).max(100),
-  perpsMarkets: z.array(z.unknown()), options: z.array(z.unknown()), manifestHash: digest,
+    feePips: uint(32), xDecimals: uint(5).max(18), walletGasX: uint(32, 10000).max(500000),
+    walletGramX: atomic.refine(value => BigInt(value) <= 500000000n), walletBudgetX: walletBudget }).strict()).min(1).max(100),
+  perpsMarkets: z.array(z.object({ marketId: uint(32, 1), symbol, pool: address }).strict()),
+  options: z.array(z.object({ templateId: uint(32, 1), kind: z.enum(['shout', 'outperformance']), symbol,
+    comparisonSymbol: symbol.optional(), seriesId: atomic.optional(), option: address.optional(), expiry: atomic.optional() }).strict()),
+  manifestHash: digest,
 }).strict();
 const stableJson = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -70,29 +97,53 @@ export function parseDexReleaseManifest(value: unknown): DexReleaseBinding {
   if (manifest.globalId !== (network === 'testnet' ? -3 : -239) ||
     !manifest.releaseId.endsWith(`-${manifest.source.build.slice(0, 12)}`)) throw new Error('DEX release identity is inconsistent.');
   const service = new URL(manifest.services.indexer);
-  if (service.protocol !== 'https:' || service.username || service.password || service.search || service.hash) {
-    throw new Error('DEX manifest indexer must be an HTTPS URL without credentials, query or fragment.');
+  for (const value of Object.values(manifest.services)) {
+    const url = new URL(value);
+    if (value !== value.trim() || url.username || url.password || url.search || url.hash ||
+      (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) {
+      throw new Error('DEX manifest services must be HTTPS or loopback URLs without credentials, query or fragment.');
+    }
   }
+  if (service.protocol !== 'https:' || manifest.services.indexer !== `${service.origin}/api/indexer`) {
+    throw new Error('DEX manifest indexer must use the canonical HTTPS /api/indexer mount.');
+  }
+  if (BigInt(manifest.supplyBase) > BigInt(manifest.campaign.total)) throw new Error('DEX release supplyBase exceeds its campaign.');
+  const contracts = Object.values(manifest.contracts);
   const unique = (values: string[]) => new Set(values).size === values.length;
+  const identities = [...contracts.map(contract => contract.address), manifest.orderKeeper.address,
+    ...manifest.spotMarkets.map(market => market.pool), ...manifest.options.flatMap(option => option.option ? [option.option] : [])];
   if (!unique(manifest.tokens.map(token => token.symbol)) || !unique(manifest.tokens.map(token => token.root)) ||
-    !unique(manifest.spotMarkets.map(market => market.symbol)) || !unique(manifest.spotMarkets.map(market => market.pool)) ||
-    !unique(Object.values(manifest.contracts).map(contract => contract.address))) throw new Error('DEX release contains duplicate identities.');
+    !unique(manifest.spotMarkets.map(market => market.symbol)) || !unique(identities)) throw new Error('DEX release contains duplicate identities.');
   const tokens = manifest.tokens.map(token => {
-    const contract = Object.values(manifest.contracts).find(contract => contract.address === token.root);
-    if (!contract) throw new Error('DEX token root has no release code binding.');
-    return { assetId: token.root, symbol: token.symbol, name: token.symbol, root: token.root, decimals: token.decimals, codeHash: contract.codeHash };
+    const role = token.symbol === 'T3' ? 'T3Hub' : token.symbol === 'TS' ? 'TSMinter' : token.symbol;
+    const contract = manifest.contracts[role as typeof roles[number]];
+    if (!contract || contract.address !== token.root || contract.codeHash !== token.masterCodeHash ||
+      (token.symbol === 'T3' && token.walletCodeHash !== manifest.templates.T3Wallet) ||
+      (token.symbol === 'TS' && (token.walletCodeHash !== manifest.templates.JettonV21Wallet || token.masterCodeHash !== manifest.templates.JettonV21Minter))) {
+      throw new Error('DEX token root or code pins do not match its current release role.');
+    }
+    return { assetId: token.root, symbol: token.symbol, name: token.symbol, root: token.root, decimals: token.decimals, codeHash: token.masterCodeHash };
   });
   const quote = tokens.find(token => token.symbol === 'T3');
-  if (!quote || manifest.contracts.T3Root?.address !== quote.root || !manifest.templates.DlmmPool) {
-    throw new Error('DEX release requires the canonical T3 root and DLMM pool template.');
-  }
+  if (!quote) throw new Error('DEX release requires the canonical T3Hub token.');
   const markets = manifest.spotMarkets.map(market => {
     const token = tokens.find(token => token.symbol === market.symbol);
-    if (!token || token === quote || tokens.some(token => token.root === market.pool) ||
-      Object.values(manifest.contracts).some(contract => contract.address === market.pool)) throw new Error('DEX market identity is invalid.');
+    const budget = market.walletBudgetX;
+    if (!token || token === quote || tokens.some(token => token.root === market.pool) || market.xDecimals !== token.decimals ||
+      budget.senderGas > market.walletGasX || budget.burnWalletGas < budget.senderGas || budget.largeSenderGas < budget.senderGas ||
+      budget.largeWalletGas < market.walletGasX || budget.largeSenderGas > budget.largeWalletGas) throw new Error('DEX market identity or wallet profile is invalid.');
     return { assetId: token.assetId, marketKey: `spot:${token.symbol}-T3`, address: market.pool,
-      codeHash: manifest.templates.DlmmPool!, binSpacing: market.binSpacing, feePips: market.feePips };
+      codeHash: manifest.templates.DlmmPool, binSpacing: market.binSpacing, feePips: market.feePips };
   });
+  if (!unique(manifest.perpsMarkets.map(market => String(market.marketId))) || manifest.perpsMarkets.some(market =>
+    manifest.spotMarkets.find(spot => spot.symbol === market.symbol)?.pool !== market.pool)) throw new Error('DEX release perps bindings are invalid.');
+  const series = manifest.options.flatMap(option => option.seriesId === undefined ? [] : [option.seriesId]);
+  if (!unique(series) || manifest.options.some(option => {
+    const listed = [option.seriesId, option.option, option.expiry].filter(value => value !== undefined).length;
+    return !manifest.spotMarkets.some(spot => spot.symbol === option.symbol) || (listed !== 0 && listed !== 3) ||
+      (option.kind === 'outperformance' ? option.comparisonSymbol === option.symbol ||
+        !manifest.spotMarkets.some(spot => spot.symbol === option.comparisonSymbol) : option.comparisonSymbol !== undefined);
+  })) throw new Error('DEX release option bindings are invalid.');
   return { network, releaseId: manifest.releaseId, manifestHash: manifest.manifestHash,
     indexerUrl: `${service.toString().replace(/\/$/, '')}/v1`, quoteAssetId: quote.assetId, quoteRoot: quote.root,
     quoteDecimals: quote.decimals, quoteCodeHash: quote.codeHash, tokens, markets };

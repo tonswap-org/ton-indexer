@@ -12,6 +12,13 @@ including errors and readiness, carries `x-tonswap-release` when the manifest is
 valid. Clients may send that header to reject a stale release with HTTP 409 before
 route work. CORS permits and exposes it.
 
+The separate platform service validates this same current manifest before
+deriving DEX market bindings, including token code pins, wallet profiles,
+vendor/campaign fields and the keeper identity. Its configured indexer URL must
+equal the manifest's `/api/indexer/v1` endpoint. Validate the standalone consumer
+with `npm --prefix services/platform run verify`; matching schema does not establish
+live chain or service readiness.
+
 `GET /api/indexer/v1/orders/open` returns a release-bound immutable snapshot of
 current `ACTIVE` and `EXECUTING` orders. Omit the first cursor; `limit` is 1–100
 (default 50) and must remain unchanged across pages. A cursor retains its original

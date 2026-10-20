@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { nativeLocalnetManifestText } from '../../../src/scripts/fixtures/runtimeManifest.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +8,7 @@ import { Address, beginCell } from '@ton/core';
 import { Decimal } from '../src/decimal.js';
 import { loadConfig } from '../src/config.js';
 import { DexPrices, dexQ64Ratio, loadDexReleaseManifest, parseDexReleaseManifest } from '../src/dexPrices.js';
-import { ASSET, NOW, POOL, ROOT_CODE, T3, dexConfig, dexFetcher, dexManifest, freshDexBody, signDexManifest, type FixtureCall } from './dexFixtures.js';
+import { ASSET, NOW, POOL, ROOT_CODE, T3, currentNativeDexManifest, dexConfig, dexFetcher, dexManifest, freshDexBody, signDexManifest, type FixtureCall } from './dexFixtures.js';
 
 const clock = () => new Date(NOW);
 const stack = (body: Record<string, any>, calls: FixtureCall[], method: string) => body.results[calls.findIndex(call => call.method === method)].stack;
@@ -18,7 +20,62 @@ describe('release-bound DEX configuration', () => {
   it('binds canonical roots, explicit decimals, pool code and release identity', () => {
     const binding = parseDexReleaseManifest(dexManifest());
     expect(binding).toMatchObject({ network: 'testnet', quoteAssetId: T3, quoteRoot: T3, quoteDecimals: 9,
-      indexerUrl: 'https://indexer.example.test/api/indexer-r2/v1', markets: [{ assetId: ASSET, marketKey: 'spot:USDT-T3', address: POOL }] });
+      indexerUrl: 'https://indexer.example.test/api/indexer/v1', markets: [{ assetId: ASSET, marketKey: 'spot:USDT-T3', address: POOL }] });
+  });
+  it('loads the complete native schema through startup configuration with synthetic testnet services', () => {
+    // Exact producer bytes remain localnet sandbox evidence, not a deployed r4 claim.
+    expect(createHash('sha256').update(nativeLocalnetManifestText).digest('hex')).toBe('d6d327121711c74450cf70bcafddbb5769503f2707adcd4ccc6904ddcd141fea');
+    const original = JSON.parse(nativeLocalnetManifestText);
+    expect(signDexManifest(original).manifestHash).toBe(original.manifestHash);
+    const manifest = currentNativeDexManifest();
+    for (const field of ['contracts', 'templates', 'tokens', 'vendor', 'campaign', 'supplyBase', 'orderKeeper', 'spotMarkets', 'perpsMarkets', 'options']) {
+      expect(manifest[field]).toEqual(original[field]);
+    }
+    const directory = mkdtempSync(join(tmpdir(), 'tonswap-current-manifest-test-')); directories.push(directory);
+    const path = join(directory, 'release-manifest.json'); writeFileSync(path, JSON.stringify(manifest));
+    const configuration = loadConfig({ DATABASE_URL: 'postgres://test/unused', DATA_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64'),
+      APP_ORIGIN: 'https://app.example.test', PLATFORM_URL: manifest.services.platform,
+      INDEXER_URL_TESTNET: `${manifest.services.indexer}/v1`, INDEXER_RELEASE_MANIFEST: path });
+    expect(configuration.dexRelease).toMatchObject({ manifestHash: manifest.manifestHash,
+      quoteRoot: manifest.contracts.T3Hub.address, quoteCodeHash: manifest.contracts.T3Hub.codeHash });
+    expect(configuration.dexRelease!.tokens.map(token => token.codeHash)).toEqual(manifest.tokens.map((token: any) => token.masterCodeHash));
+    expect(configuration.dexRelease!.markets.map(market => market.codeHash)).toEqual(manifest.spotMarkets.map(() => manifest.templates.DlmmPool));
+    expect(() => parseDexReleaseManifest(original)).toThrow();
+  });
+  it.each([
+    ['obsolete T3Root role', (m: any) => { m.contracts.T3Root = m.contracts.T3Hub; delete m.contracts.T3Hub; }],
+    ['obsolete global wallet template', (m: any) => { m.templates.JettonWallet = m.templates.JettonV21Wallet; }],
+    ['missing token master pin', (m: any) => { delete m.tokens[0].masterCodeHash; }],
+    ['missing token wallet pin', (m: any) => { delete m.tokens[0].walletCodeHash; }],
+    ['mismatched token master pin', (m: any) => { m.tokens[0].masterCodeHash = 'f'.repeat(64); }],
+    ['mismatched T3 wallet pin', (m: any) => { m.tokens.find((t: any) => t.symbol === 'T3').walletCodeHash = 'f'.repeat(64); }],
+    ['mismatched TS wallet pin', (m: any) => { m.tokens.find((t: any) => t.symbol === 'TS').walletCodeHash = 'f'.repeat(64); }],
+    ['mismatched TS master template', (m: any) => { m.templates.JettonV21Minter = 'f'.repeat(64); }],
+    ['missing vendor', (m: any) => { delete m.vendor; }],
+    ['unbound vendor asset path', (m: any) => { m.vendor.stablecoin.wallet.sha256 = 'f'.repeat(64); }],
+    ['unknown vendor field', (m: any) => { m.vendor.stablecoin.wallet.unreviewed = true; }],
+    ['missing campaign', (m: any) => { delete m.campaign; }],
+    ['zero campaign total', (m: any) => { m.campaign.total = '0'; }],
+    ['campaign id overflow', (m: any) => { m.campaign.id = (1n << 256n).toString(); }],
+    ['missing supplyBase', (m: any) => { delete m.supplyBase; }],
+    ['excess supplyBase', (m: any) => { m.supplyBase = (BigInt(m.campaign.total) + 1n).toString(); }],
+    ['missing keeper', (m: any) => { delete m.orderKeeper; }],
+    ['null keeper', (m: any) => { m.orderKeeper = null; }],
+    ['obsolete keeper tuning', (m: any) => { m.orderKeeper.maxSteps = 1; }],
+    ['keeper aliases a contract', (m: any) => { m.orderKeeper.address = m.contracts.T3Hub.address; }],
+    ['keeper aliases a pool', (m: any) => { m.orderKeeper.address = m.spotMarkets[0].pool; }],
+    ['missing wallet profile', (m: any) => { delete m.spotMarkets[0].walletBudgetX; }],
+    ['incorrect market precision', (m: any) => { m.spotMarkets[0].xDecimals = 18; }],
+    ['inconsistent sender budget', (m: any) => { m.spotMarkets[0].walletBudgetX.senderGas = m.spotMarkets[0].walletGasX + 1; }],
+    ['unbounded wallet rent', (m: any) => { m.spotMarkets[0].walletBudgetX.rentSeconds = 2 ** 32; }],
+    ['excess wallet attachment', (m: any) => { m.spotMarkets[0].walletGramX = '500000001'; }],
+    ['unbound perps pool', (m: any) => { m.perpsMarkets[0].pool = m.orderKeeper.address; }],
+    ['invalid option comparison', (m: any) => { m.options[0].kind = 'outperformance'; m.options[0].comparisonSymbol = m.options[0].symbol; }],
+    ['partial listed option', (m: any) => { m.options[0].seriesId = '1'; delete m.options[0].option; }],
+    ['obsolete indexer mount', (m: any) => { m.services.indexer += '-r2'; }],
+  ])('rejects current-schema %s even with a recomputed hash', (_label, change) => {
+    const manifest = currentNativeDexManifest(); change(manifest);
+    expect(() => parseDexReleaseManifest(signDexManifest(manifest))).toThrow();
   });
   it('rejects a manifest whose contents changed after its hash was computed', () => {
     const manifest = dexManifest(); manifest.tokens[1].decimals = 6;
@@ -30,7 +87,7 @@ describe('release-bound DEX configuration', () => {
     ['duplicate token symbol', (m: any) => { m.tokens[1].symbol = 'T3'; }],
     ['duplicate token root', (m: any) => { m.tokens[1].root = T3; }],
     ['unbound root', (m: any) => { delete m.contracts.USDT; }],
-    ['wrong T3 role', (m: any) => { m.contracts.T3Root.address = `0:${'4'.repeat(64)}`; }],
+    ['wrong T3 role', (m: any) => { m.contracts.T3Hub.address = `0:${'4'.repeat(64)}`; }],
     ['missing pool template', (m: any) => { delete m.templates.DlmmPool; }],
     ['self-market', (m: any) => { m.spotMarkets[0].symbol = 'T3'; }],
     ['pool address aliases token root', (m: any) => { m.spotMarkets[0].pool = ASSET; }],
