@@ -7,7 +7,7 @@ import { Providers } from '../src/providers.js';
 import { PushSender } from '../src/push.js';
 import { Worker } from '../src/worker.js';
 import { address, database, session } from './helpers.js';
-import { ASSET, T3, dexConfig, freshDexBody, type FixtureCall } from './dexFixtures.js';
+import { ASSET, T3, dexConfig, freshDexBody, oracleFixture, type FixtureCall } from './dexFixtures.js';
 let db: Database;
 beforeAll(async () => { db = await database(); });
 afterAll(async () => { await db.close(); });
@@ -24,13 +24,13 @@ it('resolves witnessed DEX prices through a leased scan into a durable scoped in
     thresholdPercent: null, direction: 'above', enabled: true });
   const rule = await store.saveRule(current, target(token));
   await store.saveRule(mainnet, target({ ...token, network: 'mainnet' }));
-  let observed = Date.now() - 3_000, q64 = 1n << 64n;
+  let observed = Date.now() - 3_000, priceE9 = 1_000_000_000n;
   const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     expect(new URL(String(url)).hostname).toBe('indexer.example.test');
     const calls: FixtureCall[] = JSON.parse(String(init?.body)).calls;
     const body = freshDexBody(calls, new Date(observed + 1_000));
-    const active = body.results.find((_: unknown, index: number) => calls[index]?.method === 'active_price_q64');
-    active.stack[1][1] = q64.toString();
+    const active = body.results.find((_: unknown, index: number) => calls[index]?.method === 'oracle_evidence');
+    active.stack[0][1].bytes = oracleFixture({servedAt:body.readContext.head.utime,at:body.readContext.head.utime,spot:priceE9,short:priceE9,medium:priceE9,long:priceE9});
     return new Response(JSON.stringify(body));
   });
   const providers = new Providers(db, cfg, fetcher);
@@ -42,13 +42,13 @@ it('resolves witnessed DEX prices through a leased scan into a durable scoped in
   expect((await store.rules(current)).find(value => value.id === rule.id)?.monitoring).toMatchObject({ state: 'monitoring', source: 'tonswap-dex' });
   expect((await store.rules(mainnet))[0]?.monitoring.state).toBe('unavailable');
 
-  observed += 1_000; q64 = 1n << 63n;
+  observed += 1_000; priceE9 = 2_000_000_000n;
   const replacement = new Worker(cfg, new Store(db, cfg), providers, new PushSender(cfg), fetcher);
   await replacement.scanPrices(job);
   const events = (await store.inbox(current, 100)).notifications;
   expect(events).toHaveLength(1);
   expect(events[0]?.evidence).toMatchObject({ asset: token, price: '2', currency: 'T3', quoteAssetId: T3, change24h: null,
-    source: 'tonswap-dex', valuationEvidence: { method: 'active_pool_q64', marketKey: 'spot:USDT-T3', release: { manifestHash: cfg.dexRelease!.manifestHash } } });
+    source: 'tonswap-dex', valuationEvidence: { method: 'pool_twap_median_v1', marketKey: 'spot:USDT-T3', release: { manifestHash: cfg.dexRelease!.manifestHash } } });
   expect((await store.inbox(mainnet, 100)).notifications).toHaveLength(0);
   await replacement.scanPrices(job);
   expect((await store.inbox(current, 100)).notifications.map(event => event.id)).toEqual(events.map(event => event.id));

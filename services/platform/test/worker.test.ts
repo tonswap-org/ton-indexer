@@ -1,4 +1,4 @@
-import { dexDefinition, dexQuote, native, release } from './dexAlertFixtures.js';
+import { dexDefinition, dexQuote, otherToken, release } from './dexAlertFixtures.js';
 import { applicationServerKey, pushConfig } from './helpers.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Database } from '../src/db.js';
@@ -40,12 +40,12 @@ describe('verified notification workers', () => {
     expect((await store.rules(current))[0]?.lastDirection).toBe('up');
   });
   it('supports exact decimal target crossings and rejects stale observations', async () => {
-    const rule = await store.saveRule(current, dexDefinition({ asset: native, targetPrice: '100.000000000000000001' }));
-    const nativeQuote = (hour: number, price: string, stale = false) => dexQuote({ asset: native, price, stale }, Date.UTC(2026, 0, 1, hour));
-    await applyPrice(rule.id, nativeQuote(0, '100'));
-    await applyPrice(rule.id, nativeQuote(1, '100.000000000000000002', true));
+    const rule = await store.saveRule(current, dexDefinition({ asset: otherToken, targetPrice: '100.000000000000000001' }));
+    const otherQuote = (hour: number, price: string, stale = false) => dexQuote({ asset: otherToken, price, stale }, Date.UTC(2026, 0, 1, hour));
+    await applyPrice(rule.id, otherQuote(0, '100'));
+    await applyPrice(rule.id, otherQuote(1, '100.000000001', true));
     expect((await store.rules(current)).find(item => item.id === rule.id)?.lastDirection).toBe('inside');
-    await applyPrice(rule.id, nativeQuote(2, '100.000000000000000002'));
+    await applyPrice(rule.id, otherQuote(2, '100.000000001'));
     expect((await store.rules(current)).find(item => item.id === rule.id)?.lastDirection).toBe('up');
   });
   it('never turns a successful wallet request or requested minimum into a product fill', () => {

@@ -4,7 +4,8 @@ import { AlertObservations } from '../src/alertObservations.js';
 import { DexPrices } from '../src/dexPrices.js';
 import { assessPriceObservation } from '../src/priceMonitoring.js';
 import type { AlertAsset, AlertQuote } from '../src/types.js';
-import { dexConfig, dexQuote, native, token, quoteRoot, release } from './dexAlertFixtures.js';
+import { dexConfig, dexQuote, otherToken, token, quoteRoot, release } from './dexAlertFixtures.js';
+import { poolIdFixture } from './dexFixtures.js';
 const now = Date.parse('2026-10-09T06:00:00.000Z');
 function setup(change: Record<string, unknown> = {}, overrides: Partial<AlertQuote> = {}) {
   const cfg = dexConfig({ networks: ['mainnet', 'testnet'] });
@@ -20,14 +21,14 @@ function setup(change: Record<string, unknown> = {}, overrides: Partial<AlertQuo
   return { cfg, dex, prices, forbidden, observations: new AlertObservations(cfg, dex, () => new Date(now)) };
 }
 describe('canonical current DEX alert observations', () => {
-  it('captures native and token T3 prices without listed provider calls or percentage fabrication', async () => {
+  it('captures two token T3 prices without listed provider calls or percentage fabrication', async () => {
     const { observations, prices, forbidden } = setup();
-    const result = await observations.prices([native, token, { kind: 'listed', coinGeckoId: 'bitcoin' }]);
-    expect(prices).toHaveBeenCalledExactlyOnceWith('testnet', ['native', token.assetId]);
+    const result = await observations.prices([otherToken, token, { kind: 'listed', coinGeckoId: 'bitcoin' }]);
+    expect(prices).toHaveBeenCalledExactlyOnceWith('testnet', [otherToken.assetId, token.assetId]);
     expect(forbidden).not.toHaveBeenCalled();
     expect(result).toMatchObject({ currency: 'T3', quoteAssetId: quoteRoot });
     for (const value of result.quotes.slice(0, 2)) expect(value).toMatchObject({ currency: 'T3', quoteAssetId: quoteRoot,
-      source: 'tonswap-dex', status: 'available', change24h: null, price: '100.000000000000000001' });
+      source: 'tonswap-dex', status: 'available', change24h: null, price: '100.000000001' });
     expect(result.quotes[2]).toMatchObject({ status: 'unavailable', issue: 'dex_asset_required', price: null });
     expect(assessPriceObservation(token, 'target', result.quotes[1]!, 'T3', now, quoteRoot).outcome).toBe('observed');
     expect(assessPriceObservation(token, 'percent', result.quotes[1]!, 'T3', now, quoteRoot).issue).toBe('change_unavailable');
@@ -60,8 +61,19 @@ describe('canonical current DEX alert observations', () => {
       expect((await observations.prices([token])).quotes[0]).toMatchObject({ status: 'unavailable', issue: 'quote_scope_invalid' });
     }
   });
+  it('rejects an altered current pool profile or peer inside a matching release envelope', async () => {
+    const value = dexQuote({ asset: token }, now);
+    const pool = value.evidence.pool as Record<string, unknown>;
+    for (const changed of [
+      { ...pool, factory: quoteRoot },
+      { ...pool, idBoc: poolIdFixture({ ...release.markets[1], xMaster: token.assetId, walletGasX: 30001 }) },
+    ]) {
+      const { observations } = setup({}, { evidence: { ...value.evidence, pool: changed } });
+      expect((await observations.prices([token])).quotes[0]).toMatchObject({ status: 'unavailable', issue: 'quote_scope_invalid' });
+    }
+  });
   it('retains explicit stale evidence and original time without substituting an external observation', async () => {
-    const observedAt = new Date(now - 120001).toISOString();
+    const observedAt = new Date(now - 31000).toISOString();
     const { observations } = setup({}, { observedAt });
     expect((await observations.prices([token])).quotes[0]).toMatchObject({ observedAt, status: 'available', stale: true, issue: 'quote_stale' });
   });

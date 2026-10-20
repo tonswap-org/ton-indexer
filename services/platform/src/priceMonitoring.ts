@@ -1,4 +1,4 @@
-import { DEX_PRICE_MAX_AGE_MS, DEX_PRICE_FUTURE_SKEW_MS } from './dexPrices.js';
+import { DEX_PRICE_MAX_AGE_MS, DEX_PRICE_FUTURE_SKEW_MS, decodeDexOracle } from './dexPrices.js';
 import { Decimal } from './decimal.js';
 import { alertAssetKey } from './alertAssets.js';
 import type { AlertAsset, AlertQuote, AlertQuoteSource, PriceRuleMonitoring } from './types.js';
@@ -26,27 +26,36 @@ export function assessPriceObservation(asset: AlertAsset, kind: 'percent' | 'tar
   if (quote.currency !== 'T3' || !address(expectedQuoteAssetId) || quote.quoteAssetId !== expectedQuoteAssetId)
     return result('unavailable', 'currency_mismatch');
   const evidence = quote.evidence, release = object(evidence.release), roots = object(evidence.rootBindings),
-    ratio = object(evidence.exactRatio), head = object(evidence.head);
-  const sourceValid = quote.source === 'tonswap-dex' && evidence.method === 'active_pool_q64' &&
+    ratio = object(evidence.exactRatio), head = object(evidence.head), oracle = object(evidence.oracle), pool = object(evidence.pool);
+  const sourceValid = quote.source === 'tonswap-dex' && evidence.method === 'pool_twap_median_v1' &&
     evidence.precision === 'indicative_display' && evidence.network === asset.network && evidence.assetId === asset.assetId &&
     evidence.currency === 'T3' && evidence.quoteAssetId === expectedQuoteAssetId &&
     typeof release.releaseId === 'string' && release.releaseId.length > 0 && hash(release.manifestHash) &&
     typeof evidence.marketKey === 'string' && evidence.marketKey.length > 0 && address(evidence.marketAddress) && hash(evidence.codeHash) &&
-    ['ton-indexer/http4', 'ton-indexer/lite'].includes(String(evidence.source)) &&
-    address(roots.assetRoot) && (asset.assetId === 'native' || roots.assetRoot === asset.assetId) &&
+    evidence.source === 'ton-indexer/lite' &&
+    address(roots.assetRoot) && roots.assetRoot === asset.assetId &&
     roots.quoteRoot === expectedQuoteAssetId && hash(roots.assetCodeHash) && hash(roots.quoteCodeHash) &&
-    positiveInteger(ratio.numerator) && positiveInteger(ratio.denominator) && positiveInteger(evidence.q64) &&
-    positiveInteger(evidence.executableDepthT3Raw) && positiveInteger(evidence.executableDepthAssetRaw) &&
-    Number.isSafeInteger(evidence.activeBin) && Number.isSafeInteger(head.workchain) &&
-    typeof head.shard === 'string' && head.shard.length > 0 && Number.isSafeInteger(head.seqno) && Number(head.seqno) >= 0 &&
+    positiveInteger(ratio.numerator) && positiveInteger(ratio.denominator) && positiveInteger(oracle.medianPriceE9) &&
+    typeof oracle.evidenceBoc === 'string' && JSON.stringify(oracle.windowsSeconds) === '[300,1800,7200]' &&
+    typeof pool.idBoc === 'string' && [pool.factory,pool.feeSink,pool.treasury,pool.t3Master].every(address) &&
+    pool.t3Master === expectedQuoteAssetId && pool.flags === 1 && pool.ready === true &&
+    Number.isSafeInteger(pool.activeBin) && Number(pool.activeBin) >= -2147483648 && Number(pool.activeBin) <= 2147483647 &&
+    head.workchain === -1 && head.shard === '-9223372036854775808' && Number.isSafeInteger(head.seqno) && Number(head.seqno) > 0 &&
+    Number.isSafeInteger(head.utime) && Number(head.utime) > 0 && Number(head.utime) <= 0xffffffff &&
     hash(head.rootHashHex) && hash(head.fileHashHex);
   if (!sourceValid) return result('unavailable', 'quote_scope_invalid');
   const observed = quote.observedAt === null ? NaN : Date.parse(quote.observedAt);
   const queried = typeof evidence.queriedAt === 'string' ? Date.parse(evidence.queriedAt) : NaN;
   if (!Number.isFinite(observed) || observed > now + DEX_PRICE_FUTURE_SKEW_MS || evidence.observedAt !== quote.observedAt ||
-      !Number.isFinite(queried) || queried > now + DEX_PRICE_FUTURE_SKEW_MS || observed > queried + DEX_PRICE_FUTURE_SKEW_MS)
+      !Number.isFinite(queried) || queried > now + DEX_PRICE_FUTURE_SKEW_MS || observed > queried + DEX_PRICE_FUTURE_SKEW_MS ||
+      observed !== Number(head.utime) * 1000 || queried - observed > PRICE_OBSERVATION_MAX_AGE_MS)
     return result('unavailable', 'observation_time_invalid');
   const observedAt = new Date(observed).toISOString();
+  try {
+    const decoded = decodeDexOracle(oracle.evidenceBoc);
+    if (decoded.servedAt !== BigInt(Number(head.utime)) || decoded.median.toString() !== oracle.medianPriceE9 ||
+        BigInt(ratio.numerator as string) * 1_000_000_000n !== BigInt(ratio.denominator as string) * decoded.median) throw Error();
+  } catch { return result('unavailable', 'quote_scope_invalid', observedAt); }
   try {
     if (quote.price === null || !new Decimal(quote.price).isFinite() || !new Decimal(quote.price).gt(0) ||
         !new Decimal(quote.price).eq(new Decimal(ratio.numerator as string).div(ratio.denominator as string))) throw Error();

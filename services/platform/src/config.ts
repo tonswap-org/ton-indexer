@@ -68,7 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       return value ? [[network, value]] : [];
     })),
     pollSeconds: integer('POLL_SECONDS', 30, 10, 3600),
-    priceSeconds: integer('PRICE_SECONDS', 120, 60, 3600),
+    priceSeconds: integer('PRICE_SECONDS', 15, 15, 3600),
     workerConcurrency: integer('WORKER_CONCURRENCY', 4, 1, 16),
     retentionDays: integer('RETENTION_DAYS', 90, 7, 730), allowInsecureLocal,
     assetValuationPaths: valuationPathsSchema.parse(JSON.parse(env.ASSET_VALUATION_PATHS_JSON ?? '[]')),

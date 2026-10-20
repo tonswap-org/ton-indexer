@@ -5,10 +5,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Address, beginCell } from '@ton/core';
-import { Decimal } from '../src/decimal.js';
 import { loadConfig } from '../src/config.js';
-import { DexPrices, dexQ64Ratio, loadDexReleaseManifest, parseDexReleaseManifest } from '../src/dexPrices.js';
-import { ASSET, NOW, POOL, ROOT_CODE, T3, currentNativeDexManifest, dexConfig, dexFetcher, dexManifest, freshDexBody, signDexManifest, type FixtureCall } from './dexFixtures.js';
+import { DexPrices, dexTwapRatio, loadDexReleaseManifest, parseDexReleaseManifest } from '../src/dexPrices.js';
+import { ASSET, NOW, POOL, ROOT_CODE, T3, currentNativeDexManifest, dexConfig, dexFetcher, dexManifest, freshDexBody, oracleFixture, poolIdFixture, signDexManifest, type FixtureCall } from './dexFixtures.js';
 
 const clock = () => new Date(NOW);
 const stack = (body: Record<string, any>, calls: FixtureCall[], method: string) => body.results[calls.findIndex(call => call.method === method)].stack;
@@ -112,114 +111,119 @@ describe('release-bound DEX configuration', () => {
   });
 });
 
-describe('T3 quote arithmetic', () => {
-  it('inverts the pool price in both directions and scales atomic quantities before dividing', () => {
-    expect(dexQ64Ratio(2n << 64n, 9, 9)).toEqual({ numerator: '1', denominator: '2', price: '0.5' });
-    expect(dexQ64Ratio(1n << 63n, 9, 9)).toEqual({ numerator: '2', denominator: '1', price: '2' });
-    expect(dexQ64Ratio(2n << 64n, 6, 9)).toEqual({ numerator: '1', denominator: '2000', price: '0.0005' });
-    expect(dexQ64Ratio(2n << 64n, 9, 6)).toEqual({ numerator: '500', denominator: '1', price: '500' });
+describe('covered T3 TWAP arithmetic', () => {
+  it('uses whole-token E9 prices directly without inversion or token precision scaling', () => {
+    expect(dexTwapRatio(2_000_000_000n)).toEqual({ numerator: '2', denominator: '1', price: '2' });
+    expect(dexTwapRatio(500_000_000n)).toEqual({ numerator: '1', denominator: '2', price: '0.5' });
+    expect(dexTwapRatio(1_234_567_891n)).toEqual({ numerator: '1234567891', denominator: '1000000000', price: '1.234567891' });
   });
-  it('retains exact rational evidence when a decimal cannot terminate', () => {
-    const ratio = dexQ64Ratio(3n << 64n, 9, 9);
-    expect(ratio.numerator).toBe('1'); expect(ratio.denominator).toBe('3');
-    expect(ratio.price).toBe(`0.${'3'.repeat(80)}`);
-    expect(new Decimal(ratio.price).eq(new Decimal(ratio.numerator).div(ratio.denominator))).toBe(true);
-  });
-  it.each([0n, -1n, 1n << 128n])('rejects invalid Q64 %s', q64 => expect(() => dexQ64Ratio(q64, 9, 9)).toThrow());
+  it.each([0n, -1n, 999_999n, 1n << 120n])('rejects invalid oracle price %s', price => expect(() => dexTwapRatio(price)).toThrow());
 });
 
-describe('current DEX pool quote', () => {
-  it('uses one pinned readFresh batch and distinguishes fresh state from old market activity', async () => {
+describe('current covered DEX TWAP quote', () => {
+  const replaceOracle = (body: any, calls: FixtureCall[], values: Record<string, bigint | number>) => {
+    stack(body, calls, 'oracle_evidence')[0][1].bytes = oracleFixture(values);
+  };
+  it('uses only current getters at one pinned lite head and retains original oracle evidence', async () => {
     const fetcher = vi.fn(dexFetcher());
-    const prices = new DexPrices(dexConfig({ indexerApiKey: 'test-key' }), fetcher, clock);
-    const response = await prices.prices('testnet', [ASSET]);
+    const response = await new DexPrices(dexConfig({ indexerApiKey: 'test-key' }), fetcher, clock).prices('testnet', [ASSET]);
     expect(fetcher).toHaveBeenCalledTimes(1);
     const [url, init] = fetcher.mock.calls[0]!;
     expect(url).toBe(`${dexConfig().dexRelease!.indexerUrl}/readFresh`);
-    expect(init?.headers).toMatchObject({ authorization: 'Bearer test-key' });
+    expect(init?.headers).toMatchObject({ authorization: 'Bearer test-key', 'x-tonswap-release': dexConfig().dexRelease!.manifestHash });
     expect(init?.redirect).toBe('error');
-    expect(JSON.parse(String(init?.body)).calls).toHaveLength(8);
-    expect(response).toMatchObject({ network: 'testnet', currency: 'T3', quoteAssetId: T3,
-      release: { manifestHash: dexConfig().dexRelease!.manifestHash }, quotes: [{ assetId: ASSET, price: '1',
-        observedAt: '2026-10-09T06:59:59.000Z', source: 'tonswap-dex', status: 'available', stale: false, change24h: null,
-        evidence: { currency: 'T3', method: 'active_pool_q64', precision: 'indicative_display', source: 'ton-indexer/http4',
-          exactRatio: { numerator: '1', denominator: '1' }, lastMarketObservationAt: '2026-10-07T06:59:59.000Z',
-          executableDepthT3Raw: '10000000000000', executableDepthAssetRaw: '10000000000000' }, issues: [] }] });
-    expect(response.quotes[0]!.evidence.observedAt).toBe(response.quotes[0]!.observedAt);
+    const calls = JSON.parse(String(init?.body)).calls;
+    expect(calls).toHaveLength(5);
+    expect(calls.filter((call: any) => call.kind === 'getter')).toEqual([
+      { kind:'getter', address:POOL, method:'get_pool_info', stack:[] },
+      { kind:'getter', address:POOL, method:'oracle_evidence', stack:[['num','0']] },
+    ]);
+    expect(response.quotes[0]).toMatchObject({ assetId:ASSET, price:'1', observedAt:'2026-10-09T06:59:59.000Z', status:'available', stale:false,
+      evidence:{ method:'pool_twap_median_v1', precision:'indicative_display', source:'ton-indexer/lite',
+        exactRatio:{numerator:'1',denominator:'1'}, oracle:{evidenceBoc:oracleFixture(),windowsSeconds:[300,1800,7200],medianPriceE9:'1000000000'},
+        pool:{ idBoc:poolIdFixture(),ready:true,flags:1,activeBin:0 }, head:{utime:Math.floor(NOW.getTime()/1000)-1} } });
+    for (const retired of ['q64','lastMarketObservationAt','executableDepthT3Raw','executableDepthAssetRaw','perpsOracleSafetyAvailable'])
+      expect(response.quotes[0]!.evidence).not.toHaveProperty(retired);
   });
-  it('prices a nonunit live quote without treating a stablecoin symbol as a USD peg', async () => {
-    const response = await mutate((body, calls) => { stack(body, calls, 'active_price_q64')[1][1] = String(2n << 64n); });
-    expect(response.quotes[0]).toMatchObject({ price: '0.5', evidence: { exactRatio: { numerator: '1', denominator: '2' } } });
+  it('uses the median of covered windows, never the current spot or an assumed USD peg', async () => {
+    const response = await mutate((body,calls) => replaceOracle(body,calls,{spot:9_000_000_000n,short:3_000_000_000n,medium:1_000_000_000n,long:2_000_000_000n}));
+    expect(response.quotes[0]).toMatchObject({price:'2',evidence:{exactRatio:{numerator:'2',denominator:'1'},oracle:{medianPriceE9:'2000000000'}}});
     expect(JSON.stringify(response)).not.toContain('USD"');
   });
-  it('does not fabricate native, T3 identity or symbol-based prices and never contacts another provider', async () => {
-    const fetcher = vi.fn(dexFetcher());
-    const dex = new DexPrices(dexConfig(), fetcher, clock);
-    const response = await dex.prices('testnet', ['native', T3, 'tether']);
-    expect(fetcher).not.toHaveBeenCalled();
-    expect(response.quotes.every(quote => quote.price === null && quote.status === 'unavailable')).toBe(true);
-    expect(dex.catalogue('testnet')).toMatchObject([{ assetId: T3, priceConfigured: false }, { assetId: ASSET, priceConfigured: true }]);
+  it('does not fabricate native, T3 identity or symbol-based prices', async () => {
+    const fetcher = vi.fn(dexFetcher()), dex = new DexPrices(dexConfig(),fetcher,clock);
+    const response = await dex.prices('testnet',['native',T3,'tether']); expect(fetcher).not.toHaveBeenCalled();
+    expect(response.quotes.every(quote=>quote.price===null&&quote.status==='unavailable')).toBe(true);
+    expect(dex.catalogue('testnet')).toMatchObject([{assetId:T3,priceConfigured:false},{assetId:ASSET,priceConfigured:true}]);
     expect(dex.catalogue('mainnet')).toEqual([]);
   });
-  it('does not fetch when release configuration or network binding is absent', async () => {
-    const fetcher = vi.fn(dexFetcher());
-    for (const configuration of [dexConfig({ dexRelease: undefined }), dexConfig({ indexerUrls: {} })]) {
-      const dex = new DexPrices(configuration, fetcher, clock);
-      expect(dex.configured('testnet')).toBe(false);
-      expect((await dex.prices('testnet', [ASSET])).quotes[0]!.issues).toEqual(['dex_release_not_configured']);
+  it('does not fetch without current release and network configuration', async () => {
+    const fetcher=vi.fn(dexFetcher());
+    for(const config of [dexConfig({dexRelease:undefined}),dexConfig({indexerUrls:{}})]) {
+      const dex=new DexPrices(config,fetcher,clock); expect(dex.configured('testnet')).toBe(false);
+      expect((await dex.prices('testnet',[ASSET])).quotes[0]!.issues).toEqual(['dex_release_not_configured']);
     }
-    expect((await new DexPrices(dexConfig(), fetcher, clock).prices('mainnet', [ASSET])).quoteAssetId).toBe(null);
+    expect((await new DexPrices(dexConfig(),fetcher,clock).prices('mainnet',[ASSET])).quoteAssetId).toBe(null);
     expect(fetcher).not.toHaveBeenCalled();
   });
   it.each([
-    ['wrong network', (b: any) => { b.network = 'mainnet'; }, 'dex_release_mismatch'],
-    ['wrong release', (b: any) => { b.release.releaseId = 'old-release'; }, 'dex_release_mismatch'],
-    ['wrong manifest hash', (b: any) => { b.release.manifestHash = 'f'.repeat(64); }, 'dex_release_mismatch'],
-    ['missing release', (b: any) => { delete b.release; }, 'dex_release_mismatch'],
-    ['wrong result address', (b: any) => { b.results[2].address = ASSET; }, 'dex_result_identity_mismatch'],
-    ['missing result', (b: any) => { b.results.pop(); }, 'dex_result_identity_mismatch'],
-    ['inactive token', (b: any) => { b.results[1].account_state = 'frozen'; }, 'dex_account_inactive'],
-    ['changed quote-root code', (b: any) => { b.results[0].code_boc = beginCell().storeUint(4, 8).endCell().toBoc().toString('base64'); }, 'dex_code_hash_mismatch'],
-    ['changed pool code', (b: any) => { b.results[2].code_boc = ROOT_CODE.toBoc().toString('base64'); }, 'dex_code_hash_mismatch'],
-    ['provider origin changed', (b: any) => { b.readContext.source = 'cache'; }, 'dex_invalid_read_context'],
-    ['invalid head', (b: any) => { b.readContext.head.rootHashHex = 'invalid'; }, 'dex_invalid_read_context'],
-    ['old query', (b: any) => { b.readContext.queriedAt -= 121_000; }, 'dex_stale_state'],
-    ['future query', (b: any) => { b.readContext.queriedAt += 6_000; }, 'dex_future_timestamp'],
-  ])('fails closed for %s', async (_label, change, issue) => {
-    const response = await mutate(change);
-    expect(response.quotes[0]).toMatchObject({ price: null, observedAt: null, status: 'unavailable', issues: [issue], stale: issue === 'dex_stale_state' });
+    ['wrong network',(b:any)=>{b.network='mainnet';},'dex_release_mismatch'],
+    ['wrong release',(b:any)=>{b.release.releaseId='old';},'dex_release_mismatch'],
+    ['wrong hash',(b:any)=>{b.release.manifestHash='f'.repeat(64);},'dex_release_mismatch'],
+    ['wrong result address',(b:any)=>{b.results[2].address=ASSET;},'dex_result_identity_mismatch'],
+    ['missing result',(b:any)=>{b.results.pop();},'dex_result_identity_mismatch'],
+    ['frozen root',(b:any)=>{b.results[1].account_state='frozen';},'dex_account_inactive'],
+    ['wrong root code',(b:any)=>{b.results[0].code_boc=beginCell().storeUint(4,8).endCell().toBoc().toString('base64');},'dex_code_hash_mismatch'],
+    ['wrong pool code',(b:any)=>{b.results[2].code_boc=ROOT_CODE.toBoc().toString('base64');},'dex_code_hash_mismatch'],
+    ['retired http source',(b:any)=>{b.readContext.source='http4';},'dex_invalid_read_context'],
+    ['bad block hash',(b:any)=>{b.readContext.head.rootHashHex='invalid';},'dex_invalid_read_context'],
+    ['old query',(b:any)=>{b.readContext.queriedAt-=31000;},'dex_stale_state'],
+    ['future query',(b:any)=>{b.readContext.queriedAt+=6000;},'dex_future_timestamp'],
+    ['old head',(b:any)=>{b.readContext.head.utime-=31;},'dex_stale_state'],
+    ['future head',(b:any)=>{b.readContext.head.utime+=7;},'dex_future_timestamp'],
+  ])('fails closed for %s',async(_label,change,issue)=>{
+    const response=await mutate(change); expect(response.quotes[0]).toMatchObject({price:null,status:'unavailable',issues:[issue],stale:issue==='dex_stale_state'});
   });
   it.each([
-    ['wrong token binding', 'pool_state', (s: any) => { s[1] = ['slice', { bytes: beginCell().storeAddress(Address.parse(T3)).endCell().toBoc().toString('base64') }]; }, 'dex_pool_binding_mismatch'],
-    ['wrong fee', 'pool_state', (s: any) => { s[6][1] = '1000'; }, 'dex_pool_binding_mismatch'],
-    ['changed active bin', 'active_price_q64', (s: any) => { s[0][1] = '1'; }, 'dex_active_bin_mismatch'],
-    ['zero Q64', 'active_price_q64', (s: any) => { s[1][1] = '0'; }, 'dex_invalid_price'],
-    ['inexact number encoding', 'active_price_q64', (s: any) => { s[1][1] = '1e18'; }, 'dex_invalid_integer'],
-    ['unsafe numeric tuple', 'active_price_q64', (s: any) => { s[1][1] = 18446744073709551616; }, 'dex_invalid_stack'],
-    ['unhealthy depth', 'oracle_depth_health', (s: any) => { s[0][1] = '0'; }, 'dex_insufficient_executable_liquidity'],
-    ['zero executable asset depth', 'oracle_depth_health', (s: any) => { s[3][1] = '0'; }, 'dex_insufficient_executable_liquidity'],
-    ['zero executable T3 depth', 'oracle_depth_health', (s: any) => { s[2][1] = '0'; }, 'dex_insufficient_executable_liquidity'],
-    ['old chain state', 'perps_oracle_snapshot', (s: any) => { s[1][1] = String(NOW.getTime() / 1000 - 121); }, 'dex_stale_state'],
-    ['future chain state', 'perps_oracle_snapshot', (s: any) => { s[1][1] = String(NOW.getTime() / 1000 + 6); }, 'dex_future_timestamp'],
-    ['invalid TVM safety flag', 'perps_oracle_snapshot', (s: any) => { s[0][1] = '1'; }, 'dex_integer_out_of_range'],
-    ['mismatched activity time', 'perps_oracle_snapshot', (s: any) => { s[2][1] = String(NOW.getTime() / 1000); }, 'dex_activity_timestamp_mismatch'],
-  ])('rejects %s', async (_label, method, change, issue) => {
-    const response = await mutate((body, calls) => change(stack(body, calls, method)));
-    expect(response.quotes[0]).toMatchObject({ price: null, status: 'unavailable', issues: [issue], stale: issue === 'dex_stale_state' });
+    ['wrong X root',{xMaster:T3}],['wrong fee',{feePips:1000}],['wrong spacing',{binSpacing:2}],['wrong precision',{xDecimals:6}],
+    ['wrong wallet gas',{walletGasX:30001}],['wrong wallet attachment',{walletGramX:'1'}],
+    ['wrong wallet budget',{walletBudgetX:{...dexManifest().spotMarkets[0].walletBudgetX,creditProtection:true}}],
+  ])('rejects current PoolId %s',async(_label,values)=>{
+    const response=await mutate((b,c)=>{stack(b,c,'get_pool_info')[0][1].bytes=poolIdFixture(values);});
+    expect(response.quotes[0]!.issues).toEqual(['dex_pool_binding_mismatch']);
   });
-  it('rejects a failed getter and a successful getter with a different shape', async () => {
-    const failed = await mutate(body => { body.results[4].exit_code = 9; });
-    expect(failed.quotes[0]!.issues).toEqual(['dex_getter_failed']);
-    const transposed = await mutate(body => { [body.results[4], body.results[5]] = [body.results[5], body.results[4]]; });
-    expect(transposed.quotes[0]!.issues).toEqual(['dex_getter_failed']);
+  it.each([1,2,3,4])('rejects wrong immutable pool peer %s',async index=>{
+    const response=await mutate((b,c)=>{stack(b,c,'get_pool_info')[index]=['slice',{bytes:beginCell().storeAddress(Address.parse(POOL)).endCell().toBoc().toString('base64')}];});
+    expect(response.quotes[0]!.issues).toEqual(['dex_pool_binding_mismatch']);
   });
-  it('never returns a previous quote as current when a subsequent read fails', async () => {
-    let succeeds = true;
-    const fetcher = vi.fn(async (_url, init) => succeeds ? new Response(JSON.stringify(freshDexBody(JSON.parse(String(init?.body)).calls))) : new Response('unavailable', { status: 503 }));
-    const dex = new DexPrices(dexConfig(), fetcher, clock);
-    expect((await dex.prices('testnet', [ASSET])).quotes[0]!.price).toBe('1');
-    succeeds = false;
-    expect((await dex.prices('testnet', [ASSET])).quotes[0]).toMatchObject({ price: null, status: 'unavailable', issues: ['dex_source_unavailable'] });
+  it.each([
+    ['paused',5,'3','dex_pool_unavailable'],['unknown flags',5,'5','dex_pool_unavailable'],['not ready',6,'0','dex_pool_unavailable'],
+    ['invalid TVM bool',6,'1','dex_integer_out_of_range'],['active bin overflow',7,'2147483648','dex_integer_out_of_range'],
+    ['negative reserve',8,'-1','dex_integer_out_of_range'],['reserve overflow',9,(1n<<120n).toString(),'dex_integer_out_of_range'],
+  ])('rejects pool %s',async(_label,index,value,issue)=>{
+    const response=await mutate((b,c)=>{stack(b,c,'get_pool_info')[Number(index)][1]=value;});expect(response.quotes[0]!.issues).toEqual([issue]);
+  });
+  it.each([
+    ['missing short',{flags:13,short:0n}],['missing medium',{flags:11,medium:0n}],['missing long',{flags:7,long:0n}],
+    ['unhealthy active bin',{flags:14,spot:0n}],['historical',{flags:30,spot:0n}],['unknown flags',{flags:47}],
+    ['invalid price',{short:999999n}],['price overflow',{long:1n<<120n}],['wrong current at',{at:1n}],
+  ])('rejects %s oracle evidence',async(_label,values)=>{
+    const response=await mutate((b,c)=>replaceOracle(b,c,values)); expect(response.quotes[0]!.issues).toEqual(['dex_twap_unavailable']);
+  });
+  it('binds oracle served time to the exact head',async()=>{
+    const response=await mutate((b,c)=>replaceOracle(b,c,{servedAt:1n,at:1n}));expect(response.quotes[0]!.issues).toEqual(['dex_oracle_head_mismatch']);
+  });
+  it('rejects malformed current getter shapes and cells',async()=>{
+    for(const change of [
+      (b:any,c:FixtureCall[])=>{stack(b,c,'get_pool_info').pop();},
+      (b:any,c:FixtureCall[])=>{stack(b,c,'oracle_evidence').push(['num','1']);},
+      (b:any,c:FixtureCall[])=>{stack(b,c,'oracle_evidence')[0][1].bytes=beginCell().endCell().toBoc().toString('base64');},
+    ]) expect((await mutate(change)).quotes[0]!.status).toBe('unavailable');
+  });
+  it('never returns a previous quote as current when the next read fails',async()=>{
+    let succeeds=true;const fetcher=vi.fn(async(_url,init)=>succeeds?new Response(JSON.stringify(freshDexBody(JSON.parse(String(init?.body)).calls))):new Response('unavailable',{status:503}));
+    const dex=new DexPrices(dexConfig(),fetcher,clock); expect((await dex.prices('testnet',[ASSET])).quotes[0]!.price).toBe('1');
+    succeeds=false;expect((await dex.prices('testnet',[ASSET])).quotes[0]).toMatchObject({price:null,status:'unavailable',issues:['dex_source_unavailable']});
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

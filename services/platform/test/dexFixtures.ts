@@ -44,25 +44,35 @@ export function dexConfig(overrides: Partial<Config> = {}): Config {
 }
 const num = (value: string | number | bigint) => ['num', String(value)];
 const addr = (value: string) => ['slice', { bytes: beginCell().storeAddress(Address.parse(value)).endCell().toBoc().toString('base64') }];
-export interface FixtureCall { kind: string; address: string; method?: string }
+export interface FixtureCall { kind: string; address: string; method?: string; stack?: unknown[] }
+export function oracleFixture(overrides: Record<string, number | bigint> = {}): string {
+  const t = BigInt(Math.floor(NOW.getTime() / 1000) - 1);
+  const v = { servedAt: t, at: t, flags: 15, spot: 1_000_000_000n, short: 1_000_000_000n, medium: 1_000_000_000n, long: 1_000_000_000n, ...overrides };
+  return beginCell().storeUint(v.servedAt!,64).storeUint(v.at!,64).storeUint(v.flags!,8).storeUint(v.spot!,128)
+    .storeUint(v.short!,128).storeUint(v.medium!,128).storeUint(v.long!,128).endCell().toBoc().toString('base64');
+}
+export function poolIdFixture(overrides: Record<string, any> = {}): string {
+  const market = dexManifest().spotMarkets[0], v = { ...market, xMaster: ASSET, ...overrides }, budget = beginCell();
+  for (const [key,width] of [['senderGas',32],['walletBounceGas',32],['burnWalletGas',32],['smallPayloadCells',16],['largeWalletGas',32],['largeSenderGas',32],['rentSeconds',32],['rentBits',32],['rentCells',16],['initBits',32],['initCells',16],['initCopies',8],['transferBits',16],['transferCells',8],['transferCopies',8]] as const) budget.storeUint(v.walletBudgetX[key],width);
+  budget.storeBit(v.walletBudgetX.creditProtection);
+  return beginCell().storeAddress(Address.parse(v.xMaster)).storeUint(v.binSpacing,16).storeUint(v.feePips,32).storeUint(v.xDecimals,8)
+    .storeUint(v.walletGasX,32).storeCoins(BigInt(v.walletGramX)).storeRef(budget.endCell()).endCell().toBoc().toString('base64');
+}
 export function freshDexBody(calls: FixtureCall[], now = NOW): Record<string, any> {
-  const chainTime = Math.floor(now.getTime() / 1000) - 1;
-  const activityTime = chainTime - 172800;
-  return { network: 'testnet', release: { releaseId: dexConfig().dexRelease!.releaseId, manifestHash: dexConfig().dexRelease!.manifestHash },
-    readContext: { source: 'http4', queriedAt: now.getTime(),
-      head: { workchain: -1, shard: '-9223372036854775808', seqno: 90_000_000, rootHashHex: 'a'.repeat(64), fileHashHex: 'b'.repeat(64) } },
+  const chainTime = Math.floor(now.getTime() / 1000) - 1, release = dexConfig().dexRelease!;
+  return { network: 'testnet', release: { releaseId: release.releaseId, manifestHash: release.manifestHash },
+    readContext: { source: 'lite', queriedAt: now.getTime(),
+      head: { workchain: -1, shard: '-9223372036854775808', seqno: 90_000_000, rootHashHex: 'a'.repeat(64), fileHashHex: 'b'.repeat(64), utime: chainTime } },
     results: calls.map(call => {
       if (call.kind === 'account') return { kind: 'account', address: call.address, account_state: 'active', balance_raw: '1',
         code_boc: (call.address === POOL ? POOL_CODE : ROOT_CODE).toBoc().toString('base64'),
         data_boc: beginCell().endCell().toBoc().toString('base64') };
       const stack = {
-        pool_state: [addr(T3), addr(ASSET), addr(T3), addr(T3), num(1), num(0), num(3000), num(10000), num(1), num(1), num(8), num(128), num(10n ** 13n)],
-        active_price_q64: [num(0), num(1n << 64n)],
-        observation: [num(0), num(activityTime), num(10n ** 13n)],
-        oracle_depth_health: [num(1), num(activityTime), num(10n ** 13n), num(10n ** 13n), num(172800)],
-        perps_oracle_snapshot: [num(-1), num(chainTime), num(activityTime), ['cell', { bytes: beginCell().endCell().toBoc().toString('base64') }]],
+        get_pool_info: [['cell',{bytes:poolIdFixture()}], addr(release.factory), addr(release.feeSink), addr(release.treasury), addr(T3),
+          num(1),num(-1),num(0),num(10n ** 13n),num(10n ** 13n),num(0),num(1),num(1),num(0)],
+        oracle_evidence: [['cell',{bytes:oracleFixture({ servedAt:chainTime, at:chainTime })}]],
       }[call.method!];
-      return { kind: 'getter', address: call.address, exit_code: 0, stack, gas_used: null };
+      return { kind: 'getter', address: call.address, exit_code: stack ? 0 : 11, stack: stack ?? [], gas_used: null };
     }) };
 }
 export function dexFetcher(transform: (body: Record<string, any>, calls: FixtureCall[]) => void = () => {}): Fetcher {

@@ -19,6 +19,13 @@ equal the manifest's `/api/indexer/v1` endpoint. Validate the standalone consume
 with `npm --prefix services/platform run verify`; matching schema does not establish
 live chain or service readiness.
 
+Platform indicative prices use one native current-head batch of `get_pool_info`
+and `oracle_evidence(0)`. Exact pool identity/profile/code bindings, current depth
+health and all three covered TWAP windows are required. The median is whole T3
+per whole token at 1e9; original PoolId/oracle BOCs and the 30-second head are
+retained for frontend and alert validation. No retired getter or spot-price
+fallback is supported.
+
 `GET /api/indexer/v1/orders/open` returns a release-bound immutable snapshot of
 current `ACTIVE` and `EXECUTING` orders. Omit the first cursor; `limit` is 1–100
 (default 50) and must remain unchanged across pages. A cursor retains its original

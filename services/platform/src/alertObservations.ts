@@ -1,7 +1,7 @@
 import { alertAssetKey } from './alertAssets.js';
 import { alertAssetSchema } from './alertAssetSchema.js';
 import type { Config } from './config.js';
-import { DexPrices } from './dexPrices.js';
+import { DexPrices, assertDexPoolBinding, type DexPoolEvidence } from './dexPrices.js';
 import { assessPriceObservation } from './priceMonitoring.js';
 import type { AlertAsset, AlertQuote, AlertQuotesResponse } from './types.js';
 
@@ -65,6 +65,10 @@ export class AlertObservations {
               roots?.assetCodeHash !== token.codeHash || roots?.quoteRoot !== this.config.dexRelease?.quoteRoot ||
               roots?.quoteCodeHash !== this.config.dexRelease?.quoteCodeHash)) {
             resolved.set(alertAssetKey(asset), unavailable(asset, 'quote_scope_invalid', quoteAssetId)); continue;
+          }
+          if (value.status === 'available') {
+            try { assertDexPoolBinding(value.evidence.pool as DexPoolEvidence, this.config.dexRelease!, market!); }
+            catch { resolved.set(alertAssetKey(asset), unavailable(asset, 'quote_scope_invalid', quoteAssetId)); continue; }
           }
           const quote: AlertQuote = { asset, currency: 'T3', quoteAssetId, price: value.price, observedAt: value.observedAt,
             source: value.source === 'tonswap-dex' ? value.source : null, status: value.status, stale: value.stale,

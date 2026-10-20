@@ -61,7 +61,13 @@ vendor assets, campaign/supply and unique keeper identity. Keep its strict schem
 aligned with the indexer's current manifest; no T3Root or old field shapes.
 Run `npm --prefix services/platform run verify` after changing these bindings.
 The retained native fixture and its synthetic testnet startup translation prove
-schema compatibility only, never public deployment or price readiness.
+schema compatibility only, never public deployment or price readiness. Current
+platform prices use only `get_pool_info` and `oracle_evidence(0)` from one native
+current-head batch. Bind exact PoolId/profile/code and all three covered TWAPs;
+retain original BOCs, require current depth/coverage flags and a 30-second head.
+The median is whole T3 per whole token at 1e9, not an active-bin spot estimate.
+Source-qualified native snapshots use an explicitly synthetic API/network envelope
+in platform tests; they do not replace public qualification.
 
 Current open-order discovery uses original authenticated factory and child
 transaction boundaries plus exact same-head account envelopes. Durable snapshots

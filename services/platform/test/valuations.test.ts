@@ -20,8 +20,8 @@ describe('DEX denominations and monetary display boundary', () => {
   it('retains a verified T3 pool quote without inventing USD or a stablecoin peg', async () => {
     const dex = { network: 'testnet', currency: 'T3', quoteAssetId: secondAddress, requestedAt: new Date().toISOString(),
       release: { releaseId: 'test-release', manifestHash: 'a'.repeat(64) }, issues: [], quotes: [
-        { assetId: address, price: '1.234567890123456789', observedAt: new Date().toISOString(), source: 'tonswap-dex',
-          status: 'available', stale: false, change24h: null, evidence: { method: 'active_pool_q64' }, issues: [] },
+        { assetId: address, price: '1.234567891', observedAt: new Date().toISOString(), source: 'tonswap-dex',
+          status: 'available', stale: false, change24h: null, evidence: { method: 'pool_twap_median_v1' }, issues: [] },
       ] };
     const mock = vi.spyOn(DexPrices.prototype, 'prices').mockResolvedValue(dex as never);
     try {

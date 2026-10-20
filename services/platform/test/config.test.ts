@@ -5,6 +5,13 @@ import { PushSender } from '../src/push.js';
 const environment = { DATABASE_URL: 'postgres://localhost/tonswap', DATA_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64'),
   APP_ORIGIN: 'https://app.example.test', PLATFORM_URL: 'https://app.example.test/platform' };
 describe('secure service configuration', () => {
+  it('checks prices every 15 seconds by default within the current oracle freshness window', () => {
+    expect(loadConfig(environment).priceSeconds).toBe(15);
+    expect(loadConfig({ ...environment, PRICE_SECONDS: '15' }).priceSeconds).toBe(15);
+    expect(loadConfig({ ...environment, PRICE_SECONDS: '3600' }).priceSeconds).toBe(3600);
+    for (const value of ['14', '15.5', '3601'])
+      expect(() => loadConfig({ ...environment, PRICE_SECONDS: value })).toThrow();
+  });
   it('keeps secure cookies and proxy trust explicit by default', () => {
     expect(loadConfig(environment)).toMatchObject({ cookieSecure: true, cookieSameSite: 'lax', trustLoopbackProxy: false });
     expect(loadConfig({ ...environment, TRUST_LOOPBACK_PROXY: '1', COOKIE_SAME_SITE: 'none' })).toMatchObject({ cookieSecure: true, trustLoopbackProxy: true });

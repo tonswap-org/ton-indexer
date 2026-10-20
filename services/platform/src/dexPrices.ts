@@ -1,27 +1,28 @@
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
-import { Address, Cell } from '@ton/core';
+import { Address, Cell, CellType } from '@ton/core';
 import { z } from 'zod';
 import type { Config } from './config.js';
 import type { Network } from './types.js';
 import { Decimal } from './decimal.js';
 import { fetchJson, record, type Fetcher } from './http.js';
 
-export const DEX_PRICE_MAX_AGE_MS = 120_000;
+export const DEX_PRICE_MAX_AGE_MS = 30_000;
 export const DEX_PRICE_FUTURE_SKEW_MS = 5_000;
 const HASH = /^[0-9a-f]{64}$/;
 const RAW_ADDRESS = /^0:[0-9a-f]{64}$/;
-const Q64 = 1n << 64n;
 
 export interface DexTokenBinding {
   assetId: string; symbol: string; name: string; root: string; decimals: number; codeHash: string;
 }
 export interface DexMarketBinding {
   assetId: string; marketKey: string; address: string; codeHash: string; binSpacing: number; feePips: number;
+  xDecimals: number; walletGasX: number; walletGramX: string; walletBudgetX: z.infer<typeof walletBudget>;
 }
 export interface DexReleaseBinding {
   network: Network; releaseId: string; manifestHash: string; indexerUrl: string;
   quoteAssetId: string; quoteRoot: string; quoteDecimals: number; quoteCodeHash: string;
+  factory: string; feeSink: string; treasury: string;
   tokens: DexTokenBinding[]; markets: DexMarketBinding[];
 }
 export interface DexCatalogueEntry {
@@ -133,7 +134,8 @@ export function parseDexReleaseManifest(value: unknown): DexReleaseBinding {
       budget.senderGas > market.walletGasX || budget.burnWalletGas < budget.senderGas || budget.largeSenderGas < budget.senderGas ||
       budget.largeWalletGas < market.walletGasX || budget.largeSenderGas > budget.largeWalletGas) throw new Error('DEX market identity or wallet profile is invalid.');
     return { assetId: token.assetId, marketKey: `spot:${token.symbol}-T3`, address: market.pool,
-      codeHash: manifest.templates.DlmmPool, binSpacing: market.binSpacing, feePips: market.feePips };
+      codeHash: manifest.templates.DlmmPool, binSpacing: market.binSpacing, feePips: market.feePips,
+      xDecimals: market.xDecimals, walletGasX: market.walletGasX, walletGramX: market.walletGramX, walletBudgetX: market.walletBudgetX };
   });
   if (!unique(manifest.perpsMarkets.map(market => String(market.marketId))) || manifest.perpsMarkets.some(market =>
     manifest.spotMarkets.find(spot => spot.symbol === market.symbol)?.pool !== market.pool)) throw new Error('DEX release perps bindings are invalid.');
@@ -144,7 +146,10 @@ export function parseDexReleaseManifest(value: unknown): DexReleaseBinding {
       (option.kind === 'outperformance' ? option.comparisonSymbol === option.symbol ||
         !manifest.spotMarkets.some(spot => spot.symbol === option.comparisonSymbol) : option.comparisonSymbol !== undefined);
   })) throw new Error('DEX release option bindings are invalid.');
+  const { DlmmPoolFactory, FeeRouter, Treasury } = manifest.contracts;
+  if (!DlmmPoolFactory || !FeeRouter || !Treasury) throw new Error('DEX release requires current pool peer bindings.');
   return { network, releaseId: manifest.releaseId, manifestHash: manifest.manifestHash,
+    factory: DlmmPoolFactory.address, feeSink: FeeRouter.address, treasury: Treasury.address,
     indexerUrl: `${service.toString().replace(/\/$/, '')}/v1`, quoteAssetId: quote.assetId, quoteRoot: quote.root,
     quoteDecimals: quote.decimals, quoteCodeHash: quote.codeHash, tokens, markets };
 }
@@ -190,13 +195,12 @@ const integer = (value: unknown, minimum: bigint, maximum: bigint): bigint => {
   return parsed;
 };
 const int32 = (value: unknown) => Number(integer(value, -(1n << 31n), (1n << 31n) - 1n));
-const uint128 = (value: unknown) => integer(value, 0n, (1n << 128n) - 1n);
 const safeInteger = (value: unknown) => Number(integer(value, 0n, BigInt(Number.MAX_SAFE_INTEGER)));
-const cell = (value: unknown): Cell => {
+const cell = (value: unknown, executable = false): Cell => {
   requireValue(typeof value === 'string' && value.length <= 2_000_000 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value), 'dex_invalid_cell');
   let cells: Cell[];
   try { cells = Cell.fromBoc(Buffer.from(value, 'base64')); } catch { throw new DexFailure('dex_invalid_cell'); }
-  requireValue(cells.length === 1 && !cells[0]!.isExotic, 'dex_invalid_cell');
+  requireValue(cells.length === 1 && (!cells[0]!.isExotic || executable && cells[0]!.type === CellType.Library), 'dex_invalid_cell');
   return cells[0]!;
 };
 const tupleNumber = (stack: unknown[], index: number): unknown => {
@@ -221,25 +225,64 @@ const getter = (value: unknown, size: number): unknown[] => {
 const account = (value: unknown, expectedHash: string): void => {
   const result = record(value);
   requireValue(result.account_state === 'active', 'dex_account_inactive');
-  requireValue(cell(result.code_boc).hash().toString('hex') === expectedHash, 'dex_code_hash_mismatch');
+  requireValue(cell(result.code_boc, true).hash().toString('hex') === expectedHash, 'dex_code_hash_mismatch');
 };
-const time = (seconds: unknown): number => Number(integer(seconds, 1n, BigInt(Math.floor(Number.MAX_SAFE_INTEGER / 1000)))) * 1000;
 const fresh = (timestamp: number, now: number): void => {
   if (timestamp > now + DEX_PRICE_FUTURE_SKEW_MS) throw new DexFailure('dex_future_timestamp');
   if (now - timestamp > DEX_PRICE_MAX_AGE_MS) throw new DexFailure('dex_stale_state', true);
 };
 const gcd = (a: bigint, b: bigint): bigint => { while (b) [a, b] = [b, a % b]; return a; };
-/** The pool stores X atomic units per T3 atomic unit. Return T3 units per X. */
-export function dexQ64Ratio(q64: bigint, assetDecimals: number, quoteDecimals: number): { numerator: string; denominator: string; price: string } {
-  requireValue(q64 > 0n && q64 < 1n << 128n && [assetDecimals, quoteDecimals].every(value => Number.isInteger(value) && value >= 0 && value <= 18), 'dex_invalid_price');
-  const numerator = Q64 * 10n ** BigInt(assetDecimals);
-  const denominator = q64 * 10n ** BigInt(quoteDecimals);
-  const divisor = gcd(numerator, denominator);
-  return { numerator: (numerator / divisor).toString(), denominator: (denominator / divisor).toString(),
-    price: new Decimal(numerator.toString()).div(denominator.toString()).toFixed() };
+/** Oracle prices are whole T3 per whole asset, scaled by 1e9 for every token precision. */
+export function dexTwapRatio(priceE9: bigint): { numerator: string; denominator: string; price: string } {
+  requireValue(priceE9 >= 1_000_000n && priceE9 < 1n << 120n, 'dex_invalid_price');
+  const denominator = 1_000_000_000n, divisor = gcd(priceE9, denominator);
+  return { numerator: (priceE9 / divisor).toString(), denominator: (denominator / divisor).toString(),
+    price: new Decimal(priceE9.toString()).div(denominator.toString()).toFixed() };
 }
-
-type Call = { kind: 'account'; address: string } | { kind: 'getter'; address: string; method: string; stack: never[] };
+const tupleCell = (stack: unknown[], index: number): { boc: string; cell: Cell } => {
+  const tuple = stack[index];
+  requireValue(Array.isArray(tuple) && tuple.length === 2 && tuple[0] === 'cell', 'dex_invalid_stack');
+  const boc = record(tuple[1]).bytes;
+  return { boc: boc as string, cell: cell(boc) };
+};
+export function decodeDexOracle(boc: unknown) {
+  const original = cell(boc);
+  requireValue(original.bits.length === 648 && original.refs.length === 0, 'dex_invalid_oracle');
+  const s = original.beginParse();
+  const servedAt = s.loadUintBig(64), at = s.loadUintBig(64), flags = s.loadUint(8);
+  const prices = [s.loadUintBig(128), s.loadUintBig(128), s.loadUintBig(128), s.loadUintBig(128)]; s.endParse();
+  requireValue(flags === 15 && servedAt === at && prices.every(price => price >= 1_000_000n && price < 1n << 120n), 'dex_twap_unavailable');
+  const median = prices.slice(1).sort((a, b) => a < b ? -1 : a > b ? 1 : 0)[1]!;
+  return { servedAt, at, flags, median, ratio: dexTwapRatio(median) };
+}
+export type DexPoolEvidence = { idBoc: string; factory: string; feeSink: string; treasury: string; t3Master: string;
+  flags: number; ready: boolean; activeBin: number };
+export function assertDexPoolBinding(pool: DexPoolEvidence, release: DexReleaseBinding, market: DexMarketBinding): void {
+  const s = cell(pool.idBoc).beginParse();
+  const xMaster = s.loadAddress().toRawString(), binSpacing = s.loadUint(16), feePips = s.loadUint(32), xDecimals = s.loadUint(8);
+  const walletGasX = s.loadUint(32), walletGramX = s.loadCoins(), budgetCell = s.loadRef(); s.endParse();
+  requireValue(!budgetCell.isExotic, 'dex_invalid_cell');
+  const b = budgetCell.beginParse();
+  const budget = { senderGas: b.loadUint(32), walletBounceGas: b.loadUint(32), burnWalletGas: b.loadUint(32), smallPayloadCells: b.loadUint(16),
+    largeWalletGas: b.loadUint(32), largeSenderGas: b.loadUint(32), rentSeconds: b.loadUint(32), rentBits: b.loadUint(32), rentCells: b.loadUint(16),
+    initBits: b.loadUint(32), initCells: b.loadUint(16), initCopies: b.loadUint(8), transferBits: b.loadUint(16), transferCells: b.loadUint(8),
+    transferCopies: b.loadUint(8), creditProtection: b.loadBit() }; b.endParse();
+  requireValue(xMaster === market.assetId && binSpacing === market.binSpacing && feePips === market.feePips && xDecimals === market.xDecimals &&
+    walletGasX === market.walletGasX && walletGramX.toString() === market.walletGramX && stableJson(budget) === stableJson(market.walletBudgetX) &&
+    pool.factory === release.factory && pool.feeSink === release.feeSink && pool.treasury === release.treasury && pool.t3Master === release.quoteRoot,
+    'dex_pool_binding_mismatch');
+  requireValue(pool.flags === 1 && pool.ready === true && Number.isInteger(pool.activeBin) && pool.activeBin >= -2147483648 && pool.activeBin <= 2147483647, 'dex_pool_unavailable');
+}
+const poolEvidence = (state: unknown[], release: DexReleaseBinding, market: DexMarketBinding): DexPoolEvidence => {
+  const pool = { idBoc: tupleCell(state, 0).boc, factory: tupleAddress(state, 1), feeSink: tupleAddress(state, 2),
+    treasury: tupleAddress(state, 3), t3Master: tupleAddress(state, 4), flags: Number(integer(tupleNumber(state, 5), 0n, 255n)),
+    ready: integer(tupleNumber(state, 6), -1n, 0n) === -1n, activeBin: int32(tupleNumber(state, 7)) };
+  for (const index of [8, 9, 10]) integer(tupleNumber(state, index), 0n, (1n << 120n) - 1n);
+  for (const index of [11, 12]) integer(tupleNumber(state, index), 0n, 65535n);
+  integer(tupleNumber(state, 13), 0n, 255n);
+  assertDexPoolBinding(pool, release, market); return pool;
+};
+type Call = { kind: 'account'; address: string } | { kind: 'getter'; address: string; method: string; stack: Array<['num', string]> };
 const identity = (binding: DexReleaseBinding) => ({ releaseId: binding.releaseId, manifestHash: binding.manifestHash });
 const unavailable = (assetId: string, issue: string, stale = false): DexPriceQuote => ({
   assetId, price: null, observedAt: null, source: 'tonswap-dex', status: 'unavailable', stale, change24h: null,
@@ -270,32 +313,33 @@ export class DexPrices {
     if (!release || !this.configured(network)) return { ...response, quotes: assets.map(asset => unavailable(asset, 'dex_release_not_configured')) };
     const markets = release.markets.filter(market => assets.includes(market.assetId));
     const quotes = new Map<string, DexPriceQuote>();
-    // 1 shared quote-root account + 7 calls per market stays within readFresh's 32-call limit.
-    for (let start = 0; start < markets.length; start += 4) {
-      for (const quote of await this.readMarkets(release, markets.slice(start, start + 4))) quotes.set(quote.assetId, quote);
+    // 1 shared quote-root account + 4 calls per market stays within readFresh's 32-call limit.
+    for (let start = 0; start < markets.length; start += 7) {
+      for (const quote of await this.readMarkets(release, markets.slice(start, start + 7))) quotes.set(quote.assetId, quote);
     }
     response.quotes = assets.map(asset => quotes.get(asset) ?? unavailable(asset, 'dex_market_not_in_release'));
     return response;
   }
   private async readMarkets(release: DexReleaseBinding, markets: DexMarketBinding[]): Promise<DexPriceQuote[]> {
-    const methods = ['pool_state', 'active_price_q64', 'observation', 'oracle_depth_health', 'perps_oracle_snapshot'];
     const calls: Call[] = [{ kind: 'account', address: release.quoteRoot }];
     for (const market of markets) calls.push({ kind: 'account', address: market.assetId }, { kind: 'account', address: market.address },
-      ...methods.map(method => ({ kind: 'getter' as const, address: market.address, method, stack: [] as never[] })));
+      { kind: 'getter', address: market.address, method: 'get_pool_info', stack: [] },
+      { kind: 'getter', address: market.address, method: 'oracle_evidence', stack: [['num', '0']] });
     try {
       const body = record(await fetchJson(`${release.indexerUrl}/readFresh`, { method: 'POST',
-        headers: { 'content-type': 'application/json', ...(this.config.indexerApiKey ? { authorization: `Bearer ${this.config.indexerApiKey}` } : {}) },
+        headers: { 'content-type': 'application/json', 'x-tonswap-release': release.manifestHash, ...(this.config.indexerApiKey ? { authorization: `Bearer ${this.config.indexerApiKey}` } : {}) },
         body: JSON.stringify({ calls }) }, this.fetcher));
       const now = this.clock().getTime();
       requireValue(body.network === release.network && record(body.release).releaseId === release.releaseId &&
         record(body.release).manifestHash === release.manifestHash, 'dex_release_mismatch');
       const context = record(body.readContext), head = record(context.head);
-      requireValue(['http4', 'lite'].includes(String(context.source)) && integer(head.workchain, -1n, -1n) === -1n &&
+      requireValue(context.source === 'lite' && integer(head.workchain, -1n, -1n) === -1n &&
         head.shard === '-9223372036854775808' && typeof head.rootHashHex === 'string' && HASH.test(head.rootHashHex) &&
         typeof head.fileHashHex === 'string' && HASH.test(head.fileHashHex), 'dex_invalid_read_context');
       const seqno = safeInteger(head.seqno), queriedAt = safeInteger(context.queriedAt);
       requireValue(seqno > 0 && queriedAt > 0, 'dex_invalid_read_context');
-      fresh(queriedAt, now);
+      const headUtime = Number(integer(head.utime, 1n, 0xffffffffn)), headMs = headUtime * 1000;
+      fresh(queriedAt, now); fresh(headMs, now); fresh(headMs, queriedAt);
       requireValue(Array.isArray(body.results) && body.results.length === calls.length, 'dex_result_identity_mismatch');
       const results = body.results;
       for (let index = 0; index < calls.length; index++) requireValue(record(results[index]).kind === calls[index]!.kind &&
@@ -304,42 +348,22 @@ export class DexPrices {
       return markets.map((market, index) => {
         try {
           const token = release.tokens.find(token => token.assetId === market.assetId)!;
-          const offset = 1 + index * 7;
+          const offset = 1 + index * 4;
           account(results[offset], token.codeHash); account(results[offset + 1], market.codeHash);
-          const state = getter(results[offset + 2], 13), price = getter(results[offset + 3], 2);
-          const observation = getter(results[offset + 4], 3), depth = getter(results[offset + 5], 5), snapshot = getter(results[offset + 6], 4);
-          requireValue(tupleAddress(state, 0) === release.quoteRoot && tupleAddress(state, 1) === token.root &&
-            int32(tupleNumber(state, 4)) === market.binSpacing && safeInteger(tupleNumber(state, 6)) === market.feePips, 'dex_pool_binding_mismatch');
-          const activeBin = int32(tupleNumber(price, 0));
-          requireValue(activeBin === int32(tupleNumber(state, 5)), 'dex_active_bin_mismatch');
-          const q64 = uint128(tupleNumber(price, 1));
-          const safetyAvailable = integer(tupleNumber(snapshot, 0), -1n, 0n) === -1n;
-          const safetyCell = snapshot[3];
-          requireValue(Array.isArray(safetyCell) && safetyCell.length === 2 && safetyCell[0] === 'cell', 'dex_invalid_stack');
-          cell(record(safetyCell[1]).bytes);
-          const observedMs = time(tupleNumber(snapshot, 1));
-          fresh(observedMs, now); fresh(observedMs, queriedAt);
-          const observationMs = time(tupleNumber(observation, 1));
-          requireValue(observationMs === time(tupleNumber(snapshot, 2)) && observationMs <= observedMs, 'dex_activity_timestamp_mismatch');
-          const healthy = integer(tupleNumber(depth, 0), 0n, 1n) === 1n;
-          const healthySince = time(tupleNumber(depth, 1));
-          const executableT3 = uint128(tupleNumber(depth, 2)), executableAsset = uint128(tupleNumber(depth, 3));
-          requireValue(healthy && executableT3 > 0n && executableAsset > 0n, 'dex_insufficient_executable_liquidity');
-          requireValue(healthySince <= observedMs && safeInteger(tupleNumber(depth, 4)) <= (observedMs - healthySince) / 1000, 'dex_depth_timestamp_mismatch');
-          const ratio = dexQ64Ratio(q64, token.decimals, release.quoteDecimals);
-          const observedAt = new Date(observedMs).toISOString();
+          const pool = poolEvidence(getter(results[offset + 2], 14), release, market);
+          const evidence = tupleCell(getter(results[offset + 3], 1), 0), oracle = decodeDexOracle(evidence.boc);
+          requireValue(oracle.servedAt === BigInt(headUtime), 'dex_oracle_head_mismatch');
+          const observedAt = new Date(headMs).toISOString(), ratio = oracle.ratio;
           return { assetId: token.assetId, price: ratio.price, observedAt, source: 'tonswap-dex', status: 'available', stale: false,
-            change24h: null, issues: [], evidence: { method: 'active_pool_q64', precision: 'indicative_display', network: release.network,
+            change24h: null, issues: [], evidence: { method: 'pool_twap_median_v1', precision: 'indicative_display', network: release.network,
               assetId: token.assetId, currency: 'T3', quoteAssetId: release.quoteAssetId, release: identity(release),
               marketKey: market.marketKey, marketAddress: market.address, codeHash: market.codeHash,
-              observedAt, queriedAt: new Date(queriedAt).toISOString(), source: `ton-indexer/${context.source}`,
-              head: { workchain: -1, shard: head.shard, seqno, rootHashHex: head.rootHashHex, fileHashHex: head.fileHashHex },
-              exactRatio: { numerator: ratio.numerator, denominator: ratio.denominator }, activeBin, q64: q64.toString(),
-              perpsOracleSafetyAvailable: safetyAvailable,
-              lastMarketObservationAt: new Date(observationMs).toISOString(), executableDepthT3Raw: executableT3.toString(),
-              executableDepthAssetRaw: executableAsset.toString(),
+              observedAt, queriedAt: new Date(queriedAt).toISOString(), source: 'ton-indexer/lite',
+              head: { workchain: -1, shard: head.shard, seqno, rootHashHex: head.rootHashHex, fileHashHex: head.fileHashHex, utime: headUtime },
+              exactRatio: { numerator: ratio.numerator, denominator: ratio.denominator }, pool,
+              oracle: { evidenceBoc: evidence.boc, windowsSeconds: [300, 1800, 7200], medianPriceE9: oracle.median.toString() },
               rootBindings: { assetRoot: token.root, quoteRoot: release.quoteRoot, assetCodeHash: token.codeHash, quoteCodeHash: release.quoteCodeHash },
-            } } satisfies DexPriceQuote;
+            } } as DexPriceQuote;
         } catch (error) { return unavailable(market.assetId, error instanceof DexFailure ? error.issue : 'dex_invalid_response', error instanceof DexFailure && error.stale); }
       });
     } catch (error) { return markets.map(market => unavailable(market.assetId, error instanceof DexFailure ? error.issue : 'dex_source_unavailable', error instanceof DexFailure && error.stale)); }

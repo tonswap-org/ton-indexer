@@ -10,7 +10,7 @@ import { Worker } from '../src/worker.js';
 import { createServer } from '../src/server.js';
 import { assessPriceObservation, priceMonitoring, type PriceMonitoringRecord } from '../src/priceMonitoring.js';
 import type { AlertAsset, AlertQuote, Job, PriceRuleInput, Session } from '../src/types.js';
-import { dexConfig, dexDefinition, dexQuote, token, native, quoteRoot, release } from './dexAlertFixtures.js';
+import { dexConfig, dexDefinition, dexQuote, token, otherToken, quoteRoot, release } from './dexAlertFixtures.js';
 import { Decimal } from '../src/decimal.js';
 import { address, config, database, secondAddress, session } from './helpers.js';
 
@@ -37,7 +37,7 @@ beforeAll(async () => {
 afterAll(async () => { await cleanup(); });
 afterEach(() => { vi.restoreAllMocks(); });
 beforeEach(async () => {
-  now = Date.now(); forbiddenFetch.mockClear();
+  now = Math.floor(Date.now() / 1000) * 1000; forbiddenFetch.mockClear();
   for (const table of ['platform_jobs', 'platform_notifications', 'platform_subscriptions', 'platform_price_rules']) await db.query(`DELETE FROM ${table}`);
   for (const owner of [current, other, mainnet]) await store.setPreferences(owner, { priceAlerts: true, activity: false, walletProtocol: false, governance: false });
   providers = new Providers(db, cfg, forbiddenFetch);
@@ -86,7 +86,7 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
   it.each([
     ['stale provider flag', { stale: true }, 'T3', 'stale', 'quote_stale'],
     ['aged observation', { observedAt: '2000-01-01T00:00:00.000Z' }, 'T3', 'stale', 'quote_stale'],
-    ['other asset', { asset: native }, 'T3', 'unavailable', 'quote_scope_invalid'],
+    ['other asset', { asset: otherToken }, 'T3', 'unavailable', 'quote_scope_invalid'],
     ['daily precision', { evidence: { ...dexQuote().evidence, precision: 'daily' } }, 'T3', 'unavailable', 'quote_scope_invalid'],
     ['foreign method', { evidence: { ...dexQuote().evidence, method: 'coingecko-utc-daily-snapshot' } }, 'T3', 'unavailable', 'quote_scope_invalid'],
     ['foreign currency', {}, 'EUR', 'unavailable', 'dex_rule_binding_mismatch'],
@@ -127,19 +127,19 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
     expect(await inbox()).toHaveLength(1);
     await sample(2_000, '104'); await sample(86_400_000, '106');
     expect(await inbox()).toHaveLength(1);
-    await sample(86_401_000, '100'); await sample(86_402_000, '107.000000000000000001');
-    await sample(86_402_000, '107.000000000000000001');
+    await sample(86_401_000, '100'); await sample(86_402_000, '107.000000001');
+    await sample(86_402_000, '107.000000001');
     const notices = await inbox(); expect(notices).toHaveLength(2);
-    expect(notices[0]?.evidence).toMatchObject({ price: '107.000000000000000001', currency: 'T3', quoteAssetId: quoteRoot, change24h: null, source: 'tonswap-dex' });
+    expect(notices[0]?.evidence).toMatchObject({ price: '107.000000001', currency: 'T3', quoteAssetId: quoteRoot, change24h: null, source: 'tonswap-dex' });
   });
   it('supports a target observation without a 24-hour percentage value', async () => {
     const { rule, watched } = await saved({ kind: 'target', thresholdPercent: null, targetPrice: '100.000000000000000002', direction: 'above' }), job = await lease();
-    await apply(watched, quote({ change24h: null }), job); now += 1_000;
-    await apply(watched, quote({ change24h: null, price: '100.000000000000000003' }), job);
+    await apply(watched, quote({ change24h: null, price: '100' }), job); now += 1_000;
+    await apply(watched, quote({ change24h: null, price: '100.000000003' }), job);
     expect(await monitoring(rule.id)).toMatchObject({ state: 'monitoring', issue: null }); expect(await inbox()).toHaveLength(1);
   });
-  it('scans native GRAM and canonical contracts with distinct network and wallet scopes', async () => {
-    const first = await saved(), gram = await saved({ asset: native });
+  it('scans two canonical contracts with distinct network and wallet scopes', async () => {
+    const first = await saved(), second = await saved({ asset: otherToken });
     const mainToken = await saved({}, mainnet), repeated = await saved({}, other);
     const observations = vi.spyOn(AlertObservations.prototype, 'prices').mockImplementation(async assets => ({
       currency: 'T3', quoteAssetId: quoteRoot, requestedAt: iso(), issues: [], quotes: assets.map(asset => indexedQuote(asset)),
@@ -147,8 +147,8 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
     await worker.scanPrices(await lease());
     expect(observations).toHaveBeenCalledOnce();
     expect(observations.mock.calls[0]![0]).toHaveLength(3);
-    expect(observations.mock.calls[0]![0]).toEqual(expect.arrayContaining([first.rule.asset, gram.rule.asset, mainToken.rule.asset]));
-    for (const row of [first, gram]) expect(await monitoring(row.rule.id)).toMatchObject({ state: 'monitoring', source: 'tonswap-dex' });
+    expect(observations.mock.calls[0]![0]).toEqual(expect.arrayContaining([first.rule.asset, second.rule.asset, mainToken.rule.asset]));
+    for (const row of [first, second]) expect(await monitoring(row.rule.id)).toMatchObject({ state: 'monitoring', source: 'tonswap-dex' });
     expect(await monitoring(repeated.rule.id, other)).toMatchObject({ state: 'monitoring', source: 'tonswap-dex' });
     expect(await inbox()).toHaveLength(0);
   });
@@ -156,11 +156,11 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
     const asset: AlertAsset = { kind: 'ton', network: 'testnet', assetId: address };
     const { rule, watched } = await saved({ asset, kind: 'target', thresholdPercent: null, targetPrice: '100.000000000000000002', direction: 'above' });
     const job = await lease();
-    await apply(watched, indexedQuote(asset), job); now += 1_000;
-    await apply(watched, indexedQuote(asset, { price: '100.000000000000000003', stale: true }), job);
+    await apply(watched, indexedQuote(asset, { price: '100' }), job); now += 1_000;
+    await apply(watched, indexedQuote(asset, { price: '100.000000003', stale: true }), job);
     expect(await monitoring(rule.id)).toMatchObject({ state: 'stale', issue: 'quote_stale' });
     expect((await store.rules(current))[0]?.lastDirection).toBe('inside'); expect(await inbox()).toHaveLength(0);
-    now += 1_000; const crossed = indexedQuote(asset, { price: '100.000000000000000003' });
+    now += 1_000; const crossed = indexedQuote(asset, { price: '100.000000003' });
     await apply(watched, crossed, job); await apply(watched, crossed, job);
     const notices = await inbox(); expect(notices).toHaveLength(1);
     expect(notices[0]?.evidence).toMatchObject({ asset, source: 'tonswap-dex', price: crossed.price, currency: 'T3', quoteAssetId: quoteRoot,
@@ -170,7 +170,7 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
     expect(await monitoring(rule.id)).toMatchObject({ state: 'monitoring', source: 'tonswap-dex' });
   });
   it('does not create percentage observations from current DEX state and keeps forged scope inert', async () => {
-    const asset: AlertAsset = native;
+    const asset: AlertAsset = otherToken;
     const { rule, watched } = await saved({ asset, kind: 'percent', thresholdPercent: '5', targetPrice: null, direction: 'both' }), job = await lease();
     await apply(watched, indexedQuote(asset), job);
     expect(await monitoring(rule.id)).toMatchObject({ state: 'unavailable', issue: 'change_unavailable', evaluatedAt: null });
@@ -183,7 +183,7 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
     expect(await monitoring(rule.id)).toEqual(original); expect(await inbox()).toHaveLength(0);
   });
   it('keeps another configured asset observable when one TON valuation path becomes unavailable', async () => {
-    const listed = await saved(), ton = await saved({ asset: { kind: 'ton', network: 'testnet', assetId: 'native' } });
+    const listed = await saved(), ton = await saved({ asset: otherToken });
     vi.spyOn(AlertObservations.prototype, 'prices').mockResolvedValue({ currency: 'T3', quoteAssetId: quoteRoot, requestedAt: iso(), issues: ['valuation_path_missing'],
       quotes: [quote(), indexedQuote(ton.rule.asset, { price: null, observedAt: null, source: null, status: 'unavailable', stale: true, issue: 'valuation_path_missing' })] });
     await worker.scanPrices(await lease());
@@ -239,10 +239,10 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
     expect(await persisted(rule.id)).toHaveLength(0); expect(await inbox()).toHaveLength(0);
   });
   it('keeps valid partial observations usable while explicitly recording a missing independent asset', async () => {
-    const bitcoin = await saved(), ethereum = await saved({ asset: native });
+    const bitcoin = await saved(), ethereum = await saved({ asset: otherToken });
     const prices = vi.spyOn(AlertObservations.prototype, 'prices').mockResolvedValue({ currency: 'T3', quoteAssetId: quoteRoot, requestedAt: iso(), issues: ['one_quote_missing'], quotes: [quote()] });
     await worker.scanPrices(await lease());
-    expect(prices).toHaveBeenCalledWith([token, native]);
+    expect(prices).toHaveBeenCalledWith([token, otherToken]);
     expect(await monitoring(bitcoin.rule.id)).toMatchObject({ state: 'monitoring', source: 'tonswap-dex' });
     expect(await monitoring(ethereum.rule.id)).toMatchObject({ state: 'unavailable', issue: 'quote_missing', observedAt: null });
   });
@@ -280,7 +280,7 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
       const response = await app.inject({ url: '/v1/notifications/price-rules', headers });
       expect(response.statusCode).toBe(200);
       expect(response.json().rules[0]).toMatchObject({ id: rule.id, asset: watched.asset, capabilities: { target: true, percent: false },
-        monitoring: { state: 'monitoring', checkedAt: iso(), evaluatedAt: iso(), source: 'tonswap-dex', issue: null, validUntil: iso(now + 120_000) } });
+        monitoring: { state: 'monitoring', checkedAt: iso(), evaluatedAt: iso(), source: 'tonswap-dex', issue: null, validUntil: iso(now + 30_000) } });
       expect(Date.parse(response.json().rules[0].monitoring.observedAt)).toBe(now);
       await db.query("UPDATE platform_price_rule_monitoring SET started_at=now()-interval '1 hour',checked_at=now()-interval '1 hour' WHERE rule_id=$1", [rule.id]);
       expect((await app.inject({ url: '/v1/notifications/price-rules', headers })).json().rules[0].monitoring).toMatchObject({ state: 'stale', issue: 'monitoring_overdue' });
@@ -293,8 +293,8 @@ describe('price evidence freshness deadlines', () => {
   const record: PriceMonitoringRecord = { started_at: new Date(at).toISOString(), checked_at: new Date(at).toISOString(), observed_at: new Date(at).toISOString(), source: 'tonswap-dex', outcome: 'observed', issue: null };
   const state = (offset: number, overrides: Partial<Parameters<typeof priceMonitoring>[0]> = {}) => priceMonitoring({ enabled: true, categoryEnabled: true, lastEvaluatedAt: record.observed_at, record, scanIntervalSeconds: 120, now: at + offset, ...overrides });
   it('uses exact inclusive observation and check deadlines without updating source time', () => {
-    expect(state(120_000)).toMatchObject({ state: 'monitoring', validUntil: new Date(at + 120_000).toISOString() });
-    expect(state(120_001)).toMatchObject({ state: 'stale', issue: 'quote_stale', observedAt: record.observed_at });
+    expect(state(30_000)).toMatchObject({ state: 'monitoring', validUntil: new Date(at + 30_000).toISOString() });
+    expect(state(30_001)).toMatchObject({ state: 'stale', issue: 'quote_stale', observedAt: record.observed_at });
     expect(state(360_001)).toMatchObject({ state: 'stale', issue: 'monitoring_overdue' });
   });
   it('does not turn saved, disabled or category-off rules into active monitoring', () => {
@@ -309,7 +309,7 @@ describe('price evidence freshness deadlines', () => {
     expect(state(-5_001)).toMatchObject({ state: 'stale', issue: 'monitoring_overdue' });
   });
   it('rejects foreign scope and nonfinite prices while accepting exact positive target values', () => {
-    const value = dexQuote({ price: '0.000000000000000001' }, at);
+    const value = dexQuote({ price: '0.001000001' }, at);
     expect(assessPriceObservation(token, 'target', value, 'T3', at, quoteRoot)).toMatchObject({ outcome: 'observed', issue: null });
     expect(assessPriceObservation(token, 'percent', value, 'T3', at, quoteRoot)).toMatchObject({ issue: 'change_unavailable' });
     expect(assessPriceObservation(token, 'target', { ...value, price: 'Infinity' }, 'T3', at, quoteRoot)).toMatchObject({ issue: 'quote_invalid' });
