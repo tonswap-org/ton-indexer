@@ -1,4 +1,3 @@
-import {parseAdmissionArtifacts, type AdmissionArtifactConfig} from './admission';
 import { readDatabaseUrl } from './database';
 import { dirname, resolve } from 'node:path';
 
@@ -22,7 +21,6 @@ export type Config = {
   corsMaxAge: number;
   snapshotPath?: string;
   databaseUrl?: string;
-  perpsAdmissionArtifacts?: AdmissionArtifactConfig;
   ledgerMaxWatchedAccounts: number;
   ledgerMaxPagesPerSync: number;
   ledgerMaxRelatedAccounts: number;
@@ -217,7 +215,6 @@ export const loadConfig = (): Config => {
     corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600, { min: 0, integer: true }),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
     databaseUrl: readDatabaseUrl(),
-    perpsAdmissionArtifacts: parseAdmissionArtifacts(process.env),
     ledgerMaxWatchedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_WATCHED_ACCOUNTS', 1000, {min:1,max:100000}),
     ledgerMaxPagesPerSync: strictBoundedIntegerFromEnv('INDEXER_MAX_PAGES_PER_SYNC',20,{min:1,max:100}),
     ledgerMaxRelatedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_RELATED_ACCOUNTS',256,{min:1,max:1024}),

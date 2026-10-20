@@ -10,7 +10,6 @@ import { loadConfig } from '../config';
 import { parseCanonicalReleaseManifest } from '../config/releaseManifest';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 import { FakeLiteEngine, masterAnswer, proofBlock } from './support/fakeLiteEngine';
-import { AdmissionError } from '../data/admission/protocol';
 import { releaseDatabaseSchema } from '../releaseState';
 import { assertLedgerDatabaseReady, readLedgerCatalog, RELEASE_IDENTITY_DDL } from '../ledger/schemaReadiness';
 import type { LedgerSqlPool } from '../ledger/store';
@@ -36,14 +35,13 @@ async function main() {
   const poolPath = join(directory, 'pool.json');
   writeFileSync(poolPath, JSON.stringify({ liteservers: [{ ip: 2130706433, port: 1, id: { type: 'pub.ed25519', key: Buffer.alloc(32, 1).toString('base64') } }] }));
   const base = runtimeManifestFixture();
-  // Qualified current decoders still require available canonical storage and
-  // separately authenticated native admission.
+  // Registered current Perps starts without the retired OPEN/CLOSE worker.
+  // Qualified ledger decoders still require available canonical storage.
   const manifest = parseCanonicalReleaseManifest(base, 'testnet');
   const { pool, catalog } = await database(manifest.runtime.manifestHash);
   const config = { ...loadConfig(), port: 0, host: '127.0.0.1', databaseUrl: 'postgres://offline.invalid/indexer',
     snapshotPath: undefined, snapshotOnExit: false, snapshotAutosaveEnabled: false, diskGuardPath: directory,
-    liteserverPool: poolPath, blockPollMs: 100, rateLimitEnabled: false,
-    perpsAdmissionArtifacts: { binaryPath: '/synthetic/pinned-binary', binarySha256: 'a'.repeat(64), configPath: '/synthetic/pinned-config', configSha256: 'b'.repeat(64) } };
+    liteserverPool: poolPath, blockPollMs: 100, rateLimitEnabled: false };
   const head = proofBlock(100, currentTime, -1);
   const peer = new FakeLiteEngine(async req => {
     if (req.kind === 'liteServer.getMasterchainInfoExt') return masterAnswer(head);
@@ -52,7 +50,7 @@ async function main() {
     throw new Error(`Unexpected offline-startup query ${req.kind}`);
   });
   peer.ready = false;
-  let listened = false, databaseAttempts = 0, orderDatabaseAttempts = 0, admissionStarted = false, admissionClosed = false;
+  let listened = false, databaseAttempts = 0, orderDatabaseAttempts = 0;
   let fetchCalls = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { fetchCalls++; throw new Error('External discovery forbidden'); };
@@ -61,7 +59,7 @@ async function main() {
   try {
     const before = performance.now();
     worker = await startWorker(manifest, { config, logger,
-      onReady() { listened = true; assert.equal(databaseAttempts, 0); assert.equal(admissionStarted, false); assert.equal(fetchCalls, 0); },
+      onReady() { listened = true; assert.equal(databaseAttempts, 0); assert.equal(fetchCalls, 0); },
       engineFactory() { assert(listened, 'chain socket creation occurs after listen'); return peer; },
       ledger: { catalog, poolFactory: async () => {
         assert(listened); databaseAttempts++;
@@ -71,14 +69,12 @@ async function main() {
         assert(listened); orderDatabaseAttempts++;
         throw new Error('Synthetic order database connection refused');
       } },
-      admission: { factory: options => ({ engine: options.engine, ready: false,
-        async start() { assert(listened); admissionStarted = true; await new Promise<void>(() => {}); },
-        async run() { throw new AdmissionError('admission_unavailable'); }, async close() { admissionClosed = true; } }) },
     });
     assert(performance.now() - before < 3_000); assert(worker.api.app.server.listening);
     assert.equal((await worker.api.app.inject('/api/indexer/v1/service-info')).statusCode, 200);
     const health = await worker.api.app.inject('/api/indexer/v1/health');
-    assert.equal(health.statusCode, 503); assert.deepEqual(health.json().admission, { configured: true, ready: false });
+    assert.equal(health.statusCode, 503); assert(!('admission' in health.json()));
+    assert.equal(worker.registry.PerpsEngine, base.contracts.PerpsEngine!.address);
     const unavailable = await worker.api.app.inject(`/api/indexer/v1/accounts/${base.tokens[0].root}/ledger`);
     assert.equal(unavailable.statusCode, 503); assert.equal(unavailable.json().code, 'ledger_unavailable');
     assert(Number(unavailable.headers['retry-after']) >= 1);
@@ -100,8 +96,10 @@ async function main() {
     assert.equal(worker.ledger.ledger(), undefined); assert(databaseAttempts > 1);
     const stillFenced = await worker.api.app.inject(`/api/indexer/v1/accounts/${base.tokens[0].root}/ledger`);
     assert.equal(stillFenced.statusCode, 503); assert.equal(stillFenced.json().code, 'ledger_unavailable');
-    assert.equal((await worker.api.app.inject('/api/indexer/v1/health')).statusCode, 503, 'chain recovery cannot manufacture native admission readiness');
-    await worker.close(); assert(admissionClosed);
+    assert.equal((await worker.api.app.inject('/api/indexer/v1/health')).statusCode, 200, 'current chain health does not depend on the retired worker');
+    const readiness = await worker.api.app.inject('/api/indexer/v1/ledger/readiness');
+    assert.equal(readiness.statusCode, 503, 'chain health cannot manufacture ledger readiness');
+    await worker.close();
 
     await assertLedgerDatabaseReady(pool, manifest.runtime.manifestHash, catalog);
     const bad = await database(manifest.runtime.manifestHash);
@@ -110,7 +108,7 @@ async function main() {
       await assert.rejects(assertLedgerDatabaseReady(bad.pool, manifest.runtime.manifestHash, bad.catalog),
         /Durable ledger catalog differs from the canonical SQL schema/);
     } finally { await bad.pool.end(); }
-    console.log('Offline startup listens before chain/DB/admission, survives outages, recovers chain while retaining storage/native admission fences, and independently rejects incompatible PGlite catalogs');
+    console.log('Current Perps starts without retired artifacts, listens before chain/DB, recovers chain while retaining ledger readiness fences, and rejects incompatible PGlite catalogs');
   } finally {
     globalThis.fetch = originalFetch;
     await worker?.close();

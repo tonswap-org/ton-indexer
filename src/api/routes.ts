@@ -25,13 +25,13 @@ import {
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
 import { publicIndexerPath } from './publicMount';
-import { installErrorHandlers, publicAdmissionError, sendError, sendFailure } from './errors';
+import { installErrorHandlers, sendError, sendFailure } from './errors';
 import { requestDeadline, ROUTE_DEADLINE_MS } from './deadline';
 import { ChainReadError, type ChainSource, type TonBlockIdExt } from '../data/dataSource';
 import type { BalanceService } from '../balances/balanceService';
 import type { BalanceStreamHub } from '../balances/balanceStream';
 import type { RuntimeMetrics } from '../runtimeMetrics';
-import { isAdmissionMethod } from '../data/admission/protocol';
+import { isRetiredPerpsGetter } from '../data/currentGetters';
 import type { FreshReadCall } from '../data/freshRead';
 import { currentNativeRuntime, resolveServiceMetadata, installReleaseIdentity } from './serviceMetadata';
 import { errorDiagnostic, type Logger } from '../utils/logger';
@@ -423,13 +423,11 @@ export const registerRoutes = (
   app.get('/', async () => ({ status: 'ok' }));
 
   app.get('/api/indexer/v1/health', async (_request, reply) => {
-    const admission = service.getAdmissionStatus();
     const health = service.getHealth();
-    if (!health.chain.peersReady || health.disk === 'critical' || admission.configured && !admission.ready) reply.status(503);
+    if (!health.chain.peersReady || health.disk === 'critical') reply.status(503);
     return {
       ...health,
-      ...serviceIdentity,
-      admission
+      ...serviceIdentity
     };
   });
 
@@ -892,7 +890,7 @@ export const registerRoutes = (
         if (!address || !isValidAddress(address)) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
         }
-        if (!getter || !/^[a-zA-Z0-9_]{1,64}$/.test(getter)) {
+        if (!getter || !/^[a-zA-Z0-9_]{1,64}$/.test(getter) || isRetiredPerpsGetter(getter)) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid method' }, id);
         }
         const argsResult = parseStackArgs(params.stack);
@@ -957,8 +955,6 @@ export const registerRoutes = (
 
       return sendToncenterCompat(reply, { ok: false, code: 404, error: `unsupported method: ${method}` }, id);
     } catch (error) {
-      const admission = publicAdmissionError(error);
-      if (admission) return sendToncenterCompat(reply, { ok: false, code: admission.status, error: admission.code }, id, admission.status);
       const status = error instanceof ChainReadError ? error.code === 'upstream_timeout' ? 504 : 503 : 500;
       return sendToncenterCompat(reply, { ok: false, code: status, error: status === 500 ? 'JSON-RPC request failed' : error instanceof ChainReadError ? error.code : 'upstream_unavailable' }, id, status);
     }
@@ -984,7 +980,7 @@ export const registerRoutes = (
         calls.push({ kind: 'account', address: Address.parse(address).toRawString() });
       } else if (call.kind === 'getter' && Object.keys(call).every(key => ['kind', 'address', 'method', 'stack'].includes(key))) {
         const method = readString(call.method);
-        if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method) || isAdmissionMethod(method))
+        if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method) || isRetiredPerpsGetter(method))
           return sendError(reply, 400, 'invalid_fresh_read', 'Invalid fresh getter method.');
         const parsed = parseStackArgs(call.stack);
         if (!parsed.ok) return sendError(reply, 400, 'invalid_fresh_read', parsed.error ?? 'Invalid fresh getter stack.');
@@ -1014,7 +1010,7 @@ export const registerRoutes = (
     if (!address || !isValidAddress(address)) {
       return sendError(reply, 400, 'invalid_address', 'invalid address');
     }
-    if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method)) {
+    if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method) || isRetiredPerpsGetter(method)) {
       return sendError(reply, 400, 'invalid_method', 'invalid method');
     }
     const argsResult = parseStackArgs(body?.stack);
@@ -1024,8 +1020,6 @@ export const registerRoutes = (
     try {
       return await service.runGetMethod(address, method, argsResult.args ?? [], { signal: requestDeadline(request, ROUTE_DEADLINE_MS.getter) });
     } catch (error) {
-      const admission = publicAdmissionError(error);
-      if (admission) return sendError(reply, admission.status, admission.code, admission.message);
       return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'get method call failed' });
     }
   });

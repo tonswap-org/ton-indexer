@@ -43,7 +43,7 @@ async function main() {
   const common = { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, asOf: { masterchainSeqno: 1, unixTime: 1800000000, blockRootHash: '1'.repeat(64) },
     request: { kind: request.kind, owner: request.owner, bodyHash: request.bodyHash }, coverage: { complete: false, gaps: [{ code: 'original_unavailable', account: request.engine }] } };
   const read = (signal?: AbortSignal) => { assert(signal); reads++; if (unavailable) throw new ProductEvidenceError(503, 'upstream_unavailable'); };
-  registerRoutes(app, { network: 'testnet' }, { getAdmissionStatus() { return { configured: false, ready: false }; } } as IndexerService,
+  registerRoutes(app, { network: 'testnet' }, {  } as IndexerService,
     undefined, undefined, undefined, undefined, bundle.contracts, bundle.metadata, { source: {} as any, orders: { page: async () => { throw Error(); },
       perpsOperationEvidence: async (_p, signal) => { read(signal); return { schema: 'tonswap-perps-operation-evidence-v1', ...common, transactions: [] }; },
       perpsWalletClaimEvidence: async (_p, signal) => { read(signal); return { schema: 'tonswap-perps-wallet-claim-evidence-v1', ...common, wallets: [] }; }

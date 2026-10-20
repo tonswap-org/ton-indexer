@@ -53,7 +53,7 @@ export function deriveRuntimeManifestBindings(manifest: RuntimeReleaseManifest):
       masterCodeHash: token.masterCodeHash, walletCodeHash: token.walletCodeHash })),
     currentSpotMarkets,
     // Current product gates authenticate original source, economics and physical cash.
-    // Canonical storage, exact live identities and native admission remain required.
+    // Canonical storage, exact live identities and native execution qualification remain required.
     currentLedgerDecodersQualified: true,
     currentOptionsBinding: currentOptionsBindingFromManifest(manifest),
     currentPerpsBinding: currentPerpsBindingFromManifest(manifest),

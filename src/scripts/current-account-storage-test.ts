@@ -40,7 +40,7 @@ async function main() {
       return { head: mode === 'wrong-head' ? { ...head, fileHashHex: 'f'.repeat(64) } : head,
         configBoc: (mode === 'pruned' ? beginCell().storeRef(pruned).endCell() : config).toBoc().toString('base64') };
     } });
-  const app = Fastify(); const service = { getAdmissionStatus: () => ({ configured: false, ready: false }) } as IndexerService;
+  const app = Fastify(); const service = {  } as IndexerService;
   registerRoutes(app, { network: 'testnet' }, service, undefined, undefined, undefined, undefined, bundle.contracts, bundle.metadata, { source });
   const path = `/api/indexer/v1/account-storage?address=${encodeURIComponent(address)}&masterchainSeqno=100&blockRootHash=${head.rootHashHex}`;
   const check = async (url: string, status: number, code?: string, headers?: Record<string, string>) => {

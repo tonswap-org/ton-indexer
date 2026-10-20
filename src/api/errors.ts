@@ -1,10 +1,8 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
-import { AdmissionError, AdmissionErrorCode } from '../data/admission/protocol';
 import { ChainReadError } from '../data/dataSource';
 import { FreshReadUnavailableError } from '../data/freshRead';
 
-export type ErrorCode = AdmissionErrorCode
-  | 'upstream_timeout' | 'upstream_unavailable' | 'indexer_unavailable' | 'ledger_unavailable' | 'internal_error'
+export type ErrorCode = 'upstream_timeout' | 'upstream_unavailable' | 'indexer_unavailable' | 'ledger_unavailable' | 'internal_error'
   | 'invalid_address'
   | 'head_mismatch'
   | 'release_mismatch'
@@ -37,8 +35,6 @@ export const PROXY_ERROR_BODY = { error: 'The indexer is temporarily unavailable
 export function sendFailure(reply: FastifyReply, error: unknown, fallback: { code: ErrorCode; message: string }): FastifyReply {
   if (error instanceof FreshReadUnavailableError) return sendError(reply, 503, 'upstream_unavailable', fallback.message);
   if (error instanceof ChainReadError) return sendError(reply, error.code === 'upstream_timeout' ? 504 : 503, error.code, fallback.message);
-  const admission = publicAdmissionError(error);
-  if (admission) return sendError(reply, admission.status, admission.code, admission.message);
   return sendError(reply, 500, 'internal_error', fallback.message);
 }
 
@@ -64,14 +60,3 @@ export function installErrorHandlers(app: FastifyInstance): void {
     return payload;
   });
 }
-
-
-/** Only locally created typed admission failures cross the public boundary.
- * Upstream text, process output and proof bytes are never exposed as errors. */
-export const publicAdmissionError = (error: unknown) => {
-  if (!(error instanceof AdmissionError)) return null;
-  const status = error.code === 'admission_invalid_request' ? 400 :
-    error.code === 'admission_timeout' ? 504 :
-    error.code === 'admission_busy' || error.code === 'admission_unavailable' ? 503 : 502;
-  return { status, code: error.code, message: error.code };
-};

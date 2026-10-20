@@ -7,13 +7,12 @@ import { registerRoutes } from '../api/routes';
 import { setCorsHeaders } from '../api/cors';
 import { registerLedgerReadinessRoute } from '../ledger/readiness';
 import { createLedgerRuntime } from '../runtime/ledgerRuntime';
-import { createAdmissionRuntime } from '../runtime/admissionRuntime';
 import type { RuntimeDeps } from '../runtime/worker';
 import type { IndexerService } from '../indexerService';
 import { nativeLocalnetManifestText, runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 const service = {
-  getAdmissionStatus() { return { configured: false, ready: false }; },
+
   getHealth() { return { chain: { peersConfigured: 0, peersReady: 0, headSeqno: null, headAgeSec: null }, ledger: 'unavailable', disk: 'ok' }; },
 } as IndexerService;
 const header = 'x-tonswap-release';
@@ -118,8 +117,6 @@ async function main() {
   ledger.start(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(allocated, 0, 'explicitly unqualified ledger bindings cannot allocate a release database');
   assert.equal(ledger.status(), 'unavailable'); assert.equal(ledger.readPool(), undefined); await ledger.stop();
-  assert.throws(() => createAdmissionRuntime(deps), /qualified testnet admission runtime and exact artifact pins/,
-    'the current engine still requires native admission artifacts');
-  console.log('Current release header, stale request fence, CORS, instrument discovery, stable mount, readiness and admission boundaries passed.');
+  console.log('Current release header, stale request fence, CORS, instrument discovery, stable mount, readiness and current ledger boundaries passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

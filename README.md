@@ -47,7 +47,7 @@ produce coverage gaps. Immutable snapshots survive restarts, and late workers
 cannot replace a newer publication. No current account or getter result is cached.
 Use `INDEXER_DATABASE_URL` and the ordinary `npm run build`; the canonical database
 catalog includes the orders tables. This adds no readiness success keys and does
-not bypass native admission or canonical storage and live-identity checks.
+not bypass current native execution qualification, canonical storage or live-identity checks.
 
 `GET /api/indexer/v1/config-prices?masterchainSeqno=N&blockRootHash=HEX` authenticates
 config parameters 18, 21 and 25 at the same current masterchain boundary used by
@@ -308,7 +308,7 @@ isolation and eviction regressions.
 
 ## Current chain reads
 
-`POST /api/indexer/v1/readFresh` accepts 1–32 account/getter calls and executes them at one exact masterchain boundary. Its `readContext` contains `source: "lite"`, the complete head including `utime`, and the server query-start timestamp `queriedAt`. Account results contain the authenticated shard block and its creation time in `anchor`. The response also carries the current native release ID and manifest hash. No persisted account projection supplies a current chain read. Partial, wrong-network and wrong-block batches fail; actual getter VM exits remain outcomes. Perps admission stays on its separately authenticated native executor.
+`POST /api/indexer/v1/readFresh` accepts 1–32 account/getter calls and executes them at one exact masterchain boundary. Its `readContext` contains `source: "lite"`, the complete head including `utime`, and the server query-start timestamp `queriedAt`. Account results contain the authenticated shard block and its creation time in `anchor`. The response also carries the current native release ID and manifest hash. No persisted account projection supplies a current chain read. Partial, wrong-network and wrong-block batches fail; actual getter VM exits remain outcomes. Current Perps intake and funding getters use this same pinned batch; later asynchronous contract execution remains separate.
 
 Current metadata must have a canonical block time within 30 seconds of local
 time, at most five seconds ahead, and a consistent peer clock. Stale or lagging
@@ -328,7 +328,7 @@ Other SDK block/header/shard caches are bounded to 256 entries. Run
 
 The source does not retain completed getters. `SnapshotReader` shares active loads and permits completed reuse only when a caller explicitly supplies an age limit, optionally also requiring an unchanged exact account transaction pointer read at the current head. A reused value retains its original `asOfSeqno`. Time-dependent values must not enable completed reuse. Timed-out or abandoned work cannot publish into a later request, and there is no stale-success response mode.
 
-REST request errors use the flat body: `{ "error": "safe explanation", "code": "machine_code" }`. Validation uses 400, unknown or removed paths use 404, unsupported content types use 415, limiting uses 429, unavailable reads use 503/`upstream_unavailable`, timed-out reads use 504/`upstream_timeout`, and unknown internal errors use 500. Native admission keeps its separate typed errors. All errors are `no-store`; 429, 503 and 504 include `Retry-After`, exposed through CORS. Operational `/health` retains its component-status document even when its HTTP status is 503. Request disconnects cancel remaining work. Route budgets are five seconds for getters, balances and JSON-RPC, eighteen seconds for `readFresh`, and ten seconds for product snapshots.
+REST request errors use the flat body: `{ "error": "safe explanation", "code": "machine_code" }`. Validation uses 400, unknown or removed paths use 404, unsupported content types use 415, limiting uses 429, unavailable reads use 503/`upstream_unavailable`, timed-out reads use 504/`upstream_timeout`, and unknown internal errors use 500. All errors are `no-store`; 429, 503 and 504 include `Retry-After`, exposed through CORS. Operational `/health` retains its component-status document even when its HTTP status is 503. Request disconnects cancel remaining work. Route budgets are five seconds for getters, balances and JSON-RPC, eighteen seconds for `readFresh`, and ten seconds for product snapshots.
 
 `/jsonRPC` and `/api/v2/jsonRPC` use the same configured chain source. Masterchain responses use real head hashes; account responses use the actual shard anchor and chain creation time. Missing anchors never become wall-clock timestamps or fabricated blocks. Only explicit unused accounts receive a zero transaction cursor. `sendBoc` and `sendBocReturnHash` send one validated BOC through that source when `INDEXER_ENABLE_WRITE_RPC=true`; other writes and external JSON-RPC forwarding are unavailable.
 
@@ -714,9 +714,9 @@ production archive availability or change the ledger's explicit decoding limits.
 
 ## Startup and release operations
 
-Configuration, manifest and admission-artifact validation happen before listen. The listener opens before chain, database and native admission initialization; a live listener alone is not readiness. `/health` reports actual peer readiness, ledger state, disk capacity and admission state. It returns 503 when no peer is ready, disk is critical, or configured admission is not ready. Release admission separately requires the ledger to report ready. Database connection failures retry with bounded 2–60 second backoff; namespace, release or catalog conflicts remain unavailable without resetting data. Native authentication retries after 1–60 seconds while retaining its proof and artifact requirements. Source-mode workers cannot claim authenticated compiled-ledger readiness.
+Configuration and manifest validation happen before listen. The listener opens before chain and database initialization; a live listener alone is not readiness. `/health` reports actual peer readiness, ledger state and disk capacity. It returns 503 when no peer is ready or disk is critical. Release admission separately requires `/ledger/readiness` to report ready. Database connection failures retry with bounded 2–60 second backoff; namespace, release or catalog conflicts remain unavailable without resetting data. Source-mode workers cannot claim authenticated compiled-ledger readiness.
 
-Use a fresh canonical database for this first-release schema. Retain old database/snapshot/journal state; there is no migration fallback. In one cutover window, start the new worker beside the existing one on another port with its new database and wait for readiness and singleton prewarm. Publish this phase's web build first, then switch the proxy to the new indexer, record ledger admission and run release acceptance. If the host cannot run two admission runtimes, publish the web first and then restart the indexer on the new database. Incomplete ledger reads remain pending. Rollback switches the proxy to the retained old indexer/database while the new web stays deployed. See `docs/rollback-checklist.md`.
+Use a fresh canonical database for this first-release schema. Retain old database/snapshot/journal state; there is no migration fallback. In one cutover window, start the new worker beside the existing one on another port with its new database and wait for readiness and singleton prewarm. Publish this phase's web build first, then switch the proxy to the new indexer, record ledger admission and run release acceptance. If the host cannot run two indexer workers, publish the web first and then restart the indexer on the new database. Incomplete ledger reads remain pending. Rollback switches the proxy to the retained old indexer/database while the new web stays deployed. See `docs/rollback-checklist.md`.
 
 The public proxy template is `config/nginx-indexer.conf`. Render `PUBLIC_MOUNT`, `LISTEN`, `BACKEND` and `ERROR_ROOT`, place `config/proxy-error.json` at the rendered error root, and run `nginx -t` before installation. It supports `/api/indexer` and `/api/indexer-r2`, unbuffered SSE, a three-second connect timeout and a twenty-five-second JSON timeout. Backend 429/503/504 responses pass unchanged; an unavailable backend produces the exact static 503 JSON, CORS, `Retry-After: 5` and `no-store`. Public metrics, debug and snapshots are blocked.
 
@@ -843,7 +843,7 @@ The worker binds the configured `PORT`. If it is occupied, startup fails and the
 Production safeguards:
 - Missing, malformed, unauthenticated or wrong-network release manifests fail startup.
 - Code pins and deployment bindings come only from that manifest. Opcode definitions are bundled with the service.
-- A changed manifest hash stops the old child worker before a fresh process starts with separate snapshots, PostgreSQL schema, jobs, caches and native admission workers.
+- A changed manifest hash stops the old child worker before a fresh process starts with separate snapshots, PostgreSQL schema, jobs and caches.
 
 ## API
 
@@ -925,7 +925,7 @@ Every API response, including validation errors, preflight and ledger readiness,
 
 Current source and native evidence qualify the implemented T3, Options, Perps, DLMM, Orders and Launchpad decoders. `deriveRuntimeManifestBindings` marks that current decoder set qualified; it never enrolls older business-state readers. An explicitly false binding still refuses ledger initialization before allocating a database. Canonical SQL/catalog, release namespace, compiled-build identity and live T3 reserve authentication remain mandatory. Unlisted token roots remain unqualified.
 Reserve wallet custody still requires exact on-chain identity and archive
-evidence. Native perps admission artifacts and chain/genesis authentication
+evidence. Current native capture qualification and chain/genesis authentication
 remain required. Deployed identities do not establish fresh oracle depth, mint
 delivery, writer backing or an economically funded Cover product.
 
@@ -1749,26 +1749,13 @@ Current jetton wallet identity and settlement readers share the strict `readT3Re
 Current perps journal qualification uses a 128-record eligibility index. The exact count, unique wire ids, protected paid orders and receipt/index bijection are verified by the sole current state reader. Run `npm run test:ledger` for actual engine callback, settlement and current-source range fixtures.
 
 
-### Verified testnet perps admission runtime
+### Current Perps intake and funding reads
 
-A registered PerpsEngine requires the qualified native admission worker on macOS arm64, testnet, and the exact engine code hash. Set `PERPS_ADMISSION_BINARY_PATH`, `PERPS_ADMISSION_BINARY_SHA256`, `PERPS_ADMISSION_CONFIG_PATH`, and `PERPS_ADMISSION_CONFIG_SHA256` to the immutable reviewed native package. The package carries the native binary, its official TON source/toolchain provenance, and the exact global configuration with its retained trust anchor. All four values are mandatory together. There is no generic container deployment in this release; the host must provide the reviewed native package.
+Current PxStorage uses `get_request_check(owner, body, deposit)`, `get_min_value(op)` and `get_min_forward(op, slot)` through `/readFresh`, together with manifest-bound account state at one current masterchain head. The current getters are executed by the configured liteserver at the pinned block; this API does not claim local native-VM execution or measured gas. Intake approval does not promise the later oracle, RiskVault or token-transfer outcome. The contracts recheck actual asynchronous execution and preserve its original evidence.
 
-The HTTP listener opens before native authentication. The pool owns at most two persistent worker processes. HTTP readiness starts as soon as one live worker authenticates the signature chain and a fresh exact-block engine account; a slow or failed sibling does not discard that authenticated capacity. Cold workers cannot receive requests, and failure of both startup attempts remains unavailable. Cold bootstrap refreshes a fully authenticated but past-stale readiness snapshot by requesting a new verified sync, exact header and exact account. At most three startup rounds share the transport/freshness retry budget; future or inconsistent clocks, invalid proofs and wrong identity/code fail immediately. The 30-second proof-age and three-second future-skew checks remain strict. Private native diagnostics record authenticated master/shard ages. Cold bootstrap has a 600-second total deadline and a 120-second validated-progress stall deadline; the parent allows 610 seconds for process startup and cleanup. Deployment health gates must allow at least this cold-start interval. Each admission request has one attempt, a five-second timeout, a fixed one-million TVM gas maximum, and complete authenticated account/configuration/context binding. Busy workers return `admission_busy`; unavailable, timeout, proof, context and worker failures retain distinct safe API codes. Economic denial, VM failure and exhausted gas retain their actual getter result and gas usage. Admission requests never use generic remote-getter fallback or response caching.
+The retired `open_order_preflight` and `close_order_preflight` methods are rejected by REST, JSON-RPC and direct service calls before any source request. Their native worker, environment configuration and health dependency are removed. A current registered PerpsEngine starts with the ordinary manifest, chain and database configuration. `/health` reports chain, disk and ledger status; `/ledger/readiness` remains the separate compiled-build and canonical-storage release gate.
 
-After worker loss, the pool keeps authenticating replacements with exponential backoff capped at 60 seconds; repeated startup failures do not permanently exhaust recovery. When no authenticated worker remains, admission stays unavailable until a replacement authenticates. Failed requests are never replayed. Shutdown cancels pending replacement attempts and reaps owned workers. Run `npm run test:admission` for the supervisor lifecycle and API regressions.
-
-Each owned worker emits one private operator record when its process closes. It
-retains the original failure origin and phase, exact close code/signal, parent
-kill intent, readiness/timing and request/output counters. Only the last 4 KiB
-of stderr are retained and rendered as bounded printable ASCII; stdout contains
-proofs and payloads and supplies counters only. Expected shutdown and 128-job
-retirement use informational records; failures use warnings. Diagnostic sink
-errors cannot interfere with rejection, process reaping or replacement. Public
-admission error codes and messages remain fixed. The existing lifetime 1 MiB
-stderr termination guard is unchanged and separate from diagnostic retention;
-authentication, deadlines, resource limits and one-attempt execution are unchanged.
-The admission suite covers original failure preservation, exact exit status,
-stderr boundaries, same-chunk protocol failures and throwing diagnostic sinks.
+Run `npm run test:current-perps-getters`, `npm run test:fresh-read`, `npx tsx src/scripts/startup-offline-test.ts`, `npm run test:authenticated-proof`, `npm run test:historical-replay`, and `npm run build` after changing this boundary. Current native capture/ledger qualification and deployed acceptance are still required. Removing the old worker does not qualify another host or runtime; historical replay and deployment retain their separately qualified environment constraints. Historical native worker proof fixtures, provenance and operational packages remain evidence, not an executable current-release dependency.
 
 The retained historical Perps economic fixtures use the isolated LP counterparty model. Returned trader margin stays separate from an `RVPS` profit claim against that position's actual reserved capital. The independent integer verifier checks ceiling reserve allocation, signed floor PnL, capped funding and profit, exact predecessor/hash/beneficiary binding, and collected-loss journal growth. It rejects pooled profit credits, changes to another trader's cash, old fractional ADL, and obsolete funding-transfer layouts. A verified claim is not evidence of completed token delivery; wallet and RiskVault finalizers remain separate physical facts. Those earlier ABI fixtures are retained as historical evidence. The fresh PxStorage release is qualified by `npm run test:ledger:perps`, followed by the complete `npm run test:ledger`.
 
@@ -2090,7 +2077,7 @@ native capture files, all 180 source files and the passing producer receipt.
 All eight worlds qualify the actual discovery graph from exact same-head current
 account envelopes and canonical getters, including explicit original cold-wallet
 states. Sandbox heads do not qualify a public deployment; canonical storage,
-current live identities and native admission remain separate gates.
+current live identities and native execution qualification remain separate gates.
 
 
 Fresh market observations use `dlmm-market-ledger-v2` and the current Pool/T3/X
@@ -2157,7 +2144,7 @@ Current runtime qualification is exercised by `src/scripts/current-ledger-bootst
 through the actual derived binding, canonical SQL/catalog, separate worker/read
 pools, current v2 market construction and drained shutdown. Its explicit false
 binding allocates no pool. PGlite and synthetic fixture transport do not establish
-public consensus, PostgreSQL restart isolation or deployed native admission. Run
+public consensus, PostgreSQL restart isolation or deployed release qualification. Run
 `npm test` after changing these boundaries; final ledger qualification and web
 activation remain separate release receipts.
 

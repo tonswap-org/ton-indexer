@@ -40,7 +40,7 @@ async function main(){
   for(const change of [{target:other},{slot:2},{nonce:'01'},{extra:1},{model:3},{owner:'-1:'+ '1'.repeat(64)}])assert.throws(()=>readLaunchpadOwedArchiveRequest({...request,...change},manifest),ProductEvidenceError);
   assert.throws(()=>readLaunchpadOwedArchiveRequest({...request,manifestHash:'f'.repeat(64)},manifest),(error:any)=>error.status===409);
   const bundle=buildRuntimeManifestBundle(manifest),app=Fastify(),url='/api/indexer/v1/launchpad/owed-archive-evidence';let reads=0,unavailable=false,pending=false;
-  registerRoutes(app,{network:'testnet'},{getAdmissionStatus(){return{configured:false,ready:false};}} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,
+  registerRoutes(app,{network:'testnet'},{} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,
     {source:{} as any,orders:{page:async()=>{throw Error();},launchpadOwedArchiveEvidence:async(parsed,signal)=>{assert(signal);reads++;if(pending)throw new ArchiveReconstructionPending(64,64);if(unavailable)throw new ProductEvidenceError(503,'upstream_unavailable');const{network,releaseId,manifestHash,...identity}=parsed;
       return{schema:'tonswap-launchpad-owed-archive-evidence-v1',releaseId,manifestHash,asOf:{masterchainSeqno:1,unixTime:1800000000,blockRootHash:'1'.repeat(64)},request:identity,coverage:{complete:false,gaps:[]},holder:null,archive:null};}}});
   try{

@@ -1,6 +1,5 @@
 import { readOriginalTransactionEvidence, originalTransactionToToncenter } from './data/transactionEvidence';
-import { AdmissionExecutor } from './data/admission/nativePool';
-import { AdmissionError, AdmissionExecution, isAdmissionMethod } from './data/admission/protocol';
+import { isRetiredPerpsGetter } from './data/currentGetters';
 import { Address, Cell, TupleItem, beginCell, parseTuple, serializeTuple } from '@ton/core';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
@@ -60,7 +59,6 @@ type ToncenterRunResult = {
   stack: ToncenterStackEntry[];
   exit_code: number;
   gas_used: number | null;
-  admission?: AdmissionExecution;
 };
 
 const normalizeAddress = (value: string) => {
@@ -342,17 +340,6 @@ export class IndexerService {
   private poolTracker?: PoolTracker;
   private txCache: LRUCache<string, { value: any; signature: string }>;
   private healthCache?: { value: HealthStatus; expiresAt: number };
-  private admissionExecutor?: AdmissionExecutor;
-
-  setAdmissionExecutor(executor: AdmissionExecutor): void {
-    if (this.admissionExecutor) throw new Error('Admission executor is already bound.');
-    this.admissionExecutor = executor;
-  }
-
-  getAdmissionStatus(): { configured: boolean; ready: boolean } {
-    return { configured: Boolean(this.admissionExecutor), ready: Boolean(this.admissionExecutor?.ready) };
-  }
-
   constructor(
     config: Config,
     store: MemoryStore,
@@ -493,7 +480,7 @@ export class IndexerService {
   async readFresh(calls: FreshReadCall[], options: ServiceReadOptions = {}) {
     const startedAt = Date.now();
     if (this.source.network !== this.network
-      || calls.some(call => call.kind === 'getter' && isAdmissionMethod(call.method))) throw new FreshReadUnavailableError();
+      || calls.some(call => call.kind === 'getter' && isRetiredPerpsGetter(call.method))) throw new FreshReadUnavailableError();
     // Capture the complete tuple before handing it to a source. This path never
     // enters MemoryStore or any ordinary read's pending/completed cache.
     const captured = calls.map(call => call.kind === 'account' ? { ...call } :
@@ -517,15 +504,7 @@ export class IndexerService {
     method: string,
     args: TupleItem[] = [], options: ServiceReadOptions = {}
   ): Promise<ToncenterRunResult> {
-    if (isAdmissionMethod(method)) {
-      const admission = this.admissionExecutor;
-      if (!admission || normalizeAddress(address) !== normalizeAddress(admission.engine)) throw new AdmissionError('admission_unavailable');
-      // Explicit local verified execution. It cannot enter the generic remote
-      // source, completed cache, retry, or resilient fallback path below.
-      const result = await withReadDeadline(options, 5_000, () => admission.run(method, args));
-      return { stack: result.stack.map(tupleItemToToncenterStackEntry), exit_code: result.exitCode,
-        gas_used: result.gasUsed, admission: result.execution };
-    }
+    if (isRetiredPerpsGetter(method)) throw new Error('Retired Perps getter is unsupported.');
     const result = await this.runGetMethodSource(normalizeAddress(address), method, args, options);
     return {
       stack: result.stack.map(tupleItemToToncenterStackEntry),

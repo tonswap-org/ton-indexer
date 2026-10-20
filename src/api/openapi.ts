@@ -62,8 +62,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             chain: {type:'object',required:['peersConfigured','peersReady','headSeqno','headAgeSec'],properties:{
               peersConfigured:{type:'integer',minimum:0},peersReady:{type:'integer',minimum:0},headSeqno:{type:['integer','null']},headAgeSec:{type:['number','null']} }},
             ledger: {type:'string',enum:['disabled','connecting','ready','unavailable']},disk:{type:'string',enum:['ok','low','critical']},
-            admission: {type:'object',required:['configured','ready'],properties:{configured:{type:'boolean'},ready:{type:'boolean'}}}
-          }, required:['serviceId','ecosystem','chainId','network','chain','ledger','disk','admission']
+          }, required:['serviceId','ecosystem','chainId','network','chain','ledger','disk']
         },
         ContractsResponse: {
           type: 'object',
@@ -159,7 +158,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
           type: 'object',
           properties: {
             exit_code: { type: 'integer' },
-            gas_used: { type: ['integer', 'null'], description: 'Measured TVM gas for verified admission; null when the source does not report gas.' },
+            gas_used: { type: ['integer', 'null'], description: 'Null when the source does not report gas.' },
             stack: { type: 'array', items: { type: 'array', items: {} } },
           },
           required: ['exit_code', 'gas_used', 'stack'],

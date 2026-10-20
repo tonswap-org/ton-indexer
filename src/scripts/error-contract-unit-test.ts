@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import fastify, { type FastifyRequest } from 'fastify';
-import { AdmissionError, type AdmissionErrorCode } from '../data/admission/protocol';
 import { ChainReadError } from '../data/dataSource';
-import { installErrorHandlers, PROXY_ERROR_BODY, publicAdmissionError, sendError, sendFailure } from '../api/errors';
+import { installErrorHandlers, PROXY_ERROR_BODY, sendError, sendFailure } from '../api/errors';
 import { requestDeadline, ROUTE_DEADLINE_MS } from '../api/deadline';
 
 async function main() {
@@ -18,8 +17,6 @@ async function main() {
   app.get('/custom-retry', (_request, reply) => sendError(reply, 429, 'rate_limited', 'Rate limit exceeded.', { retryAfterSeconds: 4.1 }));
   app.get('/existing-retry', (_request, reply) => reply.header('retry-after', '9').status(504).send({ error: 'Timed out.', code: 'upstream_timeout' }));
   app.post('/schema', { schema: { body: { type: 'object', required: ['address'], properties: { address: { type: 'string' } } } } }, () => ({ ok: true }));
-  const admission: AdmissionErrorCode[] = ['admission_unavailable', 'admission_busy', 'admission_timeout', 'admission_invalid_request', 'admission_invalid_proof', 'admission_invalid_context', 'admission_worker_failure'];
-  for (const code of admission) app.get(`/${code}`, (_request, reply) => sendFailure(reply, new AdmissionError(code), fallback));
   try {
     for (const [url, status, code, retry] of [
       ['/timeout', 504, 'upstream_timeout', '1'], ['/unavailable', 503, 'upstream_unavailable', '2'],
@@ -32,11 +29,6 @@ async function main() {
     }
     const invalid = await app.inject({ method: 'POST', url: '/schema', payload: {} });
     assert.equal(invalid.statusCode, 400); assert.deepEqual(invalid.json(), { error: 'The request is invalid.', code: 'bad_request' });
-    for (const code of admission) {
-      const response = await app.inject(`/${code}`), expected = publicAdmissionError(new AdmissionError(code))!;
-      assert.equal(response.statusCode, expected.status); assert.deepEqual(response.json(), { error: expected.message, code });
-      if (expected.status >= 503) assert(response.headers['retry-after']);
-    }
     assert.deepEqual(PROXY_ERROR_BODY, { error: 'The indexer is temporarily unavailable.', code: 'indexer_unavailable' });
   } finally { await app.close(); }
 

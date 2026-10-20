@@ -93,7 +93,7 @@ async function main() {
         factory: { address: request.factory, codeBoc: '', dataBoc: '' }, order: { address: request.order, codeBoc: '', dataBoc: '' }, absentAccounts: [],
         wallets: { ownerPay: request.owner, ownerReceive: request.owner, orderPay: request.order, poolPay: request.pool, poolReceive: request.pool } };
   } };
-  const service = { getAdmissionStatus() { return { configured: false, ready: false }; } } as IndexerService;
+  const service = {  } as IndexerService;
   const app = Fastify();
   registerRoutes(app, { network: 'testnet' }, service, undefined, undefined, undefined, undefined, bundle.contracts, bundle.metadata, { source, orders });
   const path = `/api/indexer/v1/config-prices?masterchainSeqno=100&blockRootHash=${head.rootHashHex}`;

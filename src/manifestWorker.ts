@@ -1,7 +1,7 @@
 import { fork } from 'node:child_process';
 import type { LoadedManifest } from './config/manifestSource';
 import type { ManifestWorker } from './manifestSupervisor';
-// Readiness notification acknowledges the HTTP listener; admission and chain
+// Readiness notification acknowledges the HTTP listener; ledger and chain
 // authentication proceed independently after it has opened.
 export const MANIFEST_WORKER_STARTUP_TIMEOUT_MS = 30_000;
 

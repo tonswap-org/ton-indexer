@@ -18,7 +18,7 @@ async function main(){
   assert.equal(readFaucetProofSessionRequest(request,manifest).nonce,request.nonce);
   for(const altered of [{...request,extra:1},{...request,nonce:'0'},{...request,proofCodeBoc:beginCell().endCell().toBoc().toString('base64')},{...request,original:{...original,asset:1}},{...request,anchor:{seqno:1}}])assert.throws(()=>readFaucetProofSessionRequest(altered,manifest),ProductEvidenceError);
   let reads=0,unavailable=false;const app=Fastify(),url='/api/indexer/v1/t3/faucet-proof-session';
-  registerRoutes(app,{network:'testnet'},{getAdmissionStatus(){return {configured:false,ready:false};}} as IndexerService,
+  registerRoutes(app,{network:'testnet'},{} as IndexerService,
     undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,{source:{} as any,orders:{page:async()=>{throw Error();},faucetProofSession:async(p,signal)=>{
       reads++;assert(signal);assert.equal(p.nonce,request.nonce);if(unavailable)throw new ProductEvidenceError(503,'upstream_unavailable');
       return {schema:'tonswap-faucet-proof-session-v1',releaseId:manifest.releaseId,manifestHash:manifest.manifestHash} as any;
@@ -39,7 +39,7 @@ async function main(){
     {method:'launchpadHolderProofSession',path:'holder-proof-session',payload:{original:launchOriginal,key:launchOriginal.target+':1:'+ '2'.repeat(64),nonce:'1'.repeat(64),anchor:null,proofCodeBoc:request.proofCodeBoc}},
   ]){
     const app=Fastify(),url='/api/indexer/v1/launchpad/'+entry.path;let reads=0,unavailable=false;
-    registerRoutes(app,{network:'testnet'},{getAdmissionStatus(){return{configured:false,ready:false};}} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,
+    registerRoutes(app,{network:'testnet'},{} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,
       {source:{} as any,orders:{page:async()=>{throw Error();},[entry.method]:async(_parsed:unknown,signal:AbortSignal)=>{assert(signal);reads++;if(unavailable)throw new ProductEvidenceError(503,'upstream_unavailable');return{releaseId:manifest.releaseId,manifestHash:manifest.manifestHash};}}});
     try{
       for(let i=0;i<2;i++){const response=await app.inject({method:'POST',url,payload:entry.payload});assert.equal(response.statusCode,200,response.body);assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['x-tonswap-release'],manifest.manifestHash);}

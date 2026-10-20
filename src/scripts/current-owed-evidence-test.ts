@@ -23,7 +23,7 @@ async function run(){
   }
   const bundle=buildRuntimeManifestBundle(manifest),app=Fastify();let calls=0,unavailable=false;
   const collect=async(_p:any,signal?:AbortSignal)=>{calls++;assert(signal);if(unavailable)throw new ProductEvidenceError(503,'upstream_unavailable');return{coverage:{complete:false,gaps:[]}} as any;};
-  registerRoutes(app,{network:'testnet'},{getAdmissionStatus(){return{configured:false,ready:false};}} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,{source:{} as any,orders:{page:async()=>{throw Error();},owedEvidence:collect,owedOperationEvidence:collect,owedWalletClaimEvidence:collect}});
+  registerRoutes(app,{network:'testnet'},{} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,{source:{} as any,orders:{page:async()=>{throw Error();},owedEvidence:collect,owedOperationEvidence:collect,owedWalletClaimEvidence:collect}});
   try{for(const[name,payload]of [['evidence',base],['operation-evidence',fixture('archive')],['wallet-claim-evidence',fixture('direct')]] as const){const url=`/api/indexer/v1/owed/${name}`;
     for(let i=0;i<2;i++){const r=await app.inject({method:'POST',url,payload});assert.equal(r.statusCode,200,r.body);assert.equal(r.headers['cache-control'],'no-store');assert.equal(r.headers['x-tonswap-release'],manifest.manifestHash);}
     assert.equal((await app.inject({method:'POST',url:url+'?extra=1',payload})).statusCode,400);

@@ -18,7 +18,7 @@ async function main() {
     assert.throws(() => readLaunchpadSalesRequest({ ...request, ...change }, manifest), ProductEvidenceError);
   assert.throws(() => readLaunchpadSalesRequest({ ...request, factory: runtimeAddress(999) }, manifest), (e: any) => e.code === 'release_mismatch');
   const bundle = buildRuntimeManifestBundle(manifest), app = Fastify(), url = '/api/indexer/v1/launchpad/sales'; let reads = 0, unavailable = false;
-  registerRoutes(app, { network: 'testnet' }, { getAdmissionStatus() { return { configured: false, ready: false }; } } as IndexerService,
+  registerRoutes(app, { network: 'testnet' }, {  } as IndexerService,
     undefined, undefined, undefined, undefined, bundle.contracts, bundle.metadata, { source: {} as any, orders: {
       page: async () => { throw Error(); }, launchpadSales: async (parsed, signal) => {
         assert(signal); reads++; if (unavailable) throw new ProductEvidenceError(503, 'upstream_unavailable');

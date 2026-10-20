@@ -37,7 +37,7 @@ async function main() {
   for (const key of ['network','releaseId','manifestHash','masterCodeHash','walletCodeHash'])
     assert.throws(() => readLaunchpadTokenRequest({ ...request, [key]: 'wrong' }, manifest), (error: any) => error.status === 409);
   const bundle = buildRuntimeManifestBundle(manifest), app = Fastify(), url = '/api/indexer/v1/launchpad/token-evidence'; let reads = 0, unavailable = false;
-  registerRoutes(app, { network: 'testnet' }, { getAdmissionStatus() { return { configured: false, ready: false }; } } as IndexerService,
+  registerRoutes(app, { network: 'testnet' }, {  } as IndexerService,
     undefined, undefined, undefined, undefined, bundle.contracts, bundle.metadata, { source: {} as any, orders: {
       page: async () => { throw Error(); }, launchpadTokenEvidence: async (parsed, signal) => {
         assert(signal); reads++; if (unavailable) throw new ProductEvidenceError(503, 'upstream_unavailable');

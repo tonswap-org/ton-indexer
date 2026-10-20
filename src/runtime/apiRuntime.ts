@@ -17,13 +17,12 @@ import { SnapshotService } from '../snapshotService';
 import { DebugService } from '../debugService';
 import { RateLimiter } from '../api/rateLimit';
 import { PoolTracker } from '../poolTracker';
-import type { AdmissionExecutor } from '../data/admission/nativePool';
 import type { RuntimeDeps } from './worker';
 import type { LedgerRuntime } from './ledgerRuntime';
 import type { CurrentOrdersRuntime } from './ordersRuntime';
 
 export type ApiRuntime = { app: FastifyInstance; listen(): Promise<string>; start(): void; close(): Promise<void> };
-export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; orders: CurrentOrdersRuntime; admission?: AdmissionExecutor }): ApiRuntime {
+export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; orders: CurrentOrdersRuntime }): ApiRuntime {
   const { config, logger, source, registry, manifest, bindings, opcodes, ledger, disk } = deps;
   const poolTracker = new PoolTracker(registry), store = new MemoryStore(config);
   if (config.snapshotPath) {
@@ -34,7 +33,6 @@ export function createApiRuntime(deps: RuntimeDeps & { ledger: LedgerRuntime; or
   }
   const metricsCollector = new MetricsCollector();
   const service = new IndexerService(config, store, source, opcodes, bindings.jettonRoots, metricsCollector, poolTracker, { ledgerStatus: () => ledger.status(), diskState: () => disk.state() });
-  if (deps.admission) service.setAdmissionExecutor(deps.admission);
   const balances = new BalanceService({ reader: createJettonWalletReader({ source, tokens: bindings.jettonRoots }), roots: bindings.jettonRoots, network: config.network });
   const streams = new BalanceStreamHub({ service: balances, heads: deps.heads });
   const backfillWorker = new BackfillWorker(config, store, source, opcodes, logger, metricsCollector, poolTracker);

@@ -272,18 +272,7 @@ Run `src/scripts/ledger-dlmm-swap-test.ts` for the frozen current-source cases.
 
 The current oracle journal stores count:uint16, nextWireQueryId:uint64, an eligibility dictionary keyed by uint128 (eligibleAt<<64|wireQueryId), and owner receipts. Protected paid outcome1 records have no index entry. Terminal records have eligibleAt0; unpaid pending records have requestedAt+300. Reject count, unique nonce or index/receipt mismatches and obsolete ring layouts; no scan fallback.
 
-Registered testnet perps engines require the reviewed macOS arm64 admission runtime.
-Configure all four `PERPS_ADMISSION_BINARY_PATH`, `PERPS_ADMISSION_BINARY_SHA256`,
-`PERPS_ADMISSION_CONFIG_PATH`, and `PERPS_ADMISSION_CONFIG_SHA256` values together.
-The HTTP listener opens before native authentication. Readiness requires the chain,
-fresh exact-block engine state and configured code to authenticate; failed native
-startup retries with bounded backoff without replaying an admission request. OPEN/CLOSE admission uses only the bounded native workers, with
-authenticated account/configuration/context, a hard gas maximum, and no generic
-remote-getter fallback or response cache. Preserve actual economic denial, VM exit
-and gas usage separately from typed infrastructure errors. Run `npm run test:admission`
-and the complete `npm test`; the ordinary build must retain owned clean-dist cleanup.
-The native package is qualified and installed separately on its supported host.
-There is no generic container deployment for this release.
+Current Perps intake uses only `get_request_check(owner, body, deposit)` and dynamic `get_min_value`/`get_min_forward` funding reads in the ordinary pinned `/readFresh` batch. The configured liteserver executes those getters; do not describe this as local proof-verified native VM execution. Intake checks do not guarantee later asynchronous oracle, RiskVault or wallet outcomes. Current native fixture qualification, original account/transaction proofs, canonical storage and release readiness remain mandatory. The retired OPEN/CLOSE worker is not a current Perps runtime dependency. Reject its removed getter names before generic source calls; do not add compatibility or remote fallback. Preserve its original proof fixtures and retained operational packages. Run `test:current-perps-getters`, `test:fresh-read`, the offline startup regression, authenticated-proof and historical-replay gates, and the ordinary clean-dist build after changing this boundary.
 
 Current routed DLMM observations require strict RTR1/extras5/RSJ8 historical router
 state and the sole RSWI/RPSX/RPSC/RPCA ordinary single-pool wire. Payer funding,
@@ -323,15 +312,15 @@ Authenticate every executed/embedded compiled identity and its original bytes;
 keep transaction BOCs, state commitments and historical rejection fixtures intact.
 Never import removed native scripts/release helpers, trust transient build output,
 claim historical producer-source locks absent from the receipt, or add a provisional
-bypass. Capture evidence and runtime admission are separate: this migration does
-not relax the macOS arm64 admission binary/configuration requirements. Run
+bypass. Capture evidence and deployed release acceptance remain separate; retained
+old worker artifacts do not qualify the current PxStorage ABI. Run
 `npm run test:capture-build`, all ledger checks, the full suite and the ordinary
 clean-dist build after capture verifier changes.
 
 
 ## Current chain, API and ledger contract
 
-The sole chain source is the reviewed local liteserver pool. The selected network requires an absolute local global-config file or an explicit inline peer list. No HTTP source, remote pool URL, public endpoint default, discovery service or alternate RPC proxy is supported. Configuration and admission artifacts validate before listen; chain, database and admission initialization start after listen. Listener availability never establishes ledger or native readiness. Namespace/catalog/release conflicts remain unavailable without resetting operational data.
+The sole chain source is the reviewed local liteserver pool. The selected network requires an absolute local global-config file or an explicit inline peer list. No HTTP source, remote pool URL, public endpoint default, discovery service or alternate RPC proxy is supported. Configuration and manifest bindings validate before listen; chain and database initialization start after listen. Listener availability never establishes ledger or deployed product readiness. Namespace/catalog/release conflicts remain unavailable without resetting operational data.
 
 One monotonic network-authenticated head pins each current batch. Current block time must be within 30 seconds of local time, at most five seconds ahead, with a consistent peer clock; the one-second process-head reuse window cannot extend block freshness. Unpinned preflight batches recheck block age at completion. An already pinned concurrent batch retains its original boundary without lowering the process head. Failed batches cancel active siblings and stop queued reads. Accounts carry real shard-block anchors and chain creation times; server time never supplies a chain anchor. Completed getters and balances are not cached. Snapshot reuse must be explicit and retain its original asOfSeqno; time-dependent values cannot enable completed reuse. Cancellation and bounded deadlines apply to callers and underlying shared work. Typed REST failures use flat `{error,code}` with honest 400/404/415/429/500/503/504 statuses and no-store; retryable 429/503/504 responses include Retry-After. JSON-RPC uses the same source and authentic anchors. Enabled BOC submission is single-attempt and never retried or hedged.
 
@@ -477,7 +466,7 @@ native capture files, all 180 source files and the passing producer receipt.
 All eight worlds qualify the actual discovery graph from exact same-head current
 account envelopes and canonical getters, including explicit original cold-wallet
 states. Sandbox heads do not qualify a public deployment; canonical storage,
-current live identities and native admission remain separate gates.
+current live identities and native execution qualification remain separate gates.
 
 
 Fresh market observations use `dlmm-market-ledger-v2` and the current Pool/T3/X
@@ -551,7 +540,7 @@ Current runtime qualification is exercised by `src/scripts/current-ledger-bootst
 through the actual derived binding, canonical SQL/catalog, separate worker/read
 pools, current v2 market construction and drained shutdown. Its explicit false
 binding allocates no pool. PGlite and synthetic fixture transport do not establish
-public consensus, PostgreSQL restart isolation or deployed native admission. Run
+public consensus, PostgreSQL restart isolation or deployed release qualification. Run
 `npm test` after changing these boundaries; final ledger qualification and web
 activation remain separate release receipts.
 

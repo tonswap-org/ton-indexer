@@ -56,7 +56,7 @@ async function main() {
   const collect=async({request}:any,signal?:AbortSignal)=>{count++;assert(signal);if(unavailable)throw new ProductEvidenceError(503,'upstream_unavailable');
     return {schema:request.kind==='claim'?'tonswap-faucet-operation-evidence-v1':'tonswap-options-operation-evidence-v1',releaseId:manifest.releaseId,manifestHash:manifest.manifestHash,
       asOf:{masterchainSeqno:1,unixTime:1800000000,blockRootHash:'1'.repeat(64)},request:{kind:request.kind,owner:request.owner,bodyHash:request.bodyHash},coverage:{complete:false,gaps:[{code:'original_request_unobserved',account:request.owner}]},transactions:[]};};
-  const app=Fastify();registerRoutes(app,{network:'testnet'},{getAdmissionStatus(){return {configured:false,ready:false};}} as IndexerService,
+  const app=Fastify();registerRoutes(app,{network:'testnet'},{} as IndexerService,
     undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,{source:{} as any,orders:{page:async()=>{throw Error();},optionsOperationEvidence:collect as any,faucetOperationEvidence:collect as any,optionsWalletClaimEvidence:collect as any,faucetRecoveryEvidence:collect as any}});
   try {
     for(const [product,request] of [['options/operation-evidence',optionsRequestFixture().request],['faucet/operation-evidence',faucet.request],['options/wallet-claim-evidence',optionsRequestFixture().request],['faucet/recovery-evidence',faucet.request]] as const) {

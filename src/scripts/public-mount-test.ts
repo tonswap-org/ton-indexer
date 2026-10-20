@@ -15,7 +15,7 @@ const metadataFor = (indexer: string) => {
   return { runtime, releaseId: runtime.releaseId, manifestHash: runtime.manifestHash, registryHash: '' };
 };
 const service = {
-  getAdmissionStatus() { return { configured: false, ready: false }; },
+
   getHealth() { return { lastMasterSeqno: 42 }; },
 } as IndexerService;
 

@@ -6,7 +6,7 @@ import { runtimeManifestFixture, runtimeMetadataFixture } from './fixtures/runti
 import type { Network } from '../config';
 
 const service = {
-  getAdmissionStatus() { return { configured: false, ready: false }; },
+
   getHealth() { return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 123, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' }; },
 } as IndexerService;
 const capabilityRoutes = {

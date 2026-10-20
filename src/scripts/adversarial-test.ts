@@ -147,7 +147,7 @@ const testRateLimitIgnoresUntrustedForwardedFor = async () => {
   };
   const app = fastify({ logger: false });
   const service = {
-    getAdmissionStatus() { return { configured: false, ready: false }; },
+
       getHealth() {
       return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
@@ -189,7 +189,7 @@ const testRateLimitUsesAuthenticatedEdgeOnly = async () => {
   };
   const app = fastify({ logger: false });
   const service = {
-    getAdmissionStatus() { return { configured: false, ready: false }; },
+
       getHealth() {
       return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
@@ -229,7 +229,7 @@ const testRateLimitBucketsAreIsolated = async () => {
     },
   };
   const service = {
-    getAdmissionStatus() { return { configured: false, ready: false }; },
+
       getHealth() {
       return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },

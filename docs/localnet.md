@@ -27,4 +27,4 @@ TON_INDEXER_EXPECTED_CORS_ORIGIN=http://127.0.0.1:5173 \
 npm run smoke:production
 ```
 
-Native admission remains mandatory for a registered PerpsEngine. The reviewed native runtime supports macOS arm64 testnet; localnet cannot invent a supported binding or bypass qualification. Configure all four admission artifact path/hash settings only for a supported deployment. Gate-only native database tests use INDEXER_TEST_DATABASE_URL and an isolated loopback PostgreSQL server; they do not mutate the localnet application database.
+Current Perps uses pinned `readFresh` intake/funding getters and manifest-bound PxStorage. No retired OPEN/CLOSE worker package is required. Localnet remains distinct from public-consensus and deployed-release qualification. Gate-only native database tests use INDEXER_TEST_DATABASE_URL and an isolated loopback PostgreSQL server; they do not mutate the localnet application database.

@@ -23,10 +23,10 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - Confirm the five-second manifest poll stops the old child worker before
   starting a changed release, and snapshots/PostgreSQL schemas isolate
   manifest hashes without resuming old ledger jobs under new bindings.
-- A registered PerpsEngine requires the reviewed macOS arm64 testnet native
-  admission package. Configure its binary/config paths and SHA-256 hashes
-  together; require authenticated fresh engine state before readiness. The
-  release host must provide this runtime before admission can become ready.
+- Verify current Perps PxStorage and intake/funding getters in one fresh
+  manifest-bound liteserver batch. Retired OPEN/CLOSE getters must fail before
+  any source request. Require current native capture/ledger qualification and
+  deployed execution checks; retained old worker packages are historical evidence.
 - Run or confirm green CI for branch-flow audit, public artifact audit,
   TODO-debt audit, install, production dependency audit, tests, build, and
   release-bound OpenAPI smoke.

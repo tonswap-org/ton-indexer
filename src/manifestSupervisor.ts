@@ -8,7 +8,7 @@ export type ManifestWorker = {
 };
 
 /** Stop the old process before starting a new release. In-flight work can never
- * mutate the next release's store, bindings, admission worker or caches. */
+ * mutate the next release's store, bindings or caches. */
 export function createManifestSupervisor(options: {
   read: () => Promise<LoadedManifest>;
   launch: (manifest: LoadedManifest) => ManifestWorker;

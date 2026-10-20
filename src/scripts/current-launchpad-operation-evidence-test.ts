@@ -50,7 +50,7 @@ async function main(){
     return{releaseId:manifest.releaseId,manifestHash:manifest.manifestHash,asOf:{masterchainSeqno:1,unixTime:1800000000,blockRootHash:'1'.repeat(64)},
       request:{kind:parsed.request.kind,owner:parsed.request.owner,bodyHash:parsed.request.bodyHash},coverage:{complete:false,gaps:[]}};
   };
-  registerRoutes(app,{network:'testnet'},{getAdmissionStatus(){return{configured:false,ready:false};}} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,
+  registerRoutes(app,{network:'testnet'},{} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,
     {source:{} as any,orders:{page:async()=>{throw Error();},
       launchpadOperationEvidence:async(parsed,signal)=>({...response(parsed,signal),schema:'tonswap-launchpad-operation-evidence-v1',transactions:[]}),
       launchpadWalletClaimEvidence:async(parsed,signal)=>({...response(parsed,signal),schema:'tonswap-launchpad-wallet-claim-evidence-v1',wallets:[]})}});

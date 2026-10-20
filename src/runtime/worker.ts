@@ -12,7 +12,6 @@ import type { HeadFeed } from './headFeed';
 import { releaseSnapshotPath } from '../releaseState';
 import { createChainRuntime } from './chainRuntime';
 import { createLedgerRuntime } from './ledgerRuntime';
-import { createAdmissionRuntime } from './admissionRuntime';
 import { createApiRuntime } from './apiRuntime';
 import { createOrdersRuntime } from './ordersRuntime';
 
@@ -21,7 +20,7 @@ export type RuntimeDeps = { config: Config; manifest: LoadedManifest; bindings: 
 
 export async function startWorker(manifest: LoadedManifest, options: {
   config?: Config; logger?: Logger; engineFactory?: (peer: LiteserverPeer) => LiteEngine;
-  ledger?: Parameters<typeof createLedgerRuntime>[1]; orders?: Parameters<typeof createOrdersRuntime>[1]; admission?: Parameters<typeof createAdmissionRuntime>[1];
+  ledger?: Parameters<typeof createLedgerRuntime>[1]; orders?: Parameters<typeof createOrdersRuntime>[1];
   onReady?: () => void;
 } = {}) {
   const config = { ...(options.config ?? loadConfig()) }, logger = options.logger ?? createLogger(config.logLevel);
@@ -34,25 +33,23 @@ export async function startWorker(manifest: LoadedManifest, options: {
     onChange: (state, path, freeBytes) => { metrics.gauge('disk_free_bytes', freeBytes); logger.info('disk state changed', { state, path, freeBytes }); } });
   const deps: RuntimeDeps = { config, manifest, registry: manifest.contracts, bindings,
     source: chain.source, heads: chain.heads, logger, metrics, disk, opcodes };
-  let admission: ReturnType<typeof createAdmissionRuntime> | undefined;
   let ledger: ReturnType<typeof createLedgerRuntime> | undefined;
   let orders: ReturnType<typeof createOrdersRuntime> | undefined;
   let api: ReturnType<typeof createApiRuntime> | undefined;
   let stopMonitor: (() => void) | undefined, closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
     disk.stop(); stopMonitor?.();
-    await Promise.all([api?.close(), admission?.stop(), chain.stop(), ledger?.stop(), orders?.stop()]);
+    await Promise.all([api?.close(), chain.stop(), ledger?.stop(), orders?.stop()]);
   })();
   try {
-    admission = createAdmissionRuntime(deps, options.admission);
     ledger = createLedgerRuntime(deps, options.ledger);
     orders = createOrdersRuntime(deps, options.orders);
-    api = createApiRuntime({ ...deps, ledger, orders, admission: admission.executor });
+    api = createApiRuntime({ ...deps, ledger, orders });
     const address = await api.listen();
     logger.info('server started', { address, network: config.network, registryLoaded: Object.keys(deps.registry).length > 0 });
     options.onReady?.();
     stopMonitor = metrics.startEventLoopMonitor();
-    admission.start(); ledger.start(); orders.start(); api.start();
-    return { ...deps, api, ledger, orders, admission, address, close };
+    ledger.start(); orders.start(); api.start();
+    return { ...deps, api, ledger, orders, address, close };
   } catch (error) { await close(); throw error; }
 }
