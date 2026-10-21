@@ -1915,7 +1915,14 @@ The optional notification, public price and historical FX service is maintained 
 [`services/platform`](services/platform/README.md). It has its own dependencies,
 configuration and build. From that directory, run `npm ci` and `npm run verify`;
 follow its README for database migrations and API/worker deployment. The indexer
-build and runtime remain separate from this service.
+build and runtime remain separate from this service. The platform API uses the same
+validated `INDEXER_RELEASE_MANIFEST` as its browser release. All requests except
+canonical GET/HEAD `/v1/health` require `x-tonswap-release: <manifestHash>`; a
+missing identity returns 503, and an old or missing client header returns 409
+before parsing or authentication. Responses expose the process manifest hash
+through the same header and CORS. An intentionally absent indexer URL disables
+DEX reads without removing this request fence. Run `npm --prefix
+services/platform run verify` to check the complete API and worker suite.
 
 Current Options and faucet physical evidence use `POST /api/indexer/v1/options/operation-evidence`
 and `POST /api/indexer/v1/faucet/operation-evidence`. Each exact request names its

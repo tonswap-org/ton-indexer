@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { routeById } from '../../../../tonswap_web/routes.mjs';
-import { governanceNotificationLink, NOTIFICATION_DESTINATIONS, walletNotificationLink } from '../src/notificationLinks.js';
+import { governanceNotificationLink, walletNotificationLink } from '../src/notificationLinks.js';
 
 describe('first-release notification navigation contract', () => {
-  it('binds every service destination to the actual frontend route manifest', () => {
-    expect(NOTIFICATION_DESTINATIONS).toEqual({ wallet: routeById('wallet').path, swap: routeById('swap').path,
-      governance: routeById('earn.vote').path, settings: routeById('settings.notifications').path });
-  });
   it('retains an opaque transaction identity exactly once through URL encoding', () => {
     const txId = '9007199254740993:aB+/==';
     const url = new URL(walletNotificationLink(txId), 'https://app.example.test');

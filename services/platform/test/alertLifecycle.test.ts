@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { Database } from '../src/db.js';
 import type { AlertAsset, PriceRuleInput } from '../src/types.js';
-import { createServer } from '../src/server.js';
+import { createReleaseTestServer as createServer, injectRelease } from './releaseRequests.js';
 import { Store } from '../src/store.js';
 import { Providers } from '../src/providers.js';
 import { PushSender } from '../src/push.js';
@@ -56,7 +56,7 @@ it('resolves witnessed DEX prices through a leased scan into a durable scoped in
 
   const app = await createServer(cfg, db, { providers, fetcher, logger: false });
   try {
-    const response = await app.inject({ url: '/v1/notifications/inbox', headers: { cookie: `__Host-tonswap_session=${current.token}`,
+    const response = await injectRelease(app, { url: '/v1/notifications/inbox', headers: { cookie: `__Host-tonswap_session=${current.token}`,
       'x-wallet-address': address, 'x-wallet-network': 'testnet' } });
     expect(response.statusCode).toBe(200);
     expect(response.json().notifications.map((event: { id: string }) => event.id)).toEqual(events.map(event => event.id));

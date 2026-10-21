@@ -2,10 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import { Providers } from '../src/providers.js';
 import { fetchPtax, ptaxCacheKey, ptaxEvidenceMatches, ptaxRequest, ptaxRevisionId } from '../src/ptax.js';
-import { createServer } from '../src/server.js';
+import { createReleaseTestServer as createServer, injectRelease, apiConfig as config } from './releaseRequests.js';
 import { postgres, type Database } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
-import { config, database } from './helpers.js';
+import {database} from './helpers.js';
 
 let db: Database, cleanup = async () => {};
 const now = new Date('2026-09-12T09:00:00.000Z'), date = '2025-08-29';
@@ -167,13 +167,13 @@ describe('Banco Central exact historical closing evidence', () => {
   it('exposes only public currency/date requests and immutable observations without wallet authentication', async () => {
     const p = service(response()), app = await createServer(config(), db, { providers: p, logger: false });
     try {
-      const initial = await app.inject({ method: 'GET', url: `/v1/ptax?currency=USD&date=${date}` }); expect(initial.statusCode).toBe(200);
+      const initial = await injectRelease(app, { method: 'GET', url: `/v1/ptax?currency=USD&date=${date}` }); expect(initial.statusCode).toBe(200);
       const value = initial.json(); expect(value.status).toBe('available');
-      const saved = await app.inject({ method: 'GET', url: `/v1/ptax/revisions/${value.revisionId}` }); expect(saved.statusCode).toBe(200); expect(saved.json().evidence.observation).toEqual(value.observation);
-      expect((await app.inject({ method: 'GET', url: `/v1/ptax?currency=USD&date=${date}&wallet=private` })).statusCode).toBe(400);
-      expect((await app.inject({ method: 'GET', url: `/v1/ptax?currency=BRL&date=${date}` })).statusCode).toBe(400);
-      expect((await app.inject({ method: 'GET', url: `/v1/ptax/revisions/${'0'.repeat(64)}` })).statusCode).toBe(404);
-      expect((await app.inject({ method: 'GET', url: `/v1/ptax/revisions/${value.revisionId}?wallet=private` })).statusCode).toBe(400);
+      const saved = await injectRelease(app, { method: 'GET', url: `/v1/ptax/revisions/${value.revisionId}` }); expect(saved.statusCode).toBe(200); expect(saved.json().evidence.observation).toEqual(value.observation);
+      expect((await injectRelease(app, { method: 'GET', url: `/v1/ptax?currency=USD&date=${date}&wallet=private` })).statusCode).toBe(400);
+      expect((await injectRelease(app, { method: 'GET', url: `/v1/ptax?currency=BRL&date=${date}` })).statusCode).toBe(400);
+      expect((await injectRelease(app, { method: 'GET', url: `/v1/ptax/revisions/${'0'.repeat(64)}` })).statusCode).toBe(404);
+      expect((await injectRelease(app, { method: 'GET', url: `/v1/ptax/revisions/${value.revisionId}?wallet=private` })).statusCode).toBe(400);
     } finally { await app.close(); }
   });
 });

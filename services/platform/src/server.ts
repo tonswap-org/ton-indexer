@@ -45,6 +45,9 @@ export async function createServer(config: Config, db: Database, dependencies: S
     level: 'info', redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'],
     serializers: { req: request => ({ method: request.method, url: request.url?.split('?')[0], remoteAddress: request.ip }) },
   } });
+  // This process serves one validated manifest. Never adopt a later mutable config value.
+  const configuredHash = config.dexRelease?.manifestHash;
+  const releaseHash = typeof configuredHash === 'string' && /^[0-9a-f]{64}$/.test(configuredHash) ? configuredHash : null;
   const store = dependencies.store ?? new Store(db, config);
   const providers = dependencies.providers ?? new Providers(db, config, dependencies.fetcher);
   const push = dependencies.push ?? new PushSender(config);
@@ -56,7 +59,17 @@ export async function createServer(config: Config, db: Database, dependencies: S
   await app.register(cookie);
   await app.register(cors, { origin: (origin, callback) => callback(null, Boolean(origin && config.appOrigins.includes(origin))),
     credentials: true, methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Wallet-Address', 'X-Wallet-Network'] });
+    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Wallet-Address', 'X-Wallet-Network', 'X-Tonswap-Release'],
+    exposedHeaders: ['X-Tonswap-Release'] });
+  // CORS terminates genuine allowed-origin preflights before this hook. An arbitrary
+  // OPTIONS request is not an exemption. Refuse stale clients before parsing a body
+  // or calling authentication, persistence or a provider.
+  app.addHook('onRequest', async request => {
+    if (['GET', 'HEAD'].includes(request.method) && request.routeOptions.url === '/v1/health' && request.url.split('?', 1)[0] === '/v1/health') return;
+    if (!releaseHash) throw new ApiError(503, 'release_unavailable', 'The platform release is not configured.');
+    if (request.headers['x-tonswap-release'] !== releaseHash)
+      throw new ApiError(409, 'release_mismatch', 'Reload TONSwap to use the current release.');
+  });
   await app.register(rateLimit, { max: 120, timeWindow: '1 minute', allowList: [], keyGenerator: request => request.ip });
   const requireOrigin = (request: FastifyRequest): string => {
     const origin = request.headers.origin;
@@ -75,6 +88,7 @@ export async function createServer(config: Config, db: Database, dependencies: S
     return session;
   };
   app.addHook('onSend', async (_request, reply, payload) => {
+    if (releaseHash) reply.header('X-Tonswap-Release', releaseHash);
     reply.header('X-Content-Type-Options', 'nosniff'); reply.header('Referrer-Policy', 'no-referrer');
     reply.header('Cache-Control', 'no-store');
     if (config.cookieSecure) reply.header('Strict-Transport-Security', 'max-age=31536000');

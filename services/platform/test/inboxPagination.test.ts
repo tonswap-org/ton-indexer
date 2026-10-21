@@ -3,8 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { postgres, type Database } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
 import { Store } from '../src/store.js';
-import { createServer } from '../src/server.js';
-import { address, config, database, secondAddress, session } from './helpers.js';
+import { createReleaseTestServer as createServer, injectRelease, apiConfig as config } from './releaseRequests.js';
+import {address, database, secondAddress, session} from './helpers.js';
 import type { FastifyInstance } from 'fastify';
 
 let db: Database, store: Store, app: FastifyInstance, current: Awaited<ReturnType<typeof session>>, other: Awaited<ReturnType<typeof session>>;
@@ -30,7 +30,7 @@ async function seed(value: number, timestamp: string, wallet = address, network 
 }
 const headers = () => ({ cookie: `__Host-tonswap_session=${current.token}`, 'x-wallet-address': address, 'x-wallet-network': 'testnet' });
 async function apiPage(limit: number, cursor?: string) {
-  const response = await app.inject({ url: `/v1/notifications/inbox?limit=${limit}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, headers: headers() });
+  const response = await injectRelease(app, { url: `/v1/notifications/inbox?limit=${limit}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, headers: headers() });
   expect(response.statusCode).toBe(200); return response.json<{ notifications: { id: string; readAt: string | null; createdAt: string }[]; nextCursor: string | null }>();
 }
 async function allPages(limit: number) {
@@ -88,12 +88,12 @@ describe('lossless PostgreSQL inbox cursors', () => {
     { createdAt: '2026-09-13T00:00:00.123456Z', id: id(2), old: true },
     { createdAt: 123, id: id(2) }, null,
   ])('rejects malformed or superseded cursor format%j with a client error', async value => {
-    const response = await app.inject({ url: `/v1/notifications/inbox?cursor=${encodeURIComponent(encoded(value))}`, headers: headers() });
+    const response = await injectRelease(app, { url: `/v1/notifications/inbox?cursor=${encodeURIComponent(encoded(value))}`, headers: headers() });
     expect(response.statusCode).toBe(400); expect(response.json().error.code).toBe('invalid_cursor');
   });
   it('rejects noncanonical base64url rather than ignoring trailing bytes', async () => {
     const cursor = encoded({ createdAt: '2026-09-13T00:00:00.123456Z', id: id(2) }) + '!';
-    const response = await app.inject({ url: `/v1/notifications/inbox?cursor=${encodeURIComponent(cursor)}`, headers: headers() });
+    const response = await injectRelease(app, { url: `/v1/notifications/inbox?cursor=${encodeURIComponent(cursor)}`, headers: headers() });
     expect(response.statusCode).toBe(400); expect(response.json().error.code).toBe('invalid_cursor');
   });
 });

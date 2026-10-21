@@ -55,6 +55,18 @@ mounts are exactly `/api/indexer`; responses and optional request fences bind
 below do not authorize old decoders for the fresh native release. Current product
 bindings are qualified by their accepted original-source and native evidence.
 
+The standalone platform API requires the exact `x-tonswap-release` manifest hash
+on every data, authentication and mutation request. Only canonical GET/HEAD
+`/v1/health` is exempt; genuine allowed-origin CORS preflights terminate separately.
+Refuse absent server identity with 503 and missing or different client identity
+with 409 before body parsing, session lookup or other work. Derive the immutable
+process identity only from the validated `INDEXER_RELEASE_MANIFEST`, return it in
+responses and expose it through CORS. An absent indexer URL leaves DEX capability
+unavailable; every supplied indexer URL must match that manifest network and
+canonical endpoint. Never accept a second-network endpoint under one identity.
+Run the complete platform `verify` gate, including release-fence refusals, after
+changing this boundary.
+
 The standalone platform service validates the complete current native manifest
 before deriving DEX prices: T3Hub, explicit token code pins, spot wallet profiles,
 vendor assets, campaign/supply and unique keeper identity. Keep its strict schema
@@ -338,7 +350,15 @@ Only gate packages start an isolated native PostgreSQL test server. Native secti
 
 Disk monitoring never deletes operational data. Unknown capacity is critical; low/critical capacity skips snapshot saves and critical health returns 503. Snapshots serialize through the asynchronous writer, use one owned temporary file per target and are awaited during shutdown. Logs and metric series are bounded and expose dropped counts. Runtime metrics include source/database/phase timing, scheduler depth, foreground age, pool wait, first-publication latency and database size; additive concurrent I/O totals need not equal wall-clock phases.
 
-Publish this phase's web first, then switch the indexer within one release window. Keep the old indexer/database available for proxy rollback; the new web stays. No acceptance run or release announcement belongs between those two cutover steps.
+Follow `../tonswap_tolk/docs/runbooks/testnet-release.md`: start the qualified
+current indexer at the stable manifest service mount before switching the web
+origin. Require its unredirected ledger readiness to match the exact manifest,
+build/SQL identity and durable release namespace, and verify
+`x-tonswap-release: <manifestHash>` against that same manifest. With the completed
+web build bound to the manifest, run `activate-ledger`, then `publish --dry-run`,
+before publication switches the web origin. Retain the previous indexer runtime,
+database and operational state for rollback. Do not announce release completion
+until both indexer and web readback pass with the same release identity.
 
 
 Current Options/faucet evidence starts at the exact original owner TON wallet

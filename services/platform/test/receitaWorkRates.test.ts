@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Providers } from '../src/providers.js';
 import { receitaWorkRatesRequest, receitaWorkRatesReplay, receitaWorkRatesSnapshot } from '../src/receitaWorkRates.js';
 import { fetchReceitaWorkRates, receitaWorkRatesCacheKey, receitaWorkRatesEvidenceMatches, receitaWorkRatesRevisionId } from '../src/receitaWorkRatesProvider.js';
-import { createServer } from '../src/server.js';
+import { createReleaseTestServer as createServer, injectRelease, apiConfig } from './releaseRequests.js';
 import { postgres, type Database } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
 import { receitaWorkRatesTestConfig as config, receitaWorkRatesTestDatabase as database } from './fixtures/receitaWorkRates.js';
@@ -123,12 +123,12 @@ describe('official Receita receipt-month Compra evidence', () => {
     expect(receitaWorkRatesReplay(original,'2025-06',new Date('2027-01-01T00:00:00.000Z')).observation!.buy).toBe('5.6322');
   });
   it('exposes only strict public month/revision routes',async()=>{
-    const app=await createServer(config(),db,{providers:new Providers(db,config(),async()=>response(),()=>now),logger:false});try{
-      const result=await app.inject({method:'GET',url:'/v1/receita-work-rates?month=2025-06'});expect(result.statusCode).toBe(200);const payload=result.json();
-      const revision=await app.inject({method:'GET',url:`/v1/receita-work-rates/revisions/${payload.revisionId}`});expect(revision.statusCode).toBe(200);expect(revision.json().evidence.sourceHtml).toBe(html());
-      for(const query of ['month=2025-06&wallet=private','month=2024-06','month=2025-06&month=2025-01','month=2025-06%0A'])expect((await app.inject({method:'GET',url:'/v1/receita-work-rates?'+query})).statusCode).toBe(400);
-      expect((await app.inject({method:'GET',url:`/v1/receita-work-rates/revisions/${payload.revisionId}?wallet=private`})).statusCode).toBe(400);
-      expect((await app.inject({method:'GET',url:`/v1/receita-work-rates/revisions/${'0'.repeat(64)}`})).statusCode).toBe(404);
+    const app=await createServer(apiConfig({ ...config(), indexerUrls: {} }),db,{providers:new Providers(db,config(),async()=>response(),()=>now),logger:false});try{
+      const result=await injectRelease(app, {method:'GET',url:'/v1/receita-work-rates?month=2025-06'});expect(result.statusCode).toBe(200);const payload=result.json();
+      const revision=await injectRelease(app, {method:'GET',url:`/v1/receita-work-rates/revisions/${payload.revisionId}`});expect(revision.statusCode).toBe(200);expect(revision.json().evidence.sourceHtml).toBe(html());
+      for(const query of ['month=2025-06&wallet=private','month=2024-06','month=2025-06&month=2025-01','month=2025-06%0A'])expect((await injectRelease(app, {method:'GET',url:'/v1/receita-work-rates?'+query})).statusCode).toBe(400);
+      expect((await injectRelease(app, {method:'GET',url:`/v1/receita-work-rates/revisions/${payload.revisionId}?wallet=private`})).statusCode).toBe(400);
+      expect((await injectRelease(app, {method:'GET',url:`/v1/receita-work-rates/revisions/${'0'.repeat(64)}`})).statusCode).toBe(404);
     }finally{await app.close();}
   });
 });

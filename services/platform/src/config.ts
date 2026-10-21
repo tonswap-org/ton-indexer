@@ -77,7 +77,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   };
   if (env.INDEXER_RELEASE_MANIFEST) {
     config.dexRelease = loadDexReleaseManifest(env.INDEXER_RELEASE_MANIFEST);
-    if (!networks.includes(config.dexRelease.network) || config.indexerUrls[config.dexRelease.network] !== config.dexRelease.indexerUrl) {
+    const release = config.dexRelease;
+    // The manifest still identifies the API when DEX reads are deliberately disabled.
+    // A supplied read endpoint must always belong to that exact release.
+    const suppliedIndexers = (['mainnet', 'testnet'] as const).flatMap(network => {
+      const value = env[`INDEXER_URL_${network.toUpperCase()}`];
+      return value ? [{ network, endpoint: url(value, allowInsecureLocal) }] : [];
+    });
+    if (!networks.includes(release.network) || suppliedIndexers.some(({ network, endpoint }) =>
+      network !== release.network || endpoint !== release.indexerUrl)) {
       throw new Error('INDEXER_RELEASE_MANIFEST must match the configured network and INDEXER_URL release endpoint.');
     }
   }

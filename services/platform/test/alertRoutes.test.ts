@@ -3,7 +3,7 @@ import { Address } from '@ton/core';
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../src/db.js';
 import type { Config } from '../src/config.js';
-import { createServer } from '../src/server.js';
+import { createReleaseTestServer as createServer, injectRelease } from './releaseRequests.js';
 import { Providers } from '../src/providers.js';
 import { Store } from '../src/store.js';
 import { address, database, session } from './helpers.js';
@@ -29,7 +29,7 @@ async function setup(cfg = fixtureConfig(), stale = false) {
   const account = await session(store);
   const headers = { origin: cfg.appOrigins[0]!, cookie: `__Host-tonswap_session=${account.token}`,
     'x-csrf-token': account.csrfToken, 'x-wallet-address': address, 'x-wallet-network': 'testnet' };
-  const save = (payload: unknown) => app.inject({ method: 'PUT', url: '/v1/notifications/price-rules', headers, payload: payload as object });
+  const save = (payload: unknown) => injectRelease(app, { method: 'PUT', url: '/v1/notifications/price-rules', headers, payload: payload as object });
   const definition = (overrides: Record<string, unknown> = {}) => ({ asset: token, currency: 'T3', quoteAssetId: T3,
     releaseManifestHash: cfg.dexRelease?.manifestHash, kind: 'target', targetPrice: '1.5', direction: 'above', enabled: true, ...overrides });
   return { app, store, account, prices, search, fetcher, headers, save, definition };
@@ -39,12 +39,12 @@ describe('release-bound DEX alert API', () => {
   it('requires network for search and rejects disabled networks and old query formats', async () => {
     const { app, search, fetcher } = await setup(fixtureConfig({ networks: ['testnet'] }));
     for (const url of ['/v1/assets/search?q=TON', '/v1/assets/search?network=mainnet', '/v1/assets/search?network=-3', '/v1/assets/search?network=testnet&wallet=any'])
-      expect((await app.inject({ url })).statusCode).toBe(400);
+      expect((await injectRelease(app, { url })).statusCode).toBe(400);
     expect(search).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
   });
   it('lists only active-release tokens with explicit denomination and truthful capabilities', async () => {
     const { app, search, prices } = await setup();
-    const response = await app.inject({ url: '/v1/assets/search?network=testnet' });
+    const response = await injectRelease(app, { url: '/v1/assets/search?network=testnet' });
     expect(response.statusCode).toBe(200);
     expect(response.json().assets).toEqual([
       { asset: { kind: 'ton', network: 'testnet', assetId: T3 }, symbol: 'T3', name: 'T3', currency: 'T3', quoteAssetId: T3,
@@ -52,12 +52,12 @@ describe('release-bound DEX alert API', () => {
       { asset: token, symbol: 'USDT', name: 'USDT', currency: 'T3', quoteAssetId: T3,
         releaseManifestHash: fixtureConfig().dexRelease!.manifestHash, capabilities: { target: true, percent: false } },
     ]);
-    expect((await app.inject({ url: '/v1/assets/search?network=mainnet' })).json()).toEqual({ assets: [], issues: ['dex_release_not_configured'] });
+    expect((await injectRelease(app, { url: '/v1/assets/search?network=mainnet' })).json()).toEqual({ assets: [], issues: ['dex_release_not_configured'] });
     expect(search).not.toHaveBeenCalled(); expect(prices).not.toHaveBeenCalled();
   });
   it('matches friendly addresses without depending on external metadata', async () => {
     const { app, search } = await setup();
-    const response = await app.inject({ url: `/v1/assets/search?network=testnet&q=${encodeURIComponent(Address.parse(ASSET).toString({ testOnly: true }))}` });
+    const response = await injectRelease(app, { url: `/v1/assets/search?network=testnet&q=${encodeURIComponent(Address.parse(ASSET).toString({ testOnly: true }))}` });
     expect(response.json()).toMatchObject({ assets: [{ asset: token, symbol: 'USDT', capabilities: { target: true, percent: false } }], issues: [] });
     expect(response.json().assets).toHaveLength(1); expect(search).not.toHaveBeenCalled();
   });
@@ -66,7 +66,9 @@ describe('release-bound DEX alert API', () => {
       { kind: 'coingecko', network: 'testnet', assetId: ASSET, coinGeckoId: 'tether' },
     ] });
     const { app, search, prices } = await setup(cfg);
-    expect((await app.inject({ url: '/v1/assets/search?network=testnet' })).json()).toEqual({ assets: [], issues: ['dex_release_not_configured'] });
+    const response = await injectRelease(app, { url: '/v1/assets/search?network=testnet' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ error: { code: 'release_unavailable' } });
     expect(search).not.toHaveBeenCalled(); expect(prices).not.toHaveBeenCalled();
   });
   it('rejects old, listed, implicit-USD and numeric target inputs before provider work', async () => {

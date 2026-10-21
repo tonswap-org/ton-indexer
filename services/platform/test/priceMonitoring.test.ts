@@ -7,12 +7,12 @@ import { Providers } from '../src/providers.js';
 import { AlertObservations } from '../src/alertObservations.js';
 import { PushSender } from '../src/push.js';
 import { Worker } from '../src/worker.js';
-import { createServer } from '../src/server.js';
+import { createReleaseTestServer as createServer, injectRelease, apiConfig as config } from './releaseRequests.js';
 import { assessPriceObservation, priceMonitoring, type PriceMonitoringRecord } from '../src/priceMonitoring.js';
 import type { AlertAsset, AlertQuote, Job, PriceRuleInput, Session } from '../src/types.js';
 import { dexConfig, dexDefinition, dexQuote, token, otherToken, quoteRoot, release } from './dexAlertFixtures.js';
 import { Decimal } from '../src/decimal.js';
-import { address, config, database, secondAddress, session } from './helpers.js';
+import {address, database, secondAddress, session} from './helpers.js';
 
 const cfg = dexConfig({ networks: ['testnet', 'mainnet'] });
 let db: Database, store: Store, providers: Providers, worker: Worker;
@@ -277,13 +277,13 @@ describe('durable price monitoring, separate from saved rule definitions', () =>
     const app = await createServer(cfg, db, { store, providers, logger: false });
     try {
       const headers = { cookie: `__Host-tonswap_session=${current.token}`, origin: 'https://app.example.test', 'x-wallet-address': address, 'x-wallet-network': 'testnet' };
-      const response = await app.inject({ url: '/v1/notifications/price-rules', headers });
+      const response = await injectRelease(app, { url: '/v1/notifications/price-rules', headers });
       expect(response.statusCode).toBe(200);
       expect(response.json().rules[0]).toMatchObject({ id: rule.id, asset: watched.asset, capabilities: { target: true, percent: false },
         monitoring: { state: 'monitoring', checkedAt: iso(), evaluatedAt: iso(), source: 'tonswap-dex', issue: null, validUntil: iso(now + 30_000) } });
       expect(Date.parse(response.json().rules[0].monitoring.observedAt)).toBe(now);
       await db.query("UPDATE platform_price_rule_monitoring SET started_at=now()-interval '1 hour',checked_at=now()-interval '1 hour' WHERE rule_id=$1", [rule.id]);
-      expect((await app.inject({ url: '/v1/notifications/price-rules', headers })).json().rules[0].monitoring).toMatchObject({ state: 'stale', issue: 'monitoring_overdue' });
+      expect((await injectRelease(app, { url: '/v1/notifications/price-rules', headers })).json().rules[0].monitoring).toMatchObject({ state: 'stale', issue: 'monitoring_overdue' });
     } finally { await app.close(); }
   });
 });

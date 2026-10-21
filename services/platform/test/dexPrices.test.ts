@@ -97,15 +97,26 @@ describe('release-bound DEX configuration', () => {
     const manifest = dexManifest(); change(manifest);
     expect(() => parseDexReleaseManifest(signDexManifest(manifest))).toThrow();
   });
-  it('loads an explicit manifest and refuses a different configured release endpoint or network', () => {
+  it('loads an explicit manifest and refuses a different configured release endpoint or network', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tonswap-dex-test-')); directories.push(directory);
     const path = join(directory, 'release-manifest.json'); writeFileSync(path, JSON.stringify(dexManifest()));
     const environment = { DATABASE_URL: 'postgres://test/unused', DATA_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64'),
       APP_ORIGIN: 'https://app.example.test', PLATFORM_URL: 'https://app.example.test/platform',
       INDEXER_URL_TESTNET: dexConfig().dexRelease!.indexerUrl, INDEXER_RELEASE_MANIFEST: path };
     expect(loadConfig(environment).dexRelease).toEqual(parseDexReleaseManifest(dexManifest()));
+    const unbound = loadConfig({ ...environment, INDEXER_URL_TESTNET: '' });
+    expect(unbound.dexRelease).toEqual(parseDexReleaseManifest(dexManifest()));
+    const fetcher = vi.fn(async () => { throw Error('An absent indexer binding must not fetch.'); });
+    const unavailable = new DexPrices(unbound, fetcher);
+    expect(unavailable.configured('testnet')).toBe(false);
+    expect((await unavailable.prices('testnet', [ASSET])).quotes[0]!.issues).toEqual(['dex_release_not_configured']);
+    expect(fetcher).not.toHaveBeenCalled();
     expect(() => loadConfig({ ...environment, INDEXER_URL_TESTNET: 'https://other.example.test/v1' })).toThrow('must match');
     expect(() => loadConfig({ ...environment, NETWORKS: 'mainnet' })).toThrow('must match');
+    for (const NETWORKS of ['testnet', 'testnet,mainnet']) {
+      expect(() => loadConfig({ ...environment, NETWORKS,
+        INDEXER_URL_MAINNET: 'https://other.example.test/api/indexer/v1' })).toThrow('must match');
+    }
     writeFileSync(path, JSON.stringify(dexManifest()).replace('"schema":', '"schema":"tonswap-release-v1","schema":'));
     expect(() => loadDexReleaseManifest(path)).toThrow('duplicate JSON keys');
   });

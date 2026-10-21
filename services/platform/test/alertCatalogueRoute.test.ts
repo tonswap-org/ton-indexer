@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { Address } from '@ton/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createServer } from '../src/server.js';
+import { createReleaseTestServer as createServer, injectRelease } from './releaseRequests.js';
 import type { Database } from '../src/db.js';
 import type { Providers } from '../src/providers.js';
 import type { PushSender } from '../src/push.js';
@@ -54,40 +54,40 @@ afterEach(async () => {
 
 describe('public release-bound DEX catalogue route', () => {
   it('returns the exact unauthenticated release token and T3 denomination through the real server', async () => {
-    const response = await app!.inject({ method: 'GET', url: '/v1/assets/search?network=testnet&q=USDT' });
+    const response = await injectRelease(app!, { method: 'GET', url: '/v1/assets/search?network=testnet&q=USDT' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ assets: [usdt], issues: [] });
     expect(response.headers['set-cookie']).toBeUndefined();
   });
 
   it.each(['usdt', 'uSdT', '  USDT  ', 'usd', ASSET, Address.parse(ASSET).toString({ testOnly: true })])('finds canonical release metadata for %j', async value => {
-    const response = await app!.inject({ method: 'GET', url: `/v1/assets/search?network=testnet&q=${encodeURIComponent(value)}` });
+    const response = await injectRelease(app!, { method: 'GET', url: `/v1/assets/search?network=testnet&q=${encodeURIComponent(value)}` });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ assets: [usdt], issues: [] });
   });
 
   it('defaults an omitted query to the public catalogue', async () => {
-    const response = await app!.inject({ method: 'GET', url: '/v1/assets/search?network=testnet' });
+    const response = await injectRelease(app!, { method: 'GET', url: '/v1/assets/search?network=testnet' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ assets: [t3, usdt], issues: [] });
   });
 
   it('rejects unknown query keys before reading the catalogue', async () => {
-    const response = await app!.inject({ method: 'GET', url: '/v1/assets/search?network=testnet&q=USDT&unexpected=true' });
+    const response = await injectRelease(app!, { method: 'GET', url: '/v1/assets/search?network=testnet&q=USDT&unexpected=true' });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toMatchObject({ code: 'invalid_request', fields: [''] });
     expect(searchAssets).not.toHaveBeenCalled();
   });
 
   it('rejects a valid but disabled network before reading the catalogue', async () => {
-    const response = await app!.inject({ method: 'GET', url: '/v1/assets/search?network=mainnet&q=USDT' });
+    const response = await injectRelease(app!, { method: 'GET', url: '/v1/assets/search?network=mainnet&q=USDT' });
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe('unsupported_network');
     expect(searchAssets).not.toHaveBeenCalled();
   });
 
   it.each(['GRAM', 'TON', 'native', 'bitcoin'])('does not invent %j when absent from the release', async value => {
-    const response = await app!.inject({ method: 'GET', url: `/v1/assets/search?network=testnet&q=${value}` });
+    const response = await injectRelease(app!, { method: 'GET', url: `/v1/assets/search?network=testnet&q=${value}` });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ assets: [], issues: [] });
   });

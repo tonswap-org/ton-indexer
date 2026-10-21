@@ -20,7 +20,7 @@ The initial migration creates sessions/challenges, preferences, encrypted device
 
 ## Static frontend and deployment
 
-Recommended production layout: static frontend at `https://test.tonswap.org`, reverse proxy `/platform/` to `127.0.0.1:18787/`, and `VITE_PLATFORM_API_URL=/platform`, `VITE_APP_ORIGIN=https://test.tonswap.org` in the frontend build. `deploy/nginx.conf` strips the prefix and overwrites forwarded client addresses. Run the API with `HOST=127.0.0.1`, `PORT=18787`, `TRUST_LOOPBACK_PROXY=1`. Only the exact IPv4/IPv6 loopback proxy addresses are trusted; direct untrusted peers cannot choose their forwarded identity. `deploy/tonswap-platform.service` is a systemd template; set its user, Node path, checkout path and protected environment file to actual host values before installation.
+The frontend reads the platform URL from the same canonical release manifest as the API, for example `https://test.tonswap.org/api/platform`. The reviewed reverse proxy strips that exact mount and forwards to `127.0.0.1:18787/`; it must preserve request and response `x-tonswap-release` headers and overwrite forwarded client addresses. The deployment proxy template must be adjusted to that manifest mount before use; no separate frontend platform URL override establishes identity. Run the API with `HOST=127.0.0.1`, `PORT=18787`, `TRUST_LOOPBACK_PROXY=1`. Only the exact IPv4/IPv6 loopback proxy addresses are trusted; direct untrusted peers cannot choose their forwarded identity. `deploy/tonswap-platform.service` is a systemd template; set its user, Node path, checkout path and protected environment file to actual host values before installation.
 
 Cookies are HttpOnly, Secure, `__Host-` prefixed, path `/`, and SameSite=Lax by default. For a separate HTTPS API origin set `COOKIE_SAME_SITE=none`, `PLATFORM_URL`, and exact `APP_ORIGIN` values; the frontend must send credentials. Third-party-cookie restrictions can still prevent this topology, so the same-origin proxy is preferred. Origins are exact, credentialed CORS is explicit, and every authenticated mutation requires Origin, `X-CSRF-Token`, `X-Wallet-Address` and `X-Wallet-Network`. The wallet headers must equal the cookie session, preventing a delayed request from crossing a wallet/session change.
 
@@ -28,7 +28,7 @@ Cookies are HttpOnly, Secure, `__Host-` prefixed, path `/`, and SameSite=Lax by 
 
 `Dockerfile` supplies an unprivileged runtime. `compose.yaml` provides PostgreSQL, one-shot migration, API and worker for local smoke/staging setup; set `POSTGRES_PASSWORD` and `.env` first. Its Docker bridge API has proxy trust disabled, so requests forwarded through the bridge share that peer's rate budget. Use the native loopback/systemd topology above for production per-client proxy limiting, or explicitly design a separately reviewed trusted-proxy topology. PostgreSQL is not published by the compose stack. No deployment or purchase is performed by these files.
 
-The first-release browser runner also starts this exact production `dist/main.js` in API-only mode against an owned temporary native PostgreSQL 16 cluster. It uses an ephemeral encryption key/database password, the resolved loopback UI origin, empty testnet asset mappings, and no VAPID, worker, indexer binding or provider credentials. Frankfurter remains a real read-only provider; absent prices return null/unavailable. `PLATFORM_INSTANCE_ID` is an optional UUID exposed by health so the supervisor verifies the exact API instance. This local navigation proof does not establish public provider, governance, ledger-worker or push delivery readiness.
+The first-release browser runner also starts this exact production `dist/main.js` in API-only mode against an owned temporary native PostgreSQL 16 cluster. It uses an ephemeral encryption key/database password, the resolved loopback UI origin, the exact explicitly supplied UI manifest snapshot, empty testnet asset mappings, and no VAPID, worker, indexer endpoint or provider credentials. Frankfurter remains a real read-only provider; absent prices return null/unavailable. `PLATFORM_INSTANCE_ID` is an optional UUID exposed by health so the supervisor verifies the exact API instance. This local navigation proof does not establish public provider, governance, ledger-worker or push delivery readiness.
 
 ## Configuration
 
@@ -43,7 +43,7 @@ The first-release browser runner also starts this exact production `dist/main.js
 | `INDEXER_API_KEY` | Optional server-to-server bearer credential |
 | `TON_RPC_URL_TESTNET`, `TON_RPC_URL_MAINNET` | Configured JSON-RPC endpoint for unknown wallet code public-key resolution |
 | `TON_RPC_API_KEY` | Optional RPC key; never sent to the browser |
-| `INDEXER_RELEASE_MANIFEST` | Absolute path to the exact live release manifest; binds DEX markets, roots, code hashes, precision and indexer URL |
+| `INDEXER_RELEASE_MANIFEST` | Absolute path to the exact release manifest; mandatory for API request identity and binds DEX markets, roots, code hashes, precision and indexer URL |
 | `COINGECKO_API_KEY`, `COINGECKO_TIER` | Optional explicitly dated historical archives only; never current DEX pricing |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | All three or none; generate keys with `npx web-push generate-vapid-keys --json`; subject is `mailto:` or HTTPS |
 | `GOVERNANCE_CONTRACT_TESTNET`, `GOVERNANCE_CONTRACT_MAINNET` | Verified deployed Voting contract per network |
@@ -54,6 +54,19 @@ The first-release browser runner also starts this exact production `dist/main.js
 | `RETENTION_DAYS` | Inbox retention 90 days by default |
 
 ## Public API
+
+Every data, authentication and mutation request requires
+`x-tonswap-release: <manifestHash>` from the installed browser manifest. The API
+freezes its identity from the validated `INDEXER_RELEASE_MANIFEST` at startup.
+Missing server identity returns `503 release_unavailable`; a missing, malformed
+or different request header returns `409 release_mismatch` before body parsing,
+session lookup, database access or provider calls. Only exact GET/HEAD
+`/v1/health` is exempt; genuine allowed-origin CORS preflights terminate separately.
+Responses advertise the configured hash and CORS permits and exposes the header.
+The browser checks response identity before interpreting status or body and must
+not turn a mismatch into cached price data. Restart with the new validated
+manifest when changing releases; never route retired clients to the current API
+as a compatibility path.
 
 All amounts/rates are decimal strings; missing observations are null. `status: available` means an observation exists, not that it is fresh. Check `stale`, `observedAt`, `observationDate`, `requestedDate`, source and issues. Identity conversion USD/USD=1 is mathematical identity; no stablecoin or test token is assumed to trade at $1.
 
@@ -85,7 +98,9 @@ covers all fields, including instruments the DEX display does not price. Token
 roots and code pins must match their declared roles; spot precision and profiles
 must agree with the token binding. Obsolete `T3Root`, global wallet templates and
 old manifest shapes are rejected. `INDEXER_URL_TESTNET` or `INDEXER_URL_MAINNET`
-must equal the manifest's canonical HTTPS `/api/indexer/v1` endpoint. Run
+may be omitted to leave DEX pricing explicitly unavailable without fetching.
+Every supplied indexer URL must belong to the manifest network and equal its
+canonical HTTPS `/api/indexer/v1` endpoint, even if the other network is disabled. Run
 `npm run verify` in this directory after changing these bindings. Native-fixture
 startup tests use explicitly synthetic testnet URLs and do not prove a deployed
 release or live price readiness.

@@ -3,12 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { postgres, type Database } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
-import { createServer } from '../src/server.js';
+import { createReleaseTestServer as createServer, injectRelease, apiConfig as config } from './releaseRequests.js';
 import { Store } from '../src/store.js';
 import { Providers } from '../src/providers.js';
 import { PushSender } from '../src/push.js';
 import { Worker } from '../src/worker.js';
-import { config, database, session, address, secondAddress } from './helpers.js';
+import {database, session, address, secondAddress} from './helpers.js';
 import type { Session } from '../src/types.js';
 
 const firstKey = webpush.generateVAPIDKeys(), nextKey = webpush.generateVAPIDKeys();
@@ -54,7 +54,7 @@ describe('canonical VAPID registration and delivery binding', () => {
     const verified = await session(store), saved = await store.saveSubscription(verified, input());
     const app = await createServer(cfg, db, { store, logger: false });
     try {
-      const response = await app.inject({ method: 'POST', url: '/v1/push/test', headers: { origin: cfg.appOrigins[0]!, cookie: `__Host-tonswap_session=${verified.token}`,
+      const response = await injectRelease(app, { method: 'POST', url: '/v1/push/test', headers: { origin: cfg.appOrigins[0]!, cookie: `__Host-tonswap_session=${verified.token}`,
         'x-csrf-token': verified.csrfToken, 'x-wallet-address': address, 'x-wallet-network': 'testnet' }, payload: { subscriptionId: saved.id } });
       expect(response.statusCode).toBe(200); expect(response.json()).toMatchObject({ queued: true, delivery: 'pending' });
       expect((await store.inbox(verified, 20)).notifications).toEqual([expect.objectContaining({ id: response.json().notificationId,
@@ -71,18 +71,18 @@ describe('canonical VAPID registration and delivery binding', () => {
       const existing = await store.saveSubscription(verified, input());
       const notice = await store.emit(address, 'testnet', { category: 'walletProtocol', sourceEventId: 'key-race', title: 'Kept', body: 'Kept', href: '/wallet', occurredAt: new Date().toISOString(), evidence: {} });
       await store.markRead(verified, notice!);
-      expect((await app.inject({ url: '/v1/push/config' })).json().publicKey).toBe(firstKey.publicKey);
+      expect((await injectRelease(app, { url: '/v1/push/config' })).json().publicKey).toBe(firstKey.publicKey);
       rotate();
-      const rejected = await app.inject({ method: 'POST', url: '/v1/push/subscriptions', headers, payload: { ...input(), replacesSubscriptionId: existing.id } });
+      const rejected = await injectRelease(app, { method: 'POST', url: '/v1/push/subscriptions', headers, payload: { ...input(), replacesSubscriptionId: existing.id } });
       expect(rejected.statusCode).toBe(409); expect(rejected.json().error.code).toBe('push_key_changed');
       expect(await row(existing.id)).toMatchObject({ active: true, last_sent_at: null });
       expect((await store.inbox(verified, 20)).notifications[0]).toMatchObject({ id: notice, readAt: expect.any(String) });
-      const test = await app.inject({ method: 'POST', url: '/v1/push/test', headers, payload: { subscriptionId: existing.id } });
+      const test = await injectRelease(app, { method: 'POST', url: '/v1/push/test', headers, payload: { subscriptionId: existing.id } });
       expect(test.statusCode).toBe(409); expect(test.json().error.code).toBe('push_key_changed');
-      const renewed = await app.inject({ method: 'POST', url: '/v1/push/subscriptions', headers, payload: { ...input(nextKey.publicKey, '-new'), replacesSubscriptionId: existing.id } });
+      const renewed = await injectRelease(app, { method: 'POST', url: '/v1/push/subscriptions', headers, payload: { ...input(nextKey.publicKey, '-new'), replacesSubscriptionId: existing.id } });
       expect(renewed.statusCode).toBe(200); expect(renewed.json()).toMatchObject({ active: true, applicationServerKey: nextKey.publicKey });
       expect(await row(existing.id)).toMatchObject({ active: false, retirement_reason: 'replaced' });
-      const devices = (await app.inject({ url: '/v1/push/subscriptions', headers })).json().subscriptions;
+      const devices = (await injectRelease(app, { url: '/v1/push/subscriptions', headers })).json().subscriptions;
       expect(devices).toEqual(expect.arrayContaining([expect.objectContaining({ id: existing.id, applicationServerKey: firstKey.publicKey }),
         expect.objectContaining({ id: renewed.json().id, applicationServerKey: nextKey.publicKey })]));
       expect((await store.inbox(verified, 20)).notifications).toHaveLength(1);
@@ -94,7 +94,7 @@ describe('canonical VAPID registration and delivery binding', () => {
       const payload: Record<string, unknown> = input();
       if (mode === 'missing') delete payload.applicationServerKey;
       else payload.applicationServerKey = mode === 'padded' ? firstKey.publicKey + '=' : 'BAAA';
-      const response = await app.inject({ method: 'POST', url: '/v1/push/subscriptions', headers: { origin: cfg.appOrigins[0]!, cookie: `__Host-tonswap_session=${verified.token}`,
+      const response = await injectRelease(app, { method: 'POST', url: '/v1/push/subscriptions', headers: { origin: cfg.appOrigins[0]!, cookie: `__Host-tonswap_session=${verified.token}`,
         'x-csrf-token': verified.csrfToken, 'x-wallet-address': address, 'x-wallet-network': 'testnet' }, payload });
       expect(response.statusCode).toBe(400); expect(await store.listSubscriptions(verified)).toEqual([]);
     } finally { await app.close(); }

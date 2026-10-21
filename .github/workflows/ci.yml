@@ -10,6 +10,9 @@ on:
       - develop
       - master
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -33,3 +36,52 @@ jobs:
       - run: npm audit --omit=dev
       - run: npm test
       - run: npm run build
+
+  platform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/platform
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tonswap_platform_test_ci
+          POSTGRES_USER: platform_test
+          POSTGRES_PASSWORD: platform_test_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U platform_test -d tonswap_platform_test_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      PLATFORM_TEST_DATABASE_URL: postgresql://platform_test:platform_test_ci@127.0.0.1:5432/tonswap_platform_test_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/platform/package-lock.json
+      - run: npm ci
+        working-directory: .
+      - run: npm ci
+      - name: Require the native PostgreSQL 16 test database
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          if (!process.env.PLATFORM_TEST_DATABASE_URL) throw Error('PLATFORM_TEST_DATABASE_URL is required.');
+          const client = new pg.Client({ connectionString: process.env.PLATFORM_TEST_DATABASE_URL });
+          await client.connect();
+          try {
+            const { rows } = await client.query('SHOW server_version_num');
+            if (Math.floor(Number(rows[0].server_version_num) / 10000) !== 16)
+              throw Error('Platform native verification requires PostgreSQL 16.');
+          } finally { await client.end(); }
+          NODE
+      - name: Verify the complete platform service with native database coverage
+        run: env -u PERPS_CASE npm run verify
