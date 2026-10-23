@@ -1942,6 +1942,14 @@ through the same header and CORS. An intentionally absent indexer URL disables
 DEX reads without removing this request fence. Run `npm --prefix
 services/platform run verify` to check the complete API and worker suite.
 
+Platform Governance notifications use the same manifest's Governance address/code
+pins and matching configured indexer endpoint. The sole consumer format is
+`tonswap-governance-snapshot-v1`, with exact release/head/data commitments and
+bounded live/pruned proposal pages. A closed or queued proposal does not prove
+target execution; a pruned proposal has an unknown terminal outcome. The
+platform README documents its focused current/native consumer tests and the
+complete verification gate. Removed `GOVERNANCE_CONTRACT_*` inputs are refused.
+
 Current Options and faucet physical evidence use `POST /api/indexer/v1/options/operation-evidence`
 and `POST /api/indexer/v1/faucet/operation-evidence`. Each exact request names its
 original owner TON wallet dispatch LT/hash and emitted value. The endpoint binds

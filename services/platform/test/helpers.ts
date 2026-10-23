@@ -14,7 +14,7 @@ export const config = (overrides: Partial<Config> = {}): Config => ({
   appOrigins: ['https://app.example.test'], platformUrl: 'https://app.example.test/platform', cookieSecure: true, cookieSameSite: 'lax',
   encryptionKey: Buffer.alloc(32, 42), networks: ['testnet'], sessionHours: 24,
   indexerUrls: { testnet: 'https://indexer.example.test/api/indexer/v1' }, tonRpcUrls: {}, coingeckoTier: 'demo',
-  governanceContracts: {}, pollSeconds: 30, priceSeconds: 120, workerConcurrency: 4, retentionDays: 90, allowInsecureLocal: false,
+  pollSeconds: 30, priceSeconds: 120, workerConcurrency: 4, retentionDays: 90, allowInsecureLocal: false,
   assetValuationPaths: [],
   trustLoopbackProxy: false,
   ...overrides,

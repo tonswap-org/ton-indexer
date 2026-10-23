@@ -15,7 +15,6 @@ export interface Config {
   tonRpcUrls: Partial<Record<Network, string>>; tonRpcApiKey?: string;
   coingeckoKey?: string; coingeckoTier: 'demo' | 'pro';
   vapidPublicKey?: string; vapidPrivateKey?: string; vapidSubject?: string;
-  governanceContracts: Partial<Record<Network, string>>;
   pollSeconds: number; priceSeconds: number; workerConcurrency: number;
   retentionDays: number; allowInsecureLocal: boolean;
   assetValuationPaths: ValuationPath[];
@@ -32,6 +31,8 @@ function url(value: string, allowLocal: boolean): string {
   return parsed.toString().replace(/\/$/, '');
 }
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  if (env.GOVERNANCE_CONTRACT_TESTNET || env.GOVERNANCE_CONTRACT_MAINNET)
+    throw new Error('Governance identity comes only from INDEXER_RELEASE_MANIFEST; remove GOVERNANCE_CONTRACT_* inputs.');
   const databaseUrl = readDatabaseUrl(env);
   const encryptionText = readSecretText(env, 'DATA_ENCRYPTION_KEY', true);
   const indexerApiKey = readSecretText(env, 'INDEXER_API_KEY');
@@ -70,10 +71,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     tonRpcUrls: map('TON_RPC_URL'), tonRpcApiKey,
     coingeckoKey, coingeckoTier: z.enum(['demo', 'pro']).parse(env.COINGECKO_TIER ?? 'demo'),
     vapidPublicKey: env.VAPID_PUBLIC_KEY, vapidPrivateKey, vapidSubject: env.VAPID_SUBJECT,
-    governanceContracts: Object.fromEntries(networks.flatMap(network => {
-      const value = env[`GOVERNANCE_CONTRACT_${network.toUpperCase()}`];
-      return value ? [[network, value]] : [];
-    })),
     pollSeconds: integer('POLL_SECONDS', 30, 10, 3600),
     priceSeconds: integer('PRICE_SECONDS', 15, 15, 3600),
     workerConcurrency: integer('WORKER_CONCURRENCY', 4, 1, 16),

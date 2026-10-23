@@ -593,6 +593,8 @@ release held collectors before pool shutdown; early event-loop drain is failure.
 
 Current Governance snapshots admit only the manifest Governance singleton and exact code hash. Authenticate complete original active ShardAccount storage and current class parameters in one pinned-head batch; locks and proposals use the current Governance dictionaries, never retired Voting tuples. Keep uint32 allocation bounds and at most 64 IDs per page, with no completed-response cache for time-derived status. Absent allocated IDs are pruned with unknown terminal outcome; queueing/dispatch never proves target execution. Retain original default/x6 capture producer/source/artifact closure and native timing comparisons. Run `npm run test:governance`, API/OpenAPI/deadline tests and typecheck after changes.
 
+The platform Governance consumer derives that same singleton/code pin from its validated manifest and requires the exact matching configured indexer endpoint and release headers. Admit only the current snapshot schema and bounded live/pruned pages; equal heads cannot change data commitments or counters. Platform checkpoints are release-scoped. A complete first scan is only a monitoring baseline, and pruning keeps the terminal outcome unknown. Removed `GOVERNANCE_CONTRACT_*` inputs are refused. Run the focused platform Governance/native consumer tests and its complete verify gate after changing this seam; synthetic heads do not establish public consensus or deployed notification readiness.
+
 Current lifecycle observations are additive non-cash facts. Select owner-connected
 candidates before original archive reads; never expand all shared-contract history
 into an owner's dependency graph. Authenticate exact current role/code pins,

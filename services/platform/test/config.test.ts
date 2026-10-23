@@ -9,6 +9,9 @@ import { encrypt, decrypt } from '../src/crypto.js';
 const environment = { DATABASE_URL: 'postgres://localhost/tonswap', DATA_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64'),
   APP_ORIGIN: 'https://app.example.test', PLATFORM_URL: 'https://app.example.test/platform' };
 describe('secure service configuration', () => {
+  it.each(['GOVERNANCE_CONTRACT_TESTNET', 'GOVERNANCE_CONTRACT_MAINNET'])('rejects removed unpinned Governance configuration %s', name => {
+    expect(() => loadConfig({ ...environment, [name]: `0:${'7'.repeat(64)}` })).toThrow('Governance identity comes only from INDEXER_RELEASE_MANIFEST');
+  });
   it('checks prices every 15 seconds by default within the current oracle freshness window', () => {
     expect(loadConfig(environment).priceSeconds).toBe(15);
     expect(loadConfig({ ...environment, PRICE_SECONDS: '15' }).priceSeconds).toBe(15);

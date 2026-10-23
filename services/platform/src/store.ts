@@ -7,6 +7,7 @@ import { decrypt, encrypt, hash, token } from './crypto.js';
 import { priceMonitoring, type PriceMonitoringRecord } from './priceMonitoring.js';
 import { alertAssetSchema } from './alertAssetSchema.js';
 import { alertCapabilities } from './alertCapabilities.js';
+import { governanceBinding } from './governanceObservations.js';
 import { DEFAULT_PREFERENCES, type AlertAsset, type Category, type Job, type Network, type Notification, type Preferences,
   type PriceRule, type PriceRuleInput, type PushSubscriptionRecord, type Session, type SubscriptionInput } from './types.js';
 
@@ -132,7 +133,7 @@ export class Store {
         WHERE wallet_address=$1 AND network=$2`, [session.walletAddress, session.network, JSON.stringify(preferences), enabled('activity'), enabled('walletProtocol')]);
       if (preferences.activity || preferences.walletProtocol) await this.enqueue(sql, 'poll_wallet',
         `wallet:${session.network}:${session.walletAddress}`, { walletAddress: session.walletAddress, network: session.network }, true);
-      if (preferences.governance && this.config.governanceContracts[session.network]) await this.enqueue(sql, 'poll_governance',
+      if (preferences.governance && governanceBinding(this.config, session.network)) await this.enqueue(sql, 'poll_governance',
         `governance:${session.network}`, { network: session.network }, true);
       if (preferences.priceAlerts) await this.enqueue(sql, 'price_scan', 'prices', {}, true);
       if (preferences.priceAlerts !== before.preferences.priceAlerts) await sql.query(`UPDATE platform_price_rules

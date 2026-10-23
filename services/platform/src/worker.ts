@@ -16,6 +16,7 @@ import { assessPriceObservation } from './priceMonitoring.js';
 import { Providers } from './providers.js';
 import { PushSender, validateApplicationServerKey } from './push.js';
 import { ApiError } from './errors.js';
+import { assessGovernanceObservation, governanceBinding, type GovernanceHead, type GovernanceProposalObservation } from './governanceObservations.js';
 import { fetchJson, ordinaryJson, record, type Fetcher } from './http.js';
 
 /** No action hint or minimum-output field is accepted as evidence of a fill. */
@@ -63,7 +64,9 @@ export function shouldNotifyCrossing(input: { previous: string | null; next: str
 }
 type WalletCheckpoint = { since: string; afterRevision: string; cursor: string | null;
   throughRevision?: string; generation?: string; publishedAt?: string; headObservedAt?: string; checkedAt?: string };
-type GovernanceCheckpoint = { proposals: Record<string, { status: string | null; close: string | null }>; initialized: boolean; nextStartId?: string };
+type GovernanceProposalCheckpoint = Pick<GovernanceProposalObservation, 'status' | 'actionsHash' | 'descriptionHash' | 'proposer' | 'class' | 'start' | 'valueTotalRaw'>;
+type GovernanceCheckpoint = { schema: 'current-governance-monitor-v1'; proposals: Record<string, GovernanceProposalCheckpoint>;
+  initialized: boolean; nextStartId: string; nextProposalId: string; head: GovernanceHead; dataHash: string };
 
 export class Worker {
   readonly id = `worker:${randomUUID()}`;
@@ -81,7 +84,7 @@ export class Worker {
     for (const item of preferences.rows) await this.store.enqueue(this.store.db, 'poll_wallet', `wallet:${item.network}:${item.wallet_address}`,
       { walletAddress: item.wallet_address, network: item.network }, true);
     await this.store.enqueue(this.store.db, 'price_scan', 'prices', {}, true);
-    for (const network of this.config.networks) if (this.config.governanceContracts[network])
+    for (const network of this.config.networks) if (governanceBinding(this.config, network))
       await this.store.enqueue(this.store.db, 'poll_governance', `governance:${network}`, { network }, true);
   }
   stop(): void { this.stopped = true; }
@@ -269,62 +272,75 @@ export class Worker {
   }
   async pollGovernance(job: Job): Promise<number | undefined> {
     const network = z.enum(['mainnet', 'testnet']).parse(job.payload.network);
-    const voting = this.config.governanceContracts[network]; if (!voting) return undefined;
-    const checkpointKey = `governance:${network}:${normalizeAddress(voting)}`;
+    if (job.kind !== 'poll_governance' || job.dedupeKey !== `governance:${network}`) throw Error('governance_lease_required');
+    const binding = governanceBinding(this.config, network); if (!binding) return undefined;
+    const { release, contract } = binding;
+    const checkpointKey = `governance:${network}:${release.manifestHash}:${contract.address}`;
     const previous = await this.store.checkpoint<GovernanceCheckpoint>(checkpointKey);
-    const target = new URL(`${this.indexer(network)}/governance/${encodeURIComponent(normalizeAddress(voting))}/snapshot`);
-    target.searchParams.set('max_scan', '64');
+    if (previous && previous.schema !== 'current-governance-monitor-v1') throw Error('governance_checkpoint_invalid');
     const startId = previous?.nextStartId ?? '1';
-    target.searchParams.set('start_id', startId);
-    const response = record(ordinaryJson(await fetchJson(target, { headers: this.headers() }, this.fetcher)));
-    if (response.network !== network || normalizeAddress(String(response.voting)) !== normalizeAddress(voting) || !Array.isArray(response.proposals))
-      throw new Error('governance_scope_mismatch');
-    const coverage = record(response.coverage);
-    if (coverage.rangeKnown !== true || coverage.pageComplete !== true) {
-      await this.store.db.transaction(async sql => {
-        await this.store.assertLease(sql, job);
-        await this.store.setCheckpoint(`governance-coverage:${network}`, { ...coverage, observedAt: new Date().toISOString() }, sql);
-      });
-      throw new Error('governance_scan_incomplete');
-    }
-    const nextStart = response.next_start_id;
-    const uint64 = (value: unknown): value is string => typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value) && BigInt(value) < (1n << 64n);
-    if (response.start_id !== startId || !uint64(coverage.nextProposalId) || !uint64(startId)) throw new Error('governance_cursor_invalid');
-    const start = BigInt(startId); const counter = BigInt(coverage.nextProposalId);
-    const end = start + 64n < counter ? start + 64n : counter;
-    const expectedNext = end < counter ? end.toString() : null;
-    if (counter < start || nextStart !== expectedNext || coverage.scanComplete !== (nextStart === null)) throw new Error('governance_cursor_invalid');
-    // A complete page contains every allocated proposal. A skipped getter or duplicate cannot silently advance discovery.
-    const seen = new Set<string>();
-    for (const value of response.proposals) {
-      const item = record(value);
-      if (!uint64(item.id) || BigInt(item.id) < start || BigInt(item.id) >= end || seen.has(item.id) ||
-        typeof item.status !== 'string' || !/^\d+$/.test(item.status)) throw new Error('governance_page_invalid');
-      seen.add(item.id);
-    }
-    if (seen.size !== Number(end - start)) throw new Error('governance_page_invalid');
-    const state: GovernanceCheckpoint = { proposals: { ...previous?.proposals }, initialized: Boolean(previous?.initialized) || coverage.scanComplete === true,
-      nextStartId: typeof nextStart === 'string' ? nextStart : '1' };
+    const target = new URL(`${release.indexerUrl}/governance/${encodeURIComponent(contract.address)}/snapshot`);
+    target.searchParams.set('max_scan', '64'); target.searchParams.set('start_id', startId);
+    const raw = ordinaryJson(await fetchJson(target, { headers: { ...this.headers(), 'x-tonswap-release': release.manifestHash } },
+      async (url, init) => {
+        const response = await this.fetcher(url, init);
+        if (response.headers.get('x-tonswap-release') !== release.manifestHash) {
+          await response.body?.cancel().catch(() => {}); throw Error('governance_release_mismatch');
+        }
+        return response;
+      }));
+    const response = assessGovernanceObservation(raw, this.config, network, startId, this.clock().getTime(), previous);
     await this.store.db.transaction(async sql => {
       await this.store.assertLease(sql, job);
+      // Database contention cannot turn an expired current observation into a fresh notice.
+      assessGovernanceObservation(response, this.config, network, startId, this.clock().getTime(), previous);
       const subscribers = await sql.query<{ wallet_address: string }>("SELECT wallet_address FROM platform_preferences WHERE network=$1 AND preferences->>'governance'='true'", [network]);
-      for (const value of response.proposals as unknown[]) {
-        const item = record(value); const id = String(item.id);
-        const current = { status: String(item.status), close: item.maxCloseTime == null ? null : String(item.maxCloseTime) };
-        const old = previous?.proposals[id];
-        if (previous?.initialized && (!old || old.status !== current.status)) {
+      const state: GovernanceCheckpoint = { schema: 'current-governance-monitor-v1', proposals: { ...previous?.proposals },
+        initialized: Boolean(previous?.initialized) || response.page.nextStartId === null,
+        nextStartId: response.page.nextStartId ?? '1', nextProposalId: response.nextProposalId, head: response.asOf, dataHash: response.dataHash };
+      const observedAt = new Date(response.asOf.utime * 1000).toISOString();
+      const evidence = { schema: response.schema, releaseId: release.releaseId, manifestHash: release.manifestHash,
+        governance: contract.address, codeHash: response.codeHash, dataHash: response.dataHash, asOf: response.asOf,
+        source: 'ton-indexer', targetExecution: 'unverified', page: response.page };
+      for (const proposal of response.proposals) {
+        const old = previous?.proposals[proposal.id];
+        if (old && (old.actionsHash !== proposal.actionsHash || old.descriptionHash !== proposal.descriptionHash ||
+          old.proposer !== proposal.proposer || old.class !== proposal.class || old.start !== proposal.start ||
+          old.valueTotalRaw !== proposal.valueTotalRaw)) throw Error('governance_proposal_changed_identity');
+        if (previous?.initialized && (!old || old.status !== proposal.status)) {
+          const body = proposal.status === 'queued'
+            ? 'The proposal is queued. Execution of its target actions remains unverified.'
+            : proposal.status === 'closed'
+              ? 'Voting has closed. This does not establish approval, queueing or target execution.'
+              : proposal.status === 'expired'
+                ? 'The proposal is expired in the current snapshot. Target execution remains unverified.'
+                : 'A current on-chain governance proposal is open for voting.';
           for (const subscriber of subscribers.rows) await this.store.emit(subscriber.wallet_address, network, {
-            category: 'governance', sourceEventId: `governance:${voting}:${id}:${current.status}`,
-            title: old ? `Proposal ${id} updated` : `New governance proposal ${id}`,
-            body: 'A verified on-chain governance proposal is available to review.', href: governanceNotificationLink(id),
-            occurredAt: new Date().toISOString(), evidence: { voting, proposalId: id, previousStatus: old?.status ?? null, status: current.status, source: 'ton-indexer' } }, { sql });
+            category: 'governance', sourceEventId: `governance:${release.manifestHash}:${contract.address}:${proposal.id}:${proposal.status}`,
+            title: old ? `Proposal ${proposal.id} updated` : `New governance proposal ${proposal.id}`,
+            body, href: governanceNotificationLink(proposal.id), occurredAt: observedAt,
+            evidence: { ...evidence, proposalId: proposal.id, previousStatus: old?.status ?? null, status: proposal.status, proposal } }, { sql });
         }
-        state.proposals[id] = current;
+        state.proposals[proposal.id] = { status: proposal.status, actionsHash: proposal.actionsHash, descriptionHash: proposal.descriptionHash,
+          proposer: proposal.proposer, class: proposal.class, start: proposal.start, valueTotalRaw: proposal.valueTotalRaw };
+      }
+      for (const id of response.prunedProposalIds) {
+        const old = previous?.proposals[id];
+        if (previous?.initialized && old) {
+          for (const subscriber of subscribers.rows) await this.store.emit(subscriber.wallet_address, network, {
+            category: 'governance', sourceEventId: `governance:${release.manifestHash}:${contract.address}:${id}:pruned`,
+            title: `Proposal ${id} left active governance`,
+            body: 'The proposal was pruned from current storage. Its terminal outcome and target execution remain unverified.',
+            href: governanceNotificationLink(id), occurredAt: observedAt,
+            evidence: { ...evidence, proposalId: id, previousStatus: old.status, status: 'unknown', pruned: true } }, { sql });
+        }
+        delete state.proposals[id];
       }
       await this.store.setCheckpoint(checkpointKey, state, sql);
-      await this.store.setCheckpoint(`governance-coverage:${network}`, { ...coverage, observedAt: new Date().toISOString() }, sql);
+      await this.store.setCheckpoint(`governance-coverage:${network}:${release.manifestHash}:${contract.address}`, { ...evidence, nextProposalId: response.nextProposalId,
+        prunedProposalIds: response.prunedProposalIds, observedAt }, sql);
     });
-    return nextStart ? 1 : 120;
+    return response.page.nextStartId ? 1 : 120;
   }
   async deliver(job: Job): Promise<void> {
     const subscriptionId = z.string().uuid().parse(job.payload.subscriptionId);
