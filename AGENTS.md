@@ -197,6 +197,19 @@ The roadmap references sibling repos for contract definitions and UI alignment:
 - If you change manifest bindings or configuration, document their purpose and update this file.
 - Keep `roadmap.md` as the canonical design reference unless an implementation doc supersedes it.
 
+Secret configuration selects exactly one inline value or explicit `*_FILE` path.
+Indexer database, edge and admin credentials and platform database, encryption,
+API and VAPID-private credentials use bounded, stable, service-UID-owned private
+regular files. A configured empty, conflicting or invalid source fails; never
+fall back or write resolved values into the environment. Preserve existing
+consumer validation, database trimming only where already specified, encryption
+key bytes and VAPID pairing. Platform migration resolves only its database source
+before allocating a connection. The CJS indexer and standalone ESM platform keep
+package-local readers; qualify both rather than importing source across rootDir.
+Run the localnet config/source checks and platform verify after these changes.
+This source mechanism alone does not qualify live custody or Linux service UID
+access, rotate encryption keys or authorize a runtime switch.
+
 
 Launchpad participation and fixed-sale refund qualification uses the manifest's
 deployment-qualified `SaleFixed`, `SaleBonding`, `SaleAuction` and

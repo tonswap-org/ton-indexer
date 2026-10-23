@@ -32,6 +32,38 @@ The first-release browser runner also starts this exact production `dist/main.js
 
 ## Configuration
 
+`DATABASE_URL`, `DATA_ENCRYPTION_KEY`, `INDEXER_API_KEY`, `TON_RPC_API_KEY`,
+`COINGECKO_API_KEY` and `VAPID_PRIVATE_KEY` each accept exactly one source: their
+inline value or the corresponding `NAME_FILE` absolute path. Setting both is an
+error, including an empty inline value. A selected empty, missing, unsafe or
+unreadable source stops startup; there is no fallback. Leave both settings unset
+for an optional credential. Remove empty optional placeholders; when selecting a
+file, remove the corresponding inline setting entirely.
+
+Files must be regular, single-link, owned by the service process UID and private
+to that owner, with 1..65536 bytes of valid UTF-8 and no NUL. Final-component
+symlinks and files whose identity or metadata changes while reading are refused.
+The reader preserves spaces, newlines and a UTF-8 BOM. It does not trim database
+URLs or keys; existing consumer validation still applies, including the VAPID
+pair check. Supply each file with the same text previously configured inline.
+Temporary read buffers are wiped best effort; JavaScript strings and active
+consumer keys remain in memory. Errors identify only the setting, not its path
+or contents.
+
+The migration command reads only `DATABASE_URL`/`DATABASE_URL_FILE` before
+creating a database pool. It does not require encryption or VAPID configuration.
+For systemd credentials, configure each `NAME_FILE` with an explicit service
+credential path (for example a unit's `%d/<name>`); the application does not
+discover sources from `CREDENTIALS_DIRECTORY`. Verify that the selected service
+UID can read the private file. This interface does not provision credentials or
+change a service, key or custody policy. Preserve the existing encryption key
+and VAPID private/public pair when changing their source.
+The supplied Compose template explicitly sets inline `DATABASE_URL` for its
+migration, API and worker; leave `DATABASE_URL_FILE` unset in that template.
+
+Run `npm test -- test/secrets.test.ts test/config.test.ts` and `npm run typecheck`
+for this boundary, followed by the ordinary `npm run verify` release gate.
+
 | Setting | Purpose |
 | --- | --- |
 | `DATABASE_URL` | Dedicated PostgreSQL connection string |

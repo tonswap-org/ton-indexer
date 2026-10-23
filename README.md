@@ -794,7 +794,7 @@ have defaults or are required only for their documented feature:
 - `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` / `LITESERVER_POOL_LOCALNET` (lite client pool; see below)
 - `INDEXER_RELEASE_MANIFEST` (reviewed `tonswap-release-v1` file path or HTTPS URL; HTTP is allowed only on loopback; polled every five seconds)
 - `INDEXER_DATABASE_URL` or `INDEXER_DATABASE_URL_FILE` (exactly one PostgreSQL secret source; each manifest hash receives a separate release schema)
-- `INDEXER_EDGE_KEY` (optional authenticated-edge secret, at least 32 characters)
+- `INDEXER_EDGE_KEY` or `INDEXER_EDGE_KEY_FILE` (optional authenticated-edge secret, at least 32 characters)
 - `INDEXER_LEDGER_WORKERS` (default `3`, range `2..8`)
 - `INDEXER_DISK_GUARD_PATH` (filesystem to monitor; defaults to the snapshot parent)
 - `INDEXER_DISK_SOFT_FLOOR_BYTES` (default `2147483648`, 2 GiB)
@@ -835,7 +835,25 @@ have defaults or are required only for their documented feature:
 - `WATCHLIST_REFRESH_MS` (default: `5000`)
 - `BLOCK_POLL_MS` (default: `5000`)
 - `LOG_LEVEL` (default: `info`)
-- `INDEXER_ADMIN_TOKEN` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
+- `INDEXER_ADMIN_TOKEN` or `INDEXER_ADMIN_TOKEN_FILE` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
+
+Each secret selects one inline value or one absolute file path. Omit both for an
+unused optional credential; a defined empty value, conflicting sources or an
+unreadable selected file fails configuration without trying another source.
+Files must be regular, single-link files owned by the service UID, with no group
+or other permission bits (for example, mode `0600`). Symlink targets are refused.
+Reads require a stable file identity, valid UTF-8 without NUL and at most 64 KiB;
+inline secrets have the same text-size and NUL limits. Database URLs retain their
+existing whitespace trimming and PostgreSQL protocol check. Token bytes are not
+trimmed, so write token files without an extra newline.
+
+The file selectors remain in the worker environment and each fresh worker reads
+them; resolved values are never copied into environment variables. A file change
+takes effect on configuration reload or process restart, not in an already loaded
+configuration. This input mechanism does not provision secrets, change service
+accounts or qualify systemd credential ownership. Run
+`npx tsx src/scripts/localnet-config-test.ts` for the source and consumer checks;
+the same tests are included in `npm test`.
 
 Explicit enum values for `INDEXER_MODE` and `TON_NETWORK` fail startup when unsupported instead of silently falling back.
 The worker binds the configured `PORT`. If it is occupied, startup fails and the supervisor retries; a release reload never silently moves the public API to another port.
