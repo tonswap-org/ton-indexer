@@ -194,6 +194,32 @@ describe('current Governance consumer', () => {
     expect(await store.checkpoint(checkpoint)).toBeNull();
   });
 
+  it('rolls back notices and both checkpoints when the final checkpoint write exhausts freshness', async () => {
+    const owner = await session(store); await store.setPreferences(owner, { governance: true });
+    await worker(vi.fn(async () => response(page()))).pollGovernance(job);
+    const coverageKey = `governance-coverage:testnet:${cfg.dexRelease!.manifestHash}:${base.governance}`;
+    const previous = await store.checkpoint(checkpoint), previousCoverage = await store.checkpoint(coverageKey);
+    const pruned = page(), id = pruned.proposals[0].id;
+    pruned.proposals = pruned.proposals.filter((p: any) => p.id !== id); pruned.liveProposalCount--;
+    pruned.prunedProposalIds.push(id); pruned.asOf.seqno++; pruned.dataHash = 'e'.repeat(64);
+    let now = pruned.asOf.utime * 1000;
+    const writeCheckpoint = store.setCheckpoint.bind(store);
+    const writes = vi.spyOn(store, 'setCheckpoint').mockImplementation(async (key, value, sql) => {
+      await writeCheckpoint(key, value, sql);
+      if (key === coverageKey) now += 31_000;
+    });
+    const emits = vi.spyOn(store, 'emit');
+    try {
+      await expect(worker(vi.fn(async () => response(pruned)), cfg, () => new Date(now)).pollGovernance(job))
+        .rejects.toThrow('governance_snapshot_stale');
+      expect(emits).toHaveBeenCalledTimes(1);
+      expect(writes.mock.calls.map(([key]) => key)).toEqual([checkpoint, coverageKey]);
+      expect((await store.inbox(owner, 100)).notifications).toEqual([]);
+      expect(await store.checkpoint(checkpoint)).toEqual(previous);
+      expect(await store.checkpoint(coverageKey)).toEqual(previousCoverage);
+    } finally { writes.mockRestore(); emits.mockRestore(); }
+  });
+
   it('fences a recovered job before an outstanding current page can write', async () => {
     let resolve!: (response: Response) => void;
     const fetcher = vi.fn(() => new Promise<Response>(done => { resolve = done; }));

@@ -339,6 +339,8 @@ export class Worker {
       await this.store.setCheckpoint(checkpointKey, state, sql);
       await this.store.setCheckpoint(`governance-coverage:${network}:${release.manifestHash}:${contract.address}`, { ...evidence, nextProposalId: response.nextProposalId,
         prunedProposalIds: response.prunedProposalIds, observedAt }, sql);
+      // Roll back notices and checkpoints if any awaited transaction work exhausted freshness.
+      assessGovernanceObservation(response, this.config, network, startId, this.clock().getTime(), previous);
     });
     return response.page.nextStartId ? 1 : 120;
   }
