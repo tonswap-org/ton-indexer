@@ -1,6 +1,12 @@
 # ton-indexer
 Indexer for faster/more reliable data from TON.
 
+The indexer uses TypeScript 6.0.3 with Node16 module resolution. Capture verification
+requires its synchronous compiler AST API, which TypeScript 7 does not provide;
+keep that dependency on the 6.x line until the verifier has a qualified
+replacement. Refresh both npm lockfiles and run `npm test` plus
+`npm --prefix services/platform run verify` after dependency changes.
+
 This TypeScript service provides pinned TON chain reads, current balances, bounded activity history and durable product settlement evidence. The runtime requires one reviewed release manifest and a locally configured liteserver pool.
 
 The fresh native manifest uses `T3Hub`, per-token master and wallet code pins,
@@ -1027,7 +1033,7 @@ When a masterchain snapshot skips an intermediate transaction, the lite adapter
 fetches the full preceding Account and up to 32 original transactions. It uses
 the original shard-block random seed and the historical configuration committed
 by that block's masterchain reference. The pinned production dependency
-`@ton/sandbox@0.43.0` executes these inputs locally; every reconstructed full
+`@ton/sandbox@0.45.0` executes these inputs locally; every reconstructed full
 transaction Cell and new Account hash must equal the chain commitments. No
 current state, default configuration, replacement request, or broadcast is used.
 Basechain internal transactions are supported; missing library/context inputs,

@@ -92,22 +92,21 @@
   },
   "homepage": "https://github.com/tonswap-org/ton-indexer#readme",
   "dependencies": {
-    "@fastify/helmet": "^13.0.2",
-    "@noble/hashes": "1.8.0",
-    "@ton/core": "^0.63.0",
-    "@ton/sandbox": "0.43.0",
-    "fastify": "^5.12.1",
-    "lru-cache": "^11.2.5",
-    "pg": "^8.23.0",
-    "pino": "^10.3.0",
+    "@fastify/helmet": "^13.2.0",
+    "@ton/core": "^0.63.1",
+    "@ton/sandbox": "0.45.0",
+    "fastify": "^5.12.7",
+    "lru-cache": "^11.5.3",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
     "ton-lite-client": "^3.1.1"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.8",
-    "@types/node": "^25.1.0",
+    "@electric-sql/pglite": "^0.5.11",
+    "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "ws": "^8.21.0"

@@ -193,6 +193,7 @@ The roadmap references sibling repos for contract definitions and UI alignment:
 - `../tonswap_web`: UI expectations for tx history fields.
 
 ## Editing Guidance
+- Keep the indexer on TypeScript 6.x while capture verifiers require the synchronous compiler AST API; TypeScript 7 removes it. Node16 module resolution preserves the CommonJS runtime and replaces removed node10 resolution.
 - If you add implementation code, update `README.md` with build/run instructions.
 - If you change manifest bindings or configuration, document their purpose and update this file.
 - Keep `roadmap.md` as the canonical design reference unless an implementation doc supersedes it.

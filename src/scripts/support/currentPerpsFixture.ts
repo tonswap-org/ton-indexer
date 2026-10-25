@@ -69,9 +69,9 @@ export async function currentPerpsGraphFixture(input: ProjectionInput, override:
     missingAccount?: string;
     maxAccounts?: number;
 } = {}) {
-    const { LedgerGraphBuilder } = await import('../../ledger/graph');
-    const { fakeChainSource } = await import('./fakeChainSource');
-    const { fixtureHead } = await import('./chainFixture');
+    const { LedgerGraphBuilder } = await import('../../ledger/graph.js');
+    const { fakeChainSource } = await import('./fakeChainSource.js');
+    const { fixtureHead } = await import('./chainFixture.js');
     const boundary = fixtureHead(1), signal = new AbortController().signal;
     const source = fakeChainSource({ getAccountState: async (account, options) => {
             assert.deepEqual(options?.at, boundary);
