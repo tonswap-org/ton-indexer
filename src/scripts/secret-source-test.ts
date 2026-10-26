@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readSecretText } from '../config/secrets';
 import { readDatabaseUrl } from '../config/database';
@@ -119,17 +120,18 @@ export function testSecretSources(): void {
     delete process.env.INDEXER_EDGE_KEY;
     write('x'.repeat(32));
     const next = loadConfig(); assert.equal(next.adminToken, 'x'.repeat(32), 'fresh config reload reads the selected source');
-    const childEnvironment = { PATH: process.env.PATH, LANG: 'C',
+    const childEnvironment = { PATH: process.env.PATH, LANG: 'C', TMPDIR: process.env.TMPDIR,
       INDEXER_EDGE_KEY_FILE: path, INDEXER_ADMIN_TOKEN_FILE: path };
     for (const character of ['x', 'y']) {
       write(character.repeat(32));
       const code = `const c = require(${JSON.stringify(require.resolve('../config'))}).loadConfig();
         process.stdout.write(String(c.edgeKey === ${JSON.stringify(character.repeat(32))}
           && c.adminToken === c.edgeKey && process.env.INDEXER_EDGE_KEY === undefined
-          && process.env.INDEXER_ADMIN_TOKEN === undefined));`;
+          && process.env.INDEXER_ADMIN_TOKEN === undefined
+          && require('node:os').tmpdir() === ${JSON.stringify(tmpdir())}));`;
       assert.equal(execFileSync(process.execPath, [...process.execArgv, '-e', code],
         { env: childEnvironment, encoding: 'utf8', timeout: 5000 }), 'true',
-      'fresh workers must resolve only file selectors without exporting secrets');
+      'fresh workers must preserve the caller temp directory and resolve only file selectors without exporting secrets');
     }
     fs.unlinkSync(path); assert.throws(() => loadConfig(), /could not be read safely/);
   } finally {
