@@ -120,7 +120,7 @@ export function testSecretSources(): void {
     delete process.env.INDEXER_EDGE_KEY;
     write('x'.repeat(32));
     const next = loadConfig(); assert.equal(next.adminToken, 'x'.repeat(32), 'fresh config reload reads the selected source');
-    const childEnvironment = { PATH: process.env.PATH, LANG: 'C', TMPDIR: process.env.TMPDIR,
+    const childEnvironment = { PATH: process.env.PATH, LANG: 'C', TMPDIR: tmpdir(),
       INDEXER_EDGE_KEY_FILE: path, INDEXER_ADMIN_TOKEN_FILE: path };
     for (const character of ['x', 'y']) {
       write(character.repeat(32));
