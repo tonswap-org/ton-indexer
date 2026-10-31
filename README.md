@@ -879,6 +879,10 @@ Each manifest token carries its own `masterCodeHash` and `walletCodeHash`. The w
 
 SSE `/stream/balances` accepts `address` and comma-separated `addresses`; `wallet` has no effect. One HeadFeed subscriber shares per-owner reads, with at most eight owners running and slow owners coalescing to the newest head. Each client gets an initial snapshot. Later verified amount changes emit `balances_changed` before a snapshot. Unavailable rows keep the previous verified comparison value, so availability flapping does not fabricate changes; the first verified value after initial unavailability does count.
 
+Stream admission reserves capacity before HTTP 200: at most 128 connections per process, eight per canonical trusted-edge or raw-socket client IP, and 128 distinct canonical owners in the shared hub. Each HTTP request still accepts at most eight owners. IPv6 spellings and IPv4-mapped IPv6 share their corresponding client bucket; untrusted forwarding headers cannot select a bucket. Per-client capacity returns 429, global/hub capacity returns 503, and retryable failures include `Retry-After` and `Cache-Control: no-store`. These concurrent limits apply even when request-rate limiting is disabled. Each connection ends after five minutes and the web client reconnects. Output remains ordered under backpressure, with at most 256 KiB of queued plus socket-buffered data, 256 queued frames and five seconds to drain; overflow or a stalled socket closes the connection and releases its owners. Disconnects, setup failures and shutdown release all reservations. These are resource bounds, not a load-qualified throughput guarantee.
+
+Run `npm run test:balance-stream-admission` for admission, canonical-client accounting, synchronous setup rollback, ordered backpressure and cleanup regressions; it also runs in `npm test`. `npm run build` type-checks and builds the changed indexer sources. The platform challenge regression runs in `services/platform` through `npm test -- test/challengeAdmission.test.ts`; use `npm run verify` there for the full platform type-check, tests and build.
+
 Current routes include:
 
 - `GET /api/indexer/v1/accounts/{addr}/balances`
@@ -1552,6 +1556,8 @@ connection/worker lock tests in an explicitly selected loopback PostgreSQL insta
 it creates and removes an isolated schema.
 
 Masterchain freshness uses authenticated block creation time, never the server clock. Historical lookup brackets backward from the recent head before locating the exact containing block. Intermediate states require original transaction and Account-hash replay using the pinned sandbox. The retained current native fixtures and historical replay tests preserve original evidence; unsupported old layouts are not accepted through compatibility readers.
+
+The archive's 60-second account/source cooldown is entered only after a failed account-state read at a seqno. A caller-selected exact transaction replay failure does not establish an account outage and cannot suppress a different cursor's immediate lookup. Failures still return unavailable/incomplete evidence; successful replay still requires the original transaction and Account commitments. Aborted reads do not populate the cooldown, newer seqnos can retry, and unrelated accounts and source instances remain independent. Run `npm run test:historical-replay` for the cold-store invalid-intermediate-cursor regression and `npx tsx src/scripts/ledger-graph-load-test.ts` for outage expiry, newer boundaries, aborts and isolation; both belong to the existing ledger suite. Run `npm run build` after changing these sources.
 
 ## Public testnet report regression checks
 

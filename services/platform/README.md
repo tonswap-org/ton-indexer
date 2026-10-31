@@ -144,7 +144,11 @@ Explicitly dated historical requests retain the original source observations, im
 
 ## Wallet verification and private API
 
-Request `POST /v1/auth/challenge` with `{address,network}`. The nonce is bound to canonical wallet, network and requesting origin domain, expires in five minutes, and is consumed atomically once. Supply its `payload` to TonConnect's proof request, then post to `/v1/auth/verify`:
+Request `POST /v1/auth/challenge` with `{address,network}`. The nonce is bound to canonical wallet, network and requesting origin domain, expires in five minutes, and is consumed atomically once.
+
+Challenge issuance is limited to 20 requests per requester IP in five minutes through the server's existing socket or explicitly trusted loopback proxy identity. A public wallet address does not have a shared issuance quota: requests from one IP cannot exhaust another IP's ability to obtain a challenge for the same wallet. New challenges do not revoke earlier unused challenges. This does not change signature verification, expiry, domain/network binding or atomic replay protection. `npm test -- test/challengeAdmission.test.ts` exercises real database issuance, release/origin admission, separate requesters, throttling and proof/replay behavior; `npm run verify` runs the complete platform checks.
+
+Supply the challenge's `payload` to TonConnect's proof request, then post to `/v1/auth/verify`:
 
 ```ts
 {address, network, publicKey, walletStateInit,

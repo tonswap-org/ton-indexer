@@ -3,6 +3,11 @@ import type { ChainHead } from '../data/dataSource';
 import type { HeadFeed } from '../runtime/headFeed';
 import { balanceHeadKey, type BalanceService, type BalanceSnapshot } from './balanceService';
 
+export const BALANCE_STREAM_MAX_SUBSCRIPTIONS = 128, BALANCE_STREAM_MAX_OWNERS = 128;
+export class BalanceStreamCapacityError extends Error {
+  constructor() { super('Balance stream capacity is full.'); this.name = 'BalanceStreamCapacityError'; }
+}
+
 export type BalanceStreamEvent =
   | { type: 'balances_snapshot'; address: string; seq: number; ts: number; balances: BalanceSnapshot }
   | { type: 'balances_changed'; address: string; seq: number; ts: number; hints: { ton: boolean; jettons: string[] | null } };
@@ -22,24 +27,39 @@ export class BalanceStreamHub {
   constructor(private readonly options: { service: Pick<BalanceService, 'read'>; heads: HeadFeed }) {}
   subscribe(ownerInputs: readonly string[], sink: Sink): () => void {
     if (this.closed) throw new Error('Balance stream is closed.');
+    if (ownerInputs.length > BALANCE_STREAM_MAX_OWNERS) throw new BalanceStreamCapacityError();
     const addresses = [...new Set(ownerInputs.map(owner => Address.parse(owner).toRawString()))];
+    const addedOwners = addresses.filter(address => !this.owners.has(address)).length;
+    if (this.subscriptions.size >= BALANCE_STREAM_MAX_SUBSCRIPTIONS ||
+        this.owners.size + addedOwners > BALANCE_STREAM_MAX_OWNERS) throw new BalanceStreamCapacityError();
     const subscription: Subscription = { owners: addresses, sink, seen: new Set(), seq: 0, closed: false };
     this.subscriptions.add(subscription);
-    for (const address of addresses) {
-      let owner = this.owners.get(address);
-      if (!owner) { owner = { address, subscribers: new Set(), verified: new Map(), running: false }; this.owners.set(address, owner); }
-      owner.subscribers.add(subscription);
-      if (this.head && owner.last && owner.lastHead === balanceHeadKey(this.head)) this.snapshot(subscription, owner.last);
-      else if (this.head && owner.readingHead !== balanceHeadKey(this.head)) owner.wanted = this.head;
+    try {
+      // Reserve the entire canonical owner set before callbacks can run or reenter.
+      for (const address of addresses) {
+        let owner = this.owners.get(address);
+        if (!owner) { owner = { address, subscribers: new Set(), verified: new Map(), running: false }; this.owners.set(address, owner); }
+        owner.subscribers.add(subscription);
+        if (this.head && owner.readingHead !== balanceHeadKey(this.head) && owner.lastHead !== balanceHeadKey(this.head)) owner.wanted = this.head;
+      }
+      if (!this.unsubscribeHead) {
+        this.unsubscribeHead = this.options.heads.subscribe(head => this.onHead(head));
+        const current = this.options.heads.current();
+        if (current) this.onHead(current);
+      }
+      for (const address of addresses) {
+        if (subscription.closed) break;
+        const owner = this.owners.get(address)!;
+        if (this.head && owner.last && owner.lastHead === balanceHeadKey(this.head)) this.snapshot(subscription, owner.last);
+      }
+      this.pump();
+      return () => this.unsubscribe(subscription);
+    } catch (error) {
+      this.unsubscribe(subscription);
+      throw error;
     }
-    if (!this.unsubscribeHead) {
-      this.unsubscribeHead = this.options.heads.subscribe(head => this.onHead(head));
-      const current = this.options.heads.current();
-      if (current) this.onHead(current);
-    }
-    this.pump();
-    return () => this.unsubscribe(subscription);
   }
+
   close(): void {
     this.closed = true;
     for (const subscription of [...this.subscriptions]) this.unsubscribe(subscription);
@@ -71,7 +91,10 @@ export class BalanceStreamHub {
       owner.readingHead = balanceHeadKey(head);
       this.owners.delete(owner.address); this.owners.set(owner.address, owner);
       owner.running = true; owner.controller = new AbortController(); this.active++;
-      void this.options.service.read(owner.address, { at: head, signal: owner.controller.signal }).then(result => {
+      let reading: Promise<BalanceSnapshot>;
+      try { reading = this.options.service.read(owner.address, { at: head, signal: owner.controller.signal }); }
+      catch (error) { reading = Promise.reject(error); }
+      void reading.then(result => {
         if (this.closed || this.owners.get(owner.address) !== owner || owner.controller!.signal.aborted) return;
         const changed: string[] = [];
         for (const row of result.assets) {

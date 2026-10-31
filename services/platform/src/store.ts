@@ -49,9 +49,8 @@ export const priceRule = (row: RuleRow, monitoring: PriceMonitoringRecord | null
 export class Store {
   constructor(readonly db: Database, private config: Config) {}
   async createChallenge(address: string, network: Network, domain: string): Promise<{ payload: string; domain: string; expiresAt: string }> {
-    const count = (await this.db.query<{ count: string }>(`SELECT count(*) FROM platform_challenges
-      WHERE wallet_address=$1 AND created_at>now()-interval '5 minutes'`, [address])).rows[0];
-    if (Number(count?.count) >= 15) throw new ApiError(429, 'challenge_rate_limit', 'Please wait before requesting another proof.');
+    // Issuance is limited by the trusted proxy-or-socket requester identity at the
+    // HTTP boundary. A public wallet address cannot be a victim-wide lockout key.
     const payload = `tonswap-platform:${network}:${token()}`;
     const expiresAt = new Date(Date.now() + 300_000).toISOString();
     await this.db.query('INSERT INTO platform_challenges(payload_hash,wallet_address,network,domain,expires_at) VALUES($1,$2,$3,$4,$5)',

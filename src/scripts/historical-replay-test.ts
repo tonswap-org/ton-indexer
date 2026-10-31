@@ -1,4 +1,4 @@
-import { fixtureChainSource } from './support/chainFixture';
+import { fixtureChainSource, fixtureHead } from './support/chainFixture';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -7,6 +7,7 @@ import { Address, Cell, beginCell, loadShardAccount, loadTransaction, storeShard
 import { Executor, type IExecutor } from '@ton/sandbox';
 import { replayHistoricalAccount, type HistoricalReplayStep } from '../data/historicalReplay';
 import { findTransactionState } from '../ledger/archive';
+import { createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore } from '../runtime/physicalEvidence';
 import { decodeNativePerpsState } from '../ledger/currentPerpsState';
 import { projectOwnerLedger, type ProjectionInput, type LedgerChain } from '../ledger/project';
 import { loadOpcodes } from '../utils/opcodes';
@@ -124,6 +125,60 @@ async function main() {
     assert.equal(replayCalls, 1);
     source.getAccountStateAtTransaction = async () => { throw Error('archive unavailable'); };
     assert.equal(await findTransactionState(source, address.toRawString(), cursor), null);
+  });
+
+  await check('a rejected intermediate cursor cannot poison another exact read on a cold evidence store', async () => {
+    const account = address.toRawString(), valid = { lt: lts[1], hash: steps[1].transaction.hash().toString('hex') };
+    const head = fixtureHead(8103, loadTransaction(steps.at(-1)!.transaction.beginParse()).now);
+    // The missing-config negative above destroys the shared native emulator
+    // before throwing. Keep this regression independent of that failed executor.
+    const replayExecutor = await Executor.create();
+    const now = Date.now, fixedTime = now(); Date.now = () => fixedTime;
+    try {
+      // Each case starts without retained evidence or source-local cooldowns.
+      // Both targets are below the containing block's final LT, forcing exact
+      // replay rather than an equal-LT hash comparison at a seqno boundary.
+      for (const invalid of [{ lt: cursor.lt, hash: '0'.repeat(64) }, { lt: '8218000008', hash: cursor.hash }]) {
+        let seqnoReads = 0, replayReads = 0;
+        let replayFailure: unknown;
+        const source = fixtureChainSource({ head: async () => head,
+          getAccountStateAtSeqno: async (requested, seqno) => {
+            assert.equal(requested, account); seqnoReads++;
+            return seqno < 8102 ? beforeState : snapshots.get(lts.at(-1)!)!;
+          },
+          getAccountStateAtTransaction: async (requested, selected, seqno) => {
+            assert.equal(requested, account); assert.equal(seqno, 8102); replayReads++;
+            const index = lts.indexOf(selected.lt);
+            // Original replay performs the cursor and Account commitment checks.
+            try {
+              return await replayHistoricalAccount({ ...input, cursor: selected, steps: steps.slice(0, Math.max(0, index) + 1) }, replayExecutor);
+            } catch (error) { replayFailure = error; throw error; }
+          },
+        });
+        const retained = new Map<string, PhysicalBoundary>();
+        const store: PhysicalEvidenceStore = {
+          evidenceBoundary: async (a, lt, hash) => retained.get(`${a}:${lt}:${hash}`) ?? null,
+          retain: async (evidence, seqno) => {
+            const transaction = Cell.fromBase64(evidence.transactionBoc), tx = loadTransaction(transaction.beginParse());
+            retained.set(`${evidence.account}:${tx.lt}:${transaction.hash().toString('hex')}`, { evidence, seqno });
+          },
+        };
+        const reader = createPhysicalEvidenceReader(source, store, head, { newTransactions: 2 });
+        await assert.rejects(reader.exact(account, invalid.lt, invalid.hash));
+        assert.equal(replayReads, 1, 'the invalid cursor must reach exact replay');
+        assert.equal(retained.size, 0, 'rejected evidence never warms the store');
+        const beforeValid = seqnoReads;
+        replayFailure = undefined;
+        const recovered = await reader.exact(account, valid.lt, valid.hash).catch(error => {
+          assert.fail(`Valid historical lookup failed after ${seqnoReads} seqno reads and ${replayReads} replay reads: ${String(replayFailure ?? error)}`);
+        });
+        assert.equal(replayReads, 2, 'a different valid cursor is attempted immediately on the same source/account');
+        assert(seqnoReads > beforeValid, 'the invalid cursor cannot suppress account-state reads');
+        assert.equal(recovered.seqno, 8102); assert.equal(retained.size, 1);
+        assert.equal(Cell.fromBase64(recovered.evidence.transactionBoc).hash().toString('hex'), valid.hash);
+        assert.equal(recovered.evidence.afterShardAccountBoc, snapshots.get(valid.lt)!.replayBoundary!.afterShardAccountBoc);
+      }
+    } finally { Date.now = now; }
   });
 
   await check('authentic archived SHORT replay does not enable an obsolete perps business layout', async () => {
