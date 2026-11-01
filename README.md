@@ -800,7 +800,7 @@ have defaults or are required only for their documented feature:
 - `LITESERVER_POOL_MAINNET` / `LITESERVER_POOL_TESTNET` / `LITESERVER_POOL_LOCALNET` (lite client pool; see below)
 - `INDEXER_RELEASE_MANIFEST` (reviewed `tonswap-release-v1` file path or HTTPS URL; HTTP is allowed only on loopback; polled every five seconds)
 - `INDEXER_DATABASE_URL` or `INDEXER_DATABASE_URL_FILE` (exactly one PostgreSQL secret source; each manifest hash receives a separate release schema)
-- `INDEXER_EDGE_KEY` (optional authenticated-edge secret, at least 32 characters)
+- `INDEXER_EDGE_KEY` or `INDEXER_EDGE_KEY_FILE` (optional authenticated-edge secret, at least 32 characters)
 - `INDEXER_LEDGER_WORKERS` (default `3`, range `2..8`)
 - `INDEXER_DISK_GUARD_PATH` (filesystem to monitor; defaults to the snapshot parent)
 - `INDEXER_DISK_SOFT_FLOOR_BYTES` (default `2147483648`, 2 GiB)
@@ -841,7 +841,25 @@ have defaults or are required only for their documented feature:
 - `WATCHLIST_REFRESH_MS` (default: `5000`)
 - `BLOCK_POLL_MS` (default: `5000`)
 - `LOG_LEVEL` (default: `info`)
-- `INDEXER_ADMIN_TOKEN` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
+- `INDEXER_ADMIN_TOKEN` or `INDEXER_ADMIN_TOKEN_FILE` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
+
+Each secret selects one inline value or one absolute file path. Omit both for an
+unused optional credential; a defined empty value, conflicting sources or an
+unreadable selected file fails configuration without trying another source.
+Files must be regular, single-link files owned by the service UID, with no group
+or other permission bits (for example, mode `0600`). Symlink targets are refused.
+Reads require a stable file identity, valid UTF-8 without NUL and at most 64 KiB;
+inline secrets have the same text-size and NUL limits. Database URLs retain their
+existing whitespace trimming and PostgreSQL protocol check. Token bytes are not
+trimmed, so write token files without an extra newline.
+
+The file selectors remain in the worker environment and each fresh worker reads
+them; resolved values are never copied into environment variables. A file change
+takes effect on configuration reload or process restart, not in an already loaded
+configuration. This input mechanism does not provision secrets, change service
+accounts or qualify systemd credential ownership. Run
+`npx tsx src/scripts/localnet-config-test.ts` for the source and consumer checks;
+the same tests are included in `npm test`.
 
 Explicit enum values for `INDEXER_MODE` and `TON_NETWORK` fail startup when unsupported instead of silently falling back.
 The worker binds the configured `PORT`. If it is occupied, startup fails and the supervisor retries; a release reload never silently moves the public API to another port.
@@ -860,6 +878,10 @@ Native assets expose `GRAM` with nine decimals. `TON` names the network. Native 
 Each manifest token carries its own `masterCodeHash` and `walletCodeHash`. The wallet reader authenticates the master account and `get_jetton_data`, resolves the owner with `get_wallet_address`, and reads active wallet balances through `get_wallet_data`. T3Wallet, Jetton v2.1 and vendor stablecoin wallets keep their separate pins; no global wallet template or JTW1 storage assumption is used. Master code, wallet code, owner/root identity and transaction pointers qualify at the same head on every read, with no completed qualification or wallet-address cache. A read failure never means zero; display metadata never supplies accounting precision.
 
 SSE `/stream/balances` accepts `address` and comma-separated `addresses`; `wallet` has no effect. One HeadFeed subscriber shares per-owner reads, with at most eight owners running and slow owners coalescing to the newest head. Each client gets an initial snapshot. Later verified amount changes emit `balances_changed` before a snapshot. Unavailable rows keep the previous verified comparison value, so availability flapping does not fabricate changes; the first verified value after initial unavailability does count.
+
+Stream admission reserves capacity before HTTP 200: at most 128 connections per process, eight per canonical trusted-edge or raw-socket client IP, and 128 distinct canonical owners in the shared hub. Each HTTP request still accepts at most eight owners. IPv6 spellings and IPv4-mapped IPv6 share their corresponding client bucket; untrusted forwarding headers cannot select a bucket. Per-client capacity returns 429, global/hub capacity returns 503, and retryable failures include `Retry-After` and `Cache-Control: no-store`. These concurrent limits apply even when request-rate limiting is disabled. Each connection ends after five minutes and the web client reconnects. Output remains ordered under backpressure, with at most 256 KiB of queued plus socket-buffered data, 256 queued frames and five seconds to drain; overflow or a stalled socket closes the connection and releases its owners. Disconnects, setup failures and shutdown release all reservations. These are resource bounds, not a load-qualified throughput guarantee.
+
+Run `npm run test:balance-stream-admission` for admission, canonical-client accounting, synchronous setup rollback, ordered backpressure and cleanup regressions; it also runs in `npm test`. `npm run build` type-checks and builds the changed indexer sources. The platform challenge regression runs in `services/platform` through `npm test -- test/challengeAdmission.test.ts`; use `npm run verify` there for the full platform type-check, tests and build.
 
 Current routes include:
 
@@ -1535,6 +1557,8 @@ it creates and removes an isolated schema.
 
 Masterchain freshness uses authenticated block creation time, never the server clock. Historical lookup brackets backward from the recent head before locating the exact containing block. Intermediate states require original transaction and Account-hash replay using the pinned sandbox. The retained current native fixtures and historical replay tests preserve original evidence; unsupported old layouts are not accepted through compatibility readers.
 
+The archive's 60-second account/source cooldown is entered only after a failed account-state read at a seqno. A caller-selected exact transaction replay failure does not establish an account outage and cannot suppress a different cursor's immediate lookup. Failures still return unavailable/incomplete evidence; successful replay still requires the original transaction and Account commitments. Aborted reads do not populate the cooldown, newer seqnos can retry, and unrelated accounts and source instances remain independent. Run `npm run test:historical-replay` for the cold-store invalid-intermediate-cursor regression and `npx tsx src/scripts/ledger-graph-load-test.ts` for outage expiry, newer boundaries, aborts and isolation; both belong to the existing ledger suite. Run `npm run build` after changing these sources.
+
 ## Public testnet report regression checks
 
 Run `npm run test:report` after changes to balances, account history or the public API.
@@ -1929,6 +1953,14 @@ before parsing or authentication. Responses expose the process manifest hash
 through the same header and CORS. An intentionally absent indexer URL disables
 DEX reads without removing this request fence. Run `npm --prefix
 services/platform run verify` to check the complete API and worker suite.
+
+Platform Governance notifications use the same manifest's Governance address/code
+pins and matching configured indexer endpoint. The sole consumer format is
+`tonswap-governance-snapshot-v1`, with exact release/head/data commitments and
+bounded live/pruned proposal pages. A closed or queued proposal does not prove
+target execution; a pruned proposal has an unknown terminal outcome. The
+platform README documents its focused current/native consumer tests and the
+complete verification gate. Removed `GOVERNANCE_CONTRACT_*` inputs are refused.
 
 Current Options and faucet physical evidence use `POST /api/indexer/v1/options/operation-evidence`
 and `POST /api/indexer/v1/faucet/operation-evidence`. Each exact request names its

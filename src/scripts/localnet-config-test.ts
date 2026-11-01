@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { loadConfig } from '../config';
 import { loadLiteserverPool } from '../data/liteserverPool';
+import { testSecretSources } from './secret-source-test';
 
 // Build the retired names as test inputs; production deletion scans must remain empty.
 const retiredVariables = [
@@ -31,6 +32,7 @@ const before = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]))
 
 async function main() {
   try {
+    testSecretSources();
     process.env.TON_NETWORK = 'localnet';
     process.env.LITESERVER_POOL_LOCALNET = '/tmp/my-local-ton-global.config.json';
     process.env.INDEXER_RELEASE_MANIFEST = '/tmp/local-release.json';

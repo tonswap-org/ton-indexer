@@ -856,7 +856,8 @@ function testDatabaseSecret() {
   try {
     writeFileSync(
       path,
-      'postgresql://ledger:private-value@db.internal/ledger\n'
+      'postgresql://ledger:private-value@db.internal/ledger\n',
+      { mode: 0o600 }
     );
     assert.equal(
       readDatabaseUrl({ INDEXER_DATABASE_URL_FILE: path }),

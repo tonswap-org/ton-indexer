@@ -32,6 +32,38 @@ The first-release browser runner also starts this exact production `dist/main.js
 
 ## Configuration
 
+`DATABASE_URL`, `DATA_ENCRYPTION_KEY`, `INDEXER_API_KEY`, `TON_RPC_API_KEY`,
+`COINGECKO_API_KEY` and `VAPID_PRIVATE_KEY` each accept exactly one source: their
+inline value or the corresponding `NAME_FILE` absolute path. Setting both is an
+error, including an empty inline value. A selected empty, missing, unsafe or
+unreadable source stops startup; there is no fallback. Leave both settings unset
+for an optional credential. Remove empty optional placeholders; when selecting a
+file, remove the corresponding inline setting entirely.
+
+Files must be regular, single-link, owned by the service process UID and private
+to that owner, with 1..65536 bytes of valid UTF-8 and no NUL. Final-component
+symlinks and files whose identity or metadata changes while reading are refused.
+The reader preserves spaces, newlines and a UTF-8 BOM. It does not trim database
+URLs or keys; existing consumer validation still applies, including the VAPID
+pair check. Supply each file with the same text previously configured inline.
+Temporary read buffers are wiped best effort; JavaScript strings and active
+consumer keys remain in memory. Errors identify only the setting, not its path
+or contents.
+
+The migration command reads only `DATABASE_URL`/`DATABASE_URL_FILE` before
+creating a database pool. It does not require encryption or VAPID configuration.
+For systemd credentials, configure each `NAME_FILE` with an explicit service
+credential path (for example a unit's `%d/<name>`); the application does not
+discover sources from `CREDENTIALS_DIRECTORY`. Verify that the selected service
+UID can read the private file. This interface does not provision credentials or
+change a service, key or custody policy. Preserve the existing encryption key
+and VAPID private/public pair when changing their source.
+The supplied Compose template explicitly sets inline `DATABASE_URL` for its
+migration, API and worker; leave `DATABASE_URL_FILE` unset in that template.
+
+Run `npm test -- test/secrets.test.ts test/config.test.ts` and `npm run typecheck`
+for this boundary, followed by the ordinary `npm run verify` release gate.
+
 | Setting | Purpose |
 | --- | --- |
 | `DATABASE_URL` | Dedicated PostgreSQL connection string |
@@ -46,7 +78,6 @@ The first-release browser runner also starts this exact production `dist/main.js
 | `INDEXER_RELEASE_MANIFEST` | Absolute path to the exact release manifest; mandatory for API request identity and binds DEX markets, roots, code hashes, precision and indexer URL |
 | `COINGECKO_API_KEY`, `COINGECKO_TIER` | Optional explicitly dated historical archives only; never current DEX pricing |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | All three or none; generate keys with `npx web-push generate-vapid-keys --json`; subject is `mailto:` or HTTPS |
-| `GOVERNANCE_CONTRACT_TESTNET`, `GOVERNANCE_CONTRACT_MAINNET` | Verified deployed Voting contract per network |
 | `ASSET_VALUATION_PATHS_JSON` | Optional listed-asset bindings for the explicit historical-anchor endpoint; ignored for current prices |
 | `SESSION_HOURS` | 168 default, maximum 720 |
 | `POLL_SECONDS`, `PRICE_SECONDS` | Wallet polling 30s default; current DEX price scan 15s default/minimum. Longer explicit intervals let the 30s observation expire between scans. |
@@ -113,7 +144,11 @@ Explicitly dated historical requests retain the original source observations, im
 
 ## Wallet verification and private API
 
-Request `POST /v1/auth/challenge` with `{address,network}`. The nonce is bound to canonical wallet, network and requesting origin domain, expires in five minutes, and is consumed atomically once. Supply its `payload` to TonConnect's proof request, then post to `/v1/auth/verify`:
+Request `POST /v1/auth/challenge` with `{address,network}`. The nonce is bound to canonical wallet, network and requesting origin domain, expires in five minutes, and is consumed atomically once.
+
+Challenge issuance is limited to 20 requests per requester IP in five minutes through the server's existing socket or explicitly trusted loopback proxy identity. A public wallet address does not have a shared issuance quota: requests from one IP cannot exhaust another IP's ability to obtain a challenge for the same wallet. New challenges do not revoke earlier unused challenges. This does not change signature verification, expiry, domain/network binding or atomic replay protection. `npm test -- test/challengeAdmission.test.ts` exercises real database issuance, release/origin admission, separate requesters, throttling and proof/replay behavior; `npm run verify` runs the complete platform checks.
+
+Supply the challenge's `payload` to TonConnect's proof request, then post to `/v1/auth/verify`:
 
 ```ts
 {address, network, publicKey, walletStateInit,
@@ -166,7 +201,11 @@ A current operation is announced only when its publication is confirmed, its pen
 
 Current notices use immutable original dispatch/body identities (or the T3 receipt/recovery identity), preserving deduplication and read state across projection generations. Incomplete current operations do not fall through to generic success. Generic physical transfers remain wallet notices. Links use `/wallet?tx=<encoded indexer txId>` with its opaque LT/hash identity. Raw retired producer JSON remains unchanged under `test/fixtures/` only as historical evidence and refusal cases; it no longer supplies positive reader tests. The maintained native captures and their declared source/provenance limits are exercised by `test/currentLedgerNative.test.ts`.
 
-Governance polling requires the updated indexer's `start_id` / `next_start_id` and explicit range/page coverage. That range is read from the current Voting contract's persisted monotonic proposal counter. Every allocated ID in a page must be present exactly once, and the next cursor must advance by the requested bounded range. All pages are scanned, a complete first cycle establishes the baseline, and subsequent new proposals/status changes link to `/earn/vote?proposal=<id>`. Unknown storage layouts or failed getters remain incomplete and retry; errors are never counted as absent proposals. Notice insertion and checkpoint advancement share one transaction fenced by the live job lease.
+Governance polling derives the Governance singleton and its exact code hash from the validated `INDEXER_RELEASE_MANIFEST`, and is available only with that release's matching configured indexer endpoint. The removed `GOVERNANCE_CONTRACT_*` environment inputs are rejected; there is no independently selected contract or retired Voting response reader. Requests and responses bind `x-tonswap-release`. The consumer admits only `tonswap-governance-snapshot-v1` with the exact release, network, contract, code/data commitments and a fresh masterchain head. Each page uses `start_id` / `max_scan` request fields and the current `page.startId`, `page.nextStartId`, `page.scanned`, `page.complete` and `prunedProposalIds` response fields. Every allocated uint32 ID in the bounded range must occur exactly once as a live proposal or an explicitly pruned ID; dictionary-page completeness never implies complete history.
+
+A full first scan establishes the baseline. Subsequent new proposals and status changes link to `/earn/vote?proposal=<id>` and retain their original source head, account commitments, proposal timing and action BOC/hash. Lower heads/counters, different commitments at the same head, altered proposal identities, malformed action graphs and stale observations do not advance state. Checkpoints belong to the exact release and retain compact proposal identities rather than copying action BOCs into every polling checkpoint. Known proposals pruned from current storage become unknown; pruning does not identify execution, defeat or expiry. Closed voting does not establish approval, and queueing does not prove execution of target actions. Each notice explicitly retains `targetExecution: unverified`. Inbox insertion and checkpoint advancement share one transaction fenced by the live job lease; freshness is checked again after database contention and after the last awaited checkpoint write, rolling back notices and checkpoints if the observation expired.
+
+Run `npm test -- test/governanceWorker.test.ts test/governanceCurrentNative.test.ts test/config.test.ts test/dexPrices.test.ts` from `services/platform`, followed by its complete `npm run verify` gate, after changing this boundary. The native consumer tests use the actual current indexer snapshot reader over unchanged source-qualified default/x6 Governance states, with synthetic HTTP identities/heads and separately acquired leases for later polling cycles. These fixtures do not qualify public consensus, deployment or background browser delivery.
 
 The worker processes public observations only. It does not claim global tax rules, infer final tax bills, upload local cost basis, or reconstruct unresolved protocol settlement. Operational launch still requires real provider credentials, verified deployed identities/paths, VAPID keys and browser/device checks.
 

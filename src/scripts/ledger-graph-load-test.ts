@@ -111,10 +111,28 @@ async function archiveCache() {
     assert.equal(await findTransactionState(source, addr(1), { lt: '0', hash: Buffer.alloc(32).toString('base64') }, 20), null,
       'cached unavailability is never reported as authenticated absence'); assert.equal(reads, 1);
     assert.equal(await findTransactionState(source, addr(1), { lt: '1', hash }, 21), null); assert.equal(reads, 2, 'newer blocks still get a source attempt');
+    assert.equal(await findTransactionState(source, addr(2), { lt: '1', hash }, 20), null);
+    assert.equal(reads, 3, 'a source outage cooldown is isolated to its account');
+    const otherSource = fakeChainSource({ getAccountStateAtSeqno: source.getAccountStateAtSeqno });
+    assert.equal(await findTransactionState(otherSource, addr(1), { lt: '1', hash }, 20), null);
+    assert.equal(reads, 4, 'another source gets its own account-state attempt');
     clock += 60001; fail = false;
     const recovered = await findTransactionState(source, addr(1), { lt: '1', hash }, 20);
     assert.equal(recovered?.seqno, 10); assert.equal(recovered?.state.lastTxHash, hash);
-    console.log('archive miss cache saves unavailable reads for 60 seconds, preserves newer attempts and never proves absence');
+    const controller = new AbortController(); let abortedReads = 0;
+    const cancelled = fakeChainSource({ getAccountStateAtSeqno: async (account, seqno, options) => {
+      abortedReads++;
+      if (options?.signal === controller.signal) { controller.abort(); throw Error('cancelled account-state read'); }
+      return source.getAccountStateAtSeqno(account, seqno, options);
+    } });
+    assert.equal(await findTransactionState(cancelled, addr(1), { lt: '1', hash }, 20, { signal: controller.signal }), null);
+    assert.equal(abortedReads, 1);
+    assert.equal((await findTransactionState(cancelled, addr(1), { lt: '1', hash }, 20))?.seqno, 10,
+      'an aborted account-state read does not start the shared cooldown');
+    const completedReads = abortedReads;
+    assert.equal(await findTransactionState(cancelled, addr(1), { lt: '1', hash }, 20, { signal: controller.signal }), null);
+    assert.equal(abortedReads, completedReads, 'an already-aborted request does not read the source');
+    console.log('archive outage cache preserves expiry, newer attempts, account/source isolation and abort behavior without proving absence');
   } finally { Date.now = now; }
 }
 void main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,3 +1,4 @@
+import { governanceBinding } from './governanceObservations.js';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
@@ -114,7 +115,7 @@ export async function createServer(config: Config, db: Database, dependencies: S
   });
   app.get('/v1/capabilities', async () => ({ networks: config.networks, appOrigins: config.appOrigins,
     notifications: { inbox: true, push: push.available, categories: ['priceAlerts', 'activity', 'governance', 'walletProtocol'],
-      governanceNetworks: Object.keys(config.governanceContracts), indexedNetworks: Object.keys(config.indexerUrls),
+      governanceNetworks: config.networks.filter(network => governanceBinding(config, network)), indexedNetworks: Object.keys(config.indexerUrls),
       priceRule: { kinds: ['target'], thresholdPercent: '5', windowHours: 24, cooldownHours: 24, currency: 'T3', source: 'tonswap-dex', quoteAssetId: config.dexRelease?.quoteAssetId ?? null, releaseManifestHash: config.dexRelease?.manifestHash ?? null },
       activityEvidence: 'confirmed_settlement_only' }, taxDataAccepted: false }));
   app.get('/v1/currencies', async () => providers.currencies());

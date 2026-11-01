@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Address, beginCell } from '@ton/core';
 import { loadConfig } from '../src/config.js';
+import { governanceBinding } from '../src/governanceObservations.js';
 import { DexPrices, dexTwapRatio, loadDexReleaseManifest, parseDexReleaseManifest } from '../src/dexPrices.js';
 import { ASSET, NOW, POOL, ROOT_CODE, T3, currentNativeDexManifest, dexConfig, dexFetcher, dexManifest, freshDexBody, oracleFixture, poolIdFixture, signDexManifest, type FixtureCall } from './dexFixtures.js';
 
@@ -19,6 +20,7 @@ describe('release-bound DEX configuration', () => {
   it('binds canonical roots, explicit decimals, pool code and release identity', () => {
     const binding = parseDexReleaseManifest(dexManifest());
     expect(binding).toMatchObject({ network: 'testnet', quoteAssetId: T3, quoteRoot: T3, quoteDecimals: 9,
+      governance: dexManifest().contracts.Governance,
       indexerUrl: 'https://indexer.example.test/api/indexer/v1', markets: [{ assetId: ASSET, marketKey: 'spot:USDT-T3', address: POOL }] });
   });
   it('loads the complete native schema through startup configuration with synthetic testnet services', () => {
@@ -36,10 +38,19 @@ describe('release-bound DEX configuration', () => {
       APP_ORIGIN: 'https://app.example.test', PLATFORM_URL: manifest.services.platform,
       INDEXER_URL_TESTNET: `${manifest.services.indexer}/v1`, INDEXER_RELEASE_MANIFEST: path });
     expect(configuration.dexRelease).toMatchObject({ manifestHash: manifest.manifestHash,
-      quoteRoot: manifest.contracts.T3Hub.address, quoteCodeHash: manifest.contracts.T3Hub.codeHash });
+      quoteRoot: manifest.contracts.T3Hub.address, quoteCodeHash: manifest.contracts.T3Hub.codeHash,
+      governance: manifest.contracts.Governance });
+    expect(governanceBinding(configuration, 'testnet')?.contract).toEqual(manifest.contracts.Governance);
+    expect(governanceBinding(configuration, 'mainnet')).toBeNull();
     expect(configuration.dexRelease!.tokens.map(token => token.codeHash)).toEqual(manifest.tokens.map((token: any) => token.masterCodeHash));
     expect(configuration.dexRelease!.markets.map(market => market.codeHash)).toEqual(manifest.spotMarkets.map(() => manifest.templates.DlmmPool));
     expect(() => parseDexReleaseManifest(original)).toThrow();
+  });
+  it('keeps Governance unavailable when the current manifest has no singleton', () => {
+    const manifest = dexManifest(); delete manifest.contracts.Governance;
+    const release = parseDexReleaseManifest(signDexManifest(manifest));
+    expect(release.governance).toBeNull();
+    expect(governanceBinding({ ...dexConfig(), dexRelease: release }, 'testnet')).toBeNull();
   });
   it.each([
     ['obsolete T3Root role', (m: any) => { m.contracts.T3Root = m.contracts.T3Hub; delete m.contracts.T3Hub; }],
@@ -107,6 +118,7 @@ describe('release-bound DEX configuration', () => {
     const unbound = loadConfig({ ...environment, INDEXER_URL_TESTNET: '' });
     expect(unbound.dexRelease).toEqual(parseDexReleaseManifest(dexManifest()));
     const fetcher = vi.fn(async () => { throw Error('An absent indexer binding must not fetch.'); });
+    expect(governanceBinding(unbound, 'testnet')).toBeNull();
     const unavailable = new DexPrices(unbound, fetcher);
     expect(unavailable.configured('testnet')).toBe(false);
     expect((await unavailable.prices('testnet', [ASSET])).quotes[0]!.issues).toEqual(['dex_release_not_configured']);

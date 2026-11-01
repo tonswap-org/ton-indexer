@@ -85,29 +85,5 @@ describe('verified notification workers', () => {
     await delivery.deliver(job); expect((await store.subscription(saved.id))?.active).toBe(false);
     await delivery.deliver(job); expect(send).toHaveBeenCalledTimes(1);
   });
-  it('pages governance beyond 64, establishes one full baseline and retries incomplete pages', async () => {
-    await store.setPreferences(current, { governance: true });
-    const cfg = config({ governanceContracts: { testnet: address } });
-    let cycle = 0; let incomplete = false;
-    const starts: string[] = [];
-    const fetcher = vi.fn(async (url: string | URL | Request) => {
-      const start = new URL(String(url)).searchParams.get('start_id')!; starts.push(start);
-      const next = start === '1' ? '65' : null;
-      return new Response(JSON.stringify({ network: 'testnet', voting: address, start_id: start, next_start_id: next,
-        coverage: { rangeKnown: true, pageComplete: !incomplete, scanComplete: !next, nextProposalId: '66' },
-        proposals: Array.from({ length: next ? 64 : 1 }, (_, offset) => ({ id: String(Number(start) + offset), status: cycle && offset === 0 ? '1' : '0', maxCloseTime: '123' })) }));
-    });
-    const governance = new Worker(cfg, store, new Providers(db, cfg), new PushSender(cfg), fetcher);
-    await store.enqueue(db, 'poll_governance', 'governance:testnet', { network: 'testnet' });
-    const job = (await store.lease('governance-test', 100)).find(item => item.kind === 'poll_governance')!;
-    expect(await governance.pollGovernance(job)).toBe(1);
-    expect(await governance.pollGovernance(job)).toBe(120);
-    expect((await store.inbox(current, 100)).notifications.filter(notice => notice.category === 'governance')).toHaveLength(0);
-    cycle = 1; incomplete = true;
-    await expect(governance.pollGovernance(job)).rejects.toThrow('governance_scan_incomplete');
-    incomplete = false; await governance.pollGovernance(job); await governance.pollGovernance(job);
-    expect(starts).toEqual(['1', '65', '1', '1', '65']);
-    const notices = (await store.inbox(current, 100)).notifications.filter(notice => notice.category === 'governance');
-    expect(notices).toHaveLength(2); expect(notices.some(notice => notice.href === '/earn/vote?proposal=65')).toBe(true);
-  });
+
 });

@@ -1,4 +1,5 @@
 import { readDatabaseUrl } from './database';
+import { readSecretText } from './secrets';
 import { dirname, resolve } from 'node:path';
 
 export type Network = 'mainnet' | 'testnet' | 'localnet';
@@ -144,7 +145,7 @@ const networkFromEnv = (): Network => {
 export const loadConfig = (): Config => {
   const mode = modeFromEnv();
   const network = networkFromEnv();
-  const edgeKey = stringFromEnv('INDEXER_EDGE_KEY');
+  const edgeKey = readSecretText(process.env, 'INDEXER_EDGE_KEY');
   if (edgeKey !== undefined && edgeKey.length < 32) throw new Error('INDEXER_EDGE_KEY must have at least 32 characters');
   const diskSoftFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_SOFT_FLOOR_BYTES', 2 * 1024 ** 3, { min: 0, max: Number.MAX_SAFE_INTEGER });
   const diskHardFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_HARD_FLOOR_BYTES', 512 * 1024 ** 2, { min: 0, max: Number.MAX_SAFE_INTEGER });
@@ -255,7 +256,7 @@ export const loadConfig = (): Config => {
           : 'LITESERVER_POOL_LOCALNET'
     ),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
-    adminToken: stringFromEnv('INDEXER_ADMIN_TOKEN'),
+    adminToken: readSecretText(process.env, 'INDEXER_ADMIN_TOKEN'),
     releaseManifestSource: stringFromEnv('INDEXER_RELEASE_MANIFEST'),
     edgeKey,
     ledgerWorkers: strictBoundedIntegerFromEnv('INDEXER_LEDGER_WORKERS', 3, { min: 2, max: 8 }),

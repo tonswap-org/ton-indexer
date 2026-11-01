@@ -36,7 +36,9 @@ export async function findTransactionState(
         return cursor ? await source.getAccountStateAtTransaction(account, cursor, seqno, options)
           : await source.getAccountStateAtSeqno(account, seqno, options);
       } catch (error) {
-        if (!options.signal?.aborted) {
+        // A caller-selected exact replay failure cannot establish an account-wide
+        // outage. Only a seqno account-state read may start this shared cooldown.
+        if (!cursor && !options.signal?.aborted) {
           if (misses!.size >= 4096) misses!.delete(misses!.keys().next().value!);
           misses!.set(account, { seqno: miss && miss.expiresAt > Date.now() ? Math.max(miss.seqno, seqno) : seqno,
             expiresAt: Date.now() + 60_000 });

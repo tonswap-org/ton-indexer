@@ -7,6 +7,7 @@ import { decrypt, encrypt, hash, token } from './crypto.js';
 import { priceMonitoring, type PriceMonitoringRecord } from './priceMonitoring.js';
 import { alertAssetSchema } from './alertAssetSchema.js';
 import { alertCapabilities } from './alertCapabilities.js';
+import { governanceBinding } from './governanceObservations.js';
 import { DEFAULT_PREFERENCES, type AlertAsset, type Category, type Job, type Network, type Notification, type Preferences,
   type PriceRule, type PriceRuleInput, type PushSubscriptionRecord, type Session, type SubscriptionInput } from './types.js';
 
@@ -48,9 +49,8 @@ export const priceRule = (row: RuleRow, monitoring: PriceMonitoringRecord | null
 export class Store {
   constructor(readonly db: Database, private config: Config) {}
   async createChallenge(address: string, network: Network, domain: string): Promise<{ payload: string; domain: string; expiresAt: string }> {
-    const count = (await this.db.query<{ count: string }>(`SELECT count(*) FROM platform_challenges
-      WHERE wallet_address=$1 AND created_at>now()-interval '5 minutes'`, [address])).rows[0];
-    if (Number(count?.count) >= 15) throw new ApiError(429, 'challenge_rate_limit', 'Please wait before requesting another proof.');
+    // Issuance is limited by the trusted proxy-or-socket requester identity at the
+    // HTTP boundary. A public wallet address cannot be a victim-wide lockout key.
     const payload = `tonswap-platform:${network}:${token()}`;
     const expiresAt = new Date(Date.now() + 300_000).toISOString();
     await this.db.query('INSERT INTO platform_challenges(payload_hash,wallet_address,network,domain,expires_at) VALUES($1,$2,$3,$4,$5)',
@@ -132,7 +132,7 @@ export class Store {
         WHERE wallet_address=$1 AND network=$2`, [session.walletAddress, session.network, JSON.stringify(preferences), enabled('activity'), enabled('walletProtocol')]);
       if (preferences.activity || preferences.walletProtocol) await this.enqueue(sql, 'poll_wallet',
         `wallet:${session.network}:${session.walletAddress}`, { walletAddress: session.walletAddress, network: session.network }, true);
-      if (preferences.governance && this.config.governanceContracts[session.network]) await this.enqueue(sql, 'poll_governance',
+      if (preferences.governance && governanceBinding(this.config, session.network)) await this.enqueue(sql, 'poll_governance',
         `governance:${session.network}`, { network: session.network }, true);
       if (preferences.priceAlerts) await this.enqueue(sql, 'price_scan', 'prices', {}, true);
       if (preferences.priceAlerts !== before.preferences.priceAlerts) await sql.query(`UPDATE platform_price_rules

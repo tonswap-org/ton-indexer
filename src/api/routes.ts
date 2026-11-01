@@ -29,7 +29,8 @@ import { installErrorHandlers, sendError, sendFailure } from './errors';
 import { requestDeadline, ROUTE_DEADLINE_MS } from './deadline';
 import { ChainReadError, type ChainSource, type TonBlockIdExt } from '../data/dataSource';
 import type { BalanceService } from '../balances/balanceService';
-import type { BalanceStreamHub } from '../balances/balanceStream';
+import { BalanceStreamCapacityError, type BalanceStreamHub } from '../balances/balanceStream';
+import { BalanceStreamAdmission, BalanceStreamWriter } from './balanceStreamTransport';
 import type { RuntimeMetrics } from '../runtimeMetrics';
 import { isRetiredPerpsGetter } from '../data/currentGetters';
 import type { FreshReadCall } from '../data/freshRead';
@@ -63,7 +64,6 @@ import { createGovernanceSnapshotReader } from '../runtime/governanceSnapshot';
 import { currentJettonConfigPrices } from '../data/configPrices';
 import { assertFreshHeadTime } from '../data/freshHead';
 
-const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
 const BALANCE_STREAM_MAX_ADDRESSES = 8;
 const GET_METHOD_MAX_STACK_ITEMS = 16;
 const FRESH_READ_MAX_CALLS = 32;
@@ -296,6 +296,7 @@ export const registerRoutes = (
     throw new Error('Routes require an explicit mainnet, testnet, or localnet network.');
   }
   const activeBalanceStreams = new Set<() => void>();
+  const balanceStreamAdmission = new BalanceStreamAdmission();
   let closing = false;
   // Hijacked SSE responses must end before Fastify waits for HTTP connections.
   app.addHook('preClose', async () => {
@@ -1174,55 +1175,41 @@ export const registerRoutes = (
     }
 
     if (!runtime.streams) return sendError(reply, 503, 'upstream_unavailable', 'Balance stream unavailable.');
-    const inheritedHeaders = reply.getHeaders();
-    reply.hijack();
-    for (const [name, value] of Object.entries(inheritedHeaders)) {
-      if (value !== undefined) {
-        reply.raw.setHeader(name, value);
-      }
-    }
-    reply.raw.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    });
-
-    let closed = false;
-    let seq = 0;
-    const writeEvent = (payload: unknown) => {
-      if (!closed) reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
-    };
+    const admission = balanceStreamAdmission.reserve(rateLimitKey(request.raw, config.edgeKey).key);
+    if ('status' in admission) return sendError(reply, admission.status,
+      admission.status === 429 ? 'rate_limited' : 'upstream_unavailable', 'Balance stream capacity is full.', { retryAfterSeconds: 5 });
     let unsubscribe = () => {};
-
-    const keepAliveTimer = setInterval(() => {
-      if (closed) return;
-      reply.raw.write(': keepalive\n\n');
-    }, BALANCE_STREAM_KEEPALIVE_MS);
-
-    const closeStream = () => {
-      if (closed) return;
-      closed = true;
+    const closeStream = () => writer.close();
+    const writer = new BalanceStreamWriter(reply.raw, () => {
       activeBalanceStreams.delete(closeStream);
-      clearInterval(keepAliveTimer);
-      unsubscribe();
-      try {
-        reply.raw.end();
-      } catch {
-        // ignore close errors
-      }
-    };
-
+      request.raw.off('close', closeStream);
+      try { unsubscribe(); } finally { admission.release(); }
+    });
     activeBalanceStreams.add(closeStream);
     request.raw.on('close', closeStream);
-    reply.raw.on('close', closeStream);
-    writeEvent({
-      type: 'subscribed',
-      addresses,
-      seq: ++seq,
-      ts: Date.now(),
+    // The hub may synchronously emit cached snapshots. Keep the initial event first
+    // and reserve both transport and hub capacity before committing HTTP success.
+    writer.event({ type: 'subscribed', addresses, seq: 1, ts: Date.now() });
+    try {
+      if (!writer.closed) unsubscribe = runtime.streams.subscribe(addresses, payload => writer.event(payload));
+      if (writer.closed) {
+        unsubscribe();
+        return sendError(reply, 503, 'upstream_unavailable', 'Balance stream unavailable.');
+      }
+    } catch (error) {
+      writer.close();
+      return sendError(reply, 503, 'upstream_unavailable', error instanceof BalanceStreamCapacityError
+        ? 'Balance stream capacity is full.' : 'Balance stream unavailable.', { retryAfterSeconds: 5 });
+    }
+    const inheritedHeaders = reply.getHeaders();
+    writer.start(() => {
+      reply.hijack();
+      for (const [name, value] of Object.entries(inheritedHeaders)) if (value !== undefined) reply.raw.setHeader(name, value);
+      reply.raw.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no',
+      });
     });
-    unsubscribe = runtime.streams!.subscribe(addresses, writeEvent);
     return reply;
   };
 

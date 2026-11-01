@@ -60,10 +60,13 @@ async function boundedPeerSelection() {
   const current = new FakeLiteEngine(async request => request.kind === 'liteServer.getMasterchainInfoExt'
     ? masterAnswer(proofBlock(101, now, -1)) : getter(request));
   const source = sourceFor(stale, behind, current);
-  let clock: ReturnType<typeof mock.method> | undefined;
+  // Pin observation time before the first head; CPU load must not shorten the
+  // intended two-second advance into the tracker's one-second reuse window.
+  let wall = now * 1_000;
+  const clock = mock.method(Date, 'now', () => wall);
   try {
     assert.equal((await source.head()).seqno, 100);
-    initial = false; clock = mock.method(Date, 'now', () => (now + 2) * 1_000);
+    initial = false; wall += 2_000;
     const result = await source.read(calls);
     assert.equal(result.head.seqno, 101);
     assert.equal(result.results[0].kind === 'getter' && result.results[0].exitCode, 17);
@@ -73,7 +76,7 @@ async function boundedPeerSelection() {
       const latest = peer.requests.filter(row => row.request.kind === 'liteServer.getMasterchainInfoExt').at(-1)!;
       assert.equal(latest.options.awaitSeqno, 100, 'Dependent queries wait above the authenticated causal floor');
     }
-  } finally { clock?.mock.restore(); await source.close(); }
+  } finally { clock.mock.restore(); await source.close(); }
 }
 
 async function currentAtCompletion() {

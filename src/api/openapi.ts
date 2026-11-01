@@ -702,6 +702,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
       '/api/indexer/v1/stream/balances': {
         get: {
           summary: 'Balance stream (SSE)',
+          description: 'Up to eight canonical owners per request. The process admits 128 streams, eight per canonical trusted-edge or socket IP, and 128 distinct owners. Streams end after five minutes; clients reconnect. Ordered pending output is bounded to 256 KiB and 256 queued frames, with a five-second drain deadline.',
           parameters: [
             { name: 'address', in: 'query', schema: { type: 'string' } },
             { name: 'addresses', in: 'query', schema: { type: 'string' } },
@@ -717,6 +718,16 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
             },
             400: {
               description: 'Bad request',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+            429: {
+              description: 'Requester stream capacity or request rate exceeded',
+              headers: { 'Retry-After': { description: 'Seconds before retrying', schema: { type: 'integer', minimum: 1 } } },
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            },
+            503: {
+              description: 'Global stream or owner capacity exceeded, or stream unavailable',
+              headers: { 'Retry-After': { description: 'Seconds before retrying', schema: { type: 'integer', minimum: 1 } } },
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
           },

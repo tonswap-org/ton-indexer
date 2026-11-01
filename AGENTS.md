@@ -198,6 +198,19 @@ The roadmap references sibling repos for contract definitions and UI alignment:
 - If you change manifest bindings or configuration, document their purpose and update this file.
 - Keep `roadmap.md` as the canonical design reference unless an implementation doc supersedes it.
 
+Secret configuration selects exactly one inline value or explicit `*_FILE` path.
+Indexer database, edge and admin credentials and platform database, encryption,
+API and VAPID-private credentials use bounded, stable, service-UID-owned private
+regular files. A configured empty, conflicting or invalid source fails; never
+fall back or write resolved values into the environment. Preserve existing
+consumer validation, database trimming only where already specified, encryption
+key bytes and VAPID pairing. Platform migration resolves only its database source
+before allocating a connection. The CJS indexer and standalone ESM platform keep
+package-local readers; qualify both rather than importing source across rootDir.
+Run the localnet config/source checks and platform verify after these changes.
+This source mechanism alone does not qualify live custody or Linux service UID
+access, rotate encryption keys or authorize a runtime switch.
+
 
 Launchpad participation and fixed-sale refund qualification uses the manifest's
 deployment-qualified `SaleFixed`, `SaleBonding`, `SaleAuction` and
@@ -338,6 +351,8 @@ The sole chain source is the reviewed local liteserver pool. The selected networ
 One monotonic network-authenticated head pins each current batch. Current block time must be within 30 seconds of local time, at most five seconds ahead, with a consistent peer clock; the one-second process-head reuse window cannot extend block freshness. Unpinned preflight batches recheck block age at completion. An already pinned concurrent batch retains its original boundary without lowering the process head. Failed batches cancel active siblings and stop queued reads. Accounts carry real shard-block anchors and chain creation times; server time never supplies a chain anchor. Completed getters and balances are not cached. Snapshot reuse must be explicit and retain its original asOfSeqno; time-dependent values cannot enable completed reuse. Cancellation and bounded deadlines apply to callers and underlying shared work. Typed REST failures use flat `{error,code}` with honest 400/404/415/429/500/503/504 statuses and no-store; retryable 429/503/504 responses include Retry-After. JSON-RPC uses the same source and authentic anchors. Enabled BOC submission is single-attempt and never retried or hedged.
 
 Balance rows always include GRAM and every manifest root in manifest order, with manifest decimals, atomic strings, exact head sequence/time and complete. Verified values are ok, qualified undeployed wallets are not_deployed with zero, and failed or unqualified reads are unavailable with null amounts. SSE shares one HeadFeed and at most eight simultaneous owner reads; unavailable transitions never fabricate balance changes. Display metadata is never accounting precision.
+
+SSE reserves transport and hub capacity before HTTP 200, including synchronous cached emissions: 128 connections/subscriptions, eight connections per canonical trusted-edge or socket client, 128 canonical owners and a five-minute connection lifetime. Keep ordered output within 256 KiB of pending bytes, 256 queued frames and a five-second drain deadline; close stalled sockets and reclaim all reservations on every terminal path. These bounds are independent of request-rate limits. `test:balance-stream-admission` is the focused regression command and is included in `npm test`; retain the existing stability and shutdown coverage. Platform challenge throttling belongs to the requester, never the unauthenticated target wallet; preserve origin/release gates, proof binding, expiry and atomic single use. Its real Store/Fastify regression is `services/platform/test/challengeAdmission.test.ts`, included in the platform `verify` command.
 
 The in-process limiter accepts a visitor IP only with a valid X-TONSwap-Edge-Key and X-TONSwap-Client-IP. Otherwise it keys on the raw socket address. X-Forwarded-For is never trusted. INDEXER_EDGE_KEY requires at least 32 characters. The proxy template forwards the two headers, blocks operational endpoints, preserves application errors and streams, and supplies the exact static JSON 503 only for an unavailable backend. It does not run a second limiter.
 
@@ -580,6 +595,8 @@ changing this rule. The bounded-range retry test must explicitly complete and
 release held collectors before pool shutdown; early event-loop drain is failure.
 
 Current Governance snapshots admit only the manifest Governance singleton and exact code hash. Authenticate complete original active ShardAccount storage and current class parameters in one pinned-head batch; locks and proposals use the current Governance dictionaries, never retired Voting tuples. Keep uint32 allocation bounds and at most 64 IDs per page, with no completed-response cache for time-derived status. Absent allocated IDs are pruned with unknown terminal outcome; queueing/dispatch never proves target execution. Retain original default/x6 capture producer/source/artifact closure and native timing comparisons. Run `npm run test:governance`, API/OpenAPI/deadline tests and typecheck after changes.
+
+The platform Governance consumer derives that same singleton/code pin from its validated manifest and requires the exact matching configured indexer endpoint and release headers. Admit only the current snapshot schema and bounded live/pruned pages; equal heads cannot change data commitments or counters. Platform checkpoints are release-scoped. A complete first scan is only a monitoring baseline, and pruning keeps the terminal outcome unknown. Removed `GOVERNANCE_CONTRACT_*` inputs are refused. Run the focused platform Governance/native consumer tests and its complete verify gate after changing this seam; synthetic heads do not establish public consensus or deployed notification readiness.
 
 Current lifecycle observations are additive non-cash facts. Select owner-connected
 candidates before original archive reads; never expand all shared-contract history

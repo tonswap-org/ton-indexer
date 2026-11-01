@@ -4,6 +4,7 @@ import { validateApplicationServerKey } from './push.js';
 import type { Network } from './types.js';
 import { valuationPathsSchema, type ValuationPath } from './valuations.js';
 import { loadDexReleaseManifest, type DexReleaseBinding } from './dexPrices.js';
+import { readDatabaseUrl, readSecretText } from './secrets.js';
 
 export interface Config {
   host: string; port: number; mode: 'api' | 'worker' | 'all'; databaseUrl: string;
@@ -14,7 +15,6 @@ export interface Config {
   tonRpcUrls: Partial<Record<Network, string>>; tonRpcApiKey?: string;
   coingeckoKey?: string; coingeckoTier: 'demo' | 'pro';
   vapidPublicKey?: string; vapidPrivateKey?: string; vapidSubject?: string;
-  governanceContracts: Partial<Record<Network, string>>;
   pollSeconds: number; priceSeconds: number; workerConcurrency: number;
   retentionDays: number; allowInsecureLocal: boolean;
   assetValuationPaths: ValuationPath[];
@@ -31,13 +31,21 @@ function url(value: string, allowLocal: boolean): string {
   return parsed.toString().replace(/\/$/, '');
 }
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  if (env.GOVERNANCE_CONTRACT_TESTNET || env.GOVERNANCE_CONTRACT_MAINNET)
+    throw new Error('Governance identity comes only from INDEXER_RELEASE_MANIFEST; remove GOVERNANCE_CONTRACT_* inputs.');
+  const databaseUrl = readDatabaseUrl(env);
+  const encryptionText = readSecretText(env, 'DATA_ENCRYPTION_KEY', true);
+  const indexerApiKey = readSecretText(env, 'INDEXER_API_KEY');
+  const tonRpcApiKey = readSecretText(env, 'TON_RPC_API_KEY');
+  const coingeckoKey = readSecretText(env, 'COINGECKO_API_KEY');
+  const vapidPrivateKey = readSecretText(env, 'VAPID_PRIVATE_KEY');
   const allowInsecureLocal = env.ALLOW_INSECURE_LOCAL === '1';
   const appOrigins = (env.APP_ORIGIN ?? 'http://localhost:3000').split(',').map(s => {
     const parsed = new URL(url(s.trim(), allowInsecureLocal));
     if (parsed.pathname !== '/' || parsed.search) throw new Error('APP_ORIGIN must contain origins, not paths.');
     return parsed.origin;
   });
-  const encryptionKey = Buffer.from(env.DATA_ENCRYPTION_KEY ?? '', 'base64');
+  const encryptionKey = Buffer.from(encryptionText, 'base64');
   if (encryptionKey.length !== 32) throw new Error('DATA_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
   const networks = z.array(z.enum(['mainnet', 'testnet'])).min(1).parse((env.NETWORKS ?? 'testnet').split(','));
   const map = (key: string): Partial<Record<Network, string>> => Object.fromEntries(networks.flatMap(network => {
@@ -55,18 +63,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const config: Config = {
     host: env.HOST ?? '0.0.0.0', port: integer('PORT', 8787, 1, 65535),
     mode: z.enum(['api', 'worker', 'all']).parse(env.PLATFORM_MODE ?? 'all'),
-    databaseUrl: z.string().min(1).parse(env.DATABASE_URL), appOrigins,
+    databaseUrl, appOrigins,
     platformUrl: url(env.PLATFORM_URL ?? 'http://localhost:8787', allowInsecureLocal),
     cookieSecure: !allowInsecureLocal, cookieSameSite, encryptionKey, networks,
     sessionHours: integer('SESSION_HOURS', 24 * 7, 1, 24 * 30),
-    indexerUrls: map('INDEXER_URL'), indexerApiKey: env.INDEXER_API_KEY,
-    tonRpcUrls: map('TON_RPC_URL'), tonRpcApiKey: env.TON_RPC_API_KEY,
-    coingeckoKey: env.COINGECKO_API_KEY, coingeckoTier: z.enum(['demo', 'pro']).parse(env.COINGECKO_TIER ?? 'demo'),
-    vapidPublicKey: env.VAPID_PUBLIC_KEY, vapidPrivateKey: env.VAPID_PRIVATE_KEY, vapidSubject: env.VAPID_SUBJECT,
-    governanceContracts: Object.fromEntries(networks.flatMap(network => {
-      const value = env[`GOVERNANCE_CONTRACT_${network.toUpperCase()}`];
-      return value ? [[network, value]] : [];
-    })),
+    indexerUrls: map('INDEXER_URL'), indexerApiKey,
+    tonRpcUrls: map('TON_RPC_URL'), tonRpcApiKey,
+    coingeckoKey, coingeckoTier: z.enum(['demo', 'pro']).parse(env.COINGECKO_TIER ?? 'demo'),
+    vapidPublicKey: env.VAPID_PUBLIC_KEY, vapidPrivateKey, vapidSubject: env.VAPID_SUBJECT,
     pollSeconds: integer('POLL_SECONDS', 30, 10, 3600),
     priceSeconds: integer('PRICE_SECONDS', 15, 15, 3600),
     workerConcurrency: integer('WORKER_CONCURRENCY', 4, 1, 16),

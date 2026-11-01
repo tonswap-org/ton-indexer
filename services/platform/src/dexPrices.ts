@@ -21,6 +21,7 @@ export interface DexMarketBinding {
 }
 export interface DexReleaseBinding {
   network: Network; releaseId: string; manifestHash: string; indexerUrl: string;
+  governance: { address: string; codeHash: string } | null;
   quoteAssetId: string; quoteRoot: string; quoteDecimals: number; quoteCodeHash: string;
   factory: string; feeSink: string; treasury: string;
   tokens: DexTokenBinding[]; markets: DexMarketBinding[];
@@ -149,6 +150,7 @@ export function parseDexReleaseManifest(value: unknown): DexReleaseBinding {
   const { DlmmPoolFactory, FeeRouter, Treasury } = manifest.contracts;
   if (!DlmmPoolFactory || !FeeRouter || !Treasury) throw new Error('DEX release requires current pool peer bindings.');
   return { network, releaseId: manifest.releaseId, manifestHash: manifest.manifestHash,
+    governance: manifest.contracts.Governance ?? null,
     factory: DlmmPoolFactory.address, feeSink: FeeRouter.address, treasury: Treasury.address,
     indexerUrl: `${service.toString().replace(/\/$/, '')}/v1`, quoteAssetId: quote.assetId, quoteRoot: quote.root,
     quoteDecimals: quote.decimals, quoteCodeHash: quote.codeHash, tokens, markets };
