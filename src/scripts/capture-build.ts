@@ -43,7 +43,7 @@ export type CaptureBuildOptions = {
 export const captureSha256 = (value: Buffer | string): string => createHash('sha256').update(value).digest('hex');
 
 // The exact TreasuryContract shipped by the capture producer's sandbox 0.42.0.
-// The installed indexer sandbox 0.43.0 has the same BOC, but does not define capture authority.
+// The installed indexer sandbox 0.45.0 has the same BOC, but does not define capture authority.
 const TREASURY_CODE = 'te6cckEBBAEARQABFP8A9KQT9LzyyAsBAgEgAwIAWvLT/+1E0NP/0RK68qL0BNH4AH+OFiGAEPR4b6UgmALTB9QwAfsAkTLiAbPmWwAE0jD+omUe';
 export const CAPTURE_SANDBOX_TREASURY_HASH = 'd992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912';
 const FACTORY_NON_EXECUTABLE_HASH = '90aec8965afabb16ebc3cb9b408ebae71b618d78788bc80d09843593cac98da4';

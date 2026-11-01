@@ -4,7 +4,7 @@ Node.js/TypeScript service in `ton-indexer/services/platform` for public price o
 
 ## Run and verify
 
-Requires Node 22+ and PostgreSQL 16+. Install with `npm ci`, copy `.env.example` to `.env`, supply the encryption key, then:
+Requires Node 22.12+ and PostgreSQL 16+. Install with `npm ci`, copy `.env.example` to `.env`, supply the encryption key, then:
 
 ```sh
 npm run verify

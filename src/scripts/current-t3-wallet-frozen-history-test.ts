@@ -59,9 +59,9 @@ async function main() {
   const prefix = rows.slice(0, thawIndex + 1), thaw = checked[thawIndex]; assert(thaw.tx.inMessage?.init);
   assert.equal((await run(prefix)).status, 'ok', 'Exact original restoration is itself a valid active boundary');
   for (const init of [null, { ...thaw.tx.inMessage.init, data: beginCell().endCell() } satisfies StateInit]) {
-    const transaction = beginCell().store(storeTransaction({ ...thaw.tx, inMessage: { ...thaw.tx.inMessage, init } })).endCell();
+    const transaction: Cell = beginCell().store(storeTransaction({ ...thaw.tx, inMessage: { ...thaw.tx.inMessage, init } })).endCell();
     const after = orderShard(rows[thawIndex].afterShardAccountBoc, wallet).shard; after.lastTransactionHash = BigInt('0x' + transaction.hash().toString('hex'));
-    const altered = { ...rows[thawIndex], transactionBoc: transaction.toBoc().toString('base64'),
+    const altered: OrderTransactionEvidence = { ...rows[thawIndex], transactionBoc: transaction.toBoc().toString('base64'),
       afterShardAccountBoc: beginCell().store(storeShardAccount(after)).endCell().toBoc().toString('base64') };
     assert(verifyOrderTransaction(altered).succeeded, 'Negative cell keeps valid structural original-boundary commitments');
     const result = await run([...prefix.slice(0, -1), altered]);

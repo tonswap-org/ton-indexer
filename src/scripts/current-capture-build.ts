@@ -244,7 +244,7 @@ export function assertCurrentCaptureProducer(snapshot: CurrentCaptureSnapshot, o
   for(const file of Object.keys(binding.captures))assert(Object.hasOwn(receipt.artifacts,file),`Current producer capture is absent: ${file}`);
   assert.deepEqual(Object.keys(receipt.compiled).sort(),Object.keys(binding.targets).sort(),'Current producer compiled target coverage differs');
   for(const [role,target] of Object.entries(binding.targets)) {
-    const entry=receipt.compiled[role];exact(entry,['file','sha256','codeHash','boc','bocSha256'],`${role} compiled receipt`);
+    const entry: unknown=receipt.compiled[role];exact(entry,['file','sha256','codeHash','boc','bocSha256'],`${role} compiled receipt`);
     assert(entry.file===`current-compiled/${role}.json`&&entry.boc===`compiler/${role}.boc`&&entry.codeHash===target.codeHash&&entry.bocSha256===target.artifactSha256,'Current compiled receipt identity differs');
     assert(entry.sha256===receipt.artifacts[entry.file]&&entry.bocSha256===receipt.artifacts[entry.boc],'Current compiled inventory digest differs');
     const compiled=json(physical(directory,entry.file),entry.file);assert(compiled.hash===entry.codeHash&&typeof compiled.hex==='string'&&/^(?:[a-f0-9]{2})+$/.test(compiled.hex),'Current compiled JSON code differs');
