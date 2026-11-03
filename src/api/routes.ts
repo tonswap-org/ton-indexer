@@ -15,10 +15,12 @@ import {
   farmsSnapshotQuerySchema,
   jettonTransferPayloadParamsSchema,
   governanceSnapshotQuerySchema,
+  marketCandlesQuerySchema,
   optionsSnapshotQuerySchema,
   perpsSnapshotQuerySchema,
   tonSccpBurnProofQuerySchema,
   swapQuerySchema,
+  tradeIntelligenceQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
@@ -1524,6 +1526,140 @@ export const registerRoutes = (
           receiveToken: query.receive_token,
           executionType: query.execution_type,
           status: query.status,
+          includeReverse: parseBooleanQuery(query.include_reverse),
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/markets/:marketKey/candles',
+    {
+      schema: {
+        params: { type: 'object', properties: { marketKey: { type: 'string' } }, required: ['marketKey'] },
+        querystring: marketCandlesQuerySchema
+      }
+    },
+    async (request, reply) => {
+      const marketKey = (request.params as { marketKey: string }).marketKey;
+      const query = request.query as {
+        market_address: string;
+        asset_symbol: string;
+        quote_symbol: string;
+        interval?: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+        from_utime?: number | string;
+        to_utime?: number | string;
+        limit?: number | string;
+      };
+      if (!query.market_address || !isValidAddress(query.market_address)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid market_address');
+      }
+      const hasFromUtime = query.from_utime !== undefined;
+      const hasToUtime = query.to_utime !== undefined;
+      const fromUtime = parsePositiveIntQuery(query.from_utime);
+      const toUtime = parsePositiveIntQuery(query.to_utime);
+      if (hasFromUtime && fromUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be a positive integer');
+      }
+      if (hasToUtime && toUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'to_utime must be a positive integer');
+      }
+      if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be less than or equal to to_utime');
+      }
+      const limitRaw = query.limit;
+      const limitFromString = typeof limitRaw === 'string' ? parsePositiveInt(limitRaw) : null;
+      const limit =
+        typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+          ? Math.max(1, Math.min(2000, Math.trunc(limitRaw)))
+          : limitFromString !== null
+            ? Math.max(1, Math.min(2000, limitFromString))
+            : 800;
+      try {
+        return await service.getMarketCandles(marketKey, {
+          marketAddress: query.market_address,
+          assetSymbol: query.asset_symbol,
+          quoteSymbol: query.quote_symbol,
+          interval: query.interval,
+          fromUtime: fromUtime ?? undefined,
+          toUtime: toUtime ?? undefined,
+          limit,
+        });
+      } catch (error) {
+        return sendError(reply, 400, 'bad_request', (error as Error).message);
+      }
+    }
+  );
+
+  app.get(
+    '/api/indexer/v1/accounts/:addr/trade-intelligence',
+    { schema: { params: addressParamsSchema, querystring: tradeIntelligenceQuerySchema } },
+    async (request, reply) => {
+      const addr = (request.params as { addr: string }).addr;
+      if (!isValidAddress(addr)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid address');
+      }
+      const query = request.query as {
+        market_key?: string;
+        market_type?: 'spot' | 'perps' | 'options';
+        limit?: number | string;
+        from_utime?: number | string;
+        to_utime?: number | string;
+        pay_token?: string;
+        receive_token?: string;
+        asset_symbol?: string;
+        quote_symbol?: string;
+        engine_address?: string;
+        market_id?: number | string;
+        factory_address?: string;
+        series_id?: string;
+        option_address?: string;
+        include_reverse?: string;
+      };
+      const limitRaw = query.limit;
+      const limitFromString = typeof limitRaw === 'string' ? parsePositiveInt(limitRaw) : null;
+      const limit =
+        typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+          ? Math.max(1, Math.min(500, Math.trunc(limitRaw)))
+          : limitFromString !== null
+            ? Math.max(1, Math.min(500, limitFromString))
+            : 300;
+      const hasFromUtime = query.from_utime !== undefined;
+      const hasToUtime = query.to_utime !== undefined;
+      const fromUtime = parsePositiveIntQuery(query.from_utime);
+      const toUtime = parsePositiveIntQuery(query.to_utime);
+      const hasMarketId = query.market_id !== undefined;
+      const marketId = parsePositiveIntQuery(query.market_id);
+      if (hasFromUtime && fromUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be a positive integer');
+      }
+      if (hasToUtime && toUtime === null) {
+        return sendError(reply, 400, 'bad_request', 'to_utime must be a positive integer');
+      }
+      if (hasMarketId && marketId === null) {
+        return sendError(reply, 400, 'bad_request', 'market_id must be a positive integer');
+      }
+      if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
+        return sendError(reply, 400, 'bad_request', 'from_utime must be less than or equal to to_utime');
+      }
+      try {
+        return await service.getTradeIntelligence(addr, {
+          marketKey: query.market_key,
+          marketType: query.market_type,
+          limit,
+          fromUtime: fromUtime ?? undefined,
+          toUtime: toUtime ?? undefined,
+          payToken: query.pay_token,
+          receiveToken: query.receive_token,
+          assetSymbol: query.asset_symbol,
+          quoteSymbol: query.quote_symbol,
+          engineAddress: query.engine_address,
+          marketId: marketId ?? undefined,
+          factoryAddress: query.factory_address,
+          seriesId: query.series_id,
+          optionAddress: query.option_address,
           includeReverse: parseBooleanQuery(query.include_reverse),
         });
       } catch (error) {

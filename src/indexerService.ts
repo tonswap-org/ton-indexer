@@ -146,9 +146,333 @@ export type AccountSwapsResponse = {
   pending_limits: AccountPendingLimitOrder[];
 };
 
+export type MarketCandleInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+
+export type MarketCandle = {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volumeBase: number;
+  volumeQuote: number;
+  tradeCount: number;
+};
+
+export type MarketCandlesResponse = {
+  market_key: string;
+  market_address: string;
+  interval: MarketCandleInterval;
+  from_utime: number | null;
+  to_utime: number | null;
+  candle_count: number;
+  history_complete: boolean;
+  synced_at: number;
+  network: Network;
+  candles: MarketCandle[];
+};
+
+export type TradeIntelligenceExecutionSide = 'buy' | 'sell' | 'swap';
+
+export type AccountTradeIntelligenceExecution = {
+  id: string;
+  txId: string;
+  lt: string;
+  hash: string;
+  utime: number;
+  status: SwapExecutionStatus;
+  reason?: string;
+  side: TradeIntelligenceExecutionSide;
+  executionType: SwapExecutionType;
+  payToken?: string;
+  receiveToken?: string;
+  payAmount?: string;
+  receiveAmount?: string;
+  qty: number | null;
+  priceQuote: number | null;
+  notionalQuote: number | null;
+  label?: string;
+  marketId?: number;
+  tokenId?: string;
+  referencePriceQuote?: number | null;
+  feeQuote?: number | null;
+  realizedPnlQuote?: number | null;
+  queryId?: string;
+  twapSlice?: number;
+  twapTotal?: number;
+  querySequence?: number;
+  queryNonce?: number;
+  twapRunId?: string;
+};
+
+export type AccountTradeIntelligenceOrder = {
+  id: string;
+  kind: 'limit' | 'twap';
+  side: TradeIntelligenceExecutionSide;
+  status: SwapExecutionStatus | 'running' | 'completed' | 'partial' | 'failed';
+  utime: number;
+  payToken?: string;
+  receiveToken?: string;
+  payAmount?: string;
+  receiveAmount?: string;
+  qty: number | null;
+  priceQuote: number | null;
+  label?: string;
+  marketId?: number;
+  tokenId?: string;
+  filledQty?: number | null;
+  remainingQty?: number | null;
+  queryId?: string;
+  querySequence?: number;
+  queryNonce?: number;
+  twapRunId?: string;
+  totalSlices?: number;
+  confirmedSlices?: number;
+  pendingSlices?: number;
+  failedSlices?: number;
+};
+
+export type AccountTradeIntelligencePosition = {
+  id: string;
+  label: string;
+  netQty: number;
+  buyQty: number;
+  sellQty: number;
+  direction?: 'long' | 'short' | 'flat' | 'open' | 'closed';
+  marketId?: number;
+  tokenId?: string;
+  avgEntryPriceQuote?: number | null;
+  avgExitPriceQuote?: number | null;
+  breakEvenPriceQuote?: number | null;
+  markPriceQuote?: number | null;
+  liquidationPriceQuote?: number | null;
+  strikePriceQuote?: number | null;
+  expiryTs?: number | null;
+  premiumPaidQuote?: number | null;
+  settlementPayoutQuote?: number | null;
+  realizedPnlQuote?: number | null;
+  unrealizedPnlQuote?: number | null;
+  totalPnlQuote?: number | null;
+  status?: string | null;
+};
+
+export type AccountTradeIntelligenceSummary = {
+  filled_count: number;
+  pending_count: number;
+  failed_count: number;
+  market_count: number;
+  limit_count: number;
+  twap_count: number;
+  unknown_count: number;
+  pending_limit_count: number;
+  twap_run_count: number;
+  buy_qty: number;
+  sell_qty: number;
+  net_qty: number;
+  active_order_count: number;
+  avg_entry_price_quote: number | null;
+  avg_exit_price_quote: number | null;
+  break_even_price_quote: number | null;
+  mark_price_quote: number | null;
+  liquidation_price_quote: number | null;
+  realized_pnl_quote: number | null;
+  unrealized_pnl_quote: number | null;
+  total_pnl_quote: number | null;
+  realized_roi_pct: number | null;
+  total_roi_pct: number | null;
+  buy_count: number;
+  sell_count: number;
+  win_rate_pct: number | null;
+  avg_slippage_bps: number | null;
+  best_fill_quote: number | null;
+  worst_fill_quote: number | null;
+};
+
+export type AccountTradeIntelligenceResponse = {
+  address: string;
+  market_key: string;
+  market_type: 'spot' | 'perps' | 'options';
+  asset_symbol: string | null;
+  quote_symbol: string | null;
+  history_complete: boolean;
+  synced_at: number;
+  network: Network;
+  summary: AccountTradeIntelligenceSummary;
+  executions: AccountTradeIntelligenceExecution[];
+  orders: AccountTradeIntelligenceOrder[];
+  positions: AccountTradeIntelligencePosition[];
+  capabilities: {
+    executions: boolean;
+    orders: boolean;
+    positions: boolean;
+  };
+  note?: string;
+};
+
 export type JettonTransferPayloadResponse = {
   custom_payload: string | null;
   state_init: string | null;
+};
+
+const PERPS_OPEN_POSITION_OP = 0x4f50454e;
+const PERPS_MODIFY_POSITION_OP = 0x4d444946;
+const PERPS_CLOSE_POSITION_OP = 0x434c4f53;
+const OPTIONS_BUY_OPTION_OP = 0x424f5952;
+const OPTIONS_BUY_SPREAD_OP = 0x42425559;
+
+const scaledBigIntToNumber = (value: bigint | null | undefined, decimals = 9): number | null => {
+  if (value === null || value === undefined) return null;
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const divisor = 10n ** BigInt(Math.max(0, Math.trunc(decimals)));
+  const whole = abs / divisor;
+  const fraction = abs % divisor;
+  const fractionText =
+    decimals > 0 ? fraction.toString(10).padStart(decimals, '0').replace(/0+$/, '') : '';
+  const raw = `${negative ? '-' : ''}${whole.toString(10)}${fractionText ? `.${fractionText}` : ''}`;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+type DecodedPerpsTradeBody = {
+  kind: 'open' | 'modify' | 'close';
+  queryId: string;
+  marketId: number;
+  sizeRaw: string;
+  qty: number | null;
+  side: TradeIntelligenceExecutionSide;
+  priceQuote: number | null;
+  notionalQuote: number | null;
+  marginQuote: number | null;
+  label: string;
+};
+
+const decodePerpsTradeBody = (body?: string): DecodedPerpsTradeBody | null => {
+  if (!body) return null;
+  try {
+    const slice = Cell.fromBase64(body).beginParse();
+    if (slice.remainingBits < 96) return null;
+    const op = slice.loadUint(32);
+    if (op !== PERPS_OPEN_POSITION_OP && op !== PERPS_MODIFY_POSITION_OP && op !== PERPS_CLOSE_POSITION_OP) {
+      return null;
+    }
+    const queryId = slice.loadUintBig(64).toString(10);
+    const marketId = slice.loadUint(32);
+    if (!Number.isFinite(marketId) || marketId <= 0) return null;
+
+    if (op === PERPS_OPEN_POSITION_OP) {
+      const size = slice.loadIntBig(128);
+      const margin = slice.loadCoins();
+      const limitPrice = slice.loadCoins();
+      const qty = scaledBigIntToNumber(size < 0n ? -size : size, 9);
+      const priceQuote = scaledBigIntToNumber(limitPrice, 9);
+      return {
+        kind: 'open',
+        queryId,
+        marketId,
+        sizeRaw: size.toString(10),
+        qty,
+        side: size > 0n ? 'buy' : size < 0n ? 'sell' : 'swap',
+        priceQuote,
+        notionalQuote:
+          qty !== null && priceQuote !== null && Number.isFinite(qty) && Number.isFinite(priceQuote) ? qty * priceQuote : null,
+        marginQuote: scaledBigIntToNumber(margin, 9),
+        label: size > 0n ? 'Open Long' : size < 0n ? 'Open Short' : 'Open Position'
+      };
+    }
+
+    if (op === PERPS_MODIFY_POSITION_OP) {
+      const sizeDelta = slice.loadIntBig(128);
+      const marginDelta = slice.loadIntBig(128);
+      const limitPrice = slice.loadCoins();
+      const qty = scaledBigIntToNumber(sizeDelta < 0n ? -sizeDelta : sizeDelta, 9);
+      const priceQuote = scaledBigIntToNumber(limitPrice, 9);
+      return {
+        kind: 'modify',
+        queryId,
+        marketId,
+        sizeRaw: sizeDelta.toString(10),
+        qty,
+        side: sizeDelta > 0n ? 'buy' : sizeDelta < 0n ? 'sell' : 'swap',
+        priceQuote,
+        notionalQuote:
+          qty !== null && priceQuote !== null && Number.isFinite(qty) && Number.isFinite(priceQuote) ? qty * priceQuote : null,
+        marginQuote: scaledBigIntToNumber(marginDelta < 0n ? -marginDelta : marginDelta, 9),
+        label: sizeDelta > 0n ? 'Increase Position' : sizeDelta < 0n ? 'Reduce Position' : 'Modify Position'
+      };
+    }
+
+    const size = slice.loadIntBig(128);
+    const limitPrice = slice.loadCoins();
+    const qty = scaledBigIntToNumber(size < 0n ? -size : size, 9);
+    const priceQuote = scaledBigIntToNumber(limitPrice, 9);
+    return {
+      kind: 'close',
+      queryId,
+      marketId,
+      sizeRaw: size.toString(10),
+      qty,
+      side: 'swap',
+      priceQuote,
+      notionalQuote:
+        qty !== null && priceQuote !== null && Number.isFinite(qty) && Number.isFinite(priceQuote) ? qty * priceQuote : null,
+      marginQuote: null,
+      label: 'Close Position'
+    };
+  } catch {
+    return null;
+  }
+};
+
+type DecodedOptionTradeBody = {
+  kind: 'buy_option' | 'buy_spread';
+  queryId: string;
+  tokenId: string;
+  qty: number | null;
+  premiumQuote: number | null;
+  priceQuote: number | null;
+  label: string;
+};
+
+const decodeOptionTradeBody = (body?: string): DecodedOptionTradeBody | null => {
+  if (!body) return null;
+  try {
+    const slice = Cell.fromBase64(body).beginParse();
+    if (slice.remainingBits < 96) return null;
+    const op = slice.loadUint(32);
+    if (op !== OPTIONS_BUY_OPTION_OP && op !== OPTIONS_BUY_SPREAD_OP) return null;
+    const queryId = slice.loadUintBig(64).toString(10);
+    slice.loadAddressAny();
+    const tokenId = slice.loadUintBig(64).toString(10);
+    const notional = slice.loadCoins();
+    const premiumPaid = slice.loadCoins();
+    const qty = scaledBigIntToNumber(notional, 9);
+    const premiumQuote = scaledBigIntToNumber(premiumPaid, 9);
+    const priceQuote =
+      qty !== null && premiumQuote !== null && Number.isFinite(qty) && Number.isFinite(premiumQuote) && qty > 0
+        ? premiumQuote / qty
+        : null;
+    return {
+      kind: op === OPTIONS_BUY_SPREAD_OP ? 'buy_spread' : 'buy_option',
+      queryId,
+      tokenId,
+      qty,
+      premiumQuote,
+      priceQuote,
+      label: op === OPTIONS_BUY_SPREAD_OP ? 'Buy Spread' : 'Buy Option'
+    };
+  } catch {
+    return null;
+  }
+};
+
+const CANDLE_INTERVAL_MS: Record<MarketCandleInterval, number> = {
+  '1m': 60_000,
+  '5m': 5 * 60_000,
+  '15m': 15 * 60_000,
+  '1h': 60 * 60_000,
+  '4h': 4 * 60 * 60_000,
+  '1d': 24 * 60 * 60_000,
 };
 
 const tupleItemBigInt = (item?: TupleItem): bigint | null => {
@@ -3472,6 +3796,836 @@ export class IndexerService {
     };
   }
 
+  async getMarketCandles(
+    marketKey: string,
+    options: {
+      marketAddress: string;
+      interval?: MarketCandleInterval;
+      fromUtime?: number;
+      toUtime?: number;
+      assetSymbol?: string;
+      quoteSymbol?: string;
+      limit?: number;
+    }
+  ): Promise<MarketCandlesResponse> {
+    const syncedAt = Math.trunc(Date.now() / 1000);
+    const normalizedMarketAddress = normalizeAddress(options.marketAddress);
+    const interval = options.interval ?? '15m';
+    const bucketMs = CANDLE_INTERVAL_MS[interval] ?? CANDLE_INTERVAL_MS['15m'];
+    const fromUtime =
+      typeof options.fromUtime === 'number' && Number.isFinite(options.fromUtime)
+        ? Math.max(1, Math.trunc(options.fromUtime))
+        : null;
+    const toUtime =
+      typeof options.toUtime === 'number' && Number.isFinite(options.toUtime)
+        ? Math.max(1, Math.trunc(options.toUtime))
+        : null;
+    const assetSymbol = normalizeTokenSymbol(options.assetSymbol);
+    const quoteSymbol = normalizeTokenSymbol(options.quoteSymbol);
+    const limit = Math.max(1, Math.min(2_000, Math.trunc(options.limit ?? 800)));
+    const marketType = marketKey.startsWith('perps:') ? 'perps' : marketKey.startsWith('options:') ? 'options' : 'spot';
+    const perpsMarketIdMatch = /^perps:market:(\d+)$/i.exec(marketKey);
+    const perpsMarketId = perpsMarketIdMatch ? Number.parseInt(perpsMarketIdMatch[1] ?? '', 10) : null;
+
+    this.store.touch(normalizedMarketAddress);
+    try {
+      await this.ensureInitialTransactions(normalizedMarketAddress);
+    } catch (_error) {
+      // fall through to stored entry if present
+    }
+
+    const entry = this.store.get(normalizedMarketAddress);
+    if (!entry) {
+      return {
+        market_key: marketKey,
+        market_address: normalizedMarketAddress,
+        interval,
+        from_utime: fromUtime,
+        to_utime: toUtime,
+        candle_count: 0,
+        history_complete: false,
+        synced_at: syncedAt,
+        network: this.network,
+        candles: [],
+      };
+    }
+
+    const buckets = new Map<number, MarketCandle>();
+    for (let index = entry.txs.length - 1; index >= 0; index -= 1) {
+      const tx = entry.txs[index];
+      if (fromUtime !== null && tx.utime < fromUtime) continue;
+      if (toUtime !== null && tx.utime > toUtime) continue;
+
+      let priceQuote: number | null = null;
+      let qty: number | null = null;
+      let notionalQuote: number | null = null;
+
+      if (marketType === 'perps') {
+        const messages = [tx.inMessage, ...(tx.outMessages ?? [])].filter(
+          (message): message is NonNullable<IndexedTx['inMessage']> => Boolean(message)
+        );
+        for (const message of messages) {
+          const parsed = decodePerpsTradeBody(message.body);
+          if (!parsed) continue;
+          if (perpsMarketId !== null && parsed.marketId !== perpsMarketId) continue;
+          priceQuote = parsed.priceQuote;
+          qty = parsed.qty;
+          notionalQuote = parsed.notionalQuote ?? (
+            parsed.priceQuote !== null && parsed.qty !== null ? parsed.priceQuote * parsed.qty : null
+          );
+          break;
+        }
+      } else if (marketType === 'options') {
+        const messages = [tx.inMessage, ...(tx.outMessages ?? [])].filter(
+          (message): message is NonNullable<IndexedTx['inMessage']> => Boolean(message)
+        );
+        for (const message of messages) {
+          const parsed = decodeOptionTradeBody(message.body);
+          if (!parsed) continue;
+          priceQuote = parsed.priceQuote;
+          qty = parsed.qty;
+          notionalQuote = parsed.premiumQuote ?? (
+            parsed.priceQuote !== null && parsed.qty !== null ? parsed.priceQuote * parsed.qty : null
+          );
+          break;
+        }
+      } else {
+        const swap = this.toSwapExecution(tx);
+        if (!swap) continue;
+        priceQuote = this.resolveSwapQuotePrice(swap, assetSymbol, quoteSymbol);
+        qty = assetSymbol ? this.resolveSwapAssetQty(swap, assetSymbol) : null;
+        notionalQuote =
+          priceQuote !== null && qty !== null && Number.isFinite(priceQuote) && Number.isFinite(qty)
+            ? priceQuote * qty
+            : null;
+      }
+
+      if (priceQuote === null || qty === null || notionalQuote === null) continue;
+      const bucketTsMs = Math.floor((tx.utime * 1000) / bucketMs) * bucketMs;
+      const bucketTs = Math.trunc(bucketTsMs / 1000);
+      const current = buckets.get(bucketTs);
+      if (!current) {
+        buckets.set(bucketTs, {
+          ts: bucketTs,
+          open: priceQuote,
+          high: priceQuote,
+          low: priceQuote,
+          close: priceQuote,
+          volumeBase: qty,
+          volumeQuote: notionalQuote,
+          tradeCount: 1,
+        });
+        continue;
+      }
+      current.high = Math.max(current.high, priceQuote);
+      current.low = Math.min(current.low, priceQuote);
+      current.close = priceQuote;
+      current.volumeBase += qty;
+      current.volumeQuote += notionalQuote;
+      current.tradeCount += 1;
+    }
+
+    const candles = [...buckets.values()].sort((left, right) => left.ts - right.ts).slice(-limit);
+    return {
+      market_key: marketKey,
+      market_address: normalizedMarketAddress,
+      interval,
+      from_utime: fromUtime,
+      to_utime: toUtime,
+      candle_count: candles.length,
+      history_complete: entry.stats.historyComplete,
+      synced_at: syncedAt,
+      network: this.network,
+      candles,
+    };
+  }
+
+  async getTradeIntelligence(
+    address: string,
+    options: {
+      marketKey?: string;
+      marketType?: 'spot' | 'perps' | 'options';
+      limit?: number;
+      fromUtime?: number;
+      toUtime?: number;
+      payToken?: string;
+      receiveToken?: string;
+      assetSymbol?: string;
+      quoteSymbol?: string;
+      engineAddress?: string;
+      marketId?: number;
+      factoryAddress?: string;
+      seriesId?: string;
+      optionAddress?: string;
+      includeReverse?: boolean;
+    } = {}
+  ): Promise<AccountTradeIntelligenceResponse> {
+    const syncedAt = Math.trunc(Date.now() / 1000);
+    const marketType = options.marketType ?? 'spot';
+    const marketKey = options.marketKey?.trim() || marketType;
+    const assetSymbol = normalizeTokenSymbol(options.assetSymbol);
+    const quoteSymbol = normalizeTokenSymbol(options.quoteSymbol);
+    const emptySummary = this.buildEmptyTradeIntelligenceSummary();
+
+    if (marketType === 'spot') {
+      const swapResponse = await this.getSwapExecutions(address, {
+        limit: Math.max(1, Math.min(500, Math.trunc(options.limit ?? 300))),
+        fromUtime: options.fromUtime,
+        toUtime: options.toUtime,
+        payToken: options.payToken,
+        receiveToken: options.receiveToken,
+        executionType: undefined,
+        status: undefined,
+        includeReverse: options.includeReverse,
+      });
+
+      const executions: AccountTradeIntelligenceExecution[] = [];
+      let buyQty = 0;
+      let sellQty = 0;
+      let buyNotionalQuote = 0;
+      let sellNotionalQuote = 0;
+      let buyCount = 0;
+      let sellCount = 0;
+      let filledCount = 0;
+      let pendingCount = 0;
+      let failedCount = 0;
+      let marketCount = 0;
+      let limitCount = 0;
+      let twapCount = 0;
+      let unknownCount = 0;
+      let positionQty = 0;
+      let positionCostQuote = 0;
+      let realizedPnlQuote = 0;
+      let profitableCloseCount = 0;
+      let bestFillQuote: number | null = null;
+      let worstFillQuote: number | null = null;
+
+      const successfulFills: Array<{
+        side: TradeIntelligenceExecutionSide;
+        qty: number;
+        priceQuote: number;
+        utime: number;
+      }> = [];
+
+      for (const swap of swapResponse.swaps) {
+        const side = assetSymbol ? this.resolveSwapSide(swap, assetSymbol) : 'swap';
+        const qty = assetSymbol ? this.resolveSwapAssetQty(swap, assetSymbol) : null;
+        const priceQuote = this.resolveSwapQuotePrice(swap, assetSymbol, quoteSymbol);
+        const notionalQuote =
+          qty !== null && priceQuote !== null && Number.isFinite(qty) && Number.isFinite(priceQuote) ? qty * priceQuote : null;
+        if (swap.status === 'success') filledCount += 1;
+        else if (swap.status === 'failed') failedCount += 1;
+        else pendingCount += 1;
+
+        if (swap.executionType === 'market') marketCount += 1;
+        else if (swap.executionType === 'limit') limitCount += 1;
+        else if (swap.executionType === 'twap') twapCount += 1;
+        else unknownCount += 1;
+
+        if (swap.status === 'success' && qty !== null && priceQuote !== null) {
+          successfulFills.push({ side, qty, priceQuote, utime: swap.utime });
+          bestFillQuote = bestFillQuote === null ? priceQuote : Math.max(bestFillQuote, priceQuote);
+          worstFillQuote = worstFillQuote === null ? priceQuote : Math.min(worstFillQuote, priceQuote);
+        }
+
+        executions.push({
+          id: `${swap.lt}:${swap.hash}`,
+          txId: swap.txId,
+          lt: swap.lt,
+          hash: swap.hash,
+          utime: swap.utime,
+          status: swap.status,
+          reason: swap.reason,
+          side,
+          executionType: swap.executionType,
+          payToken: swap.payToken,
+          receiveToken: swap.receiveToken,
+          payAmount: swap.payAmount,
+          receiveAmount: swap.receiveAmount,
+          qty,
+          priceQuote,
+          notionalQuote,
+          label:
+            side === 'buy'
+              ? 'Buy Fill'
+              : side === 'sell'
+                ? 'Sell Fill'
+                : swap.executionType === 'twap'
+                  ? 'TWAP Fill'
+                  : 'Swap Fill',
+          queryId: swap.queryId,
+          twapSlice: swap.twapSlice,
+          twapTotal: swap.twapTotal,
+          querySequence: swap.querySequence,
+          queryNonce: swap.queryNonce,
+          twapRunId: swap.twapRunId,
+        });
+      }
+
+      for (const fill of successfulFills.sort((left, right) => left.utime - right.utime)) {
+        if (!Number.isFinite(fill.qty) || !Number.isFinite(fill.priceQuote) || fill.qty <= 0 || fill.priceQuote <= 0) continue;
+        const notionalQuote = fill.qty * fill.priceQuote;
+        if (fill.side === 'buy') {
+          buyQty += fill.qty;
+          buyNotionalQuote += notionalQuote;
+          buyCount += 1;
+          positionQty += fill.qty;
+          positionCostQuote += notionalQuote;
+          continue;
+        }
+        if (fill.side !== 'sell') continue;
+        sellQty += fill.qty;
+        sellNotionalQuote += notionalQuote;
+        sellCount += 1;
+        if (positionQty > 0 && positionCostQuote > 0) {
+          const averageCost = positionCostQuote / positionQty;
+          const closedQty = Math.min(positionQty, fill.qty);
+          const tradePnlQuote = (fill.priceQuote - averageCost) * closedQty;
+          realizedPnlQuote += tradePnlQuote;
+          if (tradePnlQuote > 0) profitableCloseCount += 1;
+          positionQty -= closedQty;
+          positionCostQuote -= averageCost * closedQty;
+          if (positionQty <= 1e-12 || positionCostQuote <= 1e-9) {
+            positionQty = 0;
+            positionCostQuote = 0;
+          }
+        }
+      }
+
+      const latestPriceQuote =
+        [...successfulFills]
+          .sort((left, right) => right.utime - left.utime)
+          .find((fill) => fill.priceQuote > 0)?.priceQuote ?? null;
+      const avgEntryPriceQuote =
+        positionQty > 0 && positionCostQuote > 0 && Number.isFinite(positionQty) && Number.isFinite(positionCostQuote)
+          ? positionCostQuote / positionQty
+          : null;
+      const avgExitPriceQuote =
+        sellQty > 0 && sellNotionalQuote > 0 && Number.isFinite(sellQty) && Number.isFinite(sellNotionalQuote)
+          ? sellNotionalQuote / sellQty
+          : null;
+      const unrealizedPnlQuote =
+        positionQty > 0 && avgEntryPriceQuote !== null && latestPriceQuote !== null
+          ? (latestPriceQuote - avgEntryPriceQuote) * positionQty
+          : positionQty <= 0
+            ? 0
+            : null;
+      const totalPnlQuote =
+        unrealizedPnlQuote !== null && Number.isFinite(realizedPnlQuote) ? realizedPnlQuote + unrealizedPnlQuote : null;
+      const realizedRoiPct = buyNotionalQuote > 0 ? (realizedPnlQuote / buyNotionalQuote) * 100 : null;
+      const totalRoiPct =
+        buyNotionalQuote > 0 && totalPnlQuote !== null ? (totalPnlQuote / buyNotionalQuote) * 100 : null;
+
+      const orders: AccountTradeIntelligenceOrder[] = [];
+      for (const limit of swapResponse.pending_limits) {
+        const side = assetSymbol ? this.resolveSwapSide(limit, assetSymbol) : 'swap';
+        const qty = assetSymbol ? this.resolveSwapAssetQty(limit, assetSymbol) : null;
+        const priceQuote = this.resolveSwapQuotePrice(limit, assetSymbol, quoteSymbol);
+        orders.push({
+          id: `${limit.lt}:${limit.hash}`,
+          kind: 'limit',
+          side,
+          status: limit.status,
+          utime: limit.utime,
+          payToken: limit.payToken,
+          receiveToken: limit.receiveToken,
+          payAmount: limit.payAmount,
+          receiveAmount: limit.receiveAmount,
+          qty,
+          priceQuote,
+          label: side === 'buy' ? 'Pending Limit Buy' : side === 'sell' ? 'Pending Limit Sell' : 'Pending Limit',
+          queryId: limit.queryId,
+          querySequence: limit.querySequence,
+          queryNonce: limit.queryNonce,
+        });
+      }
+      for (const run of swapResponse.twap_runs) {
+        const side = assetSymbol ? this.resolveSwapSide(run, assetSymbol) : 'swap';
+        const totalSlices = run.totalSlices ?? undefined;
+        const filledQty = totalSlices ? Math.min(run.confirmedSlices, totalSlices) : run.confirmedSlices;
+        const remainingQty =
+          totalSlices && totalSlices > 0 ? Math.max(0, totalSlices - run.confirmedSlices - run.failedSlices) : null;
+        orders.push({
+          id: run.id,
+          kind: 'twap',
+          side,
+          status: run.status,
+          utime: run.lastUtime,
+          payToken: run.payToken,
+          receiveToken: run.receiveToken,
+          payAmount: undefined,
+          receiveAmount: undefined,
+          qty: null,
+          priceQuote: null,
+          label: 'TWAP Program',
+          twapRunId: run.id,
+          totalSlices,
+          confirmedSlices: run.confirmedSlices,
+          pendingSlices: run.pendingSlices,
+          failedSlices: run.failedSlices,
+          filledQty,
+          remainingQty,
+        });
+      }
+
+      const positions =
+        buyQty > 0 || sellQty > 0
+          ? [
+              {
+                id: 'spot-position',
+                label: 'Spot Position',
+                netQty: Math.max(0, positionQty),
+                buyQty,
+                sellQty,
+                direction: positionQty > 0 ? 'long' : 'flat',
+                avgEntryPriceQuote,
+                avgExitPriceQuote,
+                breakEvenPriceQuote: avgEntryPriceQuote,
+                markPriceQuote: latestPriceQuote,
+                realizedPnlQuote,
+                unrealizedPnlQuote,
+                totalPnlQuote,
+                status: positionQty > 0 ? 'open' : 'flat'
+              } satisfies AccountTradeIntelligencePosition,
+            ]
+          : [];
+
+      return {
+        address,
+        market_key: marketKey,
+        market_type: marketType,
+        asset_symbol: assetSymbol,
+        quote_symbol: quoteSymbol,
+        history_complete: swapResponse.history_complete,
+        synced_at: swapResponse.synced_at,
+        network: swapResponse.network,
+        summary: {
+          filled_count: filledCount,
+          pending_count: pendingCount,
+          failed_count: failedCount,
+          market_count: marketCount,
+          limit_count: limitCount,
+          twap_count: twapCount,
+          unknown_count: unknownCount,
+          pending_limit_count: swapResponse.summary.pending_limit_count,
+          twap_run_count: swapResponse.summary.twap_run_count,
+          buy_qty: buyQty,
+          sell_qty: sellQty,
+          net_qty: Math.max(0, positionQty),
+          active_order_count: swapResponse.summary.pending_limit_count + swapResponse.summary.twap_run_count,
+          avg_entry_price_quote: avgEntryPriceQuote,
+          avg_exit_price_quote: avgExitPriceQuote,
+          break_even_price_quote: avgEntryPriceQuote,
+          mark_price_quote: latestPriceQuote,
+          liquidation_price_quote: null,
+          realized_pnl_quote: realizedPnlQuote,
+          unrealized_pnl_quote: unrealizedPnlQuote,
+          total_pnl_quote: totalPnlQuote,
+          realized_roi_pct: realizedRoiPct,
+          total_roi_pct: totalRoiPct,
+          buy_count: buyCount,
+          sell_count: sellCount,
+          win_rate_pct: sellCount > 0 ? (profitableCloseCount / sellCount) * 100 : null,
+          avg_slippage_bps: null,
+          best_fill_quote: bestFillQuote,
+          worst_fill_quote: worstFillQuote
+        },
+        executions,
+        orders: orders.sort((left, right) => right.utime - left.utime),
+        positions,
+        capabilities: {
+          executions: true,
+          orders: true,
+          positions: true,
+        },
+      };
+    }
+
+    const limit = Math.max(1, Math.min(500, Math.trunc(options.limit ?? 300)));
+    const accountEntry = await this.getAccountTxEntry(address);
+    const historyComplete = accountEntry?.stats.historyComplete ?? false;
+    const accountTxs = accountEntry?.txs ?? [];
+
+    if (marketType === 'perps') {
+      const engineAddress = options.engineAddress ? normalizeAddress(options.engineAddress) : null;
+      const marketId =
+        typeof options.marketId === 'number' && Number.isFinite(options.marketId) && options.marketId > 0
+          ? Math.trunc(options.marketId)
+          : null;
+
+      let filledCount = 0;
+      let pendingCount = 0;
+      let failedCount = 0;
+      let buyQty = 0;
+      let sellQty = 0;
+      let buyCount = 0;
+      let sellCount = 0;
+      let bestFillQuote: number | null = null;
+      let worstFillQuote: number | null = null;
+      const executions: AccountTradeIntelligenceExecution[] = [];
+
+      for (const tx of accountTxs) {
+        if (options.fromUtime && tx.utime < options.fromUtime) continue;
+        if (options.toUtime && tx.utime > options.toUtime) continue;
+        const messages = [tx.inMessage, ...(tx.outMessages ?? [])].filter(
+          (message): message is NonNullable<IndexedTx['inMessage']> => Boolean(message)
+        );
+        let decoded: DecodedPerpsTradeBody | null = null;
+        for (const message of messages) {
+          if (engineAddress) {
+            const sourceMatches = message.source ? normalizeAddress(message.source) === engineAddress : false;
+            const destinationMatches = message.destination ? normalizeAddress(message.destination) === engineAddress : false;
+            if (!sourceMatches && !destinationMatches) continue;
+          }
+          const parsed = decodePerpsTradeBody(message.body);
+          if (!parsed) continue;
+          if (marketId !== null && parsed.marketId !== marketId) continue;
+          decoded = parsed;
+          break;
+        }
+        if (!decoded) continue;
+
+        if (tx.ui.status === 'success') filledCount += 1;
+        else if (tx.ui.status === 'failed') failedCount += 1;
+        else pendingCount += 1;
+
+        if (tx.ui.status === 'success' && decoded.qty !== null) {
+          if (decoded.side === 'buy') {
+            buyQty += decoded.qty;
+            buyCount += 1;
+          } else if (decoded.side === 'sell') {
+            sellQty += decoded.qty;
+            sellCount += 1;
+          }
+          if (decoded.priceQuote !== null) {
+            bestFillQuote = bestFillQuote === null ? decoded.priceQuote : Math.max(bestFillQuote, decoded.priceQuote);
+            worstFillQuote = worstFillQuote === null ? decoded.priceQuote : Math.min(worstFillQuote, decoded.priceQuote);
+          }
+        }
+
+        executions.push({
+          id: `${tx.lt}:${tx.hash}`,
+          txId: tx.ui.txId,
+          lt: tx.lt,
+          hash: tx.hash,
+          utime: tx.utime,
+          status: tx.ui.status,
+          reason: tx.ui.reason,
+          side: decoded.side,
+          executionType: 'market',
+          payToken: decoded.side === 'buy' ? quoteSymbol ?? undefined : assetSymbol ?? undefined,
+          receiveToken: decoded.side === 'buy' ? assetSymbol ?? undefined : quoteSymbol ?? undefined,
+          payAmount: undefined,
+          receiveAmount: undefined,
+          qty: decoded.qty,
+          priceQuote: decoded.priceQuote,
+          notionalQuote: decoded.notionalQuote,
+          label: decoded.label,
+          marketId: decoded.marketId,
+          queryId: decoded.queryId
+        });
+      }
+
+      const matchingExecutions = executions.sort((left, right) => right.utime - left.utime).slice(0, limit);
+      const markMarketResponse =
+        engineAddress && marketId !== null
+          ? await this.runGetMethodSourceCached(engineAddress, 'market_state', [{ type: 'int', value: BigInt(marketId) }]).catch(
+              () => null
+            )
+          : null;
+      const positionResponse =
+        engineAddress && marketId !== null
+          ? await this.runGetMethodSourceCached(engineAddress, 'position_state', [
+              { type: 'slice', cell: buildSliceCell(address) },
+              { type: 'int', value: BigInt(marketId) }
+            ]).catch(() => null)
+          : null;
+      const markPriceQuote =
+        markMarketResponse?.exitCode === 0 ? this.parseScaledValueToNumber(tupleItemBigInt(markMarketResponse.stack[17]), 9) : null;
+
+      let positions: AccountTradeIntelligencePosition[] = [];
+      let avgEntryPriceQuote: number | null = null;
+      let breakEvenPriceQuote: number | null = null;
+      let liquidationPriceQuote: number | null = null;
+      let unrealizedPnlQuote: number | null = null;
+      let totalPnlQuote: number | null = null;
+      let summaryNetQty = buyQty - sellQty;
+
+      if (positionResponse?.exitCode === 0 && tupleItemBool(positionResponse.stack[0])) {
+        const sizeRaw = tupleItemBigInt(positionResponse.stack[3]) ?? 0n;
+        const entryNotionalRaw = tupleItemBigInt(positionResponse.stack[5]) ?? 0n;
+        const sizeAbs = sizeRaw < 0n ? -sizeRaw : sizeRaw;
+        const qtyAbs = this.parseScaledValueToNumber(sizeAbs, 9) ?? 0;
+        const entryNotionalQuote = this.parseScaledValueToNumber(entryNotionalRaw, 9);
+        avgEntryPriceQuote =
+          qtyAbs > 0 && entryNotionalQuote !== null && Number.isFinite(entryNotionalQuote) ? entryNotionalQuote / qtyAbs : null;
+        breakEvenPriceQuote = avgEntryPriceQuote;
+        liquidationPriceQuote = null;
+        summaryNetQty = sizeRaw > 0n ? qtyAbs : sizeRaw < 0n ? -qtyAbs : 0;
+        if (qtyAbs > 0 && avgEntryPriceQuote !== null && markPriceQuote !== null) {
+          unrealizedPnlQuote =
+            sizeRaw > 0n ? (markPriceQuote - avgEntryPriceQuote) * qtyAbs : (avgEntryPriceQuote - markPriceQuote) * qtyAbs;
+          totalPnlQuote = unrealizedPnlQuote;
+        }
+        positions = [
+          {
+            id: `perps:${marketId ?? 'market'}`,
+            label: sizeRaw > 0n ? `Market ${marketId ?? '--'} Long` : sizeRaw < 0n ? `Market ${marketId ?? '--'} Short` : 'Perps Position',
+            netQty: summaryNetQty,
+            buyQty,
+            sellQty,
+            direction: sizeRaw > 0n ? 'long' : sizeRaw < 0n ? 'short' : 'flat',
+            marketId: marketId ?? undefined,
+            avgEntryPriceQuote,
+            breakEvenPriceQuote,
+            markPriceQuote,
+            liquidationPriceQuote,
+            realizedPnlQuote: null,
+            unrealizedPnlQuote,
+            totalPnlQuote,
+            status: qtyAbs > 0 ? 'open' : 'flat'
+          }
+        ];
+      }
+
+      return {
+        address,
+        market_key: marketKey,
+        market_type: marketType,
+        asset_symbol: assetSymbol,
+        quote_symbol: quoteSymbol,
+        history_complete: historyComplete,
+        synced_at: syncedAt,
+        network: this.network,
+        summary: {
+          ...emptySummary,
+          filled_count: filledCount,
+          pending_count: pendingCount,
+          failed_count: failedCount,
+          market_count: filledCount + pendingCount + failedCount,
+          buy_qty: buyQty,
+          sell_qty: sellQty,
+          net_qty: summaryNetQty,
+          active_order_count: pendingCount,
+          avg_entry_price_quote: avgEntryPriceQuote,
+          avg_exit_price_quote: null,
+          break_even_price_quote: breakEvenPriceQuote,
+          mark_price_quote: markPriceQuote,
+          liquidation_price_quote: liquidationPriceQuote,
+          realized_pnl_quote: null,
+          unrealized_pnl_quote: unrealizedPnlQuote,
+          total_pnl_quote: totalPnlQuote,
+          buy_count: buyCount,
+          sell_count: sellCount,
+          best_fill_quote: bestFillQuote,
+          worst_fill_quote: worstFillQuote
+        },
+        executions: matchingExecutions,
+        orders: [],
+        positions,
+        capabilities: {
+          executions: true,
+          orders: false,
+          positions: Boolean(engineAddress && marketId !== null)
+        },
+        note:
+          engineAddress && marketId !== null
+            ? undefined
+            : 'Perps position metrics require engine_address and market_id query parameters.'
+      };
+    }
+
+    const marketKeySeriesId =
+      marketKey.startsWith('options:series:') ? marketKey.slice('options:series:'.length).trim() : null;
+    const seriesIdText = (options.seriesId ?? marketKeySeriesId ?? '').trim();
+    const seriesId = /^\d+$/.test(seriesIdText) ? BigInt(seriesIdText) : null;
+    const factoryAddress = options.factoryAddress ? normalizeAddress(options.factoryAddress) : null;
+    let optionAddress = options.optionAddress ? normalizeAddress(options.optionAddress) : null;
+    let optionExpiryTs: number | null = null;
+    let optionKindLabel = 'Option';
+
+    if (factoryAddress && seriesId !== null) {
+      const seriesResponse = await this.runGetMethodSourceCached(factoryAddress, 'series_info', [
+        { type: 'int', value: seriesId }
+      ]).catch(() => null);
+      if (seriesResponse?.exitCode === 0 && tupleItemBool(seriesResponse.stack[0])) {
+        optionAddress = optionAddress ?? tupleItemAddress(seriesResponse.stack[3]);
+        const expiryRaw = tupleItemBigInt(seriesResponse.stack[4]);
+        optionExpiryTs =
+          expiryRaw !== null && Number.isFinite(Number(expiryRaw)) ? Math.trunc(Number(expiryRaw)) : null;
+        const optionKindRaw = tupleItemBigInt(seriesResponse.stack[2]);
+        optionKindLabel = optionKindRaw === 1n ? 'Spread' : 'Option';
+      }
+    }
+
+    let filledCount = 0;
+    let pendingCount = 0;
+    let failedCount = 0;
+    let buyQty = 0;
+    let buyNotionalQuote = 0;
+    let buyCount = 0;
+    let bestFillQuote: number | null = null;
+    let worstFillQuote: number | null = null;
+    const executions: AccountTradeIntelligenceExecution[] = [];
+
+    for (const tx of accountTxs) {
+      if (options.fromUtime && tx.utime < options.fromUtime) continue;
+      if (options.toUtime && tx.utime > options.toUtime) continue;
+      const messages = [tx.inMessage, ...(tx.outMessages ?? [])].filter(
+        (message): message is NonNullable<IndexedTx['inMessage']> => Boolean(message)
+      );
+      let decoded: DecodedOptionTradeBody | null = null;
+      for (const message of messages) {
+        if (optionAddress) {
+          const sourceMatches = message.source ? normalizeAddress(message.source) === optionAddress : false;
+          const destinationMatches = message.destination ? normalizeAddress(message.destination) === optionAddress : false;
+          if (!sourceMatches && !destinationMatches) continue;
+        }
+        const parsed = decodeOptionTradeBody(message.body);
+        if (!parsed) continue;
+        decoded = parsed;
+        break;
+      }
+      if (!decoded) continue;
+
+      if (tx.ui.status === 'success') filledCount += 1;
+      else if (tx.ui.status === 'failed') failedCount += 1;
+      else pendingCount += 1;
+
+      if (tx.ui.status === 'success' && decoded.qty !== null) {
+        buyQty += decoded.qty;
+        buyCount += 1;
+        if (decoded.premiumQuote !== null) buyNotionalQuote += decoded.premiumQuote;
+        if (decoded.priceQuote !== null) {
+          bestFillQuote = bestFillQuote === null ? decoded.priceQuote : Math.max(bestFillQuote, decoded.priceQuote);
+          worstFillQuote = worstFillQuote === null ? decoded.priceQuote : Math.min(worstFillQuote, decoded.priceQuote);
+        }
+      }
+
+      executions.push({
+        id: `${tx.lt}:${tx.hash}`,
+        txId: tx.ui.txId,
+        lt: tx.lt,
+        hash: tx.hash,
+        utime: tx.utime,
+        status: tx.ui.status,
+        reason: tx.ui.reason,
+        side: 'buy',
+        executionType: 'market',
+        qty: decoded.qty,
+        priceQuote: decoded.priceQuote,
+        notionalQuote: decoded.premiumQuote,
+        label: decoded.label,
+        tokenId: decoded.tokenId,
+        queryId: decoded.queryId
+      });
+    }
+
+    const uniqueTokenIds = Array.from(
+      new Set(executions.map((execution) => execution.tokenId).filter((tokenId): tokenId is string => Boolean(tokenId)))
+    ).slice(0, limit);
+    const positions: AccountTradeIntelligencePosition[] = [];
+    let realizedPnlQuote: number | null = null;
+    let totalPnlQuote: number | null = null;
+    let activeQty = 0;
+    let avgEntryPriceQuote =
+      buyQty > 0 && buyNotionalQuote > 0 && Number.isFinite(buyQty) && Number.isFinite(buyNotionalQuote)
+        ? buyNotionalQuote / buyQty
+        : null;
+
+    if (factoryAddress && seriesId !== null) {
+      for (const tokenId of uniqueTokenIds) {
+        const positionResponse = await this.runGetMethodSourceCached(factoryAddress, 'position_info', [
+          { type: 'int', value: seriesId },
+          { type: 'int', value: BigInt(tokenId) }
+        ]).catch(() => null);
+        if (!positionResponse || positionResponse.exitCode !== 0 || !tupleItemBool(positionResponse.stack[0])) continue;
+        const notionalRaw = tupleItemBigInt(positionResponse.stack[2]) ?? 0n;
+        const premiumPaidRaw = tupleItemBigInt(positionResponse.stack[3]) ?? 0n;
+        const settlementPayoutRaw = tupleItemBigInt(positionResponse.stack[5]) ?? 0n;
+        const settlementReady = tupleItemBool(positionResponse.stack[6]);
+        const settled = tupleItemBool(positionResponse.stack[7]);
+        const qty = this.parseScaledValueToNumber(notionalRaw, 9) ?? 0;
+        const premiumPaidQuote = this.parseScaledValueToNumber(premiumPaidRaw, 9);
+        const settlementPayoutQuote = this.parseScaledValueToNumber(settlementPayoutRaw, 9);
+        const entryPriceQuote =
+          qty > 0 && premiumPaidQuote !== null && Number.isFinite(premiumPaidQuote) ? premiumPaidQuote / qty : null;
+        const positionPnlQuote =
+          settled && premiumPaidQuote !== null && settlementPayoutQuote !== null
+            ? settlementPayoutQuote - premiumPaidQuote
+            : null;
+        if (!settled) activeQty += qty;
+        if (positionPnlQuote !== null) {
+          realizedPnlQuote = (realizedPnlQuote ?? 0) + positionPnlQuote;
+          totalPnlQuote = (totalPnlQuote ?? 0) + positionPnlQuote;
+        }
+        positions.push({
+          id: `option:${tokenId}`,
+          label: `${optionKindLabel} ${tokenId}`,
+          netQty: settled ? 0 : qty,
+          buyQty: qty,
+          sellQty: settled ? qty : 0,
+          direction: settled ? 'closed' : 'open',
+          tokenId,
+          avgEntryPriceQuote: entryPriceQuote,
+          breakEvenPriceQuote: null,
+          expiryTs: optionExpiryTs,
+          premiumPaidQuote,
+          settlementPayoutQuote,
+          realizedPnlQuote: positionPnlQuote,
+          totalPnlQuote: positionPnlQuote,
+          status: settled ? 'settled' : settlementReady ? 'ready' : 'open'
+        });
+      }
+    }
+
+    return {
+      address,
+      market_key: marketKey,
+      market_type: marketType,
+      asset_symbol: assetSymbol,
+      quote_symbol: quoteSymbol,
+      history_complete: historyComplete,
+      synced_at: syncedAt,
+      network: this.network,
+      summary: {
+        ...emptySummary,
+        filled_count: filledCount,
+        pending_count: pendingCount,
+        failed_count: failedCount,
+        market_count: filledCount + pendingCount + failedCount,
+        buy_qty: buyQty,
+        sell_qty: 0,
+        net_qty: activeQty,
+        active_order_count: pendingCount,
+        avg_entry_price_quote: avgEntryPriceQuote,
+        avg_exit_price_quote: null,
+        break_even_price_quote: null,
+        mark_price_quote: avgEntryPriceQuote,
+        liquidation_price_quote: null,
+        realized_pnl_quote: realizedPnlQuote,
+        unrealized_pnl_quote: null,
+        total_pnl_quote: totalPnlQuote,
+        buy_count: buyCount,
+        sell_count: 0,
+        best_fill_quote: bestFillQuote,
+        worst_fill_quote: worstFillQuote
+      },
+      executions: executions.sort((left, right) => right.utime - left.utime).slice(0, limit),
+      orders: [],
+      positions,
+      capabilities: {
+        executions: true,
+        orders: false,
+        positions: Boolean(factoryAddress && seriesId !== null)
+      },
+      note:
+        factoryAddress && seriesId !== null
+          ? undefined
+          : 'Options position metrics require factory_address and series_id query parameters.'
+    };
+  }
+
   async refreshAccountState(address: string) {
     const previous = this.store.get(address)?.balance;
     const previousSignature = balanceStateSignature(previous);
@@ -3584,6 +4738,131 @@ export class IndexerService {
 
     if (!includeReverse || !payToken || !receiveToken) return false;
     return swapPayToken === receiveToken && swapReceiveToken === payToken;
+  }
+
+  private resolveTokenDecimals(symbol?: string | null) {
+    const normalized = normalizeTokenSymbol(symbol);
+    if (!normalized || normalized === 'TON') return 9;
+    return this.fallbackJettonDecimals(normalized) ?? 9;
+  }
+
+  private parseScaledValueToNumber(rawValue: string | bigint | null | undefined, decimals = 9) {
+    if (rawValue === null || rawValue === undefined) return null;
+    const asBigInt =
+      typeof rawValue === 'bigint'
+        ? rawValue
+        : (() => {
+            try {
+              return BigInt(rawValue);
+            } catch {
+              return null;
+            }
+          })();
+    return asBigInt === null ? null : scaledBigIntToNumber(asBigInt, decimals);
+  }
+
+  private buildEmptyTradeIntelligenceSummary(): AccountTradeIntelligenceSummary {
+    return {
+      filled_count: 0,
+      pending_count: 0,
+      failed_count: 0,
+      market_count: 0,
+      limit_count: 0,
+      twap_count: 0,
+      unknown_count: 0,
+      pending_limit_count: 0,
+      twap_run_count: 0,
+      buy_qty: 0,
+      sell_qty: 0,
+      net_qty: 0,
+      active_order_count: 0,
+      avg_entry_price_quote: null,
+      avg_exit_price_quote: null,
+      break_even_price_quote: null,
+      mark_price_quote: null,
+      liquidation_price_quote: null,
+      realized_pnl_quote: null,
+      unrealized_pnl_quote: null,
+      total_pnl_quote: null,
+      realized_roi_pct: null,
+      total_roi_pct: null,
+      buy_count: 0,
+      sell_count: 0,
+      win_rate_pct: null,
+      avg_slippage_bps: null,
+      best_fill_quote: null,
+      worst_fill_quote: null
+    };
+  }
+
+  private async getAccountTxEntry(address: string) {
+    this.store.touch(address);
+    try {
+      await this.ensureInitialTransactions(address);
+    } catch {
+      // fall back to whatever is already cached in-memory
+    }
+    return this.store.get(address) ?? null;
+  }
+
+  private parseTokenAmountToNumber(symbol: string | null | undefined, rawValue?: string | null) {
+    if (!symbol || !rawValue) return null;
+    const formatted = this.formatRawAmount(rawValue, this.resolveTokenDecimals(symbol));
+    const value = Number(formatted);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  private resolveSwapSide(
+    swap: { payToken?: string; receiveToken?: string },
+    assetSymbol: string
+  ): TradeIntelligenceExecutionSide {
+    const normalizedAsset = normalizeTokenSymbol(assetSymbol);
+    if (!normalizedAsset) return 'swap';
+    if (normalizeTokenSymbol(swap.receiveToken) === normalizedAsset) return 'buy';
+    if (normalizeTokenSymbol(swap.payToken) === normalizedAsset) return 'sell';
+    return 'swap';
+  }
+
+  private resolveSwapAssetQty(
+    swap: { payToken?: string; receiveToken?: string; payAmount?: string; receiveAmount?: string },
+    assetSymbol: string | null
+  ) {
+    if (!assetSymbol) return null;
+    const side = this.resolveSwapSide(swap, assetSymbol);
+    if (side === 'buy') {
+      return this.parseTokenAmountToNumber(swap.receiveToken, swap.receiveAmount);
+    }
+    if (side === 'sell') {
+      return this.parseTokenAmountToNumber(swap.payToken, swap.payAmount);
+    }
+    return null;
+  }
+
+  private resolveSwapQuotePrice(
+    swap: { payToken?: string; receiveToken?: string; payAmount?: string; receiveAmount?: string },
+    assetSymbol: string | null,
+    quoteSymbol: string | null
+  ) {
+    if (!assetSymbol || !quoteSymbol) return null;
+    const normalizedAsset = normalizeTokenSymbol(assetSymbol);
+    const normalizedQuote = normalizeTokenSymbol(quoteSymbol);
+    const payToken = normalizeTokenSymbol(swap.payToken);
+    const receiveToken = normalizeTokenSymbol(swap.receiveToken);
+    if (!normalizedAsset || !normalizedQuote || !payToken || !receiveToken) return null;
+
+    if (payToken === normalizedQuote && receiveToken === normalizedAsset) {
+      const quoteQty = this.parseTokenAmountToNumber(swap.payToken, swap.payAmount);
+      const assetQty = this.parseTokenAmountToNumber(swap.receiveToken, swap.receiveAmount);
+      if (quoteQty === null || assetQty === null || assetQty <= 0) return null;
+      return quoteQty / assetQty;
+    }
+    if (payToken === normalizedAsset && receiveToken === normalizedQuote) {
+      const assetQty = this.parseTokenAmountToNumber(swap.payToken, swap.payAmount);
+      const quoteQty = this.parseTokenAmountToNumber(swap.receiveToken, swap.receiveAmount);
+      if (quoteQty === null || assetQty === null || assetQty <= 0) return null;
+      return quoteQty / assetQty;
+    }
+    return null;
   }
 
   private toApiTx(tx: IndexedTx): UiTx & {

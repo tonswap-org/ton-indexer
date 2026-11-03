@@ -50,6 +50,41 @@ export const swapQuerySchema = {
   },
 };
 
+export const marketCandlesQuerySchema = {
+  type: 'object',
+  properties: {
+    market_address: { type: 'string' },
+    asset_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    quote_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    interval: { type: 'string', enum: ['1m', '5m', '15m', '1h', '4h', '1d'] },
+    from_utime: { type: 'integer', minimum: 1 },
+    to_utime: { type: 'integer', minimum: 1 },
+    limit: { type: 'integer', minimum: 1, maximum: 2000 },
+  },
+  required: ['market_address', 'asset_symbol', 'quote_symbol'],
+};
+
+export const tradeIntelligenceQuerySchema = {
+  type: 'object',
+  properties: {
+    market_key: { type: 'string', minLength: 1, maxLength: 128 },
+    market_type: { type: 'string', enum: ['spot', 'perps', 'options'] },
+    limit: { type: 'integer', minimum: 1, maximum: 500 },
+    from_utime: { type: 'integer', minimum: 1 },
+    to_utime: { type: 'integer', minimum: 1 },
+    pay_token: { type: 'string', minLength: 1, maxLength: 32 },
+    receive_token: { type: 'string', minLength: 1, maxLength: 32 },
+    asset_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    quote_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    engine_address: { type: 'string' },
+    market_id: { type: 'integer', minimum: 1 },
+    factory_address: { type: 'string' },
+    series_id: { type: 'string', minLength: 1, maxLength: 128 },
+    option_address: { type: 'string' },
+    include_reverse: { type: 'string', enum: ['1', '0', 'true', 'false', 'yes', 'no'] },
+  },
+};
+
 export const debugQuerySchema = {
   type: 'object',
   properties: {
