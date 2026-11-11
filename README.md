@@ -45,13 +45,20 @@ TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production
 ```
 
 The smoke check verifies that the target host serves the TONSWAP API contract,
-not another indexer service.
+not another indexer service, and requires a positive masterchain sequence with
+`indexerLagSec` no older than 300 seconds by default. Requests refuse redirects,
+time out after 10 seconds, and reject decoded response bodies above 1 MiB.
+Override those bounded gates only when diagnosing a reviewed deployment with
+`TON_INDEXER_SMOKE_TIMEOUT_MS`, `TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES`, and
+`TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC` (hard maxima: 60 seconds, 5 MiB, and one
+hour).
 
 ## Configuration
 Environment variables (all optional):
 - `PORT` (default: `8787`)
 - `HOST` (default: `127.0.0.1`)
-- `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (`true` only when the service is behind a trusted proxy)
+- `TRUST_PROXY` / `FASTIFY_TRUST_PROXY` (development only; production rejects blanket trust)
+- `TRUSTED_PROXY_CIDRS` (canonical, non-overlapping immediate-proxy IP/CIDR list)
 - `INDEXER_MODE` (`dev` | `production`, default: `dev`)
 - `TON_NETWORK` (`mainnet` | `testnet`, default: `testnet`)
 - `TON_DATASOURCE` (`http` | `lite`, default: `http`)
@@ -73,19 +80,25 @@ Environment variables (all optional):
 - `CORS_EXPOSE_HEADERS` (default: `x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset`)
 - `CORS_MAX_AGE` (default: `600`)
 - `SNAPSHOT_PATH` (path to load/save in-memory snapshot)
+- `INDEXER_ADMIN_TOKEN` (optional random token of 32-256 URL-safe characters; enables authenticated snapshot save/load and debug HTTP controls; unset disables them)
 - `SNAPSHOT_ON_EXIT` (`true` to write snapshot on shutdown; default `false`)
 - `SNAPSHOT_AUTOSAVE_ENABLED` (`true` to periodically persist snapshots; default `true` in production when `SNAPSHOT_PATH` is set)
 - `SNAPSHOT_AUTOSAVE_INTERVAL_MS` (default: `30000`)
-- `RATE_LIMIT_ENABLED` (`true` to enable simple per-IP rate limiting; default `true`)
+- `RATE_LIMIT_ENABLED` (`true` to enable per-IP rate limiting; default `true`;
+  production rejects `false`, `0`, and `no`)
 - `RATE_LIMIT_WINDOW_MS` (default: `60000`)
 - `RATE_LIMIT_MAX` (default: `10000`)
+- `RATE_LIMIT_MAX_KEYS` (production default: `20000`)
+- `RATE_LIMIT_GLOBAL_WINDOW_MS` (default: `RATE_LIMIT_WINDOW_MS`)
+- `RATE_LIMIT_GLOBAL_MAX` (production default: `50000`)
 - `RATE_LIMIT_BUCKETS_JSON` (optional endpoint-class limits override JSON)
 - `RESPONSE_CACHE_ENABLED` (`true` to enable response caching; default `true`)
 - `BALANCE_CACHE_TTL_MS` (default: `2000`)
 - `JETTON_BALANCE_TIMEOUT_MS` (default: `2000`; caps per-root jetton balance probes so native TON balance reads stay responsive)
 - `TX_CACHE_TTL_MS` (default: `1000`)
 - `STATE_CACHE_TTL_MS` (default: `1000`)
-- `HEALTH_CACHE_TTL_MS` (default: `1000`)
+- `HEALTH_CACHE_TTL_MS` (default: `1000`, maximum: `5000`; the cap prevents a
+  stale healthy lag value from masking an indexing outage)
 - `METRICS_CACHE_TTL_MS` (default: `1000`)
 - `PAGE_SIZE` (default: `10`)
 - `MAX_PAGES_PER_ADDRESS` (default: `150`)
@@ -100,10 +113,26 @@ Environment variables (all optional):
 - `OPCODES_PATH` (default: `../tonswap_tolk/config/opcodes.json`)
 - `LOG_LEVEL` (default: `info`)
 
-If the requested `PORT` is already in use, the server will bind to the next available port and log the selected one.
+In development, an occupied `PORT` may select the next available port and log
+the selected value. Production fails closed when its fixed port is unavailable;
+it never moves the service to an unexpected port.
+
+Explicit environment values are validated fail-closed. Invalid mode, network,
+data-source, boolean, numeric, trusted-checkpoint, or rate-limit bucket values
+abort startup with the affected variable named in the diagnostic instead of
+silently selecting a development or testnet default.
+
+Proxy-derived client addresses are disabled unless `TRUSTED_PROXY_CIDRS`
+contains canonical, non-overlapping IP/CIDR entries. Production rejects blanket
+`TRUST_PROXY=true`. `RATE_LIMIT_MAX_KEYS` bounds in-memory client state, while
+`RATE_LIMIT_GLOBAL_WINDOW_MS` and `RATE_LIMIT_GLOBAL_MAX` provide a backstop for
+rotating-source attacks. See `docker-compose.production.yml` for the loopback-only
+container contract.
 
 Production safeguards:
 - In `TON_NETWORK=mainnet`, placeholder or malformed required registry addresses fail startup.
+- In `INDEXER_MODE=production`, rate limiting is mandatory and
+  `RATE_LIMIT_ENABLED=false` fails before the service listens.
 - `npm run audit:deployment-evidence -- --require-ready` also rejects ready
   deployment evidence while `registry/mainnet.json` still has placeholder,
   missing, or malformed required mainnet addresses.
@@ -138,6 +167,12 @@ Production safeguards:
 - `POST /api/indexer/v1/snapshot/save`
 - `POST /api/indexer/v1/snapshot/load`
 - `GET /api/indexer/v1/debug?limit=100`
+
+The snapshot save/load and debug routes require `Authorization: Bearer <INDEXER_ADMIN_TOKEN>`.
+Use a unique random token from the server's secret store and send it only over
+HTTPS or a local secure tunnel. Without a token these routes return 404; public
+wallet reads do not require it. Startup snapshot loading, autosave, and shutdown
+persistence remain available independently of the HTTP administrative controls.
 
 JSON-RPC compatibility endpoints:
 - `POST /jsonRPC`
@@ -196,3 +231,9 @@ npm run sync-registry
   - testnet: `https://ton.org/testnet-global.config.json`
 - Local path to a config JSON file
 - Comma-separated `ip:port:pubkey` entries (pubkey is base64); ip can be dotted or integer
+
+## Local executable-line coverage
+
+Run `npm run test:coverage` to execute all local test programs with Istanbul counters placed in the original TypeScript AST. The 80% gate includes every production module under `src/`, including operational scripts, with unloaded modules seeded at zero. Test programs (`src/scripts/*-test.ts` and `src/scripts/smoke.ts`), type-only declarations, dependencies and generated output are excluded from executable lines. Full line and branch reports, source inventory and SHA-256 hashes are saved in `coverage/`.
+
+The local coverage suites exercise adapter wire decoding, checkpoint proof binding, HTTP route validation, snapshot aggregation, and worker lifecycles. Regression cases cover full-page backfill continuation, restarting stopped workers, rejecting empty burn-record getter results, preserving nested tuple values in getter cache keys, rejecting fractional or unsafe numeric TVM integers, and isolating malformed batch getter entries. Run `npm run test:coverage:collector` to verify that type declarations/comments stay outside the executable denominator, unloaded production modules count at zero, and failures cannot pass the gate.

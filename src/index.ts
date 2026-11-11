@@ -1,7 +1,7 @@
 import fastify from 'fastify';
 import helmet from '@fastify/helmet';
-import { createServer } from 'node:net';
 import { loadConfig, readRegistryFile } from './config';
+import { selectListenPort } from './config/listenPort';
 import { createLogger } from './utils/logger';
 import { MemoryStore } from './store/memoryStore';
 import { TonClient4DataSource } from './data/tonClient4Source';
@@ -21,23 +21,6 @@ import { DebugService } from './debugService';
 import { RateLimiter } from './api/rateLimit';
 import { PoolTracker } from './poolTracker';
 import { validateMainnetRegistry } from './config/mainnetRegistry';
-
-const isPortAvailable = (host: string, port: number) =>
-  new Promise<boolean>((resolve) => {
-    const server = createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => server.close(() => resolve(true)));
-    server.listen({ port, host });
-  });
-
-const findAvailablePort = async (host: string, port: number, attempts = 20) => {
-  if (port === 0) return 0;
-  for (let i = 0; i < attempts; i += 1) {
-    const candidate = port + i;
-    if (await isPortAvailable(host, candidate)) return candidate;
-  }
-  throw new Error(`No available port found starting at ${port}`);
-};
 
 const start = async () => {
   const config = loadConfig();
@@ -154,7 +137,7 @@ const start = async () => {
     metricsCollector.recordRequest(durationMs);
   });
 
-  const port = await findAvailablePort(config.host, config.port);
+  const port = await selectListenPort(config.host, config.port, config.mode);
   if (port !== config.port) {
     logger.warn('port in use, selected next available', { requested: config.port, selected: port });
   }

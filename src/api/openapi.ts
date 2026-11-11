@@ -9,6 +9,9 @@ export const buildOpenApi = (config: Config) => {
     },
     servers: [{ url: '/' }],
     components: {
+      securitySchemes: {
+        adminBearer: { type: 'http', scheme: 'bearer', description: 'INDEXER_ADMIN_TOKEN; administrative routes are disabled when unset.' },
+      },
       parameters: {
         addr: {
           name: 'addr',
@@ -1451,7 +1454,10 @@ export const buildOpenApi = (config: Config) => {
       '/api/indexer/v1/snapshot/save': {
         post: {
           summary: 'Save in-memory snapshot',
+          security: [{ adminBearer: [] }],
           responses: {
+            401: { description: 'Administrative authorization required' },
+            404: { description: 'Administrative API disabled' },
             200: {
               description: 'Snapshot saved',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/SnapshotResponse' } } },
@@ -1466,7 +1472,10 @@ export const buildOpenApi = (config: Config) => {
       '/api/indexer/v1/snapshot/load': {
         post: {
           summary: 'Load in-memory snapshot',
+          security: [{ adminBearer: [] }],
           responses: {
+            401: { description: 'Administrative authorization required' },
+            404: { description: 'Administrative API disabled' },
             200: {
               description: 'Snapshot loaded',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/SnapshotResponse' } } },
@@ -1481,8 +1490,11 @@ export const buildOpenApi = (config: Config) => {
       '/api/indexer/v1/debug': {
         get: {
           summary: 'Debug snapshot',
+          security: [{ adminBearer: [] }],
           parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } }],
           responses: {
+            401: { description: 'Administrative authorization required' },
+            404: { description: 'Administrative API disabled' },
             200: {
               description: 'Debug response',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/DebugResponse' } } },

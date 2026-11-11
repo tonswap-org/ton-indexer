@@ -1,6 +1,8 @@
 import { FastifyReply } from 'fastify';
 
 export type ErrorCode =
+  | 'admin_disabled'
+  | 'unauthorized'
   | 'invalid_address'
   | 'invalid_cursor'
   | 'cursor_mismatch'

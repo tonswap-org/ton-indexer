@@ -152,6 +152,39 @@ bad_json="$tmp_dir/bad-json.json"
 printf '{' >"$bad_json"
 expect_failure "invalid manifest JSON" "must be valid JSON" bash "$GENERATOR_SCRIPT" --evidence "$bad_json"
 
+cross_service_swap="$tmp_dir/si-manifest-substitution.json"
+cp "$DEFAULT_MANIFEST" "$cross_service_swap"
+node - "$cross_service_swap" <<'NODE'
+const fs = require('fs');
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+Object.assign(manifest, {
+  scope: 'solswap-indexer-production-deployment-readiness',
+  serviceId: 'si.soramitsu.io',
+  baseUrl: 'https://si.soramitsu.io',
+  blockers: [
+    'production-deployment-evidence-missing',
+    'live-production-smoke-failing',
+    'production-routing-mismatch',
+  ],
+  smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
+  dockerBuildCommand: 'docker build -t solswap-indexer:release .',
+  readyVerificationCommands: [
+    'npm run test:deployment-evidence-template',
+    'npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json',
+    'npm run test:deployment-evidence-audit',
+    'npm run audit:deployment-evidence -- --require-ready',
+    'docker build -t solswap-indexer:release .',
+    'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
+  ],
+});
+fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+expect_failure \
+  "cross-service SI manifest substitution" \
+  "serviceId must be ti.soramitsu.io" \
+  bash "$GENERATOR_SCRIPT" --evidence "$cross_service_swap"
+
 bad_scope="$tmp_dir/bad-scope.json"
 cp "$DEFAULT_MANIFEST" "$bad_scope"
 node - "$bad_scope" <<'NODE'

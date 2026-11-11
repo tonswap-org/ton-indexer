@@ -60,68 +60,37 @@ const requireReady = requireReadyRaw === 'true';
 const errors = [];
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
-const serviceContracts = {
-  'ti.soramitsu.io': {
-    scope: 'ton-indexer-production-deployment-readiness',
-    baseUrl: 'https://ti.soramitsu.io',
-    smokeCommand: 'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
-    dockerBuildCommand: 'docker build -t ton-indexer:release .',
-    mainnetRegistryFile,
-    registryPlaceholderBlocker: 'mainnet-registry-placeholders-remain',
-    serviceInfo: {
-      schemaVersion: 1,
-      serviceId: 'ti.soramitsu.io',
-      ecosystem: 'ton',
-      chainId: 'ton:mainnet',
-      network: 'mainnet',
-      publicBaseUrl: 'https://ti.soramitsu.io',
-      readOnly: true,
-      endpoints: {
-        openapi: '/api/indexer/v1/openapi.json'
-      }
-    },
-    healthInfo: {
-      serviceId: 'ti.soramitsu.io',
-      ecosystem: 'ton',
-      chainId: 'ton:mainnet',
-      network: 'mainnet',
-      lastMasterSeqno: 'TODO_LAST_MASTER_SEQNO'
-    },
-    requiredBlockers: [
-      'production-deployment-evidence-missing',
-      'live-production-smoke-failing'
-    ]
+const EXPECTED_SERVICE_ID = 'ti.soramitsu.io';
+const contract = {
+  scope: 'ton-indexer-production-deployment-readiness',
+  baseUrl: 'https://ti.soramitsu.io',
+  smokeCommand: 'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
+  dockerBuildCommand: 'docker build -t ton-indexer:release .',
+  mainnetRegistryFile,
+  registryPlaceholderBlocker: 'mainnet-registry-placeholders-remain',
+  serviceInfo: {
+    schemaVersion: 1,
+    serviceId: EXPECTED_SERVICE_ID,
+    ecosystem: 'ton',
+    chainId: 'ton:mainnet',
+    network: 'mainnet',
+    publicBaseUrl: 'https://ti.soramitsu.io',
+    readOnly: true,
+    endpoints: {
+      openapi: '/api/indexer/v1/openapi.json'
+    }
   },
-  'si.soramitsu.io': {
-    scope: 'solswap-indexer-production-deployment-readiness',
-    baseUrl: 'https://si.soramitsu.io',
-    smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
-    dockerBuildCommand: 'docker build -t solswap-indexer:release .',
-    serviceInfo: {
-      schemaVersion: 1,
-      serviceId: 'si.soramitsu.io',
-      ecosystem: 'solana',
-      chainId: 'solana:mainnet',
-      network: 'mainnet',
-      publicBaseUrl: 'https://si.soramitsu.io',
-      readOnly: true,
-      endpoints: {
-        openapi: '/api/indexer/v1/openapi.json'
-      }
-    },
-    healthInfo: {
-      ok: true,
-      serviceId: 'si.soramitsu.io',
-      ecosystem: 'solana',
-      chainId: 'solana:mainnet',
-      network: 'mainnet'
-    },
-    requiredBlockers: [
-      'production-deployment-evidence-missing',
-      'live-production-smoke-failing',
-      'production-routing-mismatch'
-    ]
-  }
+  healthInfo: {
+    serviceId: EXPECTED_SERVICE_ID,
+    ecosystem: 'ton',
+    chainId: 'ton:mainnet',
+    network: 'mainnet',
+    lastMasterSeqno: 'TODO_LAST_MASTER_SEQNO'
+  },
+  requiredBlockers: [
+    'production-deployment-evidence-missing',
+    'live-production-smoke-failing'
+  ]
 };
 
 const requiredEvidenceFields = [
@@ -176,6 +145,8 @@ const allowedManifestFields = [
   'requiredEvidenceFields',
   'deploymentEvidence'
 ];
+const SECRET_VALUE_PATTERN =
+  /(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})/u;
 
 const requiredTonMainnetRegistryKeys = [
   'ClmmRouter',
@@ -223,17 +194,35 @@ function nonEmptyString(value) {
 }
 
 function isIsoUtcSecond(value) {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(value || ''));
+  return timestampMillis(value) !== null;
 }
 
 function isFutureTimestamp(value) {
-  const millis = Date.parse(value);
-  return Number.isFinite(millis) && millis > Date.now() + MAX_CLOCK_SKEW_MS;
+  const millis = timestampMillis(value);
+  return millis !== null && millis > Date.now() + MAX_CLOCK_SKEW_MS;
 }
 
 function timestampMillis(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) {
+    return null;
+  }
   const millis = Date.parse(value);
-  return Number.isFinite(millis) ? millis : null;
+  if (!Number.isFinite(millis)) return null;
+  return new Date(millis).toISOString() === value.replace(/Z$/, '.000Z') ? millis : null;
+}
+
+function parseUtcDate(value) {
+  const text = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return { ok: false, reason: 'format', millis: null };
+  }
+
+  const millis = Date.parse(`${text}T00:00:00Z`);
+  if (!Number.isFinite(millis) || new Date(millis).toISOString().slice(0, 10) !== text) {
+    return { ok: false, reason: 'calendar', millis: null };
+  }
+
+  return { ok: true, reason: null, millis };
 }
 
 function expectedReleaseCommitResult() {
@@ -328,6 +317,34 @@ function secretLikeKeyReason(value, path = '$') {
   return null;
 }
 
+function secretLikeValueReason(value, path = '$') {
+  if (typeof value === 'string') {
+    return SECRET_VALUE_PATTERN.test(value) ? path : null;
+  }
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const reason = secretLikeValueReason(value[index], `${path}[${index}]`);
+      if (reason) {
+        return reason;
+      }
+    }
+    return null;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    const reason = secretLikeValueReason(child, `${path}.${key}`);
+    if (reason) {
+      return reason;
+    }
+  }
+
+  return null;
+}
+
 function rejectUnsupportedKeys(value, allowedFields, path) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return;
@@ -337,6 +354,19 @@ function rejectUnsupportedKeys(value, allowedFields, path) {
     if (!allowed.has(key)) {
       fail(`${path}.${key} is not supported in public deployment evidence`);
     }
+  }
+}
+
+function validatePublicOperator(value, path) {
+  if (typeof value !== 'string') return;
+  if (/[\u0000-\u001f\u007f]/u.test(value)) {
+    fail(`${path}: operator must be a single-line public value`);
+  }
+  if (SECRET_VALUE_PATTERN.test(value)) {
+    fail(`${path}: operator must not contain secret-like token`);
+  }
+  if (isTemplatePlaceholder(value)) {
+    fail(`${path}: operator must not be a placeholder operator`);
   }
 }
 
@@ -381,16 +411,6 @@ function validateHealthInfo(value, contract, path) {
     if (value[field] !== contract.healthInfo[field]) {
       fail(`${path}.${field} must be ${contract.healthInfo[field]}`);
     }
-  }
-
-  if (contract.healthInfo.ok === true) {
-    if (value.ok !== true) {
-      fail(`${path}.ok must be true`);
-    }
-    if (Object.prototype.hasOwnProperty.call(value, 'lastMasterSeqno')) {
-      fail(`${path}.lastMasterSeqno is not supported in public deployment evidence`);
-    }
-    return;
   }
 
   if (Object.prototype.hasOwnProperty.call(value, 'ok')) {
@@ -445,7 +465,6 @@ function inspectTonMainnetRegistry(file) {
 }
 
 const manifest = readJson(evidenceFile);
-let contract = null;
 let registryInspection = null;
 const expectedReleaseCommit = expectedReleaseCommitResult();
 
@@ -454,15 +473,18 @@ if (manifest) {
   if (secretLikePath) {
     fail(`${secretLikePath} must not be included in public deployment evidence`);
   }
+  const secretLikeValuePath = secretLikeValueReason(manifest);
+  if (secretLikeValuePath) {
+    fail(`${secretLikeValuePath} must not contain secret-like token`);
+  }
   rejectUnsupportedKeys(manifest, allowedManifestFields, 'deployment evidence');
 
   if (manifest.schemaVersion !== 1) {
     fail('schemaVersion must be 1');
   }
 
-  contract = serviceContracts[manifest.serviceId];
-  if (!contract) {
-    fail('serviceId must be ti.soramitsu.io or si.soramitsu.io');
+  if (manifest.serviceId !== EXPECTED_SERVICE_ID) {
+    fail(`serviceId must be ${EXPECTED_SERVICE_ID}`);
   } else {
     if (contract.mainnetRegistryFile) {
       registryInspection = inspectTonMainnetRegistry(contract.mainnetRegistryFile);
@@ -554,6 +576,13 @@ if (manifest) {
 
   if (manifest.status === 'blocked' && manifest.releaseEnabled) {
     fail('releaseEnabled must remain false while deployment evidence is blocked');
+  }
+
+  const lastReviewed = parseUtcDate(manifest.lastReviewed);
+  if (!lastReviewed.ok) {
+    fail(lastReviewed.reason === 'format' ? 'lastReviewed must be YYYY-MM-DD' : 'lastReviewed must be a valid YYYY-MM-DD date');
+  } else if (lastReviewed.millis > Date.now() + MAX_CLOCK_SKEW_MS) {
+    fail('lastReviewed must not be in the future');
   }
 
   if (requireReady && manifest.status !== 'ready') {
@@ -674,14 +703,19 @@ if (manifest) {
     } else if (isIsoUtcSecond(entry.deployedAt) && timestampMillis(entry.smokePassedAt) < timestampMillis(entry.deployedAt)) {
       fail(`deploymentEvidence[${index}].smokePassedAt must be at or after deployedAt`);
     }
+    if (
+      lastReviewed.ok &&
+      isIsoUtcSecond(entry.smokePassedAt) &&
+      manifest.lastReviewed < entry.smokePassedAt.slice(0, 10)
+    ) {
+      fail(`lastReviewed must be on or after deploymentEvidence[${index}].smokePassedAt UTC date`);
+    }
 
     const deploymentId = String(entry.deploymentId || '').trim();
     if (isTemplatePlaceholder(deploymentId)) {
       fail(`deploymentEvidence[${index}].deploymentId must not be a placeholder deployment id`);
     }
-    if (isTemplatePlaceholder(entry.operator)) {
-      fail(`deploymentEvidence[${index}].operator must not be a placeholder operator`);
-    }
+    validatePublicOperator(entry.operator, `deploymentEvidence[${index}].operator`);
     if (seenDeployments.has(deploymentId)) {
       fail(`duplicate deployment evidence id: ${deploymentId}`);
     }

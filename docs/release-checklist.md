@@ -16,6 +16,8 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - Run `npm audit --omit=dev` and confirm there are no production dependency
   audit findings.
 - Confirm public builds work without private overlays.
+- Confirm `INDEXER_MODE=production RATE_LIMIT_ENABLED=false` fails before
+  listening, and the deployment contract keeps `RATE_LIMIT_ENABLED=true`.
 - Run `docker build -t ton-indexer:release .` and confirm the production image
   builds from the checked-in container contract.
 - Confirm `registry/mainnet.json` contains reviewed mainnet contract addresses,

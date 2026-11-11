@@ -45,6 +45,7 @@ export class BlockFollower {
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
   }
 
   private async poll() {

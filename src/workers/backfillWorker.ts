@@ -51,6 +51,7 @@ export class BackfillWorker {
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
   }
 
   getStats() {
@@ -69,12 +70,17 @@ export class BackfillWorker {
       if (!address) break;
       this.pendingSet.delete(address);
       this.inFlight.add(address);
+      let continueBackfill = false;
       this.processAddress(address)
+        .then((more) => { continueBackfill = more === true; })
         .catch((error) => {
           this.logger.error('backfill failed', { address, error: (error as Error).message });
         })
         .finally(() => {
           this.inFlight.delete(address);
+          // enqueue deliberately ignores active work; schedule the next page
+          // only after releasing this address from the in-flight set.
+          if (continueBackfill) this.enqueue(address);
         });
     }
   }
@@ -109,7 +115,7 @@ export class BackfillWorker {
     if (rawTxs.length < limit || updated.stats.txCount === beforeCount) {
       this.store.markHistoryComplete(address);
     } else {
-      this.enqueue(address);
+      return true;
     }
   }
 }

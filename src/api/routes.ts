@@ -1,7 +1,7 @@
 import { Address, Cell } from '@ton/core';
 import { getHttpEndpoints } from '@orbs-network/ton-access';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { IndexerService } from '../indexerService';
 import { MetricsService } from '../metrics';
 import { SnapshotService } from '../snapshotService';
@@ -50,6 +50,7 @@ type ToncenterRpcCompatRequest = {
 };
 
 type RoutesConfig = {
+  adminToken?: string;
   network?: string;
   pageSize?: number;
   rpcProxyEndpoint?: string;
@@ -91,7 +92,7 @@ const normalizeBase64 = (input: string) => {
 
 const parseBigIntLike = (value: unknown): bigint | null => {
   if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? BigInt(value) : null;
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -379,6 +380,23 @@ export const registerRoutes = (
   contracts?: Record<string, string>
 ) => {
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  // Snapshot reload mutates live indexed state. Public read access and proxy
+  // headers are not authorization for operational controls.
+  const requireAdmin = (request: FastifyRequest, reply: FastifyReply): boolean => {
+    const token = config.adminToken;
+    if (!token || !/^[A-Za-z0-9_-]{32,256}$/.test(token)) {
+      sendError(reply, 404, 'admin_disabled', 'administrative API disabled');
+      return false;
+    }
+    const supplied = request.headers.authorization;
+    const expected = Buffer.from(`Bearer ${token}`);
+    const actual = Buffer.from(typeof supplied === 'string' ? supplied : '');
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+      sendError(reply, 401, 'unauthorized', 'administrative authorization required');
+      return false;
+    }
+    return true;
+  };
   const contractMap = Object.fromEntries(contractEntries);
   const network = String(config.network || 'mainnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
   const serviceIdentity = {
@@ -772,7 +790,7 @@ export const registerRoutes = (
 
   const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
     const body = (request.body ?? null) as ToncenterRpcCompatRequest | null;
-    const method = body?.method?.trim();
+    const method = typeof body?.method === 'string' ? body.method.trim() : undefined;
     const id = body?.id ?? 1;
     const params = asRecord(body?.params ?? null) ?? {};
 
@@ -914,8 +932,8 @@ export const registerRoutes = (
 
   app.post('/api/indexer/v1/runGetMethod', async (request, reply) => {
     const body = request.body as { address?: string; method?: string; stack?: ToncenterStackEntry[] } | null;
-    const address = body?.address?.trim();
-    const method = body?.method?.trim();
+    const address = typeof body?.address === 'string' ? body.address.trim() : undefined;
+    const method = typeof body?.method === 'string' ? body.method.trim() : undefined;
     if (!address || !isValidAddress(address)) {
       return sendError(reply, 400, 'invalid_address', 'invalid address');
     }
@@ -953,8 +971,8 @@ export const registerRoutes = (
       | { ok: false; code: string; error: string };
 
     const results = await mapConcurrent(calls, GET_METHOD_BATCH_CONCURRENCY, async (call) => {
-      const address = call.address?.trim();
-      const method = call.method?.trim();
+      const address = typeof call?.address === 'string' ? call.address.trim() : undefined;
+      const method = typeof call?.method === 'string' ? call.method.trim() : undefined;
       if (!address || !isValidAddress(address)) {
         return { ok: false, code: 'invalid_address', error: 'invalid address' } satisfies BatchResult;
       }
@@ -1770,7 +1788,8 @@ export const registerRoutes = (
     }
   );
 
-  app.post('/api/indexer/v1/snapshot/save', async (_request, reply) => {
+  app.post('/api/indexer/v1/snapshot/save', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
     if (!snapshots) return sendError(reply, 400, 'snapshot_disabled', 'snapshot disabled');
     try {
       return { ok: true, ...(snapshots.save() as object) };
@@ -1779,7 +1798,8 @@ export const registerRoutes = (
     }
   });
 
-  app.post('/api/indexer/v1/snapshot/load', async (_request, reply) => {
+  app.post('/api/indexer/v1/snapshot/load', async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
     if (!snapshots) return sendError(reply, 400, 'snapshot_disabled', 'snapshot disabled');
     try {
       return { ok: true, ...(snapshots.load() as object) };
@@ -1792,6 +1812,7 @@ export const registerRoutes = (
     '/api/indexer/v1/debug',
     { schema: { querystring: debugQuerySchema } },
     async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
       if (!debug) return sendError(reply, 400, 'debug_disabled', 'debug disabled');
       const query = request.query as { limit?: string };
       const limit = Math.max(1, Math.min(500, Number(query.limit ?? 100)));

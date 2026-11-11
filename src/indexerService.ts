@@ -1031,7 +1031,10 @@ export class IndexerService {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const lag = this.lastMasterTimestamp ? Math.max(0, now - this.lastMasterTimestamp) : undefined;
+    const rawLag = this.lastMasterTimestamp ? now - this.lastMasterTimestamp : undefined;
+    // Tolerate ordinary clock skew, but preserve a materially future source
+    // timestamp as a negative lag so production health validation fails closed.
+    const lag = rawLag === undefined ? undefined : rawLag >= -30 ? Math.max(0, rawLag) : rawLag;
     const response = {
       lastMasterSeqno: this.lastMasterSeqno,
       indexerLagSec: lag,
@@ -1525,18 +1528,19 @@ export class IndexerService {
   }
 
   private getMethodCacheKey(normalizedAddress: string, method: string, args: TupleItem[]) {
-    const argsSignature = args
-      .map((arg) => {
+    const argumentSignature = (arg: TupleItem): string => {
         if (arg.type === 'null') return 'null';
         if (arg.type === 'int') return `int:${arg.value.toString(10)}`;
         if (arg.type === 'nan') return 'nan';
         if (arg.type === 'cell') return `cell:${toBocBase64(arg.cell) ?? ''}`;
         if (arg.type === 'slice') return `slice:${toBocBase64(arg.cell) ?? ''}`;
         if (arg.type === 'builder') return `builder:${toBocBase64(arg.cell) ?? ''}`;
-        if (arg.type === 'tuple') return `tuple:[${arg.items.map((item) => item.type).join(',')}]`;
+        // Tuple values (including nested tuples) identify the requested getter,
+        // just as top-level integer and cell arguments do.
+        if (arg.type === 'tuple') return `tuple:[${arg.items.map(argumentSignature).join(',')}]`;
         return 'unknown';
-      })
-      .join('|');
+    };
+    const argsSignature = args.map(argumentSignature).join('|');
     const cacheKey = [normalizedAddress, method, argsSignature].join('|');
     const baseCacheTtlMs = Math.max(0, Math.trunc(this.config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS));
     let cacheTtlMs = baseCacheTtlMs;

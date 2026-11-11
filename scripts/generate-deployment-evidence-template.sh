@@ -55,66 +55,35 @@ const path = require('path');
 const [evidenceFile, outputFile] = process.argv.slice(2);
 const errors = [];
 
-const serviceContracts = {
-  'ti.soramitsu.io': {
-    scope: 'ton-indexer-production-deployment-readiness',
-    baseUrl: 'https://ti.soramitsu.io',
-    smokeCommand: 'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
-    dockerBuildCommand: 'docker build -t ton-indexer:release .',
-    requiredBlockers: [
-      'production-deployment-evidence-missing',
-      'live-production-smoke-failing',
-      'mainnet-registry-placeholders-remain'
-    ],
-    serviceInfo: {
-      schemaVersion: 1,
-      serviceId: 'ti.soramitsu.io',
-      ecosystem: 'ton',
-      chainId: 'ton:mainnet',
-      network: 'mainnet',
-      publicBaseUrl: 'https://ti.soramitsu.io',
-      readOnly: true,
-      endpoints: {
-        openapi: '/api/indexer/v1/openapi.json'
-      }
-    },
-    healthInfo: {
-      serviceId: 'ti.soramitsu.io',
-      ecosystem: 'ton',
-      chainId: 'ton:mainnet',
-      network: 'mainnet',
-      lastMasterSeqno: 'TODO_LAST_MASTER_SEQNO'
+const EXPECTED_SERVICE_ID = 'ti.soramitsu.io';
+const contract = {
+  scope: 'ton-indexer-production-deployment-readiness',
+  baseUrl: 'https://ti.soramitsu.io',
+  smokeCommand: 'TON_INDEXER_BASE_URL=https://ti.soramitsu.io npm run smoke:production',
+  dockerBuildCommand: 'docker build -t ton-indexer:release .',
+  requiredBlockers: [
+    'production-deployment-evidence-missing',
+    'live-production-smoke-failing',
+    'mainnet-registry-placeholders-remain'
+  ],
+  serviceInfo: {
+    schemaVersion: 1,
+    serviceId: EXPECTED_SERVICE_ID,
+    ecosystem: 'ton',
+    chainId: 'ton:mainnet',
+    network: 'mainnet',
+    publicBaseUrl: 'https://ti.soramitsu.io',
+    readOnly: true,
+    endpoints: {
+      openapi: '/api/indexer/v1/openapi.json'
     }
   },
-  'si.soramitsu.io': {
-    scope: 'solswap-indexer-production-deployment-readiness',
-    baseUrl: 'https://si.soramitsu.io',
-    smokeCommand: 'SOLSWAP_INDEXER_BASE_URL=https://si.soramitsu.io npm run smoke:production',
-    dockerBuildCommand: 'docker build -t solswap-indexer:release .',
-    requiredBlockers: [
-      'production-deployment-evidence-missing',
-      'live-production-smoke-failing',
-      'production-routing-mismatch'
-    ],
-    serviceInfo: {
-      schemaVersion: 1,
-      serviceId: 'si.soramitsu.io',
-      ecosystem: 'solana',
-      chainId: 'solana:mainnet',
-      network: 'mainnet',
-      publicBaseUrl: 'https://si.soramitsu.io',
-      readOnly: true,
-      endpoints: {
-        openapi: '/api/indexer/v1/openapi.json'
-      }
-    },
-    healthInfo: {
-      ok: true,
-      serviceId: 'si.soramitsu.io',
-      ecosystem: 'solana',
-      chainId: 'solana:mainnet',
-      network: 'mainnet'
-    }
+  healthInfo: {
+    serviceId: EXPECTED_SERVICE_ID,
+    ecosystem: 'ton',
+    chainId: 'ton:mainnet',
+    network: 'mainnet',
+    lastMasterSeqno: 'TODO_LAST_MASTER_SEQNO'
   }
 };
 const requiredEvidenceFields = [
@@ -285,15 +254,6 @@ function validateHealthInfo(value, contract, currentPath) {
       fail(`${currentPath}.${field} must be ${contract.healthInfo[field]}`);
     }
   }
-  if (contract.healthInfo.ok === true) {
-    if (value.ok !== true) {
-      fail(`${currentPath}.ok must be true`);
-    }
-    if (Object.prototype.hasOwnProperty.call(value, 'lastMasterSeqno')) {
-      fail(`${currentPath}.lastMasterSeqno is not supported in public deployment evidence manifest`);
-    }
-    return;
-  }
   if (Object.prototype.hasOwnProperty.call(value, 'ok')) {
     fail(`${currentPath}.ok is not supported in public deployment evidence manifest`);
   }
@@ -325,7 +285,6 @@ function validateCommittedDeploymentEvidence(value, contract) {
 }
 
 const manifest = readJson(evidenceFile);
-let contract = null;
 
 if (manifest) {
   const secretPath = secretLikeKeyReason(manifest);
@@ -338,9 +297,8 @@ if (manifest) {
     fail('schemaVersion must be 1');
   }
 
-  contract = serviceContracts[manifest.serviceId];
-  if (!contract) {
-    fail('serviceId must be ti.soramitsu.io or si.soramitsu.io');
+  if (manifest.serviceId !== EXPECTED_SERVICE_ID) {
+    fail(`serviceId must be ${EXPECTED_SERVICE_ID}`);
   } else {
     if (manifest.scope !== contract.scope) fail(`scope must be ${contract.scope}`);
     if (manifest.baseUrl !== contract.baseUrl) fail(`baseUrl must be ${contract.baseUrl}`);

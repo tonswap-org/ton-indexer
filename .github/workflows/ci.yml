@@ -14,7 +14,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Branch flow audit
         run: |
           bash ./scripts/test-branch-flow-audit.sh
@@ -25,7 +25,7 @@ jobs:
         run: |
           bash ./scripts/test-todo-debt-audit.sh
           bash ./scripts/audit-todo-debt.sh
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -41,3 +41,14 @@ jobs:
       - run: npm run build
       - name: Build production Docker image
         run: docker build -t ton-indexer:ci .
+      - name: Verify production dependency surface
+        run: |
+          docker run --rm --entrypoint sh ton-indexer:ci -c '
+            for package in tsx typescript @types/node; do
+              if npm ls --include=dev --all "$package" >/dev/null 2>&1 &&
+                ! npm ls --omit=dev --all "$package" >/dev/null 2>&1; then
+                echo "Development-only dependency leaked into runtime image: $package" >&2
+                exit 1
+              fi
+            done
+          '

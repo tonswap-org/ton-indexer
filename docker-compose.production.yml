@@ -1,0 +1,35 @@
+services:
+  indexer:
+    image: "${TON_INDEXER_IMAGE_REPOSITORY:?Set the reviewed image repository}@sha256:${TON_INDEXER_IMAGE_DIGEST:?Set the reviewed 64-hex image digest}"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "node"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      NODE_ENV: production
+      INDEXER_MODE: production
+      TON_NETWORK: mainnet
+      TON_DATASOURCE: lite
+      LITESERVER_POOL_MAINNET: "${TON_LITESERVER_POOL_MAINNET:?Set the reviewed mainnet lite-server configuration URL}"
+      HOST: 0.0.0.0
+      PORT: "8787"
+      TRUST_PROXY: "false"
+      TRUSTED_PROXY_CIDRS: "${TON_TRUSTED_PROXY_CIDRS:?Set the exact canonical CIDRs of the local TLS proxy}"
+      CORS_ENABLED: "true"
+      CORS_ALLOW_ORIGIN: "*"
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_MAX_KEYS: "20000"
+      RATE_LIMIT_GLOBAL_WINDOW_MS: "60000"
+      RATE_LIMIT_GLOBAL_MAX: "50000"
+      RESPONSE_CACHE_ENABLED: "true"
+      INDEXER_ENABLE_WRITE_RPC: "false"
+      LOG_LEVEL: info

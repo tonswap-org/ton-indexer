@@ -4,7 +4,7 @@
   "description": "Indexer for faster/more reliable data from TON",
   "main": "dist/index.js",
   "scripts": {
-    "test": "tsx src/scripts/smoke.ts && tsx src/scripts/classifier-test.ts && tsx src/scripts/metadata-test.ts && tsx src/scripts/snapshot-test.ts && tsx src/scripts/snapshot-service-test.ts && tsx src/scripts/debug-service-test.ts && tsx src/scripts/rate-limit-test.ts && tsx src/scripts/validation-test.ts && tsx src/scripts/response-cache-test.ts && tsx src/scripts/metrics-cache-test.ts && tsx src/scripts/sora-checkpoint-test.ts && tsx src/scripts/openapi-test.ts && tsx src/scripts/service-info-test.ts && tsx src/scripts/docs-html-test.ts && tsx src/scripts/adversarial-test.ts && tsx src/scripts/deployment-manifest-test.ts && tsx src/scripts/production-smoke-adversarial-test.ts && tsx src/scripts/mainnet-registry-guard-test.ts",
+    "test": "tsx src/scripts/smoke.ts && tsx src/scripts/classifier-test.ts && tsx src/scripts/metadata-test.ts && tsx src/scripts/snapshot-test.ts && tsx src/scripts/snapshot-service-test.ts && tsx src/scripts/debug-service-test.ts && tsx src/scripts/rate-limit-test.ts && tsx src/scripts/validation-test.ts && tsx src/scripts/config-test.ts && tsx src/scripts/response-cache-test.ts && tsx src/scripts/metrics-cache-test.ts && tsx src/scripts/sora-checkpoint-test.ts && tsx src/scripts/openapi-test.ts && tsx src/scripts/service-info-test.ts && tsx src/scripts/docs-html-test.ts && tsx src/scripts/adversarial-test.ts && tsx src/scripts/deployment-manifest-test.ts && tsx src/scripts/production-smoke-adversarial-test.ts && tsx src/scripts/mainnet-registry-guard-test.ts && tsx src/scripts/worker-lifecycle-test.ts && tsx src/scripts/data-source-test.ts && tsx src/scripts/indexer-service-coverage-test.ts && tsx src/scripts/route-behavior-test.ts",
     "dev": "TON_NETWORK=testnet TON_DATASOURCE=lite LITESERVER_POOL_TESTNET=https://ton.org/testnet-global.config.json tsx src/index.ts",
     "dev:mainnet": "TON_NETWORK=mainnet TON_DATASOURCE=lite LITESERVER_POOL_MAINNET=https://ton.org/global.config.json tsx src/index.ts",
     "build": "tsc",
@@ -14,7 +14,9 @@
     "audit:deployment-evidence": "bash scripts/audit-deployment-evidence.sh",
     "test:deployment-evidence-audit": "bash scripts/test-deployment-evidence-audit.sh",
     "test:deployment-evidence-template": "bash scripts/test-deployment-evidence-template.sh",
-    "sync-registry": "tsx src/scripts/refresh-registry.ts"
+    "sync-registry": "tsx src/scripts/refresh-registry.ts",
+    "test:coverage": "node scripts/run-coverage.cjs",
+    "test:coverage:collector": "node scripts/test-coverage-runner.cjs"
   },
   "repository": {
     "type": "git",
@@ -22,7 +24,10 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/tonswap-org/ton-indexer/issues"
@@ -32,7 +37,7 @@
     "@fastify/helmet": "^13.0.2",
     "@orbs-network/ton-access": "^2.3.3",
     "@ton/core": "^0.63.0",
-    "fastify": "^5.8.5",
+    "fastify": "5.12.7",
     "lru-cache": "^11.2.5",
     "pino": "^10.3.0",
     "ton": "^13.9.0",
@@ -40,12 +45,18 @@
   },
   "devDependencies": {
     "@types/node": "^25.1.0",
+    "istanbul-lib-coverage": "3.2.2",
+    "istanbul-lib-instrument": "6.0.3",
+    "istanbul-lib-report": "3.0.1",
+    "istanbul-reports": "3.2.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "overrides": {
-    "axios": "^1.16.0",
+    "axios": "1.20.0",
     "form-data": "^4.0.6",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "follow-redirects": "1.16.1",
+    "fast-uri": "3.1.9"
   }
 }

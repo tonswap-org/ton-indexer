@@ -530,6 +530,7 @@ export class LiteClientDataSource implements TonDataSource {
       burnRecord &&
         burnRecord.exitCode === 0 &&
         Array.isArray(burnRecord.stack) &&
+        burnRecord.stack.length > 0 &&
         burnRecord.stack[0]?.type !== 'null'
     );
     if (!burnRecordPresent) {
