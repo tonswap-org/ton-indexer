@@ -21,7 +21,9 @@ type Route = {
   status?: number;
   contentType?: string;
   body: unknown;
+  bodyMode?: 'chunked' | 'stall';
   expectedSearchParams?: Record<string, string>;
+  releaseHeader?: string;
 };
 
 type Routes = Record<string, Route>;
@@ -40,6 +42,9 @@ const expectedCorsOrigin = 'https://test.tonswap.org';
 const hostileCorsOrigin = 'https://hostile.tonswap.invalid';
 const smokeEnvironmentNames = [
   'TON_INDEXER_BASE_URL',
+  'TON_INDEXER_SMOKE_TIMEOUT_MS',
+  'TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES',
+  'TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC',
   'TON_INDEXER_EXPECTED_NETWORK',
   'TON_INDEXER_EXPECTED_SERVICE_ID',
   'TON_INDEXER_EXPECTED_PUBLIC_BASE_URL',
@@ -187,6 +192,7 @@ const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://
     },
     '/api/indexer/v1/openapi.json': { body: openApi() },
   };
+  routes['/api/indexer/v1/service-info'].releaseHeader = parsed.manifestHash;
   routes[`/api/indexer/v1/accounts/${parsed.contracts.T3Hub}/balances`] = {body:balanceBody(parsed.contracts.T3Hub!, 'testnet', parsed.runtime.tokens)};
   for (const [index, market] of parsed.spotMarkets.entries()) {
     const routePath = `/api/indexer/v1/markets/${encodeURIComponent(market.marketKey)}/candles`;
@@ -267,7 +273,7 @@ const withServer = async (
         response.setHeader('access-control-allow-methods', options.preflightAllowMethods ?? 'POST');
         response.setHeader(
           'access-control-allow-headers',
-          options.preflightAllowHeaders ?? 'content-type,accept'
+          options.preflightAllowHeaders ?? 'content-type,accept,x-tonswap-release'
         );
         response.setHeader('vary', 'Origin');
       }
@@ -281,6 +287,11 @@ const withServer = async (
       response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify({ error: 'not found', code: 'not_found' }));
       return;
+    }
+
+    if (route.releaseHeader) {
+      response.setHeader('x-tonswap-release', route.releaseHeader);
+      response.setHeader('access-control-expose-headers', 'x-tonswap-release');
     }
 
     if (route.expectedSearchParams) {
@@ -300,7 +311,13 @@ const withServer = async (
     }
     response.statusCode = route.status ?? 200;
     response.setHeader('content-type', route.contentType ?? 'application/json');
-    response.end(typeof route.body === 'string' ? route.body : JSON.stringify(route.body));
+    const body = typeof route.body === 'string' ? route.body : JSON.stringify(route.body);
+    if (route.bodyMode) {
+      response.write(body);
+      if (route.bodyMode === 'chunked') response.end();
+    } else {
+      response.end(body);
+    }
   });
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -310,6 +327,7 @@ const withServer = async (
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
+      server.closeAllConnections();
     });
   }
 };
@@ -398,6 +416,64 @@ const main = async () => {
       );
       await runProductionSmoke(baseUrl, unboundOptions);
     });
+
+    const healthPath = '/api/indexer/v1/health';
+    assert.throws(() => productionSmokeBaseUrl('http://indexer.example'), /requires HTTPS/);
+    await assertSmokeRejects({ [healthPath]: { status: 302, body: '' } }, /health refused redirect HTTP 302/);
+    await withSmokeEnvironment({ TON_INDEXER_SMOKE_TIMEOUT_MS: '100' }, async () => {
+      await assertSmokeRejects({ [healthPath]: { body: '{', bodyMode: 'stall' } }, /health timed out after 100ms/);
+    });
+    await withSmokeEnvironment({ TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES: '128' }, async () => {
+      for (const bodyMode of [undefined, 'chunked'] as const) {
+        await assertSmokeRejects({ [healthPath]: { body: 'é'.repeat(65), bodyMode } }, /health response exceeded the 128-byte limit/);
+      }
+    });
+    await withSmokeEnvironment({ TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC: '10' }, async () => {
+      for (const headAgeSec of [-6, 11]) {
+        const stale = basicRoutes();
+        (stale[healthPath].body as { chain: { headAgeSec: number } }).chain.headAgeSec = headAgeSec;
+        await assertSmokeRejects(stale, /head age must be between 0 and 10/);
+      }
+    });
+    const invalidHead = basicRoutes();
+    (invalidHead[healthPath].body as { chain: { headSeqno: number } }).chain.headSeqno = Number.MAX_SAFE_INTEGER + 1;
+    await assertSmokeRejects(invalidHead, /positive safe integer head sequence/);
+
+    const nativeFetch = globalThis.fetch;
+    try {
+      const cause = Object.assign(new Error('private transport detail'), { code: 'ECONNREFUSED' });
+      globalThis.fetch = async () => { throw new TypeError('private fetch detail', { cause }); };
+      await assert.rejects(() => runProductionSmoke('http://127.0.0.1', unboundOptions),
+        { message: `${healthPath} request failed (ECONNREFUSED).` });
+    } finally {
+      globalThis.fetch = nativeFetch;
+    }
+    for (const [name, value] of [
+      ['TON_INDEXER_SMOKE_TIMEOUT_MS', '0'], ['TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES', '5242881'],
+      ['TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC', '3601'],
+    ] as const) {
+      await withSmokeEnvironment({ [name]: value }, async () => {
+        await assert.rejects(() => runProductionSmoke('http://127.0.0.1:1', unboundOptions), new RegExp(name));
+      });
+    }
+    for (const [contentType, reason] of [
+      ['text/application/json', /did not return JSON/], ['application/json', /returned invalid JSON/],
+      ['application/json; charset=utf-8, text/html', /did not return JSON/],
+      ['application/json; broken', /did not return JSON/],
+    ] as const) {
+      await withServer({ [healthPath]: { body: 'private-upstream-body', contentType } }, async baseUrl => {
+        await assert.rejects(() => runProductionSmoke(baseUrl, unboundOptions), (error: Error) => {
+          assert.match(error.message, reason);
+          assert.match(error.message, /sha256=[0-9a-f]{64}/);
+          assert.doesNotMatch(error.message, /private-upstream-body/);
+          return true;
+        });
+      });
+    }
+
+    const structuredJson = basicRoutes();
+    structuredJson[healthPath].contentType = 'application/health+json; charset="utf-8"';
+    await withServer(structuredJson, async baseUrl => runProductionSmoke(baseUrl, unboundOptions));
 
     const testnet = basicRoutes();
     for (const path of ['/api/indexer/v1/health', '/api/indexer/v1/service-info']) {
@@ -509,27 +585,28 @@ const main = async () => {
     assert.doesNotMatch(redactedOutput, /secret-value|private-value|token=/);
     assert.match(redactedOutput, /https:\/\/127\.0\.0\.1\//);
 
-    await withServer(
-      strict.routes,
-      async (baseUrl) => {
-        const cli = await runSmokeCli(
-          [],
-          smokeCliEnvironment({
-            TON_INDEXER_BASE_URL: baseUrl,
-            TON_INDEXER_EXPECTED_NETWORK: 'testnet',
-            TON_INDEXER_EXPECTED_RELEASE_ID: releaseId,
-            TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH:
-              strict.options.expectedReleaseManifestHash,
-            TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH:
-              strict.options.expectedReleaseManifestPath,
-            TON_INDEXER_EXPECTED_CORS_ORIGIN: expectedCorsOrigin,
-          })
-        );
-        assert.equal(cli.status, 0, cli.stderr);
-        assert.match(cli.stdout, /ton production smoke ok:/);
-      },
-      { corsOrigins: [expectedCorsOrigin] }
-    );
+    const releaseCliEnv = smokeCliEnvironment({
+      TON_INDEXER_EXPECTED_NETWORK: 'testnet',
+      TON_INDEXER_EXPECTED_RELEASE_ID: releaseId,
+      TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH: strict.options.expectedReleaseManifestHash,
+      TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH: strict.options.expectedReleaseManifestPath,
+      TON_INDEXER_EXPECTED_CORS_ORIGIN: expectedCorsOrigin,
+    });
+    await withServer(strict.routes, async baseUrl => {
+      const cli = await runSmokeCli([], { ...releaseCliEnv, TON_INDEXER_BASE_URL: baseUrl });
+      assert.equal(cli.status, 0, cli.stderr);
+      assert.match(cli.stdout, /ton production smoke ok:/);
+    }, { corsOrigins: [expectedCorsOrigin] });
+
+    const sensitiveService = cloneRoutes(strict.routes);
+    (sensitiveService['/api/indexer/v1/service-info'].body as Record<string, unknown>).publicBaseUrl =
+      'https://private-user:private-password@upstream.example/?token=private-token';
+    await withServer(sensitiveService, async baseUrl => {
+      const cli = await runSmokeCli([], { ...releaseCliEnv, TON_INDEXER_BASE_URL: baseUrl });
+      assert.notEqual(cli.status, 0);
+      assert.match(cli.stderr, /service-info publicBaseUrl must be/);
+      assert.doesNotMatch(cli.stderr, /private-user|private-password|private-token|upstream.example/);
+    }, { corsOrigins: [expectedCorsOrigin] });
 
     await assertSmokeRejects(
       strict.routes,
@@ -620,6 +697,12 @@ const main = async () => {
         preflightCorsOrigins: [expectedCorsOrigin, hostileCorsOrigin],
       }
     );
+
+    const staleHeader = cloneRoutes(strict.routes);
+    staleHeader['/api/indexer/v1/service-info'].releaseHeader = '0'.repeat(64);
+    await assertSmokeRejects(staleHeader, /release header must match/, strict.options, { corsOrigins: [expectedCorsOrigin] });
+    await assertSmokeRejects(strict.routes, /preflight must permit x-tonswap-release/, strict.options,
+      { corsOrigins: [expectedCorsOrigin], preflightAllowHeaders: 'content-type,accept' });
 
     const shortHistory = cloneRoutes(strict.routes);
     const firstMarket = readCanonicalReleaseManifest(strict.manifestPath, 'testnet').markets[0];

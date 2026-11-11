@@ -17,6 +17,8 @@ const retiredFiles = [
   'src/scripts/deployment-manifest-test.ts',
   'docs/ti-production.md',
   'Dockerfile',
+  'docker-compose.production.yml',
+  'build/reports/production-deployment-evidence-template.json',
   '.dockerignore',
 
   'src/config/ledgerBridge.ts',

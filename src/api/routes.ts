@@ -1,7 +1,7 @@
 import { readOwedRequest, readOwedOperationRequest } from '../runtime/owedEvidence';
 import { Address, Cell } from '@ton/core';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   IndexerService,
   MarketCandleInterval
@@ -318,7 +318,7 @@ export const registerRoutes = (
       return null;
     }
   };
-  const adminToken = typeof config.adminToken === 'string' && config.adminToken.length > 0 ? config.adminToken : null;
+  const adminToken = config.adminToken ? Buffer.from(config.adminToken) : null;
   const requireAdmin = (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -328,7 +328,8 @@ export const registerRoutes = (
     if (!adminToken) {
       return sendError(reply, 400, disabledCode, disabledMessage);
     }
-    if (getAdminToken(request) !== adminToken) {
+    const supplied = Buffer.from(getAdminToken(request) ?? '');
+    if (supplied.length !== adminToken.length || !timingSafeEqual(supplied, adminToken)) {
       return sendError(reply, 401, 'unauthorized', 'admin token required');
     }
     return null;

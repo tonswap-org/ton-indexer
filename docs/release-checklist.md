@@ -16,6 +16,7 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
 - Run `npm audit --omit=dev` and confirm there are no production dependency
   audit findings.
 - Confirm public builds work without private overlays.
+- Confirm production starts with a fixed port and rate limiting enabled.
 - Provide the reviewed native-deployer `tonswap-release-v1` manifest through
   required `INDEXER_RELEASE_MANIFEST` (file path or HTTPS URL; loopback HTTP
   allowed). Confirm its network/globalId, addresses, approved code pins and
@@ -40,7 +41,7 @@ Use this checklist for every TON indexer release PR from `develop` to `master`.
   both public `/contracts` and `/service-info` report
   `release: { releaseId, manifestHash }` without obsolete hash aliases.
 - Run `npm run smoke:production`
-  against the manifest-derived target and confirm health, service-info, OpenAPI,
+  against the manifest-derived target and confirm a fresh chain head, service-info, OpenAPI,
   and required wallet routes pass before declaring the release production-ready.
   Preserve the complete manifest, build identity, admission and activation receipts,
   smoke output, timestamps and operator record in the durable release evidence root.

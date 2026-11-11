@@ -48,6 +48,17 @@ async function main() {
   const health=make(fakeChainSource({health:()=>({peersConfigured:3,peersReady:2,head,peers:[]})})).getHealth();
   assert.deepEqual(health.chain,{peersConfigured:3,peersReady:2,headSeqno:101,headAgeSec:Math.max(0,Math.floor(Date.now()/1000)-head.utime)});
   assert.equal(health.ledger,'disabled');assert.equal(health.disk,'ok');assert(!('liteserverPoolStatus' in health));
+  const originalNow = Date.now;
+  try {
+    for (const [ahead, expectedAge] of [[5, 0], [6, -6]]) {
+      Date.now = () => (head.utime - ahead) * 1000;
+      const future = make(fakeChainSource({ health: () => ({ peersConfigured: 1, peersReady: 1, head, peers: [] }) })).getHealth();
+      assert.equal(future.chain.headAgeSec, expectedAge);
+      assert.equal(future.indexerLagSec, expectedAge);
+    }
+  } finally {
+    Date.now = originalNow;
+  }
   let listener:((head:ChainHead)=>void)|undefined,unsubscribed=false,polled=0;
   const feed:HeadFeed={current:()=>head,subscribe(fn){listener=fn;fn(head);return()=>{unsubscribed=true;listener=undefined;};}};
   const followerService=make(fakeChainSource());const received:ChainHead[]=[];

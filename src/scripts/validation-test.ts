@@ -30,13 +30,13 @@ const originalHost = process.env.HOST;
 const originalCorsAllowOrigins = process.env.CORS_ALLOW_ORIGINS;
 const originalMode = process.env.INDEXER_MODE;
 const originalNetwork = process.env.TON_NETWORK;
-process.env.PAGE_SIZE = '0';
-process.env.BACKFILL_CONCURRENCY = '-10';
+process.env.PAGE_SIZE = '25';
+process.env.BACKFILL_CONCURRENCY = '3';
 delete process.env.HOST;
 process.env.CORS_ALLOW_ORIGINS = 'https://app.example, https://wallet.example';
 const config = loadConfig();
-assert.equal(config.pageSize, 10);
-assert.equal(config.backfillConcurrency, 2);
+assert.equal(config.pageSize, 25);
+assert.equal(config.backfillConcurrency, 3);
 assert.equal(config.host, '127.0.0.1');
 assert.deepEqual(config.corsAllowOrigins, ['https://app.example', 'https://wallet.example']);
 

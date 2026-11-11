@@ -17,7 +17,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Branch flow audit
         run: |
           bash ./scripts/test-branch-flow-audit.sh
@@ -28,7 +28,7 @@ jobs:
         run: |
           bash ./scripts/test-todo-debt-audit.sh
           bash ./scripts/audit-todo-debt.sh
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -59,8 +59,8 @@ jobs:
     env:
       PLATFORM_TEST_DATABASE_URL: postgresql://platform_test:platform_test_ci@127.0.0.1:5432/tonswap_platform_test_ci
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm

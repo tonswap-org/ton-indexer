@@ -1,10 +1,12 @@
 import { FreshReadUnavailableError } from './freshRead';
 
+export const MAX_FUTURE_HEAD_SECONDS = 5;
+
 const unavailable = (): never => { throw new FreshReadUnavailableError(new Error('Fresh liteserver head has stale or invalid block time.')); };
 
 export function assertFreshHeadTime(lastUtime: number, wallTimeMs = Date.now()): void {
   const wallTime = Math.floor(wallTimeMs / 1_000);
-  if (!Number.isSafeInteger(lastUtime) || lastUtime < 0 || lastUtime < wallTime - 30 || lastUtime > wallTime + 5)
+  if (!Number.isSafeInteger(lastUtime) || lastUtime < 0 || lastUtime < wallTime - 30 || lastUtime > wallTime + MAX_FUTURE_HEAD_SECONDS)
     unavailable();
 }
 

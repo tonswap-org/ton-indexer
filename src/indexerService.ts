@@ -1,3 +1,4 @@
+import { MAX_FUTURE_HEAD_SECONDS } from './data/freshHead';
 import { readOriginalTransactionEvidence, originalTransactionToToncenter } from './data/transactionEvidence';
 import { isRetiredPerpsGetter } from './data/currentGetters';
 import { Address, Cell, TupleItem, beginCell, parseTuple, serializeTuple } from '@ton/core';
@@ -389,11 +390,14 @@ export class IndexerService {
 
     const chain = this.source.health();
     const head = chain.head;
+    const rawAge = head ? Math.floor(Date.now() / 1000) - head.utime : null;
+    // A clock offset outside current-read tolerance must remain visible to operators.
+    const headAgeSec = rawAge !== null && rawAge >= -MAX_FUTURE_HEAD_SECONDS ? Math.max(0, rawAge) : rawAge;
     const response: HealthStatus = {
       lastMasterSeqno: this.lastHead?.seqno ?? head?.seqno,
-      indexerLagSec: head ? Math.max(0, Math.floor(Date.now() / 1000) - head.utime) : undefined,
+      indexerLagSec: headAgeSec ?? undefined,
       chain: { peersConfigured: chain.peersConfigured, peersReady: chain.peersReady,
-        headSeqno: head?.seqno ?? null, headAgeSec: head ? Math.max(0, Math.floor(Date.now() / 1000) - head.utime) : null },
+        headSeqno: head?.seqno ?? null, headAgeSec },
       ledger: this.runtime.ledgerStatus?.() ?? 'disabled', disk: this.runtime.diskState?.() ?? 'ok',
     };
     if (this.config.responseCacheEnabled && this.config.healthCacheTtlMs > 0) {

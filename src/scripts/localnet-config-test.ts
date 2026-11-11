@@ -48,8 +48,12 @@ async function main() {
       process.env[key] = 'invalid-retired-value';
       assert.deepEqual(loadConfig(), config, `${key} must have no effect`);
     }
-    process.env.INDEXER_ADMIN_TOKEN = 'current-admin-token';
-    assert.equal(loadConfig().adminToken, 'current-admin-token');
+    for (const invalid of ['short', 'a'.repeat(257)]) {
+      process.env.INDEXER_ADMIN_TOKEN = invalid;
+      assert.throws(loadConfig, /INDEXER_ADMIN_TOKEN/);
+    }
+    process.env.INDEXER_ADMIN_TOKEN = 'a'.repeat(32);
+    assert.equal(loadConfig().adminToken, process.env.INDEXER_ADMIN_TOKEN);
     delete process.env.INDEXER_ADMIN_TOKEN;
 
     process.env.INDEXER_RELEASE_MANIFEST = 'https://release.example/tonswap-release-v1.json';

@@ -724,70 +724,52 @@ Configuration and manifest validation happen before listen. The listener opens b
 
 Use a fresh canonical database for this first-release schema. Retain old database/snapshot/journal state; there is no migration fallback. In one cutover window, start the new worker beside the existing one on another port with its new database and wait for readiness and singleton prewarm. Publish this phase's web build first, then switch the proxy to the new indexer, record ledger admission and run release acceptance. If the host cannot run two indexer workers, publish the web first and then restart the indexer on the new database. Incomplete ledger reads remain pending. Rollback switches the proxy to the retained old indexer/database while the new web stays deployed. See `docs/rollback-checklist.md`.
 
-The public proxy template is `config/nginx-indexer.conf`. Render `PUBLIC_MOUNT`, `LISTEN`, `BACKEND` and `ERROR_ROOT`, place `config/proxy-error.json` at the rendered error root, and run `nginx -t` before installation. It supports `/api/indexer` and `/api/indexer-r2`, unbuffered SSE, a three-second connect timeout and a twenty-five-second JSON timeout. Backend 429/503/504 responses pass unchanged; an unavailable backend produces the exact static 503 JSON, CORS, `Retry-After: 5` and `no-store`. Public metrics, debug and snapshots are blocked.
+The public proxy template is `config/nginx-indexer.conf`. Render `PUBLIC_MOUNT`, `LISTEN`, `BACKEND` and `ERROR_ROOT`, place `config/proxy-error.json` at the rendered error root, and run `nginx -t` before installation. Use the current manifest mount `/api/indexer` and set the origin allowlist to the release browser origin. The template serves unbuffered SSE and lets the allowed browser send and read `x-tonswap-release`. The connect timeout is three seconds and the JSON timeout is twenty-five seconds. Backend 429/503/504 responses pass unchanged; an unavailable backend produces the exact static 503 JSON, CORS, `Retry-After: 5` and `no-store`. Public metrics, debug and snapshots are blocked.
 
 Rate limiting runs in the process. The edge must pass both `X-TONSwap-Edge-Key` and `X-TONSwap-Client-IP`; only a matching configured key and valid IP select a visitor bucket. Otherwise the raw socket address is the key. `X-Forwarded-For` supplies no identity. Direct requests remain allowed and share their socket bucket; the proxy does not add another limiter.
 
 ## Production Smoke
-```bash
-npm run smoke:production
-TON_INDEXER_BASE_URL=https://test.tonswap.org/api/indexer-r2 npm run smoke:production
-```
 
-The smoke check verifies that the target host serves the TONSWAP API contract,
-not another indexer service. The CLI is always release-bound: either command
-above fails until all of the release inputs below are present in its environment.
+Run the smoke check with the release ID, manifest hash, absolute manifest path,
+network and expected browser origin from the release evidence.
 
-Release-bound checks fail closed unless the network, release ID,
-canonical manifest path/hash, and allowed browser origin are all pinned. The
-manifest must be a canonical absolute path to a stable, single-link regular
-file in a non-symlink, non-group/other-writable parent. A release-bound check
-keeps the parent's device, inode, permissions and ownership stable across the
-read. Unrelated sibling creation, deletion or snapshot renames are permitted;
-the manifest file's full identity and content checks remain strict. Run
-`npx tsx src/scripts/release-manifest-test.ts` and `npm run test:runtime-manifest`
-after changes to these read checks. The public service must expose the manifest's exact contract
-map, the three discovery/root equality pairs, and exactly two complete
-one-minute single-trade candles for each of its three canonical markets:
 ```bash
-TON_INDEXER_BASE_URL=https://test.tonswap.org/api/indexer-r2 \
 TON_INDEXER_EXPECTED_NETWORK=testnet \
-TON_INDEXER_EXPECTED_RELEASE_ID=<final-release-id> \
-TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH=<sha256> \
+TON_INDEXER_EXPECTED_RELEASE_ID="$RELEASE_ID" \
+TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH="$MANIFEST_SHA256" \
 TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH=/absolute/path/to/release-manifest.json \
 TON_INDEXER_EXPECTED_CORS_ORIGIN=https://test.tonswap.org \
 npm run smoke:production
 ```
 
-The native manifest's `services.indexer` supplies the exact public mount and
-service identity. With no target override, smoke uses that manifest URL.
-`TON_INDEXER_BASE_URL` may be a transport origin or that origin
-plus the exact manifest mount; another nonempty path is rejected before requests.
-The transport origin can be an explicitly selected local proxy for an owned check.
-Optional expected service-ID/public-URL overrides must agree with the manifest.
-For example, `/api/indexer-r2` produces `/api/indexer-r2/v1/health`, once.
+The native manifest's `services.indexer` supplies the public identity and the
+`/api/indexer` mount. To check the same release through a local proxy, set
+`TON_INDEXER_BASE_URL` to its loopback HTTP origin. Other transport origins
+require HTTPS. An explicit target path must match the manifest mount.
+The manifest must be a canonical absolute path to a stable, single-link regular
+file in a non-symlink, non-group/other-writable parent. The reader checks the
+parent's device, inode, permissions and ownership across the read.
 
-The backend still registers `/api/indexer` routes. Its native discovery, OpenAPI
-path keys (with server `/`) and interactive docs advertise the manifest mount.
-A distinct public mount requires a reviewed reverse-proxy mapping to the backend
-routes that preserves methods, query values and streaming behavior. Keep any
-funded release's existing service and public mount independently available.
-These source changes do not provision a proxy or qualify either release.
-Run `npm run test:public-mount` for offline route/document behavior and
-`npx tsx src/scripts/production-smoke-adversarial-test.ts` for the loopback smoke
-regressions, including exact R1/R2 mounts and rejection of cross-release routes.
+The smoke checks health, service identity, release hash, contracts, balances,
+OpenAPI, error shape and CORS for allowed and hostile origins. For each declared
+spot market it requests up to two one-minute candles and checks complete
+history, market identity, price and volume fields, and distinct source transactions.
+The release wrapper checks certified transactions and time windows against the
+retained release evidence.
 
-The smoke sends simple and POST-preflight requests for both the allowed origin
-and a distinct hostile origin. Hostile responses must omit both CORS
-allow-origin and credential headers.
+Requests refuse redirects and bound the entire response, including streamed
+bodies. The health check requires a positive head sequence and a head age
+within the configured limit.
 
-The certified manifest binds the three market identities and query metadata,
-but does not contain the certified candle transaction IDs or time windows. The
-standalone smoke therefore enforces six distinct, coherent transaction-backed
-candles; the canonical release wrapper remains responsible for matching those
-candles to the retained release proof.
+| Environment variable | Default | Maximum |
+| --- | ---: | ---: |
+| `TON_INDEXER_SMOKE_TIMEOUT_MS` | 10,000 ms | 60,000 ms |
+| `TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES` | 1 MiB | 5 MiB |
+| `TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC` | 300 s | 3,600 s |
 
-Release acceptance uses the current local liteserver source, exact manifest service identity and native runtime qualification. Repository checks do not install the live proxy or mutate a funded release.
+Run `npm run test:public-mount` and
+`npx tsx src/scripts/production-smoke-adversarial-test.ts` to exercise the mount,
+transport limits and release checks locally.
 
 ## Configuration
 `INDEXER_RELEASE_MANIFEST` is required at bootstrap. Other environment variables
@@ -822,14 +804,17 @@ have defaults or are required only for their documented feature:
 - `SNAPSHOT_ON_EXIT` (`true` to write snapshot on shutdown; default `false`)
 - `SNAPSHOT_AUTOSAVE_ENABLED` (`true` to periodically persist snapshots; default `true` in production when `SNAPSHOT_PATH` is set)
 - `SNAPSHOT_AUTOSAVE_INTERVAL_MS` (default: `30000`)
-- `RATE_LIMIT_ENABLED` (`true` to enable simple per-IP rate limiting; default `true`)
+- `RATE_LIMIT_ENABLED` defaults to `true` and is required in production.
 - `RATE_LIMIT_WINDOW_MS` (default: `60000`)
-- `RATE_LIMIT_MAX` (default: `10000`)
+- `RATE_LIMIT_MAX` defaults to 2,000 in production and 10,000 in development.
+- `RATE_LIMIT_MAX_KEYS` bounds live client/route counters. It defaults to 20,000 in production and 50,000 in development.
+- `RATE_LIMIT_GLOBAL_WINDOW_MS` defaults to `RATE_LIMIT_WINDOW_MS`.
+- `RATE_LIMIT_GLOBAL_MAX` bounds requests admitted per process per global window. It defaults to 50,000 in production and 250,000 in development.
 - `RATE_LIMIT_BUCKETS_JSON` (optional endpoint-class limits override JSON)
 - `RESPONSE_CACHE_ENABLED` (`true` to enable response caching; default `true`)
 - `INITIAL_HISTORY_TIMEOUT_MS` (default: `10000`, range: `1..120000`; caps the first account-history source read and returns `504` if it expires)
 - `TX_CACHE_TTL_MS` (default: `1000`)
-- `HEALTH_CACHE_TTL_MS` (default: `1000`)
+- `HEALTH_CACHE_TTL_MS` defaults to 1,000 ms and accepts 0–5,000 ms.
 - `METRICS_CACHE_TTL_MS` (default: `1000`)
 - `PAGE_SIZE` (default: `10`)
 - `MAX_PAGES_PER_ADDRESS` (default: `150`)
@@ -841,7 +826,7 @@ have defaults or are required only for their documented feature:
 - `WATCHLIST_REFRESH_MS` (default: `5000`)
 - `BLOCK_POLL_MS` (default: `5000`)
 - `LOG_LEVEL` (default: `info`)
-- `INDEXER_ADMIN_TOKEN` or `INDEXER_ADMIN_TOKEN_FILE` (required for snapshot save/load and debug endpoints; pass as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`)
+- `INDEXER_ADMIN_TOKEN` or `INDEXER_ADMIN_TOKEN_FILE` supplies a 32–256 character token for metrics, snapshot save/load and debug endpoints. Pass it as `Authorization: Bearer ...` or `X-Indexer-Admin-Token`.
 
 Each secret selects one inline value or one absolute file path. Omit both for an
 unused optional credential; a defined empty value, conflicting sources or an
@@ -861,7 +846,7 @@ accounts or qualify systemd credential ownership. Run
 `npx tsx src/scripts/localnet-config-test.ts` for the source and consumer checks;
 the same tests are included in `npm test`.
 
-Explicit enum values for `INDEXER_MODE` and `TON_NETWORK` fail startup when unsupported instead of silently falling back.
+Invalid explicit enum, integer, boolean and rate-limit bucket settings fail startup. Production requires a fixed, nonzero `PORT`.
 The worker binds the configured `PORT`. If it is occupied, startup fails and the supervisor retries; a release reload never silently moves the public API to another port.
 
 Production safeguards:

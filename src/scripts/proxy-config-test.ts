@@ -29,6 +29,7 @@ async function runMount(mount:string,template:string,body:Buffer){
   const backend=createServer((request,response)=>{
     seen.push({url:request.url,edge:request.headers['x-tonswap-edge-key'] as string|undefined,client:request.headers['x-tonswap-client-ip'] as string|undefined,forwarded:request.headers['x-forwarded-for'] as string|undefined});
     response.setHeader('Access-Control-Allow-Origin','https://backend.invalid');
+    response.setHeader('x-tonswap-release', 'a'.repeat(64));
     if(request.url?.startsWith('/api/indexer/v1/timeout')){response.writeHead(504,{'content-type':'application/json','retry-after':'1','cache-control':'no-store'});response.end('{"error":"Chain read deadline exceeded.","code":"upstream_timeout"}');return;}
     if(request.url==='/api/indexer/v1/unavailable'){response.writeHead(503,{'content-type':'application/json','retry-after':'2','cache-control':'no-store'});response.end('{"error":"Chain read unavailable.","code":"upstream_unavailable"}');return;}
     if(request.url==='/api/indexer/v1/limited'){response.writeHead(429,{'content-type':'application/json','retry-after':'7','cache-control':'no-store'});response.end('{"error":"Rate limit exceeded.","code":"rate_limited"}');return;}
@@ -51,6 +52,20 @@ async function runMount(mount:string,template:string,body:Buffer){
     const down=await get(`${mount}/v1/health`);assert.equal(down.status,503,log);assert.deepEqual(Buffer.from(await down.arrayBuffer()),body);
     assert.equal(down.headers.get('content-type'),'application/json');assert.equal(down.headers.get('retry-after'),'5');assert.equal(down.headers.get('cache-control'),'no-store');
     assert.equal(down.headers.get('access-control-allow-origin'),'https://test.tonswap.org');assert(down.headers.get('access-control-expose-headers')?.includes('retry-after'));
+    assert.equal(down.headers.get('access-control-allow-credentials'), 'true');
+    const preflight = (origin: string) => fetch(`http://127.0.0.1:${port}${mount}/v1/runGetMethod`, {
+      method: 'OPTIONS',
+      headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,x-tonswap-release' },
+      signal: AbortSignal.timeout(3000),
+    });
+    const allowed = await preflight('https://test.tonswap.org');
+    assert.equal(allowed.status, 204);
+    assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://test.tonswap.org');
+    assert.equal(allowed.headers.get('access-control-allow-credentials'), 'true');
+    assert(allowed.headers.get('access-control-allow-headers')?.split(/,\s*/).includes('x-tonswap-release'));
+    const denied = await preflight('https://unlisted.invalid');
+    assert.equal(denied.headers.get('access-control-allow-origin'), null);
+    assert.equal(denied.headers.get('access-control-allow-credentials'), null);
     await listen(backend,backendPort);backendLive=true;
     for(const [path,status,retry,code]of [['timeout?read=1',504,'1','upstream_timeout'],['unavailable',503,'2','upstream_unavailable'],['limited',429,'7','rate_limited']]as const){
       const response=await get(`${mount}/v1/${path}`);assert.equal(response.status,status);assert.equal(response.headers.get('retry-after'),retry);assert.equal((await response.json() as any).code,code);
@@ -62,6 +77,8 @@ async function runMount(mount:string,template:string,body:Buffer){
     const response=await get(`${mount}/v1/echo?read=1`,{'X-TONSwap-Edge-Key':'edge-secret-fixture','X-TONSwap-Client-IP':'2001:db8::12'});
     assert.deepEqual(await response.json(),{url:'/api/indexer/v1/echo?read=1',edge:'edge-secret-fixture',client:'2001:db8::12'});
     assert.equal(response.headers.get('access-control-allow-origin'),'https://test.tonswap.org','one edge CORS origin');
+    assert.equal(response.headers.get('x-tonswap-release'), 'a'.repeat(64));
+    assert(response.headers.get('access-control-expose-headers')?.split(/,\s*/).includes('x-tonswap-release'));
     const direct=await get(`${mount}/v1/echo`);assert.equal(direct.status,200,'direct clients reach the application socket-address limiter');
     const stream=await get(`${mount}/v1/stream/balances?address=owner`);assert.equal(stream.status,200);
     const reader=stream.body!.getReader(),first=await reader.read();assert.match(Buffer.from(first.value!).toString(),/"first"/);assert(!Buffer.from(first.value!).toString().includes('last'),'stream first event is unbuffered');await reader.cancel();

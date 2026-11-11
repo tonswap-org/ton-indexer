@@ -31,6 +31,9 @@ export type Config = {
   rateLimitEnabled: boolean;
   rateLimitWindowMs: number;
   rateLimitMax: number;
+  rateLimitMaxKeys: number;
+  rateLimitGlobalWindowMs: number;
+  rateLimitGlobalMax: number;
   rateLimitBuckets: RateLimitBuckets;
   responseCacheEnabled: boolean;
   initialHistoryTimeoutMs: number;
@@ -59,34 +62,12 @@ export type Config = {
   diskHardFloorBytes: number;
 };
 
-const numberFromEnv = (
-  key: string,
-  fallback: number,
-  options: { min?: number; max?: number; integer?: boolean } = {}
-) => {
+const integerFromEnv = (key: string, fallback: number, min: number, max = Number.MAX_SAFE_INTEGER) => {
   const raw = process.env[key];
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return fallback;
-  const value = options.integer ? Math.trunc(parsed) : parsed;
-  if (options.min !== undefined && value < options.min) return fallback;
-  if (options.max !== undefined && value > options.max) return fallback;
-  return value;
-};
-
-const strictBoundedIntegerFromEnv = (
-  key: string,
-  fallback: number,
-  options: { min: number; max: number }
-) => {
-  const raw = process.env[key];
-  if (raw === undefined || raw === '') return fallback;
-  if (!/^(?:0|[1-9]\d*)$/.test(raw)) {
-    throw new Error(`${key} must be a canonical integer between ${options.min} and ${options.max}`);
-  }
+  if (raw === undefined) return fallback;
   const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < options.min || value > options.max) {
-    throw new Error(`${key} must be a canonical integer between ${options.min} and ${options.max}`);
+  if (!/^(?:0|[1-9]\d*)$/.test(raw) || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${key} must be a canonical integer between ${min} and ${max}`);
   }
   return value;
 };
@@ -119,16 +100,16 @@ const listFromEnv = (keys: string[]): string[] => {
 const booleanFromEnv = (key: string, fallback: boolean) => {
   const raw = process.env[key];
   if (raw === undefined) return fallback;
-  const value = raw.toLowerCase();
+  const value = raw.trim().toLowerCase();
   if (value === '1' || value === 'true' || value === 'yes') return true;
   if (value === '0' || value === 'false' || value === 'no') return false;
-  return fallback;
+  throw new Error(`${key} must be one of true, false, 1, 0, yes, or no.`);
 };
 
 const enumFromEnv = <T extends string>(key: string, fallback: T, allowed: readonly T[]): T => {
   const raw = process.env[key];
-  if (raw === undefined || raw === '') return fallback;
-  const normalized = raw.toLowerCase();
+  if (raw === undefined) return fallback;
+  const normalized = raw.trim().toLowerCase();
   if ((allowed as readonly string[]).includes(normalized)) return normalized as T;
   throw new Error(`${key} must be one of ${allowed.join(', ')}, got ${raw}`);
 };
@@ -142,22 +123,63 @@ const networkFromEnv = (): Network => {
   return enumFromEnv<Network>('TON_NETWORK', 'testnet', ['mainnet', 'testnet', 'localnet']);
 };
 
+const rateLimitBucketsFromEnv = (defaultBuckets: RateLimitBuckets): RateLimitBuckets => {
+  const raw = process.env.RATE_LIMIT_BUCKETS_JSON;
+  if (raw === undefined) return defaultBuckets;
+  if (!raw.trim()) {
+    throw new Error('RATE_LIMIT_BUCKETS_JSON must be a non-empty JSON object.');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('RATE_LIMIT_BUCKETS_JSON must be valid JSON.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('RATE_LIMIT_BUCKETS_JSON must be an object.');
+  }
+
+  const merged = { ...defaultBuckets };
+  for (const [name, candidate] of Object.entries(parsed)) {
+    if (!Object.hasOwn(defaultBuckets, name)) {
+      throw new Error(`RATE_LIMIT_BUCKETS_JSON contains unsupported bucket ${JSON.stringify(name)}.`);
+    }
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error(`RATE_LIMIT_BUCKETS_JSON.${name} must be an object.`);
+    }
+    const key = name as RateLimitBucketName;
+    const next = { ...defaultBuckets[key] };
+    for (const [field, value] of Object.entries(candidate)) {
+      if (field !== 'windowMs' && field !== 'max') {
+        throw new Error(`RATE_LIMIT_BUCKETS_JSON.${name} contains unsupported field ${JSON.stringify(field)}.`);
+      }
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+        throw new Error(`RATE_LIMIT_BUCKETS_JSON.${name}.${field} must be a positive integer.`);
+      }
+      next[field] = value;
+    }
+    merged[key] = next;
+  }
+  return merged;
+};
+
 export const loadConfig = (): Config => {
   const mode = modeFromEnv();
   const network = networkFromEnv();
   const edgeKey = readSecretText(process.env, 'INDEXER_EDGE_KEY');
   if (edgeKey !== undefined && edgeKey.length < 32) throw new Error('INDEXER_EDGE_KEY must have at least 32 characters');
-  const diskSoftFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_SOFT_FLOOR_BYTES', 2 * 1024 ** 3, { min: 0, max: Number.MAX_SAFE_INTEGER });
-  const diskHardFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_HARD_FLOOR_BYTES', 512 * 1024 ** 2, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  const adminToken = readSecretText(process.env, 'INDEXER_ADMIN_TOKEN');
+  if (adminToken !== undefined && (adminToken.length < 32 || adminToken.length > 256)) {
+    throw new Error('INDEXER_ADMIN_TOKEN must contain 32–256 characters.');
+  }
+  const diskSoftFloorBytes = integerFromEnv('INDEXER_DISK_SOFT_FLOOR_BYTES', 2 * 1024 ** 3, 0);
+  const diskHardFloorBytes = integerFromEnv('INDEXER_DISK_HARD_FLOOR_BYTES', 512 * 1024 ** 2, 0);
   if (diskHardFloorBytes > diskSoftFloorBytes) throw new Error('INDEXER_DISK_HARD_FLOOR_BYTES must not exceed INDEXER_DISK_SOFT_FLOOR_BYTES');
 
   const defaultRateLimitWindowMs = 60_000;
   const defaultRateLimitMax = mode === 'production' ? 2_000 : 10_000;
-  const rateLimitWindowMs = numberFromEnv('RATE_LIMIT_WINDOW_MS', defaultRateLimitWindowMs, {
-    min: 1,
-    integer: true
-  });
-  const rateLimitMax = numberFromEnv('RATE_LIMIT_MAX', defaultRateLimitMax, { min: 1, integer: true });
+  const rateLimitWindowMs = integerFromEnv('RATE_LIMIT_WINDOW_MS', defaultRateLimitWindowMs, 1);
+  const rateLimitMax = integerFromEnv('RATE_LIMIT_MAX', defaultRateLimitMax, 1);
   const defaultBuckets: RateLimitBuckets = {
     accounts: { windowMs: rateLimitWindowMs, max: rateLimitMax },
     stream: { windowMs: 10_000, max: mode === 'production' ? 200 : 1_000 },
@@ -166,41 +188,15 @@ export const loadConfig = (): Config => {
     docs: { windowMs: 60_000, max: mode === 'production' ? 600 : 2_000 },
     default: { windowMs: rateLimitWindowMs, max: rateLimitMax }
   };
-  const rateLimitBucketsRaw = stringFromEnv('RATE_LIMIT_BUCKETS_JSON');
-  const rateLimitBuckets = (() => {
-    if (!rateLimitBucketsRaw) return defaultBuckets;
-    try {
-      const parsed = JSON.parse(rateLimitBucketsRaw) as Record<string, { windowMs?: number; max?: number }>;
-      const merged = { ...defaultBuckets };
-      for (const key of Object.keys(defaultBuckets) as RateLimitBucketName[]) {
-        const candidate = parsed[key];
-        if (!candidate || typeof candidate !== 'object') continue;
-        const candidateWindowMs =
-          typeof candidate.windowMs === 'number' && Number.isFinite(candidate.windowMs)
-            ? Math.trunc(candidate.windowMs)
-            : Number.NaN;
-        const candidateMax =
-          typeof candidate.max === 'number' && Number.isFinite(candidate.max)
-            ? Math.trunc(candidate.max)
-            : Number.NaN;
-        const windowMs =
-          Number.isSafeInteger(candidateWindowMs) && candidateWindowMs > 0
-            ? candidateWindowMs
-            : merged[key].windowMs;
-        const max =
-          Number.isSafeInteger(candidateMax) && candidateMax > 0
-            ? candidateMax
-            : merged[key].max;
-        merged[key] = { windowMs, max };
-      }
-      return merged;
-    } catch {
-      return defaultBuckets;
-    }
-  })();
+  const rateLimitEnabled = booleanFromEnv('RATE_LIMIT_ENABLED', true);
+  if (mode === 'production' && !rateLimitEnabled) {
+    throw new Error('RATE_LIMIT_ENABLED must be true when INDEXER_MODE=production.');
+  }
+  const port = integerFromEnv('PORT', 8787, 0, 65_535);
+  if (mode === 'production' && port === 0) throw new Error('PORT must be a fixed non-zero port in production.');
 
   return {
-    port: numberFromEnv('PORT', 8787, { min: 0, max: 65_535, integer: true }),
+    port,
     host: stringFromEnv('HOST', '127.0.0.1')!,
     mode,
     network,
@@ -213,40 +209,40 @@ export const loadConfig = (): Config => {
       'CORS_EXPOSE_HEADERS',
       'x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset,retry-after'
     )!,
-    corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600, { min: 0, integer: true }),
+    corsMaxAge: integerFromEnv('CORS_MAX_AGE', 600, 0),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
     databaseUrl: readDatabaseUrl(),
-    ledgerMaxWatchedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_WATCHED_ACCOUNTS', 1000, {min:1,max:100000}),
-    ledgerMaxPagesPerSync: strictBoundedIntegerFromEnv('INDEXER_MAX_PAGES_PER_SYNC',20,{min:1,max:100}),
-    ledgerMaxRelatedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_RELATED_ACCOUNTS',256,{min:1,max:1024}),
+    ledgerMaxWatchedAccounts: integerFromEnv('INDEXER_MAX_WATCHED_ACCOUNTS', 1000, 1, 100000),
+    ledgerMaxPagesPerSync: integerFromEnv('INDEXER_MAX_PAGES_PER_SYNC', 20, 1, 100),
+    ledgerMaxRelatedAccounts: integerFromEnv('INDEXER_MAX_RELATED_ACCOUNTS', 256, 1, 1024),
     snapshotOnExit: booleanFromEnv('SNAPSHOT_ON_EXIT', false),
     snapshotAutosaveEnabled: booleanFromEnv(
       'SNAPSHOT_AUTOSAVE_ENABLED',
       mode === 'production' && Boolean(stringFromEnv('SNAPSHOT_PATH'))
     ),
-    snapshotAutosaveIntervalMs: numberFromEnv('SNAPSHOT_AUTOSAVE_INTERVAL_MS', 30_000, { min: 1, integer: true }),
-    rateLimitEnabled: booleanFromEnv('RATE_LIMIT_ENABLED', true),
+    snapshotAutosaveIntervalMs: integerFromEnv('SNAPSHOT_AUTOSAVE_INTERVAL_MS', 30_000, 1),
+    rateLimitEnabled,
     rateLimitWindowMs,
     rateLimitMax,
-    rateLimitBuckets,
+    rateLimitMaxKeys: integerFromEnv('RATE_LIMIT_MAX_KEYS', mode === 'production' ? 20_000 : 50_000, 1, 1_000_000),
+    rateLimitGlobalWindowMs: integerFromEnv('RATE_LIMIT_GLOBAL_WINDOW_MS', rateLimitWindowMs, 1),
+    rateLimitGlobalMax: integerFromEnv('RATE_LIMIT_GLOBAL_MAX', mode === 'production' ? 50_000 : 250_000, 1),
+    rateLimitBuckets: rateLimitBucketsFromEnv(defaultBuckets),
     responseCacheEnabled: booleanFromEnv('RESPONSE_CACHE_ENABLED', true),
-    initialHistoryTimeoutMs: strictBoundedIntegerFromEnv('INITIAL_HISTORY_TIMEOUT_MS', 10_000, {
-      min: 1,
-      max: 120_000
-    }),
-    txCacheTtlMs: numberFromEnv('TX_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
-    healthCacheTtlMs: numberFromEnv('HEALTH_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
-    metricsCacheTtlMs: numberFromEnv('METRICS_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
-    pageSize: numberFromEnv('PAGE_SIZE', 10, { min: 1, integer: true }),
-    maxPagesPerAddress: numberFromEnv('MAX_PAGES_PER_ADDRESS', 150, { min: 1, integer: true }),
-    maxAddresses: numberFromEnv('MAX_ADDRESSES', 5_000, { min: 1, integer: true }),
-    idleTtlMs: numberFromEnv('IDLE_TTL_MS', 2 * 60 * 60 * 1000, { min: 1, integer: true }),
-    globalMaxPages: numberFromEnv('GLOBAL_MAX_PAGES', 200_000, { min: 1, integer: true }),
-    backfillPageBatch: numberFromEnv('BACKFILL_PAGE_BATCH', 5, { min: 1, integer: true }),
-    backfillMaxPagesPerAddress: numberFromEnv('BACKFILL_MAX_PAGES_PER_ADDRESS', 150, { min: 1, integer: true }),
-    backfillConcurrency: numberFromEnv('BACKFILL_CONCURRENCY', 2, { min: 1, integer: true }),
-    watchlistRefreshMs: numberFromEnv('WATCHLIST_REFRESH_MS', 5_000, { min: 1, integer: true }),
-    blockPollMs: numberFromEnv('BLOCK_POLL_MS', 5_000, { min: 1, integer: true }),
+    initialHistoryTimeoutMs: integerFromEnv('INITIAL_HISTORY_TIMEOUT_MS', 10_000, 1, 120_000),
+    txCacheTtlMs: integerFromEnv('TX_CACHE_TTL_MS', 1_000, 0),
+    healthCacheTtlMs: integerFromEnv('HEALTH_CACHE_TTL_MS', 1_000, 0, 5_000),
+    metricsCacheTtlMs: integerFromEnv('METRICS_CACHE_TTL_MS', 1_000, 0),
+    pageSize: integerFromEnv('PAGE_SIZE', 10, 1),
+    maxPagesPerAddress: integerFromEnv('MAX_PAGES_PER_ADDRESS', 150, 1),
+    maxAddresses: integerFromEnv('MAX_ADDRESSES', 5_000, 1),
+    idleTtlMs: integerFromEnv('IDLE_TTL_MS', 2 * 60 * 60 * 1000, 1),
+    globalMaxPages: integerFromEnv('GLOBAL_MAX_PAGES', 200_000, 1),
+    backfillPageBatch: integerFromEnv('BACKFILL_PAGE_BATCH', 5, 1),
+    backfillMaxPagesPerAddress: integerFromEnv('BACKFILL_MAX_PAGES_PER_ADDRESS', 150, 1),
+    backfillConcurrency: integerFromEnv('BACKFILL_CONCURRENCY', 2, 1),
+    watchlistRefreshMs: integerFromEnv('WATCHLIST_REFRESH_MS', 5_000, 1),
+    blockPollMs: integerFromEnv('BLOCK_POLL_MS', 5_000, 1),
     enableWriteRpc: booleanFromEnv('INDEXER_ENABLE_WRITE_RPC', false),
     liteserverPool: stringFromEnv(
       network === 'mainnet'
@@ -256,10 +252,10 @@ export const loadConfig = (): Config => {
           : 'LITESERVER_POOL_LOCALNET'
     ),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
-    adminToken: readSecretText(process.env, 'INDEXER_ADMIN_TOKEN'),
+    adminToken,
     releaseManifestSource: stringFromEnv('INDEXER_RELEASE_MANIFEST'),
     edgeKey,
-    ledgerWorkers: strictBoundedIntegerFromEnv('INDEXER_LEDGER_WORKERS', 3, { min: 2, max: 8 }),
+    ledgerWorkers: integerFromEnv('INDEXER_LEDGER_WORKERS', 3, 2, 8),
     diskGuardPath: stringFromEnv('INDEXER_DISK_GUARD_PATH', dirname(resolve(stringFromEnv('SNAPSHOT_PATH', './snapshot.json')!)))!,
     diskSoftFloorBytes,
     diskHardFloorBytes,

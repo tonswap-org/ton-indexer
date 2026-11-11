@@ -26,10 +26,44 @@ try {
   now += 999; assert(limiter.check(a.key).allowed);
   const forged = new RateLimiter(config);
   for (let i = 0; i < 3; i++) assert.equal(forged.check(rateLimitKey(request(`203.0.113.${i + 1}`, 'wrong'), key).key).allowed, i < 2);
-  const bounded = new RateLimiter(config), counters = (bounded as unknown as { counters: Map<string, unknown> }).counters;
-  for (let i = 0; i < 50_000; i++) bounded.check(`client-${i}`);
-  assert.equal(counters.size, 50_000); bounded.check('overflow'); assert.equal(counters.size, 50_000); assert(!counters.has('default:client-0'));
-  now += 1500; bounded.check('fresh'); assert.equal(counters.size, 1); assert(counters.has('default:fresh'));
+  const bounded = new RateLimiter({ ...config, rateLimitMaxKeys: 2 });
+  assert(bounded.check('client-1').allowed);
+  assert(bounded.check('client-2').allowed);
+  assert.equal(bounded.check('client-3').scope, 'capacity');
+  assert.equal(bounded.check('client-3').allowed, false);
+  assert(bounded.check('client-1').allowed);
+  assert.equal(bounded.check('client-1').allowed, false, 'Capacity pressure must preserve active quotas');
+  now += 1500;
+  assert(bounded.check('client-3').allowed, 'Expired counters release capacity');
+
+  const global = new RateLimiter({ ...config, rateLimitGlobalMax: 2, rateLimitGlobalWindowMs: 1500 });
+  assert(global.check('client-1', 'accounts').allowed);
+  assert(global.check('client-2', 'rpc').allowed);
+  const rejected = global.check('client-3');
+  assert.equal(rejected.allowed, false);
+  assert.equal(rejected.scope, 'global');
+  assert.equal(rejected.retryAfterSeconds, 2);
+  assert.equal(global.getTrackedKeyCount(), 2, 'Global refusals must not allocate a client counter');
+  now += 1500;
+  assert(global.check('client-3').allowed);
+  const admissions = new RateLimiter({ ...config, rateLimitGlobalMax: 4, rateLimitMaxKeys: 2 });
+  assert(admissions.check('first').allowed);
+  assert(admissions.check('first').allowed);
+  for (let i = 0; i < 5; i++) {
+    const refused = admissions.check('first');
+    assert.equal(refused.allowed, false);
+    assert.equal(refused.scope, 'client');
+  }
+  assert(admissions.check('second').allowed, 'Client refusals must not exhaust the global budget');
+  for (let i = 0; i < 5; i++) {
+    const refused = admissions.check(`excess-${i}`);
+    assert.equal(refused.allowed, false);
+    assert.equal(refused.scope, 'capacity');
+  }
+  assert.equal(admissions.getTrackedKeyCount(), 2, 'Capacity refusals must not allocate client counters');
+  assert(admissions.check('second').allowed, 'Capacity refusals must leave room for admitted clients');
+  assert.equal(admissions.check('third').scope, 'global', 'Four admitted requests fill the global budget');
+
   const disabled = new RateLimiter({ ...config, rateLimitEnabled: false });
   for (let i = 0; i < 5; i++) assert(disabled.check('same').allowed);
   assert.equal(disabled.check('same').retryAfterSeconds, 2);

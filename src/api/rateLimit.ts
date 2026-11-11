@@ -12,83 +12,80 @@ export function rateLimitKey(request: { headers: IncomingHttpHeaders; socket: { 
   }
   return { key: request.socket.remoteAddress ?? 'unknown', identity: 'socket' };
 }
-const MAX_COUNTERS = 50_000;
+
+type Counter = { count: number; resetAt: number };
+type RateLimitScope = 'client' | 'global' | 'capacity';
 
 export class RateLimiter {
-  private enabled: boolean;
-  private defaults: { windowMs: number; max: number };
-  private routeBuckets: Record<RateLimitBucketName, { windowMs: number; max: number }>;
-  private counters = new Map<string, { count: number; resetAt: number }>();
-  private lastCleanup = 0;
+  private readonly counters = new Map<RateLimitBucketName, Map<string, Counter>>();
+  private trackedKeys = 0;
   private nextExpiryAt = Infinity;
-  private cleanupIntervalMs: number;
+  private latestWindowStart = 0;
+  private global: Counter = { count: 0, resetAt: 0 };
 
-  constructor(config: Config) {
-    this.enabled = config.rateLimitEnabled;
-    this.defaults = { windowMs: config.rateLimitWindowMs, max: config.rateLimitMax };
-    this.routeBuckets = config.rateLimitBuckets;
-    this.cleanupIntervalMs = Math.max(
-      5_000,
-      Math.min(...Object.values(this.routeBuckets).map((entry) => entry.windowMs), this.defaults.windowMs)
-    );
-  }
+  constructor(private readonly config: Config) {}
 
   isEnabled() {
-    return this.enabled;
+    return this.config.rateLimitEnabled;
   }
 
-  check(key: string, bucketName: RateLimitBucketName = 'default') {
-    const bucketConfig = this.routeBuckets[bucketName] ?? this.defaults;
-    const windowMs = bucketConfig.windowMs;
-    const max = bucketConfig.max;
-    if (!this.enabled) {
-      return { allowed: true, remaining: max, resetAt: Date.now() + windowMs, bucket: bucketName, limit: max, retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)) };
+  getTrackedKeyCount() {
+    return this.trackedKeys;
+  }
+
+  check(key: string, bucketName: RateLimitBucketName = 'default', now = Date.now()) {
+    const { max, windowMs } = this.config.rateLimitBuckets[bucketName];
+    const result = (scope: RateLimitScope, allowed: boolean, remaining: number, limit: number, resetAt: number) => ({
+      scope, allowed, remaining, limit, resetAt, bucket: bucketName,
+      retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000))
+    });
+
+    if (!this.isEnabled()) return result('client', true, max, max, now + windowMs);
+
+    if (now >= this.global.resetAt) {
+      this.global = { count: 0, resetAt: now + this.config.rateLimitGlobalWindowMs };
+    }
+    if (this.global.count >= this.config.rateLimitGlobalMax) {
+      return result('global', false, 0, this.config.rateLimitGlobalMax, this.global.resetAt);
     }
 
-    const cacheKey = `${bucketName}:${key}`;
-    const now = Date.now();
-    let bucket = this.counters.get(cacheKey);
-    if (!bucket || bucket.resetAt <= now) {
-      this.counters.delete(cacheKey);
-      this.cleanup(now, this.counters.size >= MAX_COUNTERS);
-      bucket = { count: 0, resetAt: now + windowMs };
-      this.counters.set(cacheKey, bucket);
-      this.nextExpiryAt = Math.min(this.nextExpiryAt, bucket.resetAt);
+    if (now >= this.nextExpiryAt) this.pruneExpired(now);
+    let clients = this.counters.get(bucketName);
+    if (!clients) {
+      clients = new Map();
+      this.counters.set(bucketName, clients);
+    }
+    let counter = clients.get(key);
+    if (!counter) {
+      if (this.trackedKeys >= this.config.rateLimitMaxKeys) {
+        return result('capacity', false, 0, this.config.rateLimitMaxKeys, this.nextExpiryAt);
+      }
+      // Keep windows in start order even if the wall clock moves backwards.
+      this.latestWindowStart = Math.max(this.latestWindowStart, now);
+      counter = { count: 0, resetAt: this.latestWindowStart + windowMs };
+      clients.set(key, counter);
+      this.trackedKeys++;
+      this.nextExpiryAt = Math.min(this.nextExpiryAt, counter.resetAt);
     }
 
-    bucket.count += 1;
-    const remaining = Math.max(0, max - bucket.count);
-    this.cleanup(now);
-    return {
-      allowed: bucket.count <= max,
-      remaining,
-      resetAt: bucket.resetAt,
-      bucket: bucketName,
-      limit: max,
-      retryAfterSeconds: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))
-    };
+    if (counter.count >= max) return result('client', false, 0, max, counter.resetAt);
+    counter.count++;
+    this.global.count++;
+    return result('client', true, max - counter.count, max, counter.resetAt);
   }
 
-  getConfig() {
-    return {
-      enabled: this.enabled,
-      windowMs: this.defaults.windowMs,
-      max: this.defaults.max,
-      buckets: this.routeBuckets
-    };
-  }
-
-  private cleanup(now: number, atCapacity = false) {
-    if (!atCapacity && now - this.lastCleanup < this.cleanupIntervalMs) return;
-    this.lastCleanup = now;
-    if (now >= this.nextExpiryAt) {
-      this.nextExpiryAt = Infinity;
-      for (const [key, bucket] of this.counters) {
-        if (bucket.resetAt <= now) this.counters.delete(key);
-        else this.nextExpiryAt = Math.min(this.nextExpiryAt, bucket.resetAt);
+  private pruneExpired(now: number) {
+    this.nextExpiryAt = Infinity;
+    // Each route class has one window duration. Its map is in expiry order.
+    for (const clients of this.counters.values()) {
+      for (const [key, counter] of clients) {
+        if (counter.resetAt > now) {
+          this.nextExpiryAt = Math.min(this.nextExpiryAt, counter.resetAt);
+          break;
+        }
+        clients.delete(key);
+        this.trackedKeys--;
       }
     }
-    // Map order is the start order of the windows, including a restarted expired window.
-    if (atCapacity && this.counters.size >= MAX_COUNTERS) this.counters.delete(this.counters.keys().next().value!);
   }
 }
