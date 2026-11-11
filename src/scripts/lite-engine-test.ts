@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
-import { createServer, type AddressInfo } from 'node:net';
+import { connect, createServer, type AddressInfo, type Socket } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { performance } from 'node:perf_hooks';
 import type { ADNLClientTCP } from 'adnl';
 import { Codecs } from 'ton-lite-client/dist/schema';
 import { TLReadBuffer, TLWriteBuffer, type TLFunction } from 'ton-tl';
-import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError, UnusableLiteAnswer } from '../data/boundedLiteEngine';
+import { AbortableLitePeer, answeredUnavailable, BoundedLiteEngine, BoundedLiteQueryError, LiteServerAnswerError,
+  UnusableLiteAnswer } from '../data/boundedLiteEngine';
 import { ChainReadError } from '../data/dataSource';
 import { FakeLiteEngine } from './support/fakeLiteEngine';
 
@@ -110,6 +111,27 @@ async function main() {
     assert.ok(choosy.health()[0].failures > 0, 'an invalid answer remains a peer failure');
   } finally { choosy.close(); }
 
+  // Pruned history ("lt not in db") is answered the same way by every non-archival peer. Counting it
+  // as a peer failure benched the whole healthy pool and left current reads with no peer at all.
+  const pruned = new FakeLiteEngine(async () => { throw new LiteServerAnswerError(651, 'cannot find block: lt not in db'); });
+  const archival = new FakeLiteEngine(async () => 11);
+  const answering = new BoundedLiteEngine([pruned, archival]);
+  try {
+    assert.equal(await answering.query(method, {}), 11, 'an error answer asks another peer, which may still hold the data');
+    archival.ready = false;
+    for (let round = 0; round < 4; round++) {
+      const answer = await answering.query(method, {}).then(() => undefined, (caught: unknown) => caught);
+      assert.ok(answer instanceof BoundedLiteQueryError && answeredUnavailable(answer), 'every reachable peer answered it cannot serve this');
+    }
+    assert.equal(pruned.requests.length, 5, 'error answers never open a circuit');
+    assert.deepEqual(answering.health().map(row => [row.failures, row.open]), [[0, false], [0, false]],
+      'an error answer is never a peer failure');
+    pruned.handler = async () => { throw new Error('connection reset'); };
+    const failed = await answering.query(method, {}).then(() => undefined, (caught: unknown) => caught);
+    assert.ok(failed instanceof BoundedLiteQueryError && !answeredUnavailable(failed), 'a transport failure is not an answer');
+    assert.ok(answering.health()[0].failures > 0, 'a transport failure remains a peer failure');
+  } finally { answering.close(); }
+
   const uncertain = new FakeLiteEngine(async () => { throw new Error('connection lost after write'); });
   const duplicate = new FakeLiteEngine(async () => 1);
   const submitter = new BoundedLiteEngine([uncertain, duplicate]);
@@ -126,10 +148,17 @@ async function main() {
     write(packet: Buffer) { this.packets.push(packet); }
     end() { this.ended = true; this.emit('close'); }
     reply(index: number, value: number) {
+      const data = new TLWriteBuffer(); data.writeInt32(value);
+      this.answer(index, data.build());
+    }
+    replyError(index: number, code: number, message: string) {
+      const data = new TLWriteBuffer(); Codecs.liteServer_Error.encode({ kind: 'liteServer.error', code, message }, data);
+      this.answer(index, data.build());
+    }
+    private answer(index: number, answer: Buffer) {
       const request = Codecs.adnl_Message.decode(new TLReadBuffer(this.packets[index]));
       assert.equal(request.kind, 'adnl.message.query'); if (request.kind !== 'adnl.message.query') throw new Error('query expected');
-      const data = new TLWriteBuffer(); data.writeInt32(value);
-      const packet = new TLWriteBuffer(); Codecs.adnl_Message.encode({ kind: 'adnl.message.answer', queryId: request.queryId, answer: data.build() }, packet);
+      const packet = new TLWriteBuffer(); Codecs.adnl_Message.encode({ kind: 'adnl.message.answer', queryId: request.queryId, answer }, packet);
       this.emit('data', packet.build());
     }
   }
@@ -147,12 +176,41 @@ async function main() {
     assert.equal(await live, 42, 'cancelling one real ADNL query does not disconnect another');
     assert.equal(transport.ended, false);
     await assert.rejects(native.query(method, {}, { timeout: 5 }), ChainReadError);
+    const refused = native.query(method, {}, { timeout: 5_000 });
+    transport.replyError(transport.packets.length - 1, 651, 'lt not in db');
+    const refusal = await refused.then(() => undefined, (caught: unknown) => caught);
+    assert.ok(refusal instanceof LiteServerAnswerError && refusal.code === 651 && refusal.message === 'lt not in db',
+      'a liteServer.error packet is an answer that keeps its code');
     const pending = native.query(method, {}, { timeout: 5_000 });
     native.close();
     await assert.rejects(pending, /closed/);
     assert.equal(transport.ended, true);
     assert.equal(native.isClosed(), true);
   } finally { native.close(); }
+
+  // A busy process (a long synchronous task or GC) must not turn an answer that arrived in time into a
+  // timeout or a peer failure. The answer's socket callback is queued while the process is busy, so the
+  // expired timers run before it; the timers yield to that I/O first.
+  const stalled = new Transport();
+  const stallPeer = new AbortableLitePeer('tcp://127.0.0.1:1', Buffer.alloc(32), () => stalled as unknown as ADNLClientTCP);
+  const stallEngine = new BoundedLiteEngine([stallPeer]);
+  const relay = createServer(); relay.listen(0, '127.0.0.1'); await once(relay, 'listening');
+  const relayed = once(relay, 'connection');
+  const wire = connect((relay.address() as AddressInfo).port, '127.0.0.1'); await once(wire, 'connect');
+  const [far] = await relayed as [Socket];
+  try {
+    await delay(0);
+    const answer = stallEngine.query(method, {}, { timeout: 30 });
+    wire.on('data', chunk => {
+      if (String(chunk) !== 'busy') { stalled.reply(0, 7); return; }
+      far.write('answer');
+      const until = performance.now() + 150; while (performance.now() < until) { /* the process is busy */ }
+    });
+    far.write('busy');
+    assert.equal(await answer, 7, 'an answer that arrived while the process was busy wins over expired timers');
+    assert.deepEqual(stallEngine.health().map(row => [row.failures, row.open]), [[0, false]]);
+  } finally { wire.destroy(); far.destroy(); stallEngine.close(); await new Promise<void>(resolve => relay.close(() => resolve())); }
   console.log('Lite engine: health ordering, circuit exclusion, delayed single hedge, cancellation and owned ADNL lifecycle passed');
+  console.log('Lite engine: error answers ask another peer and bench none; a busy process blames no peer');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

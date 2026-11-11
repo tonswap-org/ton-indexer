@@ -485,7 +485,8 @@ export class IndexerService {
     // enters MemoryStore or any ordinary read's pending/completed cache.
     const captured = calls.map(call => call.kind === 'account' ? { ...call } :
       { ...call, args: parseTuple(serializeTuple(call.args)) });
-    const read = await withReadDeadline(options, 18_000, signal => this.source.read(captured, { signal }));
+    // A user's current read runs on its own lite lane: indexing load or failures cannot leave it without a peer.
+    const read = await withReadDeadline(options, 18_000, signal => this.source.read(captured, { signal, lane: 'fresh' }));
     const batch = { network: this.source.network, readContext: { source: 'lite' as const, head: read.head, queriedAt: startedAt }, results: read.results };
     assertFreshReadBatch(batch, captured, this.network, startedAt);
     return { network: batch.network, readContext: batch.readContext, results: batch.results.map(result => {
