@@ -1,16 +1,17 @@
-import { Address, Cell, TupleItem, beginCell, contractAddress, storeStateInit } from '@ton/core';
-import { EventEmitter } from 'node:events';
+import { MAX_FUTURE_HEAD_SECONDS } from './data/freshHead';
+import { readOriginalTransactionEvidence, originalTransactionToToncenter } from './data/transactionEvidence';
+import { isRetiredPerpsGetter } from './data/currentGetters';
+import { Address, Cell, TupleItem, beginCell, parseTuple, serializeTuple } from '@ton/core';
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
 import {
-  TonDataSource,
-  TonSccpBurnProofMaterial,
-  TonSccpBurnProofMaterialRequest
+  RawTransaction,
+  ChainSource, ChainHead, ChainReadError,
+  transactionPageIsLinkedInclusiveSegment,
+  transactionPageReachesHistoryStart
 } from './data/dataSource';
 import { OpcodeSets } from './utils/opcodes';
 import {
-  AccountBalance,
-  AccountBalances,
   AccountState,
   HealthStatus,
   IndexedTx,
@@ -20,28 +21,45 @@ import {
   UiTx,
 } from './models';
 import { classifyTransaction } from './utils/txClassifier';
-import { JettonMetadata } from './models';
 import { MetricsCollector } from './metricsCollector';
 import { PoolTracker } from './poolTracker';
-import { SoraTonCheckpointResolver } from './soraCheckpoint';
 import { LRUCache } from 'lru-cache';
+import { resolveDlmmPoolSettlementEvidence } from './utils/dlmmSettlementEvidence';
+import { assertFreshReadBatch, FreshReadUnavailableError, type FreshReadCall } from './data/freshRead';
+
+import { createSnapshotReader, type SnapshotReader, type SnapshotReadOptions } from './api/snapshotReader';
+
+type ServiceReadOptions = { signal?: AbortSignal };
+
+// Bound work even if a faulty source ignores its signal. The source still receives
+// the real cancellation signal, and an abandoned operation cannot publish state.
+async function withReadDeadline<T>(options: ServiceReadOptions, ms: number, load: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const reason = () => options.signal?.reason instanceof ChainReadError ? options.signal.reason
+    : new ChainReadError(options.signal?.reason?.name === 'TimeoutError' ? 'upstream_timeout' : 'upstream_unavailable');
+  const cancel = () => controller.abort(reason());
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  const timer = setTimeout(() => controller.abort(new ChainReadError('upstream_timeout')), Math.max(1, ms));
+  if (options.signal?.aborted) cancel();
+  let onAbort!: () => void;
+  try {
+    controller.signal.throwIfAborted();
+    return await Promise.race([load(controller.signal), new Promise<never>((_, reject) => {
+      onAbort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      if (controller.signal.aborted) onAbort();
+    })]);
+  } finally {
+    clearTimeout(timer); options.signal?.removeEventListener('abort', cancel);
+    if (onAbort) controller.signal.removeEventListener('abort', onAbort);
+  }
+}
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRunResult = {
   stack: ToncenterStackEntry[];
   exit_code: number;
-  gas_used: number;
-};
-
-export type BalanceChangeEvent = {
-  type: 'balances_changed';
-  address: string;
-  seq: number;
-  ts: number;
-  hints: {
-    ton: boolean;
-    jettons: string[] | null;
-  };
+  gas_used: number | null;
 };
 
 const normalizeAddress = (value: string) => {
@@ -52,9 +70,18 @@ const normalizeAddress = (value: string) => {
   }
 };
 
-const balanceStateSignature = (state?: AccountState) => {
-  if (!state) return '';
-  return [state.balance ?? '', state.lastTxLt ?? '', state.lastTxHash ?? ''].join(':');
+const transactionIdentity = (transaction: { lt: string; hash: string }) =>
+  `${transaction.lt}:${transaction.hash}`;
+
+const retainedExactInitialTransactionPage = (
+  raw: readonly RawTransaction[],
+  retained: readonly IndexedTx[]
+) => {
+  const rawIdentities = new Set(raw.map(transactionIdentity));
+  if (rawIdentities.size !== raw.length || retained.length !== raw.length) return false;
+  const retainedIdentities = new Set(retained.map(transactionIdentity));
+  return retainedIdentities.size === retained.length &&
+    [...rawIdentities].every((identity) => retainedIdentities.has(identity));
 };
 
 const normalizeTokenSymbol = (value?: string | null) => {
@@ -74,8 +101,15 @@ export type AccountSwapExecution = {
   reason?: string;
   payToken?: string;
   receiveToken?: string;
+  /** Original requested wallet debit, distinct from verified consumption. */
+  requestedPayAmount?: string;
+  /** Verified input consumption after any unused-input return. */
   payAmount?: string;
+  returnedPayAmount?: string;
   receiveAmount?: string;
+  receiveAmountSource?: 'actual';
+  minimumReceiveAmount?: string;
+  receipt?: { ledgerEventId: string; generation: string; assetId: string };
   queryId?: string;
   executionType: SwapExecutionType;
   twapSlice?: number;
@@ -85,70 +119,53 @@ export type AccountSwapExecution = {
   twapRunId?: string;
 };
 
-export type AccountSwapStatusCounts = {
-  success: number;
-  failed: number;
-  pending: number;
+export type MarketCandleInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+
+export type MarketCandle = {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volumeBase: number;
+  volumeQuote: number;
+  tradeCount: number;
+  sourceTxIds: string[];
 };
 
-export type AccountSwapExecutionTypeCounts = {
-  market: number;
-  limit: number;
-  twap: number;
-  unknown: number;
-};
-
-export type AccountSwapsSummary = {
-  status_counts: AccountSwapStatusCounts;
-  execution_type_counts: AccountSwapExecutionTypeCounts;
-  twap_run_count: number;
-  pending_limit_count: number;
-};
-
-export type AccountPendingLimitOrder = {
-  txId: string;
-  lt: string;
-  hash: string;
-  utime: number;
-  status: SwapExecutionStatus;
-  payToken?: string;
-  receiveToken?: string;
-  payAmount?: string;
-  receiveAmount?: string;
-  queryId?: string;
-  querySequence?: number;
-  queryNonce?: number;
-};
-
-export type AccountTwapRunSummary = {
-  id: string;
-  payToken?: string;
-  receiveToken?: string;
-  totalSlices?: number;
-  confirmedSlices: number;
-  pendingSlices: number;
-  failedSlices: number;
-  firstUtime: number;
-  lastUtime: number;
-  status: 'running' | 'completed' | 'partial' | 'failed';
-};
-
-export type AccountSwapsResponse = {
-  address: string;
-  total_swaps: number;
-  returned_swaps: number;
+export type MarketCandlesResponse = {
+  market_key: string;
+  market_address: string;
+  interval: MarketCandleInterval;
+  from_utime: number | null;
+  to_utime: number | null;
+  candle_count: number;
   history_complete: boolean;
   synced_at: number;
   network: Network;
-  swaps: AccountSwapExecution[];
-  summary: AccountSwapsSummary;
-  twap_runs: AccountTwapRunSummary[];
-  pending_limits: AccountPendingLimitOrder[];
+  candles: MarketCandle[];
 };
 
-export type JettonTransferPayloadResponse = {
-  custom_payload: string | null;
-  state_init: string | null;
+const MARKET_CANDLE_INTERVAL_SECONDS: Record<MarketCandleInterval, number> = {
+  '1m': 60,
+  '5m': 5 * 60,
+  '15m': 15 * 60,
+  '1h': 60 * 60,
+  '4h': 4 * 60 * 60,
+  '1d': 24 * 60 * 60,
+};
+
+const rawAmountToNumber = (value: string | undefined, decimals: number): number | null => {
+  if (!value || !/^\d+$/.test(value)) return null;
+  let raw: bigint;
+  try {
+    raw = BigInt(value);
+  } catch {
+    return null;
+  }
+  if (raw <= 0n) return null;
+  const result = Number(raw) / 10 ** decimals;
+  return Number.isFinite(result) && result > 0 ? result : null;
 };
 
 const tupleItemBigInt = (item?: TupleItem): bigint | null => {
@@ -165,14 +182,6 @@ const tupleItemBigIntString = (item?: TupleItem): string | null => {
 const tupleItemBool = (item?: TupleItem): boolean => {
   const value = tupleItemBigInt(item);
   return value !== null && value !== 0n;
-};
-
-const tupleItemCell = (item?: TupleItem): Cell | null => {
-  if (!item || item.type === 'null') return null;
-  if (item.type === 'cell' || item.type === 'slice' || item.type === 'builder') {
-    return item.cell as Cell;
-  }
-  return null;
 };
 
 const tupleItemAddress = (item?: TupleItem): string | null => {
@@ -192,6 +201,9 @@ const tupleItemAddress = (item?: TupleItem): string | null => {
   }
 };
 
+// `engine_config` is a canonical, fixed-width getter for the first Perps
+// release. Keep its arity and fee slot explicit so a truncated or unrelated
+// tuple can never be mistaken for a trade-fee quote.
 const toBocBase64 = (cell: any): string | null => {
   if (!cell) return null;
   try {
@@ -202,6 +214,8 @@ const toBocBase64 = (cell: any): string | null => {
 };
 
 const tupleItemToTvmStackEntry = (item: TupleItem): Record<string, unknown> => {
+  if (item.type === 'null') return { '@type': 'tvm.stackEntryNull' };
+  if (item.type === 'nan') return { '@type': 'tvm.stackEntryNaN' };
   if (item.type === 'int') {
     return {
       '@type': 'tvm.stackEntryNumber',
@@ -231,9 +245,9 @@ const tupleItemToTvmStackEntry = (item: TupleItem): Record<string, unknown> => {
   }
   if (item.type === 'builder') {
     return {
-      '@type': 'tvm.stackEntryCell',
-      cell: {
-        '@type': 'tvm.cell',
+      '@type': 'tvm.stackEntryBuilder',
+      builder: {
+        '@type': 'tvm.builder',
         bytes: toBocBase64(item.cell) ?? '',
       },
     };
@@ -247,14 +261,7 @@ const tupleItemToTvmStackEntry = (item: TupleItem): Record<string, unknown> => {
       },
     };
   }
-  // TonClient does not handle stackEntryNull; use an empty tuple as a null-equivalent.
-  return {
-    '@type': 'tvm.stackEntryTuple',
-    tuple: {
-      '@type': 'tvm.tuple',
-      elements: [],
-    },
-  };
+  throw new Error('Unsupported nested TVM stack item.');
 };
 
 const tupleItemToToncenterStackEntry = (item: TupleItem): ToncenterStackEntry => {
@@ -288,578 +295,7 @@ const unwrapTupleStack = (stack: TupleItem[]): TupleItem[] => {
 
 const buildSliceCell = (addressRaw: string) => beginCell().storeAddress(Address.parse(addressRaw)).endCell();
 
-const parseAnchorStateCell = (cell: Cell): AnchorStateSnapshot | null => {
-  try {
-    const slice = cell.beginParse();
-    const quorumBps = slice.loadUintBig(16);
-    const maxAgeSeconds = slice.loadIntBig(32);
-    const epsilonExtBps = slice.loadIntBig(32);
-    const epsilonClipBps = slice.loadIntBig(32);
-    const trimCount = slice.loadUintBig(8);
-    const totalWeight = slice.loadUintBig(64);
-    const ready = slice.loadBit();
-    const quorumMet = slice.loadBit();
-    const price = slice.loadIntBig(128);
-    const minPrice = slice.loadIntBig(128);
-    const maxPrice = slice.loadIntBig(128);
-    const varianceBps = slice.loadIntBig(32);
-    const weight = slice.loadUintBig(64);
-    const quorumWeight = slice.loadUintBig(64);
-    const sampleCount = slice.loadUintBig(32);
-    const latestTimestamp = slice.loadIntBig(64);
-    return {
-      quorumBps: quorumBps.toString(10),
-      maxAgeSeconds: maxAgeSeconds.toString(10),
-      epsilonExtBps: epsilonExtBps.toString(10),
-      epsilonClipBps: epsilonClipBps.toString(10),
-      trimCount: trimCount.toString(10),
-      totalWeight: totalWeight.toString(10),
-      ready,
-      quorumMet,
-      price: price.toString(10),
-      minPrice: minPrice.toString(10),
-      maxPrice: maxPrice.toString(10),
-      varianceBps: varianceBps.toString(10),
-      weight: weight.toString(10),
-      quorumWeight: quorumWeight.toString(10),
-      sampleCount: sampleCount.toString(10),
-      latestTimestamp: latestTimestamp.toString(10)
-    };
-  } catch {
-    return null;
-  }
-};
-
-const GOVERNANCE_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const GOVERNANCE_MAX_SCAN_DEFAULT = 20;
-const GOVERNANCE_MAX_SCAN_LIMIT = 64;
-const GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
-const GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
-const GOVERNANCE_SCAN_BATCH_SIZE = 5;
-const FARM_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const FARM_MAX_SCAN_DEFAULT = 20;
-const FARM_MAX_SCAN_LIMIT = 64;
-const FARM_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
-const FARM_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
-const FARM_SCAN_BATCH_SIZE = 5;
-const OPTIONS_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const OPTIONS_MAX_SCAN_DEFAULT = 2_048;
-const OPTIONS_MAX_SCAN_LIMIT = 1_000_000;
-const OPTIONS_WINDOW_SIZE_DEFAULT = 24;
-const OPTIONS_WINDOW_SIZE_LIMIT = 256;
-const OPTIONS_MAX_EMPTY_WINDOWS_DEFAULT = 2;
-const OPTIONS_MAX_EMPTY_WINDOWS_LIMIT = 64;
-const OPTIONS_MIN_PROBE_WINDOWS_DEFAULT = 8;
-const OPTIONS_MIN_PROBE_WINDOWS_LIMIT = 4_096;
-const COVER_SNAPSHOT_CACHE_TTL_MS = 30_000;
-const COVER_MAX_SCAN_DEFAULT = 20;
-const COVER_MAX_SCAN_LIMIT = 64;
-const COVER_MAX_CONSECUTIVE_MISSES_DEFAULT = 2;
-const COVER_MAX_CONSECUTIVE_MISSES_LIMIT = 8;
-const COVER_SCAN_BATCH_SIZE = 5;
-
-const GET_METHOD_CACHE_TTL_MS = 1_000;
-const GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS = 30_000;
-const GET_METHOD_CACHE_ENTRY_MIN_TTL_MS = 60_000;
-
-// Some getters are used as liveness/confirmation signals (e.g. Jetton wallet `wallet_data`).
-// Caching these for 30s makes UI/automation flows flaky because balance changes are invisible
-// during the cache window. Keep these on the base (short) TTL even when they take no args.
-const GET_METHOD_CACHE_NO_ARGS_FAST_METHODS = new Set(['wallet_data']);
-
-const DEFI_SNAPSHOT_CACHE_TTL_MS = 5_000;
 const DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS = 5_000;
-
-type GovernanceLockSnapshot = {
-  amount: string | null;
-  unlockTime: string | null;
-  tier: string | null;
-  activatedAt: string | null;
-  weight: string | null;
-};
-
-type GovernanceProposalSnapshot = {
-  id: string;
-  status: string | null;
-  passed: string | null;
-  yesWeight: string | null;
-  noWeight: string | null;
-  abstainWeight: string | null;
-  quorumWeight: string | null;
-  totalWeightSnapshot: string | null;
-  startTime: string | null;
-  minCloseTime: string | null;
-  maxCloseTime: string | null;
-  cooldownEnd: string | null;
-  target: string | null;
-  value: string | null;
-  descriptionHash: string | null;
-};
-
-type GovernanceSnapshotResponse = {
-  voting: string;
-  owner: string | null;
-  lock: GovernanceLockSnapshot | null;
-  proposal_count: number;
-  scanned: number;
-  proposals: GovernanceProposalSnapshot[];
-  source: 'lite' | 'http4';
-  network: Network;
-  updated_at: number;
-};
-
-type FarmFactoryStatusSnapshot = {
-  governance: string | null;
-  enabled: boolean;
-};
-
-type FarmSnapshotRecord = {
-  id: string;
-  farm: string | null;
-  staker: string | null;
-  sponsor: string | null;
-  rewardRoot: string | null;
-  rewardWallet: string | null;
-  rewardAmount: string | null;
-  duration: string | null;
-  sponsorFeeBps: string | null;
-  startTime: string | null;
-  endTime: string | null;
-  gasBudget: string | null;
-  status: string | null;
-  createdAt: string | null;
-  backlogLimit: string | null;
-  resumeBacklog: string | null;
-};
-
-type FarmSnapshotResponse = {
-  factory: string;
-  status: FarmFactoryStatusSnapshot | null;
-  next_id: string | null;
-  farm_count: number;
-  scanned: number;
-  farms: FarmSnapshotRecord[];
-  source: 'lite' | 'http4';
-  network: Network;
-  updated_at: number;
-};
-
-type OptionFactoryStatusSnapshot = {
-  governance: string | null;
-  enabled: boolean;
-};
-
-type OptionSeriesSnapshotRecord = {
-  seriesId: string;
-  templateId: string | null;
-  optionKind: string | null;
-  optionAddress: string | null;
-  expiry: string | null;
-  maxNotional: string | null;
-  premiumBps: string | null;
-  collateralMultiplierBps: string | null;
-  openNotional: string | null;
-  status: string | null;
-  settlementTimestamp: string | null;
-  underlyingPool: string | null;
-  quotePool: string | null;
-  collateralLocked: string | null;
-  correlationScaleBps: string | null;
-  correlationBps: string | null;
-  correlationDispersionBps: string | null;
-  correlationTimestamp: string | null;
-  isActive: boolean;
-  remainingNotional: string | null;
-};
-
-type OptionsSnapshotResponse = {
-  factory: string;
-  status: OptionFactoryStatusSnapshot | null;
-  series_count: number;
-  scanned: number;
-  series: OptionSeriesSnapshotRecord[];
-  source: 'lite' | 'http4';
-  network: Network;
-  updated_at: number;
-};
-
-type CoverStateSnapshot = {
-  totalPolicies: string | null;
-  activePolicies: string | null;
-  breachingPolicies: string | null;
-  claimablePolicies: string | null;
-  claimedPolicies: string | null;
-  nextWakeTimestamp: string | null;
-  lastSender: string | null;
-  lastJobId: string | null;
-  lastWork: string | null;
-  lastTimestamp: string | null;
-  lastProcessed: string | null;
-  lastRemaining: string | null;
-  vault: string | null;
-  riskVault: string | null;
-  riskBucketId: string | null;
-};
-
-type CoverPolicySnapshot = {
-  id: string;
-  owner: string | null;
-  pool: string | null;
-  lowerBound: string | null;
-  upperBound: string | null;
-  payout: string | null;
-  windowSeconds: string | null;
-  requiredObservations: string | null;
-  breachStart: string | null;
-  breachSeconds: string | null;
-  lastObservation: string | null;
-  lastHealthyObservation: string | null;
-  breachObservations: string | null;
-  status: string | null;
-  riskVault: string | null;
-  riskBucketId: string | null;
-};
-
-type CoverSnapshotResponse = {
-  manager: string;
-  owner: string | null;
-  enabled: boolean | null;
-  state: CoverStateSnapshot | null;
-  policy_count: number;
-  scanned: number;
-  policies: CoverPolicySnapshot[];
-  source: 'lite' | 'http4';
-  network: Network;
-  updated_at: number;
-};
-
-type VolIndexConfigSnapshot = {
-  seriesManager: string | null;
-  oracle: string | null;
-  automation: string | null;
-  perpsEngine: string | null;
-  coverManager: string | null;
-  minLiquidityBps: string | null;
-  staleSeconds: string | null;
-  emaAlphaBps: string | null;
-};
-
-type VolIndexStateSnapshot = {
-  impliedVolBps: string | null;
-  realizedVolBps: string | null;
-  varianceSpeedBps: string | null;
-  sampleCount: string | null;
-  eligibleSeries: string | null;
-  lastPremiumTs: string | null;
-  lastRealizedTs: string | null;
-  lastPublishTs: string | null;
-  lastSamplePrice: string | null;
-  lastSampleTs: string | null;
-};
-
-type VolIndexRouteSnapshot = {
-  exists: boolean;
-  marketId: string | null;
-  sourcePool: string | null;
-  coverPolicyId: string | null;
-};
-
-type VolIndexSnapshotResponse = {
-  vol_index: string;
-  config: VolIndexConfigSnapshot | null;
-  state: VolIndexStateSnapshot | null;
-  pool: string | null;
-  pool_state: VolIndexStateSnapshot | null;
-  route_ids: number[];
-  routes: Record<string, VolIndexRouteSnapshot>;
-  source: 'lite' | 'http4';
-  network: Network;
-  updated_at: number;
-};
-
-type DefiSnapshotSectionOk<T> = {
-  ok: true;
-  data: T;
-};
-
-type DefiSnapshotSectionErr = {
-  ok: false;
-  error: string;
-  data: null;
-};
-
-type DefiSnapshotSection<T> = DefiSnapshotSectionOk<T> | DefiSnapshotSectionErr;
-
-type DefiSnapshotRequest = {
-  owner?: string | null;
-  include?: {
-    activation?: boolean;
-    dlmmRegistry?: boolean;
-    reserveBalances?: boolean;
-    systemHealth?: boolean;
-    systemHealthDetailed?: boolean;
-    modules?: boolean;
-    moduleGovernance?: boolean;
-    governance?: boolean;
-    farms?: boolean;
-    cover?: boolean;
-  };
-  options?: {
-    governance?: { maxScan?: number; maxMisses?: number };
-    farms?: { maxScan?: number; maxMisses?: number };
-    cover?: { maxScan?: number; maxMisses?: number };
-  };
-  contracts: {
-    activationGate?: string | null;
-    dlmmRegistry?: string | null;
-    t3Hub?: string | null;
-    controlMesh?: string | null;
-    riskVault?: string | null;
-    feeRouter?: string | null;
-    buybackExecutor?: string | null;
-    automationRegistry?: string | null;
-    anchorGuard?: string | null;
-    clusterGuard?: string | null;
-    voting?: string | null;
-    farmFactory?: string | null;
-    coverManager?: string | null;
-  };
-  modules?: Array<{
-    key: string;
-    address: string;
-    enabledGetter?: string | null;
-    governanceGetter?: string | null;
-  }>;
-};
-
-type ActivationGateSnapshot = {
-  burned: string | null;
-  target: string | null;
-  ready: boolean;
-  activated: boolean;
-  activatedAt: string | null;
-};
-
-type DlmmRegistryMetaSnapshot = {
-  governance: string | null;
-  enabled: boolean;
-  withdrawalsOnly: boolean;
-  perpsWeightEnabled: boolean;
-};
-
-type ReserveBalancesSnapshot = {
-  usdt: string | null;
-  usdc: string | null;
-  kusd: string | null;
-};
-
-type ControlStateSnapshot = {
-  governance: string | null;
-  enabled: boolean;
-  withdrawalsOnly: boolean;
-  sequence: string | null;
-  lastHeartbeatTs: string | null;
-  pegMintFeeBps: string | null;
-  pegRedeemFeeBps: string | null;
-  pegQuotaBps: string | null;
-  pegThrottleBps: string | null;
-  pegHaircutBps: string | null;
-  pegLevel: string | null;
-  pegEscalationScore: string | null;
-  pegRecoveryScore: string | null;
-};
-
-type RiskStateSnapshot = {
-  totalLocked: string | null;
-  totalOutstanding: string | null;
-  totalPending: string | null;
-  totalSurplus: string | null;
-  flags: string | null;
-  registryVersion: string | null;
-};
-
-type RiskBucketStateSnapshot = {
-  exists: boolean;
-  controller: string | null;
-  payoutHook: string | null;
-  liquidationHook: string | null;
-  utilisationCapBps: string | null;
-  payoutCapBps: string | null;
-  collateralMultiplierBps: string | null;
-  outstandingNotional: string | null;
-  lockedCollateral: string | null;
-  pendingPayouts: string | null;
-  automationJobId: string | null;
-  automationCadence: string | null;
-  automationBacklog: string | null;
-  registryVersion: string | null;
-  surplus: string | null;
-  utilisationBps: string | null;
-  deficit: boolean;
-  lastReportTs: string | null;
-};
-
-type FeeRouterStateSnapshot = {
-  balance: string | null;
-  lastSequence: string | null;
-  lastTimestamp: string | null;
-  allocationPeg: string | null;
-  allocationLiquidations: string | null;
-  allocationBuyback: string | null;
-  allocationGas: string | null;
-  allocationEmissions: string | null;
-  allocationReferrals: string | null;
-  referralDemand: string | null;
-  referralPriority: string | null;
-  referralFloor: string | null;
-  referralWeightDirectBps: string | null;
-  referralFlags: string | null;
-  referralThrottleMask: string | null;
-};
-
-type FeeRouterTargetsSnapshot = {
-  t3Peg: string | null;
-  t3Liquidations: string | null;
-  peg: string | null;
-  liquidations: string | null;
-  buyback: string | null;
-  gas: string | null;
-  emissions: string | null;
-  referrals: string | null;
-  referralRegistry: string | null;
-};
-
-type BuybackConfigSnapshot = {
-  t3Root: string | null;
-  tsRoot: string | null;
-  tsBurnWallet: string | null;
-  router: string | null;
-  recordTarget: string | null;
-  routerWalletForward: string | null;
-  swapForwardValue: string | null;
-};
-
-type AutomationConfigSnapshot = {
-  queue: string | null;
-};
-
-type AutomationModuleTelemetrySnapshot = {
-  lastTimestamp: string | null;
-  lastStatus: string | null;
-  lastProcessed: string | null;
-  lastRemaining: string | null;
-  successCount: string | null;
-  failureCount: string | null;
-  totalProcessed: string | null;
-};
-
-type JobConfigSnapshot = {
-  maxJobs: string | null;
-  minValue: string | null;
-  maxLaneJobs: string | null;
-  maxPriorityJobs: string | null;
-};
-
-type JobRecordSnapshot = {
-  exists: boolean;
-  jobId: string | null;
-  target: string | null;
-  scheduledAt: string | null;
-  forwardedValue: string | null;
-  dispatchValue: string | null;
-  payloadHash: string | null;
-  attempts: string | null;
-  maxAttempts: string | null;
-  status: string | null;
-  lastDispatchAt: string | null;
-  lastResult: string | null;
-  wakeAt: string | null;
-  ackTimeoutAt: string | null;
-  dispatchHash: string | null;
-  owner: string | null;
-  priority: string | null;
-  lane: string | null;
-  deadlineAt: string | null;
-  maxWork: string | null;
-};
-
-type AnchorConfigSnapshot = {
-  quorumBps: string | null;
-  maxAgeSeconds: string | null;
-  epsilonExtBps: string | null;
-  epsilonClipBps: string | null;
-  trimCount: string | null;
-};
-
-type AnchorStateSnapshot = {
-  quorumBps: string | null;
-  maxAgeSeconds: string | null;
-  epsilonExtBps: string | null;
-  epsilonClipBps: string | null;
-  trimCount: string | null;
-  totalWeight: string | null;
-  ready: boolean;
-  quorumMet: boolean;
-  price: string | null;
-  minPrice: string | null;
-  maxPrice: string | null;
-  varianceBps: string | null;
-  weight: string | null;
-  quorumWeight: string | null;
-  sampleCount: string | null;
-  latestTimestamp: string | null;
-};
-
-type ClusterGuardConfigSnapshot = {
-  reporter: string | null;
-  registry: string | null;
-  vestingSeconds: string | null;
-  warnThreshold: string | null;
-  slashThreshold: string | null;
-};
-
-type SystemHealthSnapshot = {
-  controlState: ControlStateSnapshot | null;
-  riskState: RiskStateSnapshot | null;
-  feeRouterState: FeeRouterStateSnapshot | null;
-  feeRouterTargets: FeeRouterTargetsSnapshot | null;
-  buybackConfig: BuybackConfigSnapshot | null;
-  anchorGuardConfig: AnchorConfigSnapshot | null;
-  anchorGuardState: AnchorStateSnapshot | null;
-  anchorGuardEnabled: boolean | null;
-  anchorGuardGovernance: string | null;
-  clusterGuardConfig: ClusterGuardConfigSnapshot | null;
-};
-
-type SystemHealthDetailedSnapshot = {
-  riskBucketStates: Record<number, RiskBucketStateSnapshot | null>;
-  automationConfig: AutomationConfigSnapshot | null;
-  automationModules: Record<number, AutomationModuleTelemetrySnapshot | null>;
-  jobQueueConfig: JobConfigSnapshot | null;
-  jobQueueJobs: Record<number, JobRecordSnapshot | null>;
-};
-
-type ModuleStatusSnapshot = {
-  governance: string | null;
-  enabled: boolean;
-};
-
-type DefiSnapshotResponse = {
-  owner: string | null;
-  network: Network;
-  updated_at: number;
-  sections: {
-    activation?: DefiSnapshotSection<ActivationGateSnapshot | null>;
-    dlmmRegistry?: DefiSnapshotSection<DlmmRegistryMetaSnapshot | null>;
-    reserveBalances?: DefiSnapshotSection<ReserveBalancesSnapshot | null>;
-    systemHealth?: DefiSnapshotSection<SystemHealthSnapshot>;
-    systemHealthDetailed?: DefiSnapshotSection<SystemHealthDetailedSnapshot>;
-    modules?: DefiSnapshotSection<Record<string, ModuleStatusSnapshot | null>>;
-    governance?: DefiSnapshotSection<GovernanceSnapshotResponse>;
-    farms?: DefiSnapshotSection<FarmSnapshotResponse>;
-    cover?: DefiSnapshotSection<CoverSnapshotResponse>;
-  };
-};
 
 type DlmmPoolsSnapshotRequest = {
   t3Root: string;
@@ -895,121 +331,43 @@ type DlmmPoolsSnapshotResponse = {
 export class IndexerService {
   private config: Config;
   private store: MemoryStore;
-  private source: TonDataSource;
+  private source: ChainSource;
   private opcodes: OpcodeSets;
   private network: Network;
-  private lastMasterSeqno?: number;
-  private lastMasterTimestamp?: number;
+  private lastHead?: ChainHead;
+  private readonly snapshotReader: SnapshotReader;
   private enqueueBackfill?: (address: string) => void;
-  private jettonRoots: Array<{ master: string; symbol?: string }>;
-  private jettonMetaCache = new Map<string, { meta: JettonMetadata | null; updatedAt: number }>();
   private metrics?: MetricsCollector;
   private poolTracker?: PoolTracker;
-  private balanceCache: LRUCache<string, { value: AccountBalance; signature: string }>;
   private txCache: LRUCache<string, { value: any; signature: string }>;
-  private stateCache: LRUCache<string, { value: any; signature: string }>;
-  private governanceSnapshotCache: LRUCache<string, GovernanceSnapshotResponse>;
-  private governanceSnapshotInFlight = new Map<string, Promise<GovernanceSnapshotResponse>>();
-  private farmSnapshotCache: LRUCache<string, FarmSnapshotResponse>;
-  private farmSnapshotInFlight = new Map<string, Promise<FarmSnapshotResponse>>();
-  private optionsSnapshotCache: LRUCache<string, OptionsSnapshotResponse>;
-  private optionsSnapshotInFlight = new Map<string, Promise<OptionsSnapshotResponse>>();
-  private coverSnapshotCache: LRUCache<string, CoverSnapshotResponse>;
-  private coverSnapshotInFlight = new Map<string, Promise<CoverSnapshotResponse>>();
-  private defiSnapshotCache: LRUCache<string, DefiSnapshotResponse>;
-  private defiSnapshotInFlight = new Map<string, Promise<DefiSnapshotResponse>>();
-  private dlmmPoolsSnapshotCache: LRUCache<string, DlmmPoolsSnapshotResponse>;
-  private dlmmPoolsSnapshotInFlight = new Map<string, Promise<DlmmPoolsSnapshotResponse>>();
-  private getMethodSourceCache: LRUCache<string, { exitCode: number; stack: TupleItem[] }>;
-  private getMethodSourceInFlight = new Map<string, Promise<{ exitCode: number; stack: TupleItem[] } | null>>();
-  private getMethodCache: LRUCache<string, ToncenterRunResult>;
-  private getMethodInFlight = new Map<string, Promise<ToncenterRunResult>>();
   private healthCache?: { value: HealthStatus; expiresAt: number };
-  private balanceEventEmitter = new EventEmitter();
-  private balanceEventSeq = 0;
-  private soraTonCheckpointResolver: SoraTonCheckpointResolver;
-
   constructor(
     config: Config,
     store: MemoryStore,
-    source: TonDataSource,
+    source: ChainSource,
     opcodes: OpcodeSets,
     jettonRoots: Array<{ master: string; symbol?: string }>,
     metrics?: MetricsCollector,
-    poolTracker?: PoolTracker
+    poolTracker?: PoolTracker,
+    private readonly runtime: { ledgerStatus?: () => HealthStatus['ledger']; diskState?: () => HealthStatus['disk'] } = {}
   ) {
     this.config = config;
     this.store = store;
     this.source = source;
     this.opcodes = opcodes;
     this.network = config.network;
-    this.jettonRoots = jettonRoots;
+    this.snapshotReader = createSnapshotReader(source);
     this.metrics = metrics;
     this.poolTracker = poolTracker;
-    this.soraTonCheckpointResolver = new SoraTonCheckpointResolver(config);
 
-    const balanceCacheMax = Math.max(1, config.maxAddresses);
-    const stateCacheMax = Math.max(1, config.maxAddresses);
     const txCacheMax = Math.max(
       1000,
       Math.min(config.globalMaxPages, config.maxAddresses * config.maxPagesPerAddress)
     );
 
-    this.balanceCache = new LRUCache({
-      max: balanceCacheMax,
-      ttl: config.balanceCacheTtlMs,
-      allowStale: false,
-    });
-    this.stateCache = new LRUCache({
-      max: stateCacheMax,
-      ttl: config.stateCacheTtlMs,
-      allowStale: false,
-    });
     this.txCache = new LRUCache({
       max: txCacheMax,
       ttl: config.txCacheTtlMs,
-      allowStale: false,
-    });
-    this.governanceSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: GOVERNANCE_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
-    this.farmSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: FARM_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
-    this.optionsSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: OPTIONS_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
-    this.coverSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: COVER_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
-    this.defiSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: DEFI_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
-    this.dlmmPoolsSnapshotCache = new LRUCache({
-      max: 512,
-      ttl: DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS,
-      allowStale: false
-    });
-
-    this.getMethodSourceCache = new LRUCache({
-      max: 5_000,
-      ttl: Math.max(0, Math.trunc(config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS)),
-      allowStale: false,
-    });
-
-    this.getMethodCache = new LRUCache({
-      max: 5_000,
-      ttl: Math.max(0, Math.trunc(config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS)),
       allowStale: false,
     });
   }
@@ -1018,9 +376,9 @@ export class IndexerService {
     this.enqueueBackfill = fn;
   }
 
-  setMasterchainInfo(seqno: number, timestamp?: number) {
-    this.lastMasterSeqno = seqno;
-    this.lastMasterTimestamp = timestamp;
+  setMasterchainInfo(head: ChainHead) {
+    this.lastHead = head;
+    this.healthCache = undefined;
   }
 
   getHealth(): HealthStatus {
@@ -1030,221 +388,22 @@ export class IndexerService {
       }
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const rawLag = this.lastMasterTimestamp ? now - this.lastMasterTimestamp : undefined;
-    // Tolerate ordinary clock skew, but preserve a materially future source
-    // timestamp as a negative lag so production health validation fails closed.
-    const lag = rawLag === undefined ? undefined : rawLag >= -30 ? Math.max(0, rawLag) : rawLag;
-    const response = {
-      lastMasterSeqno: this.lastMasterSeqno,
-      indexerLagSec: lag,
-      liteserverPoolStatus:
-        this.config.dataSource === 'lite'
-          ? this.config.liteserverPool
-            ? 'liteserver:custom'
-            : 'liteserver:ton.org'
-          : this.config.httpEndpoint
-            ? 'http4:custom'
-            : 'http4:auto',
+    const chain = this.source.health();
+    const head = chain.head;
+    const rawAge = head ? Math.floor(Date.now() / 1000) - head.utime : null;
+    // A clock offset outside current-read tolerance must remain visible to operators.
+    const headAgeSec = rawAge !== null && rawAge >= -MAX_FUTURE_HEAD_SECONDS ? Math.max(0, rawAge) : rawAge;
+    const response: HealthStatus = {
+      lastMasterSeqno: this.lastHead?.seqno ?? head?.seqno,
+      indexerLagSec: headAgeSec ?? undefined,
+      chain: { peersConfigured: chain.peersConfigured, peersReady: chain.peersReady,
+        headSeqno: head?.seqno ?? null, headAgeSec },
+      ledger: this.runtime.ledgerStatus?.() ?? 'disabled', disk: this.runtime.diskState?.() ?? 'ok',
     };
     if (this.config.responseCacheEnabled && this.config.healthCacheTtlMs > 0) {
       this.healthCache = { value: response, expiresAt: Date.now() + this.config.healthCacheTtlMs };
     }
     return response;
-  }
-
-  async getBalance(address: string): Promise<AccountBalance> {
-    this.store.touch(address);
-    const entry = this.store.get(address);
-    const cached = Boolean(entry?.balance);
-    this.metrics?.recordBalanceCache(cached);
-
-    if (this.config.responseCacheEnabled && entry?.balance) {
-      const signature = this.getAccountSignature(entry);
-      if (signature) {
-        const cachedValue = this.getCached(this.balanceCache, address, signature);
-        if (cachedValue) return cachedValue;
-      }
-    }
-
-    const refreshStatePromise = cached ? Promise.resolve() : this.refreshAccountState(address, { lite: true });
-    const jettonPromise = Promise.all(
-      this.jettonRoots.map(async (root) => {
-        const balance = await this.withTimeoutOrNull(
-          this.source.getJettonBalance(address, root.master),
-          this.config.jettonBalanceTimeoutMs
-        );
-        if (!balance) return null;
-        try {
-          if (BigInt(balance.balance) === 0n) return null;
-        } catch {
-          // Keep malformed balances visible so issues can be diagnosed upstream.
-        }
-        const meta = await this.getJettonMetadata(root.master);
-        return {
-          master: root.master,
-          wallet: balance.wallet,
-          balance: balance.balance,
-          symbol: meta?.symbol ?? root.symbol,
-          decimals: meta?.decimals ?? this.fallbackJettonDecimals(meta?.symbol ?? root.symbol),
-        };
-      })
-    );
-    const [jettons] = await Promise.all([jettonPromise, refreshStatePromise]);
-    const updated = this.store.get(address)?.balance;
-    const now = Math.floor(Date.now() / 1000);
-
-    const response = {
-      ton: {
-        balance: updated?.balance ?? '0',
-        last_tx_lt: updated?.lastTxLt,
-        last_tx_hash: updated?.lastTxHash,
-      },
-      jettons: jettons.filter(Boolean) as AccountBalance['jettons'],
-      confirmed: true,
-      updated_at: now,
-      network: this.network,
-    };
-    const signature = this.getAccountSignature(this.store.get(address));
-    this.setCached(this.balanceCache, address, response, signature, this.config.balanceCacheTtlMs);
-    return response;
-  }
-
-  async getBalances(address: string): Promise<AccountBalances> {
-    const snapshot = await this.getBalance(address);
-    const tonRaw = snapshot.ton.balance ?? '0';
-    const ton = this.formatRawAmount(tonRaw, 9);
-    const assets = [
-      {
-        kind: 'native' as const,
-        symbol: 'TON',
-        address,
-        wallet: address,
-        balance_raw: tonRaw,
-        balance: ton,
-        decimals: 9,
-      },
-      ...snapshot.jettons.map((jetton) => {
-        const decimals = typeof jetton.decimals === 'number' && Number.isFinite(jetton.decimals)
-          ? Math.max(0, Math.trunc(jetton.decimals))
-          : this.fallbackJettonDecimals(jetton.symbol) ?? 9;
-        return {
-          kind: 'jetton' as const,
-          symbol: jetton.symbol,
-          address: jetton.master,
-          wallet: jetton.wallet,
-          balance_raw: jetton.balance,
-          balance: this.formatRawAmount(jetton.balance, decimals),
-          decimals,
-        };
-      }),
-    ];
-
-    return {
-      address,
-      ton_raw: tonRaw,
-      ton,
-      assets,
-      confirmed: snapshot.confirmed,
-      updated_at: snapshot.updated_at,
-      network: snapshot.network,
-    };
-  }
-
-  getBalancesSignature(snapshot: AccountBalances) {
-    const assetsSignature = [...snapshot.assets]
-      .map((asset) => {
-        const kind = asset.kind ?? 'unknown';
-        const key = asset.address ?? asset.wallet ?? asset.symbol ?? '';
-        return `${kind}:${key}:${asset.balance_raw ?? ''}`;
-      })
-      .sort()
-      .join('|');
-    return `${snapshot.ton_raw ?? ''}:${assetsSignature}`;
-  }
-
-  subscribeBalanceChanges(addresses: string[], listener: (event: BalanceChangeEvent) => void) {
-    const normalized = new Set(addresses.map((value) => normalizeAddress(value)));
-    const handler = (event: BalanceChangeEvent) => {
-      const target = normalizeAddress(event.address);
-      if (normalized.size > 0 && !normalized.has(target)) return;
-      listener(event);
-    };
-    this.balanceEventEmitter.on('balances_changed', handler);
-    return () => {
-      this.balanceEventEmitter.off('balances_changed', handler);
-    };
-  }
-
-  private emitBalanceChanged(address: string) {
-    const event: BalanceChangeEvent = {
-      type: 'balances_changed',
-      address,
-      seq: ++this.balanceEventSeq,
-      ts: Date.now(),
-      hints: { ton: true, jettons: null },
-    };
-    this.balanceEventEmitter.emit('balances_changed', event);
-  }
-
-  private async getJettonMetadata(master: string): Promise<JettonMetadata | null> {
-    const cached = this.jettonMetaCache.get(master);
-    const now = Date.now();
-    if (cached && now - cached.updatedAt < this.config.jettonMetadataTtlMs) {
-      return cached.meta;
-    }
-
-    const meta = await this.source.getJettonMetadata(master);
-    this.jettonMetaCache.set(master, { meta, updatedAt: now });
-    return meta;
-  }
-
-  private fallbackJettonDecimals(symbol?: string | null): number | null {
-    const normalized = (symbol ?? '').trim().toUpperCase();
-    if (!normalized) return null;
-    if (normalized === 'USDT' || normalized === 'USDC' || normalized === 'KUSD') return 6;
-    if (normalized === 'T3' || normalized === 'TS') return 9;
-    return null;
-  }
-
-  private getAccountSignature(entry?: {
-    balance?: AccountState;
-    stats: { txCount: number; historyComplete: boolean; totalPagesMin: number };
-  }) {
-    if (!entry?.balance) return null;
-    return [
-      entry.balance.lastTxLt ?? '',
-      entry.balance.lastTxHash ?? '',
-      entry.balance.balance ?? '',
-      entry.stats.txCount,
-      entry.stats.historyComplete ? '1' : '0',
-      entry.stats.totalPagesMin,
-    ].join(':');
-  }
-
-  private formatRawAmount(rawValue: string, decimals: number) {
-    let raw: bigint;
-    try {
-      raw = BigInt(rawValue);
-    } catch (_err) {
-      return '0';
-    }
-    const safeDecimals = Math.max(0, Math.trunc(decimals));
-    if (safeDecimals === 0) return raw.toString(10);
-
-    const divisor = 10n ** BigInt(safeDecimals);
-    const negative = raw < 0n;
-    const abs = negative ? -raw : raw;
-    const whole = abs / divisor;
-    const fraction = abs % divisor;
-    if (fraction === 0n) {
-      return `${negative ? '-' : ''}${whole.toString(10)}`;
-    }
-    const fractionStr = fraction
-      .toString(10)
-      .padStart(safeDecimals, '0')
-      .replace(/0+$/, '');
-    return `${negative ? '-' : ''}${whole.toString(10)}.${fractionStr}`;
   }
 
   private getTxPageSignature(
@@ -1272,23 +431,6 @@ export class IndexerService {
     return [entry.stats.txCount, entry.stats.historyComplete ? '1' : '0', lt, hash].join(':');
   }
 
-  private async withTimeoutOrNull<T>(operation: Promise<T | null>, timeoutMs: number): Promise<T | null> {
-    const guarded = operation.catch(() => null);
-    const ms = Math.max(0, Math.trunc(timeoutMs));
-    if (ms <= 0) return guarded;
-
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), ms);
-    });
-
-    try {
-      return await Promise.race([guarded, timeout]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }
-
   private getCached<T>(
     cache: LRUCache<string, { value: T; signature: string }>,
     key: string,
@@ -1311,1853 +453,97 @@ export class IndexerService {
     cache.set(key, { value, signature }, { ttl });
   }
 
-  async getState(address: string) {
-    this.store.touch(address);
-    let entry = this.store.get(address);
-    if (!entry?.balance) {
-      await this.refreshAccountState(address);
-      entry = this.store.get(address);
-    }
-    const latest = entry?.txs?.[0];
-    const signature = this.getAccountSignature(entry);
-    if (this.config.responseCacheEnabled && signature) {
-      const cachedValue = this.getCached(this.stateCache, address, signature);
-      if (cachedValue) return cachedValue;
-    }
-
-    const response = {
-      address,
-      last_tx_lt: entry?.balance?.lastTxLt,
-      last_tx_hash: entry?.balance?.lastTxHash,
-      last_seen_utime: latest?.utime ?? null,
-      last_confirmed_seqno: this.lastMasterSeqno ?? null,
-      account_state: entry?.balance?.accountState ?? null,
-      code_boc: entry?.balance?.codeBoc ?? null,
-      data_boc: entry?.balance?.dataBoc ?? null,
-      balance_raw: entry?.balance?.balance ?? '0',
-      network: this.network,
-    };
-    this.setCached(this.stateCache, address, response, signature, this.config.stateCacheTtlMs);
-    return response;
-  }
-
-  async getNativeState(address: string) {
-    this.store.touch(address);
-    let entry = this.store.get(address);
-    if (!entry?.balance) {
-      await this.refreshAccountState(address, { lite: true });
-      entry = this.store.get(address);
-    }
-    const latest = entry?.txs?.[0];
-    return {
-      address,
-      last_tx_lt: entry?.balance?.lastTxLt,
-      last_tx_hash: entry?.balance?.lastTxHash,
-      last_seen_utime: latest?.utime ?? null,
-      last_confirmed_seqno: this.lastMasterSeqno ?? null,
-      account_state: entry?.balance?.accountState ?? null,
-      code_boc: entry?.balance?.codeBoc ?? null,
-      data_boc: entry?.balance?.dataBoc ?? null,
-      balance_raw: entry?.balance?.balance ?? '0',
-      network: this.network,
-    };
-  }
-
-  async getTonSccpBurnProofMaterial(
-    request: TonSccpBurnProofMaterialRequest
-  ): Promise<TonSccpBurnProofMaterial> {
-    if (!this.source.getTonSccpBurnProofMaterial) {
-      throw new Error('TON SCCP proof material is unavailable on the configured data source.');
-    }
-    let trustedCheckpointSeqno = request.trustedCheckpointSeqno;
-    let trustedCheckpointHashHex = request.trustedCheckpointHashHex;
-    if (trustedCheckpointSeqno === undefined || trustedCheckpointHashHex === undefined) {
-      const resolved = await this.soraTonCheckpointResolver.resolveTonTrustedCheckpoint();
-      trustedCheckpointSeqno = resolved.mcSeqno;
-      trustedCheckpointHashHex = resolved.mcBlockHashHex;
-    }
-    return this.source.getTonSccpBurnProofMaterial({
-      ...request,
-      jettonMaster: normalizeAddress(request.jettonMaster),
-      trustedCheckpointSeqno,
-      trustedCheckpointHashHex,
+  async getAccountAnchor(address: string, options: ServiceReadOptions = {}) {
+    address = normalizeAddress(address);
+    return withReadDeadline(options, 5_000, async signal => {
+      const head = await this.source.head({ signal });
+      const state = await this.source.getAccountState(address, { at: head, signal });
+      signal.throwIfAborted();
+      const anchor = state.anchor;
+      const validBlock = (block: ChainHead | NonNullable<typeof anchor>['shardBlock']) =>
+        Number.isSafeInteger(block.seqno) && block.seqno >= 0 && Number.isSafeInteger(block.workchain) &&
+        /^-?\d+$/.test(block.shard) && [block.rootHashHex, block.fileHashHex].every(hash => /^[a-f0-9]{64}$/i.test(hash) && !/^0+$/.test(hash));
+      if (!anchor || !validBlock(head) || !validBlock(anchor.shardBlock) ||
+        !Number.isSafeInteger(head.utime) || head.utime <= 0 || !Number.isSafeInteger(anchor.genUtime) || anchor.genUtime <= 0)
+        throw new ChainReadError('upstream_unavailable');
+      return { state, head, anchor };
     });
   }
 
-  async getJettonTransferPayload(jettonAddress: string, ownerAddress: string): Promise<JettonTransferPayloadResponse> {
-    const normalizedJetton = normalizeAddress(jettonAddress);
-    const normalizedOwner = normalizeAddress(ownerAddress);
-
-    const walletFromBalance = await this.source.getJettonBalance(normalizedOwner, normalizedJetton).catch(() => null);
-    const walletAddress = walletFromBalance?.wallet
-      ? normalizeAddress(walletFromBalance.wallet)
-      : await this.resolveJettonWalletAddress(normalizedJetton, normalizedOwner);
-
-    if (!walletAddress) {
-      return {
-        custom_payload: null,
-        state_init: null
-      };
-    }
-
-    const walletState = await this.source.getAccountState(walletAddress).catch(() => null);
-    if (walletState?.accountState === 'active') {
-      return {
-        custom_payload: null,
-        state_init: null
-      };
-    }
-
-    return {
-      custom_payload: null,
-      state_init: await this.buildJettonWalletStateInit(normalizedJetton, normalizedOwner)
-    };
+  async getState(address: string, options: ServiceReadOptions = {}) {
+    address = normalizeAddress(address);
+    const { state, head, anchor } = await this.getAccountAnchor(address, options);
+    return { address, last_tx_lt: state.lastTxLt, last_tx_hash: state.lastTxHash,
+      last_seen_utime: this.store.get(address)?.txs[0]?.utime ?? null,
+      last_confirmed_seqno: head.seqno, account_state: state.accountState ?? null,
+      code_boc: state.codeBoc ?? null, data_boc: state.dataBoc ?? null,
+      balance_raw: state.balance, network: this.network,
+      shard_block: anchor.shardBlock, shard_utime: anchor.genUtime };
   }
 
-  private async resolveJettonWalletAddress(jettonMaster: string, ownerAddress: string): Promise<string | null> {
-    let ownerSlice: Cell;
-    try {
-      ownerSlice = buildSliceCell(ownerAddress);
-    } catch {
-      return null;
-    }
-
-    for (const method of ['wallet_address', 'get_wallet_address'] as const) {
-      const result = await this.runGetMethodSourceCached(jettonMaster, method, [{ type: 'slice', cell: ownerSlice }]);
-      if (result?.exitCode !== 0) continue;
-      const stack = unwrapTupleStack(result.stack);
-      const resolved = tupleItemAddress(stack[0]);
-      if (resolved) return normalizeAddress(resolved);
-    }
-
-    const fallbackState = await this.buildJettonWalletState(jettonMaster, ownerAddress);
-    return fallbackState?.address ?? null;
-  }
-
-  private async loadJettonWalletCode(jettonMaster: string): Promise<Cell | null> {
-    for (const method of ['get_jetton_data', 'jetton_data'] as const) {
-      const result = await this.runGetMethodSourceCached(jettonMaster, method, []);
-      if (result?.exitCode !== 0) continue;
-      const stack = unwrapTupleStack(result.stack);
-      const walletCode = tupleItemCell(stack[4]);
-      if (walletCode) return walletCode;
-    }
-    return null;
-  }
-
-  private async buildJettonWalletStateInit(jettonMaster: string, ownerAddress: string): Promise<string | null> {
-    const state = await this.buildJettonWalletState(jettonMaster, ownerAddress);
-    return state?.stateInit ?? null;
-  }
-
-  private async buildJettonWalletState(
-    jettonMaster: string,
-    ownerAddress: string
-  ): Promise<{ address: string; stateInit: string } | null> {
-    const walletCode = await this.loadJettonWalletCode(jettonMaster);
-    if (!walletCode) return null;
-
-    try {
-      const owner = Address.parse(ownerAddress);
-      const master = Address.parse(jettonMaster);
-      const walletData = beginCell()
-        .storeCoins(0n)
-        .storeAddress(owner)
-        .storeAddress(master)
-        .storeCoins(0n)
-        .storeCoins(0n)
-        .storeAddress(null)
-        .storeUint(0, 32)
-        .storeUint(0, 64)
-        .storeCoins(0n)
-        .endCell();
-
-      const stateInit = { code: walletCode, data: walletData };
-      const stateCell = beginCell().store(storeStateInit(stateInit)).endCell();
-      return {
-        address: contractAddress(0, stateInit).toRawString(),
-        stateInit: Buffer.from(stateCell.toBoc()).toString('base64')
-      };
-    } catch {
-      return null;
-    }
+  async readFresh(calls: FreshReadCall[], options: ServiceReadOptions = {}) {
+    const startedAt = Date.now();
+    if (this.source.network !== this.network
+      || calls.some(call => call.kind === 'getter' && isRetiredPerpsGetter(call.method))) throw new FreshReadUnavailableError();
+    // Capture the complete tuple before handing it to a source. This path never
+    // enters MemoryStore or any ordinary read's pending/completed cache.
+    const captured = calls.map(call => call.kind === 'account' ? { ...call } :
+      { ...call, args: parseTuple(serializeTuple(call.args)) });
+    const read = await withReadDeadline(options, 18_000, signal => this.source.read(captured, { signal }));
+    const batch = { network: this.source.network, readContext: { source: 'lite' as const, head: read.head, queriedAt: startedAt }, results: read.results };
+    assertFreshReadBatch(batch, captured, this.network, startedAt);
+    return { network: batch.network, readContext: batch.readContext, results: batch.results.map(result => {
+      if (result.kind === 'getter') return { kind: result.kind, address: result.address,
+        stack: result.stack.map(tupleItemToToncenterStackEntry), exit_code: result.exitCode, gas_used: null };
+      const state = result.state;
+      return { kind: result.kind, address: result.address, balance_raw: state.balance,
+        account_state: state.accountState, code_boc: state.codeBoc ?? null, data_boc: state.dataBoc ?? null,
+        last_tx_lt: state.lastTxLt ?? null, last_tx_hash: state.lastTxHash ?? null,
+        shard_block: state.anchor?.shardBlock ?? null, shard_utime: state.anchor?.genUtime ?? null };
+    }) };
   }
 
   async runGetMethod(
     address: string,
     method: string,
-    args: TupleItem[] = []
+    args: TupleItem[] = [], options: ServiceReadOptions = {}
   ): Promise<ToncenterRunResult> {
-    const normalized = normalizeAddress(address);
-    const { cacheKey, cacheTtlMs } = this.getMethodCacheKey(normalized, method, args);
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.getMethodCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.getMethodInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = (async () => {
-      const result = await this.runGetMethodSourceCached(normalized, method, args);
-      if (!result) {
-        throw new Error('get method call unavailable from configured data source');
-      }
-      return {
-        stack: result.stack.map(tupleItemToToncenterStackEntry),
-        exit_code: result.exitCode,
-        gas_used: 0
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.getMethodInFlight.set(cacheKey, request);
-    }
-
-    try {
-      const response = await request;
-      if (this.config.responseCacheEnabled) {
-        if (cacheTtlMs > 0) {
-          this.getMethodCache.set(cacheKey, response, { ttl: cacheTtlMs });
-        }
-      }
-      return response;
-    } finally {
-      this.getMethodInFlight.delete(cacheKey);
-    }
-  }
-
-  private getMethodCacheKey(normalizedAddress: string, method: string, args: TupleItem[]) {
-    const argumentSignature = (arg: TupleItem): string => {
-        if (arg.type === 'null') return 'null';
-        if (arg.type === 'int') return `int:${arg.value.toString(10)}`;
-        if (arg.type === 'nan') return 'nan';
-        if (arg.type === 'cell') return `cell:${toBocBase64(arg.cell) ?? ''}`;
-        if (arg.type === 'slice') return `slice:${toBocBase64(arg.cell) ?? ''}`;
-        if (arg.type === 'builder') return `builder:${toBocBase64(arg.cell) ?? ''}`;
-        // Tuple values (including nested tuples) identify the requested getter,
-        // just as top-level integer and cell arguments do.
-        if (arg.type === 'tuple') return `tuple:[${arg.items.map(argumentSignature).join(',')}]`;
-        return 'unknown';
-    };
-    const argsSignature = args.map(argumentSignature).join('|');
-    const cacheKey = [normalizedAddress, method, argsSignature].join('|');
-    const baseCacheTtlMs = Math.max(0, Math.trunc(this.config.stateCacheTtlMs ?? GET_METHOD_CACHE_TTL_MS));
-    let cacheTtlMs = baseCacheTtlMs;
-    if (method === 'get_entry') {
-      cacheTtlMs = Math.max(baseCacheTtlMs, GET_METHOD_CACHE_ENTRY_MIN_TTL_MS);
-    } else if (args.length === 0) {
-      cacheTtlMs = GET_METHOD_CACHE_NO_ARGS_FAST_METHODS.has(method)
-        ? baseCacheTtlMs
-        : Math.max(baseCacheTtlMs, GET_METHOD_CACHE_NO_ARGS_MIN_TTL_MS);
-    }
-    return { cacheKey, cacheTtlMs };
-  }
-
-  private async runGetMethodSourceCached(
-    normalizedAddress: string,
-    method: string,
-    args: TupleItem[] = []
-  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
-    const { cacheKey, cacheTtlMs } = this.getMethodCacheKey(normalizedAddress, method, args);
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.getMethodSourceCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.getMethodSourceInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = this.source.runGetMethod(normalizedAddress, method, args).catch(() => null);
-    if (this.config.responseCacheEnabled) {
-      this.getMethodSourceInFlight.set(cacheKey, request);
-    }
-
-    try {
-      const response = await request;
-      if (this.config.responseCacheEnabled && response && cacheTtlMs > 0) {
-        this.getMethodSourceCache.set(cacheKey, response, { ttl: cacheTtlMs });
-      }
-      return response;
-    } finally {
-      this.getMethodSourceInFlight.delete(cacheKey);
-    }
-  }
-
-  async getPerpsSnapshot(
-    engineAddress: string,
-    options: { marketIds?: number[]; maxMarkets?: number } = {}
-  ) {
-    const normalizedEngine = normalizeAddress(engineAddress);
-    const maxMarkets = Math.max(1, Math.min(128, Math.trunc(options.maxMarkets ?? 64)));
-    const requestedMarketIds = Array.from(
-      new Set(
-        (options.marketIds ?? [])
-          .filter((value) => Number.isFinite(value) && value > 0)
-          .map((value) => Math.trunc(value))
-      )
-    ).slice(0, maxMarkets);
-
-    const [governanceRes, enabledRes, automationRes] = await Promise.all([
-      this.runGetMethodSourceCached(normalizedEngine, 'engine_governance', []),
-      this.runGetMethodSourceCached(normalizedEngine, 'engine_enabled', []),
-      this.runGetMethodSourceCached(normalizedEngine, 'automation_state', [])
-    ]);
-
-    if (!governanceRes && !enabledRes && !automationRes) {
-      throw new Error('Perps snapshot is unavailable from the configured data source.');
-    }
-
-    const status =
-      governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
-        ? {
-            governance: tupleItemAddress(governanceRes.stack[0]),
-            enabled: tupleItemBool(enabledRes.stack[0])
-          }
-        : null;
-
-    const automation =
-      automationRes?.exitCode === 0
-        ? {
-            fundingCursor: tupleItemBigIntString(automationRes.stack[0]),
-            lastFundingTimestamp: tupleItemBigIntString(automationRes.stack[1]),
-            lastFundingProcessed: tupleItemBigIntString(automationRes.stack[2]),
-            lastFundingRemaining: tupleItemBigIntString(automationRes.stack[3]),
-            liquidationCursor: tupleItemBigIntString(automationRes.stack[4]),
-            lastLiquidationTimestamp: tupleItemBigIntString(automationRes.stack[5]),
-            lastLiquidationProcessed: tupleItemBigIntString(automationRes.stack[6]),
-            lastLiquidationRemaining: tupleItemBigIntString(automationRes.stack[7]),
-            maxMarketId: tupleItemBigIntString(automationRes.stack[8]),
-            liquidationNonce: tupleItemBigIntString(automationRes.stack[9]),
-            liquidationBacklog: tupleItemBigIntString(automationRes.stack[10]),
-            controlAuthority: tupleItemAddress(automationRes.stack[11]),
-            controlSequence: tupleItemBigIntString(automationRes.stack[12]),
-            controlTimestamp: tupleItemBigIntString(automationRes.stack[13])
-          }
-        : null;
-
-    const derivedMarketIds =
-      requestedMarketIds.length > 0
-        ? requestedMarketIds
-        : (() => {
-            const maxMarketId = automation?.maxMarketId ? Number(automation.maxMarketId) : 0;
-            if (Number.isFinite(maxMarketId) && maxMarketId > 0) {
-              return Array.from({ length: Math.min(maxMarkets, Math.trunc(maxMarketId)) }, (_, index) => index + 1);
-            }
-            return [];
-          })();
-
-    const markets: Record<string, any> = {};
-    const marketIds: number[] = [];
-
-    for (const marketId of derivedMarketIds.slice(0, maxMarkets)) {
-      const marketRes = await this.runGetMethodSourceCached(normalizedEngine, 'market_state', [
-        { type: 'int', value: BigInt(marketId) }
-      ]);
-      if (!marketRes || marketRes.exitCode !== 0) continue;
-      const stack = marketRes.stack;
-      markets[String(marketId)] = {
-        exists: tupleItemBool(stack[0]),
-        pool: tupleItemAddress(stack[1]),
-        depthUnit: tupleItemBigIntString(stack[2]),
-        impactAlpha: tupleItemBigIntString(stack[3]),
-        impactBeta: tupleItemBigIntString(stack[4]),
-        baseLeverageBps: tupleItemBigIntString(stack[5]),
-        maxLeverageBps: tupleItemBigIntString(stack[6]),
-        maintenanceBps: tupleItemBigIntString(stack[7]),
-        oiCap: tupleItemBigIntString(stack[8]),
-        fundingCapBps: tupleItemBigIntString(stack[9]),
-        fundingIndex: tupleItemBigIntString(stack[10]),
-        lastFundingTs: tupleItemBigIntString(stack[11]),
-        oiLong: tupleItemBigIntString(stack[12]),
-        oiShort: tupleItemBigIntString(stack[13]),
-        longBase: tupleItemBigIntString(stack[14]),
-        shortBase: tupleItemBigIntString(stack[15]),
-        halted: tupleItemBool(stack[16]),
-        oracleMark: tupleItemBigIntString(stack[17]),
-        oracleMarkTs: tupleItemBigIntString(stack[18]),
-        liquidationSlice: tupleItemBigIntString(stack[19]),
-        liquidationCooldown: tupleItemBigIntString(stack[20]),
-        liquidationPendingBase: tupleItemBigIntString(stack[21]),
-        liquidationLastTs: tupleItemBigIntString(stack[22]),
-        adlDeficit: tupleItemBigIntString(stack[23]),
-        liquidityWeightBps: tupleItemBigIntString(stack[24]),
-        utilizationWeightBps: tupleItemBigIntString(stack[25]),
-        lastDynamicWeightBps: tupleItemBigIntString(stack[26]),
-        rebalanceClampBps: tupleItemBigIntString(stack[27]),
-        lastClampUpdateTs: tupleItemBigIntString(stack[28]),
-        auctionActive: tupleItemBool(stack[29]),
-        auctionOutstandingBase: tupleItemBigIntString(stack[30]),
-        auctionMinPrice: tupleItemBigIntString(stack[31]),
-        auctionMaxPrice: tupleItemBigIntString(stack[32]),
-        auctionExpiryTs: tupleItemBigIntString(stack[33]),
-        auctionClearingPrice: tupleItemBigIntString(stack[34]),
-        controlWeightBps: tupleItemBigIntString(stack[35]),
-        controlFeeDeltaBps: tupleItemBigIntString(stack[36]),
-        marketKind: tupleItemBigIntString(stack[37]),
-        timerVolatilityBps: tupleItemBigIntString(stack[38]),
-        timerEmaVolatilityBps: tupleItemBigIntString(stack[39]),
-        timerLastUpdateTs: tupleItemBigIntString(stack[40]),
-        timerWeightBps: tupleItemBigIntString(stack[41]),
-        correlationBps: tupleItemBigIntString(stack[42]),
-        correlationDispersionBps: tupleItemBigIntString(stack[43]),
-        correlationLastUpdateTs: tupleItemBigIntString(stack[44]),
-        correlationWeightBps: tupleItemBigIntString(stack[45]),
-        lastFundingPayloadHash: tupleItemBigIntString(stack[46]),
-        lastFundingPoolHash: tupleItemBigIntString(stack[47])
-      };
-      marketIds.push(marketId);
-    }
-
+    if (isRetiredPerpsGetter(method)) throw new Error('Retired Perps getter is unsupported.');
+    const result = await this.runGetMethodSource(normalizeAddress(address), method, args, options);
     return {
-      engine: normalizedEngine,
-      status,
-      automation,
-      market_ids: marketIds,
-      markets,
-      source: this.config.dataSource === 'lite' ? 'lite' : 'http4',
-      network: this.network,
-      updated_at: Math.floor(Date.now() / 1000)
+      stack: result.stack.map(tupleItemToToncenterStackEntry),
+      exit_code: result.exitCode,
+      gas_used: null
     };
   }
 
-  private parseVolIndexState(stack: TupleItem[]): VolIndexStateSnapshot {
-    return {
-      impliedVolBps: tupleItemBigIntString(stack[0]),
-      realizedVolBps: tupleItemBigIntString(stack[1]),
-      varianceSpeedBps: tupleItemBigIntString(stack[2]),
-      sampleCount: tupleItemBigIntString(stack[3]),
-      eligibleSeries: tupleItemBigIntString(stack[4]),
-      lastPremiumTs: tupleItemBigIntString(stack[5]),
-      lastRealizedTs: tupleItemBigIntString(stack[6]),
-      lastPublishTs: tupleItemBigIntString(stack[7]),
-      lastSamplePrice: tupleItemBigIntString(stack[8]),
-      lastSampleTs: tupleItemBigIntString(stack[9])
+  private async runGetMethodSource(address: string, method: string, args: TupleItem[] = [], options: ServiceReadOptions = {}) {
+    const encoded = serializeTuple(args);
+    const key = JSON.stringify(['getter', address, method, encoded.toBoc({idx: false, crc32: false}).toString('base64')]);
+    const result = await this.snapshotReader.read({ key, deadlineMs: 5_000, signal: options.signal,
+      load: ({head, signal}) => this.source.runGetMethod(address, method, parseTuple(encoded), {at: head, signal}) });
+    return { exitCode: result.exitCode, stack: result.stack };
+  }
+
+  private async readSnapshot<T extends object>(options: SnapshotReadOptions<T>): Promise<T> {
+    const {asOfSeqno: _asOfSeqno, ...value} = await this.snapshotReader.read(options);
+    // The reader keeps the execution identity internally; public snapshot bodies
+    // retain their existing contract, including the original cached updated_at.
+    return value as T;
+  }
+
+  private pinnedGetter(head: ChainHead, signal: AbortSignal) {
+    return async (address: string, method: string, args: TupleItem[] = []) => {
+      const result = await this.source.read([{kind: 'getter', address, method, args}], {at: head, signal});
+      const row = result.results[0];
+      if (result.head.seqno !== head.seqno || result.head.rootHashHex !== head.rootHashHex ||
+        result.head.fileHashHex !== head.fileHashHex || result.results.length !== 1 || row?.kind !== 'getter' || row.address !== address)
+        throw new ChainReadError('upstream_unavailable');
+      return {exitCode: row.exitCode, stack: row.stack};
     };
   }
 
-  async getVolIndexSnapshot(
-    volIndexAddress: string,
-    options: { sourcePool?: string | null; routeIds?: number[] } = {}
-  ): Promise<VolIndexSnapshotResponse> {
-    const normalizedVolIndex = normalizeAddress(volIndexAddress);
-    const normalizedPool = options.sourcePool?.trim() ? normalizeAddress(options.sourcePool) : null;
-    const routeIds = Array.from(
-      new Set(
-        (options.routeIds ?? [])
-          .filter((value) => Number.isFinite(value) && value > 0)
-          .map((value) => Math.trunc(value))
-      )
-    ).slice(0, 64);
-
-    const [configRes, stateRes, poolStateRes] = await Promise.all([
-      this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_config', []),
-      this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_state', []),
-      normalizedPool
-        ? this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_pool_state', [
-            { type: 'slice', cell: beginCell().storeAddress(Address.parse(normalizedPool)).endCell() }
-          ])
-        : Promise.resolve(null)
-    ]);
-
-    if (!configRes && !stateRes && !poolStateRes) {
-      throw new Error('VolIndex snapshot is unavailable from the configured data source.');
-    }
-
-    const config =
-      configRes?.exitCode === 0
-        ? {
-            seriesManager: tupleItemAddress(configRes.stack[0]),
-            oracle: tupleItemAddress(configRes.stack[1]),
-            automation: tupleItemAddress(configRes.stack[2]),
-            perpsEngine: tupleItemAddress(configRes.stack[3]),
-            coverManager: tupleItemAddress(configRes.stack[4]),
-            minLiquidityBps: tupleItemBigIntString(configRes.stack[5]),
-            staleSeconds: tupleItemBigIntString(configRes.stack[6]),
-            emaAlphaBps: tupleItemBigIntString(configRes.stack[7])
-          }
-        : null;
-
-    const state = stateRes?.exitCode === 0 ? this.parseVolIndexState(stateRes.stack) : null;
-    const poolState = poolStateRes?.exitCode === 0 ? this.parseVolIndexState(poolStateRes.stack) : null;
-    const routes: Record<string, VolIndexRouteSnapshot> = {};
-    const loadedRouteIds: number[] = [];
-
-    for (const routeId of routeIds) {
-      const routeRes = await this.runGetMethodSourceCached(normalizedVolIndex, 'vol_index_route', [
-        { type: 'int', value: BigInt(routeId) }
-      ]);
-      if (!routeRes || routeRes.exitCode !== 0) continue;
-      const stack = routeRes.stack;
-      routes[String(routeId)] = {
-        exists: tupleItemBool(stack[0]),
-        marketId: tupleItemBigIntString(stack[1]),
-        sourcePool: tupleItemAddress(stack[2]),
-        coverPolicyId: tupleItemBigIntString(stack[3])
-      };
-      loadedRouteIds.push(routeId);
-    }
-
-    return {
-      vol_index: normalizedVolIndex,
-      config,
-      state,
-      pool: normalizedPool,
-      pool_state: poolState,
-      route_ids: loadedRouteIds,
-      routes,
-      source: this.config.dataSource === 'lite' ? 'lite' : 'http4',
-      network: this.network,
-      updated_at: Math.floor(Date.now() / 1000)
-    };
-  }
-
-  async getGovernanceSnapshot(
-    votingAddress: string,
-    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number } = {}
-  ): Promise<GovernanceSnapshotResponse> {
-    const normalizedVoting = normalizeAddress(votingAddress);
-    const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
-    const maxScan = Math.max(
-      1,
-      Math.min(GOVERNANCE_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? GOVERNANCE_MAX_SCAN_DEFAULT))
-    );
-    const maxConsecutiveMisses = Math.max(
-      1,
-      Math.min(
-        GOVERNANCE_MAX_CONSECUTIVE_MISSES_LIMIT,
-        Math.trunc(options.maxConsecutiveMisses ?? GOVERNANCE_MAX_CONSECUTIVE_MISSES_DEFAULT)
-      )
-    );
-    const cacheKey = [normalizedVoting, normalizedOwner ?? '', maxScan, maxConsecutiveMisses].join('|');
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.governanceSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.governanceSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = (async () => {
-      let lockResponded = false;
-      const lockPromise = (async (): Promise<GovernanceLockSnapshot | null> => {
-        if (!normalizedOwner) return null;
-        const owner = Address.parse(normalizedOwner);
-        const ownerCell = beginCell().storeAddress(owner).endCell();
-        const lockRes = await this.runGetMethodSourceCached(normalizedVoting, 'governance_lock', [
-          { type: 'slice', cell: ownerCell }
-        ]);
-        lockResponded = lockRes !== null;
-        if (!lockRes || lockRes.exitCode !== 0) return null;
-        const stack = lockRes.stack;
-        return {
-          amount: tupleItemBigIntString(stack[0]),
-          unlockTime: tupleItemBigIntString(stack[1]),
-          tier: tupleItemBigIntString(stack[2]),
-          activatedAt: tupleItemBigIntString(stack[3]),
-          weight: tupleItemBigIntString(stack[4])
-        };
-      })().catch(() => null);
-
-      const proposals: GovernanceProposalSnapshot[] = [];
-      let scanned = 0;
-      let misses = 0;
-      let proposalResponded = false;
-
-      outer: for (let startId = 1; startId <= maxScan; startId += GOVERNANCE_SCAN_BATCH_SIZE) {
-        const endId = Math.min(maxScan, startId + GOVERNANCE_SCAN_BATCH_SIZE - 1);
-        const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
-        const batch = await Promise.all(
-          batchIds.map((proposalId) =>
-            this.runGetMethodSourceCached(normalizedVoting, 'governance_proposal', [
-              { type: 'int', value: BigInt(proposalId) }
-            ]).catch(() => null)
-          )
-        );
-
-        for (let index = 0; index < batch.length; index += 1) {
-          scanned += 1;
-          const res = batch[index];
-          if (res) {
-            proposalResponded = true;
-          }
-          if (!res || res.exitCode !== 0) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) {
-              break outer;
-            }
-            continue;
-          }
-          const stack = res.stack;
-          const id = tupleItemBigIntString(stack[0]);
-          if (!id) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) {
-              break outer;
-            }
-            continue;
-          }
-          misses = 0;
-          proposals.push({
-            id,
-            status: tupleItemBigIntString(stack[1]),
-            passed: tupleItemBigIntString(stack[2]),
-            yesWeight: tupleItemBigIntString(stack[3]),
-            noWeight: tupleItemBigIntString(stack[4]),
-            abstainWeight: tupleItemBigIntString(stack[5]),
-            quorumWeight: tupleItemBigIntString(stack[6]),
-            totalWeightSnapshot: tupleItemBigIntString(stack[7]),
-            startTime: tupleItemBigIntString(stack[8]),
-            minCloseTime: tupleItemBigIntString(stack[9]),
-            maxCloseTime: tupleItemBigIntString(stack[10]),
-            cooldownEnd: tupleItemBigIntString(stack[11]),
-            target: tupleItemAddress(stack[12]),
-            value: tupleItemBigIntString(stack[13]),
-            descriptionHash: tupleItemBigIntString(stack[14])
-          });
-        }
-      }
-
-      const lock = await lockPromise;
-      if (!proposalResponded && !lockResponded) {
-        throw new Error('Governance snapshot is unavailable from the configured data source.');
-      }
-
-      proposals.sort((left, right) => {
-        const leftId = BigInt(left.id);
-        const rightId = BigInt(right.id);
-        if (leftId === rightId) return 0;
-        return leftId > rightId ? -1 : 1;
-      });
-      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-
-      return {
-        voting: normalizedVoting,
-        owner: normalizedOwner,
-        lock,
-        proposal_count: proposals.length,
-        scanned,
-        proposals,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000)
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.governanceSnapshotInFlight.set(cacheKey, request);
-    }
-
-    try {
-      const result = await request;
-      if (this.config.responseCacheEnabled) {
-        this.governanceSnapshotCache.set(cacheKey, result);
-      }
-      return result;
-    } finally {
-      this.governanceSnapshotInFlight.delete(cacheKey);
-    }
-  }
-
-  async getFarmSnapshot(
-    factoryAddress: string,
-    options: { maxScan?: number; maxConsecutiveMisses?: number } = {}
-  ): Promise<FarmSnapshotResponse> {
-    const normalizedFactory = normalizeAddress(factoryAddress);
-    const maxScan = Math.max(1, Math.min(FARM_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? FARM_MAX_SCAN_DEFAULT)));
-    const maxConsecutiveMisses = Math.max(
-      1,
-      Math.min(
-        FARM_MAX_CONSECUTIVE_MISSES_LIMIT,
-        Math.trunc(options.maxConsecutiveMisses ?? FARM_MAX_CONSECUTIVE_MISSES_DEFAULT)
-      )
-    );
-    const cacheKey = [normalizedFactory, maxScan, maxConsecutiveMisses].join('|');
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.farmSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.farmSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = (async () => {
-      const [governanceRes, enabledRes, nextIdRes] = await Promise.all([
-        this.runGetMethodSourceCached(normalizedFactory, 'governance', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedFactory, 'registry_enabled', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedFactory, 'next_farm_id', []).catch(() => null)
-      ]);
-
-      const status =
-        governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
-          ? {
-              governance: tupleItemAddress(governanceRes.stack[0]),
-              enabled: tupleItemBool(enabledRes.stack[0])
-            }
-          : null;
-
-      const nextId = nextIdRes?.exitCode === 0 ? tupleItemBigInt(nextIdRes.stack[0]) : null;
-      const nextIdString = nextId !== null ? nextId.toString(10) : null;
-      const maxKnownFromNextId = nextId && nextId > 1n ? Number(nextId - 1n) : 0;
-      const scanLimit =
-        nextId !== null
-          ? Number.isFinite(maxKnownFromNextId) && maxKnownFromNextId > 0
-            ? Math.min(maxScan, Math.trunc(maxKnownFromNextId))
-            : 0
-          : maxScan;
-
-      const farms: FarmSnapshotRecord[] = [];
-      let scanned = 0;
-      let misses = 0;
-      let farmResponded = false;
-
-      if (scanLimit > 0) {
-        outer: for (let startId = 1; startId <= scanLimit; startId += FARM_SCAN_BATCH_SIZE) {
-          const endId = Math.min(scanLimit, startId + FARM_SCAN_BATCH_SIZE - 1);
-          const batchIds = Array.from({ length: endId - startId + 1 }, (_, index) => startId + index);
-          const batch = await Promise.all(
-            batchIds.map((farmId) =>
-              this.runGetMethodSourceCached(normalizedFactory, 'get_farm', [{ type: 'int', value: BigInt(farmId) }]).catch(
-                () => null
-              )
-            )
-          );
-
-          for (let index = 0; index < batch.length; index += 1) {
-            scanned += 1;
-            const res = batch[index];
-            if (res) farmResponded = true;
-            if (!res || res.exitCode !== 0) {
-              misses += 1;
-              if (misses >= maxConsecutiveMisses) break outer;
-              continue;
-            }
-            const stack = res.stack;
-            const farm = tupleItemAddress(stack[0]);
-            if (!farm) {
-              misses += 1;
-              if (misses >= maxConsecutiveMisses) break outer;
-              continue;
-            }
-            misses = 0;
-            const id = batchIds[index];
-            farms.push({
-              id: String(id),
-              farm,
-              staker: tupleItemAddress(stack[1]),
-              sponsor: tupleItemAddress(stack[2]),
-              rewardRoot: tupleItemAddress(stack[3]),
-              rewardWallet: tupleItemAddress(stack[4]),
-              rewardAmount: tupleItemBigIntString(stack[5]),
-              duration: tupleItemBigIntString(stack[6]),
-              sponsorFeeBps: tupleItemBigIntString(stack[7]),
-              startTime: tupleItemBigIntString(stack[8]),
-              endTime: tupleItemBigIntString(stack[9]),
-              gasBudget: tupleItemBigIntString(stack[10]),
-              status: tupleItemBigIntString(stack[11]),
-              createdAt: tupleItemBigIntString(stack[12]),
-              backlogLimit: tupleItemBigIntString(stack[13]),
-              resumeBacklog: tupleItemBigIntString(stack[14])
-            });
-          }
-        }
-      }
-
-      if (!farmResponded && !governanceRes && !enabledRes && !nextIdRes) {
-        throw new Error('Farm snapshot is unavailable from the configured data source.');
-      }
-
-      farms.sort((left, right) => {
-        const leftId = BigInt(left.id);
-        const rightId = BigInt(right.id);
-        if (leftId === rightId) return 0;
-        return leftId > rightId ? 1 : -1;
-      });
-      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-      return {
-        factory: normalizedFactory,
-        status,
-        next_id: nextIdString,
-        farm_count: farms.length,
-        scanned,
-        farms,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000)
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.farmSnapshotInFlight.set(cacheKey, request);
-    }
-
-    try {
-      const result = await request;
-      if (this.config.responseCacheEnabled) {
-        this.farmSnapshotCache.set(cacheKey, result);
-      }
-      return result;
-    } finally {
-      this.farmSnapshotInFlight.delete(cacheKey);
-    }
-  }
-
-  async getOptionsSnapshot(
-    factoryAddress: string,
-    options: {
-      startId?: number;
-      maxSeriesId?: number;
-      windowSize?: number;
-      maxEmptyWindows?: number;
-      minProbeWindows?: number;
-    } = {}
-  ): Promise<OptionsSnapshotResponse> {
-    const normalizedFactory = normalizeAddress(factoryAddress);
-    const startId = Math.max(
-      0,
-      Math.min(OPTIONS_MAX_SCAN_LIMIT, Math.trunc(options.startId ?? 0))
-    );
-    const maxSeriesId = Math.max(
-      startId,
-      Math.min(OPTIONS_MAX_SCAN_LIMIT, Math.trunc(options.maxSeriesId ?? OPTIONS_MAX_SCAN_DEFAULT))
-    );
-    const windowSize = Math.max(
-      1,
-      Math.min(OPTIONS_WINDOW_SIZE_LIMIT, Math.trunc(options.windowSize ?? OPTIONS_WINDOW_SIZE_DEFAULT))
-    );
-    const maxEmptyWindows = Math.max(
-      1,
-      Math.min(
-        OPTIONS_MAX_EMPTY_WINDOWS_LIMIT,
-        Math.trunc(options.maxEmptyWindows ?? OPTIONS_MAX_EMPTY_WINDOWS_DEFAULT)
-      )
-    );
-    const minProbeWindows = Math.max(
-      0,
-      Math.min(
-        OPTIONS_MIN_PROBE_WINDOWS_LIMIT,
-        Math.trunc(options.minProbeWindows ?? OPTIONS_MIN_PROBE_WINDOWS_DEFAULT)
-      )
-    );
-    const cacheKey = [
-      normalizedFactory,
-      startId,
-      maxSeriesId,
-      windowSize,
-      maxEmptyWindows,
-      minProbeWindows,
-    ].join('|');
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.optionsSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.optionsSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = (async () => {
-      const [governanceRes, enabledRes] = await Promise.all([
-        this.runGetMethodSourceCached(normalizedFactory, 'governance', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedFactory, 'registry_enabled', []).catch(() => null),
-      ]);
-
-      const status =
-        governanceRes?.exitCode === 0 && enabledRes?.exitCode === 0
-          ? {
-              governance: tupleItemAddress(governanceRes.stack[0]),
-              enabled: tupleItemBool(enabledRes.stack[0]),
-            }
-          : null;
-
-      const series: OptionSeriesSnapshotRecord[] = [];
-      let scanned = 0;
-      let getterFailures = 0;
-      let emptyWindows = 0;
-      let windowsScanned = 0;
-      let seriesResponded = false;
-
-      for (let cursor = startId; cursor <= maxSeriesId; cursor += windowSize) {
-        const end = Math.min(maxSeriesId, cursor + windowSize - 1);
-        const ids = Array.from({ length: end - cursor + 1 }, (_, index) => cursor + index);
-        const batch = await Promise.all(
-          ids.map((seriesId) =>
-            this.runGetMethodSourceCached(normalizedFactory, 'series_info', [
-              { type: 'int', value: BigInt(seriesId) },
-            ]).catch(() => null)
-          )
-        );
-
-        let windowGetterFailures = 0;
-        const windowEntries: OptionSeriesSnapshotRecord[] = [];
-        for (let index = 0; index < batch.length; index += 1) {
-          scanned += 1;
-          const res = batch[index];
-          if (res) {
-            seriesResponded = true;
-          }
-          if (!res || res.exitCode !== 0) {
-            getterFailures += 1;
-            windowGetterFailures += 1;
-            continue;
-          }
-          const stack = res.stack;
-          const exists = tupleItemBool(stack[0]);
-          if (!exists) continue;
-
-          const seriesId = ids[index];
-          const expiryBigInt = tupleItemBigInt(stack[4]);
-          const statusBigInt = tupleItemBigInt(stack[9]);
-          const maxNotionalBigInt = tupleItemBigInt(stack[5]);
-          const openNotionalBigInt = tupleItemBigInt(stack[8]) ?? 0n;
-          const remainingNotional =
-            maxNotionalBigInt !== null
-              ? (() => {
-                  const remaining = maxNotionalBigInt - openNotionalBigInt;
-                  return (remaining > 0n ? remaining : 0n).toString(10);
-                })()
-              : null;
-          let isActive = statusBigInt === null || statusBigInt === 0n;
-          if (isActive && expiryBigInt !== null && expiryBigInt > 0n) {
-            const expiryMs = Number(expiryBigInt) * 1000;
-            if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
-              isActive = false;
-            }
-          }
-
-          windowEntries.push({
-            seriesId: String(seriesId),
-            templateId: tupleItemBigIntString(stack[1]),
-            optionKind: tupleItemBigIntString(stack[2]),
-            optionAddress: tupleItemAddress(stack[3]),
-            expiry: tupleItemBigIntString(stack[4]),
-            maxNotional: tupleItemBigIntString(stack[5]),
-            premiumBps: tupleItemBigIntString(stack[6]),
-            collateralMultiplierBps: tupleItemBigIntString(stack[7]),
-            openNotional: tupleItemBigIntString(stack[8]),
-            status: tupleItemBigIntString(stack[9]),
-            settlementTimestamp: tupleItemBigIntString(stack[10]),
-            underlyingPool: tupleItemAddress(stack[11]),
-            quotePool: tupleItemAddress(stack[12]),
-            collateralLocked: tupleItemBigIntString(stack[13]),
-            correlationScaleBps: tupleItemBigIntString(stack[14]),
-            correlationBps: tupleItemBigIntString(stack[15]),
-            correlationDispersionBps: tupleItemBigIntString(stack[16]),
-            correlationTimestamp: tupleItemBigIntString(stack[17]),
-            isActive,
-            remainingNotional,
-          });
-        }
-
-        windowsScanned += 1;
-        if (windowEntries.length === 0) {
-          if (series.length === 0 && windowGetterFailures > 0 && status === null) {
-            throw new Error('Options snapshot is unavailable from the configured data source.');
-          }
-          emptyWindows += 1;
-          if (windowsScanned >= minProbeWindows && emptyWindows >= maxEmptyWindows) {
-            break;
-          }
-          continue;
-        }
-        emptyWindows = 0;
-        series.push(...windowEntries);
-      }
-
-      if (!seriesResponded && !governanceRes && !enabledRes) {
-        throw new Error('Options snapshot is unavailable from the configured data source.');
-      }
-
-      series.sort((left, right) => {
-        const leftId = BigInt(left.seriesId);
-        const rightId = BigInt(right.seriesId);
-        if (leftId === rightId) return 0;
-        return leftId > rightId ? 1 : -1;
-      });
-
-      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-      return {
-        factory: normalizedFactory,
-        status,
-        series_count: series.length,
-        scanned,
-        series,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000),
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.optionsSnapshotInFlight.set(cacheKey, request);
-    }
-
-    try {
-      const result = await request;
-      if (this.config.responseCacheEnabled) {
-        this.optionsSnapshotCache.set(cacheKey, result);
-      }
-      return result;
-    } finally {
-      this.optionsSnapshotInFlight.delete(cacheKey);
-    }
-  }
-
-  async getCoverSnapshot(
-    managerAddress: string,
-    options: { owner?: string | null; maxScan?: number; maxConsecutiveMisses?: number } = {}
-  ): Promise<CoverSnapshotResponse> {
-    const normalizedManager = normalizeAddress(managerAddress);
-    const normalizedOwner = options.owner ? normalizeAddress(options.owner) : null;
-    const maxScan = Math.max(1, Math.min(COVER_MAX_SCAN_LIMIT, Math.trunc(options.maxScan ?? COVER_MAX_SCAN_DEFAULT)));
-    const maxConsecutiveMisses = Math.max(
-      1,
-      Math.min(
-        COVER_MAX_CONSECUTIVE_MISSES_LIMIT,
-        Math.trunc(options.maxConsecutiveMisses ?? COVER_MAX_CONSECUTIVE_MISSES_DEFAULT)
-      )
-    );
-    const cacheKey = [normalizedManager, normalizedOwner ?? '', maxScan, maxConsecutiveMisses].join('|');
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.coverSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.coverSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const request = (async () => {
-      const [stateRes, enabledRes] = await Promise.all([
-        this.runGetMethodSourceCached(normalizedManager, 'get_state', []).catch(() => null),
-        this.runGetMethodSourceCached(normalizedManager, 'registry_enabled', []).catch(() => null)
-      ]);
-
-      const state =
-        stateRes?.exitCode === 0
-          ? {
-              totalPolicies: tupleItemBigIntString(stateRes.stack[0]),
-              activePolicies: tupleItemBigIntString(stateRes.stack[1]),
-              breachingPolicies: tupleItemBigIntString(stateRes.stack[2]),
-              claimablePolicies: tupleItemBigIntString(stateRes.stack[3]),
-              claimedPolicies: tupleItemBigIntString(stateRes.stack[4]),
-              nextWakeTimestamp: tupleItemBigIntString(stateRes.stack[5]),
-              lastSender: tupleItemAddress(stateRes.stack[6]),
-              lastJobId: tupleItemBigIntString(stateRes.stack[7]),
-              lastWork: tupleItemBigIntString(stateRes.stack[8]),
-              lastTimestamp: tupleItemBigIntString(stateRes.stack[9]),
-              lastProcessed: tupleItemBigIntString(stateRes.stack[10]),
-              lastRemaining: tupleItemBigIntString(stateRes.stack[11]),
-              vault: tupleItemAddress(stateRes.stack[12]),
-              riskVault: tupleItemAddress(stateRes.stack[14]),
-              riskBucketId: tupleItemBigIntString(stateRes.stack[15])
-            }
-          : null;
-      const enabled = enabledRes?.exitCode === 0 ? tupleItemBool(enabledRes.stack[0]) : null;
-      const totalPoliciesRaw = stateRes?.exitCode === 0 ? tupleItemBigInt(stateRes.stack[0]) : null;
-      if (totalPoliciesRaw !== null && totalPoliciesRaw <= 0n) {
-        const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-        return {
-          manager: normalizedManager,
-          owner: normalizedOwner,
-          enabled,
-          state,
-          policy_count: 0,
-          scanned: 0,
-          policies: [],
-          source,
-          network: this.network,
-          updated_at: Math.floor(Date.now() / 1000)
-        };
-      }
-      const totalPolicies =
-        totalPoliciesRaw && totalPoliciesRaw > 0n && Number.isFinite(Number(totalPoliciesRaw))
-          ? Math.max(0, Math.trunc(Number(totalPoliciesRaw)))
-          : 0;
-      const scanCount = totalPolicies > 0 ? Math.min(maxScan, totalPolicies) : maxScan;
-      const startPolicyId = totalPolicies > 0 ? totalPolicies : maxScan;
-      const scanFloor = Math.max(1, startPolicyId - scanCount + 1);
-
-      const policies: CoverPolicySnapshot[] = [];
-      let scanned = 0;
-      let misses = 0;
-      let policyResponded = false;
-
-      outer: for (let startId = startPolicyId; startId >= scanFloor; startId -= COVER_SCAN_BATCH_SIZE) {
-        const endId = Math.max(scanFloor, startId - COVER_SCAN_BATCH_SIZE + 1);
-        const batchIds = Array.from({ length: startId - endId + 1 }, (_, index) => startId - index);
-          const batch = await Promise.all(
-            batchIds.map((policyId) =>
-              this.runGetMethodSourceCached(normalizedManager, 'get_policy', [{ type: 'int', value: BigInt(policyId) }]).catch(
-                () => null
-              )
-            )
-          );
-
-        for (let index = 0; index < batch.length; index += 1) {
-          scanned += 1;
-          const res = batch[index];
-          if (res) policyResponded = true;
-          if (!res || res.exitCode !== 0) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) break outer;
-            continue;
-          }
-          const stack = res.stack;
-          const exists = tupleItemBool(stack[0]);
-          if (!exists) {
-            misses += 1;
-            if (misses >= maxConsecutiveMisses) break outer;
-            continue;
-          }
-          const owner = tupleItemAddress(stack[1]);
-          misses = 0;
-          if (normalizedOwner && owner !== normalizedOwner) {
-            continue;
-          }
-          policies.push({
-            id: String(batchIds[index]),
-            owner,
-            pool: tupleItemAddress(stack[2]),
-            lowerBound: tupleItemBigIntString(stack[3]),
-            upperBound: tupleItemBigIntString(stack[4]),
-            payout: tupleItemBigIntString(stack[5]),
-            windowSeconds: tupleItemBigIntString(stack[6]),
-            requiredObservations: tupleItemBigIntString(stack[7]),
-            breachStart: tupleItemBigIntString(stack[8]),
-            breachSeconds: tupleItemBigIntString(stack[9]),
-            lastObservation: tupleItemBigIntString(stack[10]),
-            lastHealthyObservation: tupleItemBigIntString(stack[11]),
-            breachObservations: tupleItemBigIntString(stack[12]),
-            status: tupleItemBigIntString(stack[13]),
-            riskVault: tupleItemAddress(stack[14]),
-            riskBucketId: tupleItemBigIntString(stack[15])
-          });
-        }
-      }
-
-      if (!policyResponded && !stateRes && !enabledRes) {
-        throw new Error('Cover snapshot is unavailable from the configured data source.');
-      }
-
-      const source: 'lite' | 'http4' = this.config.dataSource === 'lite' ? 'lite' : 'http4';
-      return {
-        manager: normalizedManager,
-        owner: normalizedOwner,
-        enabled,
-        state,
-        policy_count: policies.length,
-        scanned,
-        policies,
-        source,
-        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000)
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.coverSnapshotInFlight.set(cacheKey, request);
-    }
-
-    try {
-      const result = await request;
-      if (this.config.responseCacheEnabled) {
-        this.coverSnapshotCache.set(cacheKey, result);
-      }
-      return result;
-    } finally {
-      this.coverSnapshotInFlight.delete(cacheKey);
-    }
-  }
-
-  async getDefiSnapshot(request: DefiSnapshotRequest): Promise<DefiSnapshotResponse> {
-    const normalizeValidAddress = (value?: string | null) => {
-      if (!value) return null;
-      const trimmed = value.trim();
-      if (!trimmed) return null;
-      try {
-        return Address.parse(trimmed).toRawString();
-      } catch {
-        return null;
-      }
-    };
-
-    const normalizedOwner = normalizeValidAddress(request.owner ?? null);
-    const include = request.include ?? {};
-    const includeActivation = include.activation ?? true;
-    const includeDlmmRegistry = include.dlmmRegistry ?? true;
-    const includeReserveBalances = include.reserveBalances ?? true;
-    const includeSystemHealth = include.systemHealth ?? true;
-    const includeSystemHealthDetailed = include.systemHealthDetailed ?? false;
-    const includeModules = include.modules ?? true;
-    const includeModuleGovernance = include.moduleGovernance ?? false;
-    const includeGovernance = include.governance ?? true;
-    const includeFarms = include.farms ?? true;
-    const includeCover = include.cover ?? true;
-
-    const normalizedContracts = Object.fromEntries(
-      Object.entries(request.contracts ?? {}).map(([key, value]) => [key, normalizeValidAddress(value)])
-    ) as Record<keyof DefiSnapshotRequest['contracts'], string | null>;
-
-    const modulesRequested = Array.isArray(request.modules) ? request.modules : [];
-    const normalizedModules = modulesRequested
-      .map((entry) => ({
-        key: entry.key?.trim() ?? '',
-        address: normalizeValidAddress(entry.address),
-        enabledGetter: entry.enabledGetter ?? null,
-        governanceGetter: entry.governanceGetter ?? null
-      }))
-      .filter((entry) => Boolean(entry.key) && Boolean(entry.address))
-      .sort((a, b) => a.key.localeCompare(b.key));
-
-    const options = request.options ?? {};
-    const govMaxScan =
-      typeof options.governance?.maxScan === 'number' && Number.isFinite(options.governance.maxScan)
-        ? Math.max(1, Math.trunc(options.governance.maxScan))
-        : undefined;
-    const govMaxMisses =
-      typeof options.governance?.maxMisses === 'number' && Number.isFinite(options.governance.maxMisses)
-        ? Math.max(1, Math.trunc(options.governance.maxMisses))
-        : undefined;
-    const farmMaxScan =
-      typeof options.farms?.maxScan === 'number' && Number.isFinite(options.farms.maxScan)
-        ? Math.max(1, Math.trunc(options.farms.maxScan))
-        : undefined;
-    const farmMaxMisses =
-      typeof options.farms?.maxMisses === 'number' && Number.isFinite(options.farms.maxMisses)
-        ? Math.max(1, Math.trunc(options.farms.maxMisses))
-        : undefined;
-    const coverMaxScan =
-      typeof options.cover?.maxScan === 'number' && Number.isFinite(options.cover.maxScan)
-        ? Math.max(1, Math.trunc(options.cover.maxScan))
-        : undefined;
-    const coverMaxMisses =
-      typeof options.cover?.maxMisses === 'number' && Number.isFinite(options.cover.maxMisses)
-        ? Math.max(1, Math.trunc(options.cover.maxMisses))
-        : undefined;
-
-    const cacheKey = [
-      normalizedOwner ?? '',
-      includeActivation ? 'a1' : 'a0',
-      includeDlmmRegistry ? 'd1' : 'd0',
-      includeReserveBalances ? 'r1' : 'r0',
-      includeSystemHealth ? 's1' : 's0',
-      includeSystemHealthDetailed ? 'sd1' : 'sd0',
-      includeModules ? 'm1' : 'm0',
-      includeModuleGovernance ? 'mg1' : 'mg0',
-      includeGovernance ? 'g1' : 'g0',
-      includeFarms ? 'f1' : 'f0',
-      includeCover ? 'c1' : 'c0',
-      `gov:${govMaxScan ?? ''}:${govMaxMisses ?? ''}`,
-      `farm:${farmMaxScan ?? ''}:${farmMaxMisses ?? ''}`,
-      `cover:${coverMaxScan ?? ''}:${coverMaxMisses ?? ''}`,
-      ...Object.entries(normalizedContracts)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, value]) => `${key}:${value ?? ''}`),
-      `mods:${normalizedModules
-        .map((module) => `${module.key}:${module.address}:${module.enabledGetter ?? ''}:${module.governanceGetter ?? ''}`)
-        .join(',')}`
-    ].join('|');
-
-    if (this.config.responseCacheEnabled) {
-      const cached = this.defiSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.defiSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-	    const requestPromise = (async () => {
-	      const errorMessage = (error: unknown) => {
-	        if (!error) return 'unknown error';
-	        if (error instanceof Error) return error.message || 'unknown error';
-	        return String(error);
-	      };
-	      const ok = <T>(data: T): DefiSnapshotSectionOk<T> => ({ ok: true, data });
-	      const err = (error: unknown): DefiSnapshotSectionErr => ({ ok: false, error: errorMessage(error), data: null });
-
-	      const sections: DefiSnapshotResponse['sections'] = {};
-	      const tasks: Array<Promise<void>> = [];
-
-	      if (includeActivation) {
-	        tasks.push(
-	          (async () => {
-	            const activationGate = normalizedContracts.activationGate;
-	            if (!activationGate) {
-	              sections.activation = err('activationGate missing');
-	              return;
-	            }
-	            try {
-	              const res = await this.runGetMethodSourceCached(activationGate, 'activation_status', []);
-	              if (!res || res.exitCode !== 0) {
-	                throw new Error('Activation status unavailable.');
-	              }
-	              const stack = res.stack;
-	              sections.activation = ok({
-	                burned: tupleItemBigIntString(stack[0]),
-	                target: tupleItemBigIntString(stack[1]),
-	                ready: tupleItemBool(stack[2]),
-	                activated: tupleItemBool(stack[3]),
-	                activatedAt: tupleItemBigIntString(stack[4])
-	              });
-	            } catch (error) {
-	              sections.activation = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeDlmmRegistry) {
-	        tasks.push(
-	          (async () => {
-	            const registry = normalizedContracts.dlmmRegistry;
-	            if (!registry) {
-	              sections.dlmmRegistry = err('dlmmRegistry missing');
-	              return;
-	            }
-	            try {
-	              const res = await this.runGetMethodSourceCached(registry, 'registry_meta', []);
-	              if (!res || res.exitCode !== 0) {
-	                throw new Error('DLMM registry meta unavailable.');
-	              }
-	              const stack = unwrapTupleStack(res.stack);
-	              sections.dlmmRegistry = ok({
-	                governance: tupleItemAddress(stack[0]),
-	                enabled: tupleItemBool(stack[1]),
-	                withdrawalsOnly: tupleItemBool(stack[2]),
-	                perpsWeightEnabled: tupleItemBool(stack[3])
-	              });
-	            } catch (error) {
-	              sections.dlmmRegistry = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeReserveBalances) {
-	        tasks.push(
-	          (async () => {
-	            const hub = normalizedContracts.t3Hub;
-	            if (!hub) {
-	              sections.reserveBalances = err('t3Hub missing');
-	              return;
-	            }
-	            try {
-	              const res = await this.runGetMethodSourceCached(hub, 'pool_balances', []);
-	              if (!res || res.exitCode !== 0) {
-	                throw new Error('Reserve balances unavailable.');
-	              }
-	              const stack = unwrapTupleStack(res.stack);
-	              sections.reserveBalances = ok({
-	                usdt: tupleItemBigIntString(stack[0]),
-	                usdc: tupleItemBigIntString(stack[1]),
-	                kusd: tupleItemBigIntString(stack[2])
-	              });
-	            } catch (error) {
-	              sections.reserveBalances = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeSystemHealth) {
-	        tasks.push(
-	          (async () => {
-	            const controlMesh = normalizedContracts.controlMesh;
-	            const riskVault = normalizedContracts.riskVault;
-	            const feeRouter = normalizedContracts.feeRouter;
-	            const buybackExecutor = normalizedContracts.buybackExecutor;
-	            const anchorGuard = normalizedContracts.anchorGuard;
-	            const clusterGuard = normalizedContracts.clusterGuard;
-	            try {
-	              const [
-	                controlRes,
-	                riskRes,
-	                feeStateRes,
-	                feeTargetsRes,
-	                buybackRes,
-	                anchorConfigRes,
-	                anchorStateRes,
-	                anchorEnabledRes,
-	                anchorGovRes,
-	                clusterConfigRes
-	              ] = await Promise.all([
-	                controlMesh ? this.runGetMethodSourceCached(controlMesh, 'get_control_state', []) : Promise.resolve(null),
-	                riskVault ? this.runGetMethodSourceCached(riskVault, 'risk_state', []) : Promise.resolve(null),
-	                feeRouter ? this.runGetMethodSourceCached(feeRouter, 'get_router_state', []) : Promise.resolve(null),
-	                feeRouter ? this.runGetMethodSourceCached(feeRouter, 'router_targets', []) : Promise.resolve(null),
-	                buybackExecutor ? this.runGetMethodSourceCached(buybackExecutor, 'buyback_config', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'anchor_config', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'anchor_state', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'enabled', []) : Promise.resolve(null),
-	                anchorGuard ? this.runGetMethodSourceCached(anchorGuard, 'governance', []) : Promise.resolve(null),
-	                clusterGuard ? this.runGetMethodSourceCached(clusterGuard, 'cluster_guard_config', []) : Promise.resolve(null)
-	              ]);
-
-	              const responded = Boolean(
-	                controlRes ||
-	                  riskRes ||
-	                  feeStateRes ||
-	                  feeTargetsRes ||
-	                  buybackRes ||
-	                  anchorConfigRes ||
-	                  anchorStateRes ||
-	                  anchorEnabledRes ||
-	                  anchorGovRes ||
-	                  clusterConfigRes
-	              );
-	              if (!responded) {
-	                throw new Error('System health snapshot unavailable.');
-	              }
-
-	              const controlState: ControlStateSnapshot | null =
-	                controlRes?.exitCode === 0
-	                  ? {
-	                      governance: tupleItemAddress(controlRes.stack[0]),
-	                      enabled: tupleItemBool(controlRes.stack[1]),
-	                      withdrawalsOnly: tupleItemBool(controlRes.stack[2]),
-	                      sequence: tupleItemBigIntString(controlRes.stack[3]),
-	                      lastHeartbeatTs: tupleItemBigIntString(controlRes.stack[4]),
-	                      pegMintFeeBps: tupleItemBigIntString(controlRes.stack[5]),
-	                      pegRedeemFeeBps: tupleItemBigIntString(controlRes.stack[6]),
-	                      pegQuotaBps: tupleItemBigIntString(controlRes.stack[7]),
-	                      pegThrottleBps: tupleItemBigIntString(controlRes.stack[8]),
-	                      pegHaircutBps: tupleItemBigIntString(controlRes.stack[9]),
-	                      pegLevel: tupleItemBigIntString(controlRes.stack[10]),
-	                      pegEscalationScore: tupleItemBigIntString(controlRes.stack[11]),
-	                      pegRecoveryScore: tupleItemBigIntString(controlRes.stack[12])
-	                    }
-	                  : null;
-
-	              const riskState: RiskStateSnapshot | null =
-	                riskRes?.exitCode === 0
-	                  ? {
-	                      totalLocked: tupleItemBigIntString(riskRes.stack[0]),
-	                      totalOutstanding: tupleItemBigIntString(riskRes.stack[1]),
-	                      totalPending: tupleItemBigIntString(riskRes.stack[2]),
-	                      totalSurplus: tupleItemBigIntString(riskRes.stack[3]),
-	                      flags: tupleItemBigIntString(riskRes.stack[4]),
-	                      registryVersion: tupleItemBigIntString(riskRes.stack[5])
-	                    }
-	                  : null;
-
-	              const feeRouterState: FeeRouterStateSnapshot | null =
-	                feeStateRes?.exitCode === 0
-	                  ? {
-	                      balance: tupleItemBigIntString(feeStateRes.stack[0]),
-	                      lastSequence: tupleItemBigIntString(feeStateRes.stack[1]),
-	                      lastTimestamp: tupleItemBigIntString(feeStateRes.stack[2]),
-	                      allocationPeg: tupleItemBigIntString(feeStateRes.stack[3]),
-	                      allocationLiquidations: tupleItemBigIntString(feeStateRes.stack[4]),
-	                      allocationBuyback: tupleItemBigIntString(feeStateRes.stack[5]),
-	                      allocationGas: tupleItemBigIntString(feeStateRes.stack[6]),
-	                      allocationEmissions: tupleItemBigIntString(feeStateRes.stack[7]),
-	                      allocationReferrals: tupleItemBigIntString(feeStateRes.stack[8]),
-	                      referralDemand: tupleItemBigIntString(feeStateRes.stack[9]),
-	                      referralPriority: tupleItemBigIntString(feeStateRes.stack[10]),
-	                      referralFloor: tupleItemBigIntString(feeStateRes.stack[11]),
-	                      referralWeightDirectBps: tupleItemBigIntString(feeStateRes.stack[12]),
-	                      referralFlags: tupleItemBigIntString(feeStateRes.stack[13]),
-	                      referralThrottleMask: tupleItemBigIntString(feeStateRes.stack[14])
-	                    }
-	                  : null;
-
-	              const feeRouterTargets: FeeRouterTargetsSnapshot | null =
-	                feeTargetsRes?.exitCode === 0
-	                  ? {
-	                      t3Peg: tupleItemAddress(feeTargetsRes.stack[0]),
-	                      t3Liquidations: tupleItemAddress(feeTargetsRes.stack[1]),
-	                      peg: tupleItemAddress(feeTargetsRes.stack[2]),
-	                      liquidations: tupleItemAddress(feeTargetsRes.stack[3]),
-	                      buyback: tupleItemAddress(feeTargetsRes.stack[4]),
-	                      gas: tupleItemAddress(feeTargetsRes.stack[5]),
-	                      emissions: tupleItemAddress(feeTargetsRes.stack[6]),
-	                      referrals: tupleItemAddress(feeTargetsRes.stack[7]),
-	                      referralRegistry: tupleItemAddress(feeTargetsRes.stack[8])
-	                    }
-	                  : null;
-
-	              const buybackConfig: BuybackConfigSnapshot | null =
-	                buybackRes?.exitCode === 0
-	                  ? {
-	                      t3Root: tupleItemAddress(buybackRes.stack[0]),
-	                      tsRoot: tupleItemAddress(buybackRes.stack[1]),
-	                      tsBurnWallet: tupleItemAddress(buybackRes.stack[2]),
-	                      router: tupleItemAddress(buybackRes.stack[3]),
-	                      recordTarget: tupleItemAddress(buybackRes.stack[4]),
-	                      routerWalletForward: tupleItemBigIntString(buybackRes.stack[5]),
-	                      swapForwardValue: tupleItemBigIntString(buybackRes.stack[6])
-	                    }
-	                  : null;
-
-	              const anchorGuardConfig: AnchorConfigSnapshot | null =
-	                anchorConfigRes?.exitCode === 0
-	                  ? (() => {
-	                      const stack = unwrapTupleStack(anchorConfigRes.stack);
-	                      return {
-	                        quorumBps: tupleItemBigIntString(stack[0]),
-	                        maxAgeSeconds: tupleItemBigIntString(stack[1]),
-	                        epsilonExtBps: tupleItemBigIntString(stack[2]),
-	                        epsilonClipBps: tupleItemBigIntString(stack[3]),
-	                        trimCount: tupleItemBigIntString(stack[4])
-	                      };
-	                    })()
-	                  : null;
-
-	              const anchorCell =
-	                anchorStateRes?.exitCode === 0 ? tupleItemCell(anchorStateRes.stack[0]) : null;
-	              const anchorGuardState = anchorCell ? parseAnchorStateCell(anchorCell) : null;
-	              const anchorGuardEnabled = anchorEnabledRes?.exitCode === 0 ? tupleItemBool(anchorEnabledRes.stack[0]) : null;
-	              const anchorGuardGovernance = anchorGovRes?.exitCode === 0 ? tupleItemAddress(anchorGovRes.stack[0]) : null;
-
-	              const clusterGuardConfig: ClusterGuardConfigSnapshot | null =
-	                clusterConfigRes?.exitCode === 0
-	                  ? (() => {
-	                      const stack = unwrapTupleStack(clusterConfigRes.stack);
-	                      return {
-	                        reporter: tupleItemAddress(stack[0]),
-	                        registry: tupleItemAddress(stack[1]),
-	                        vestingSeconds: tupleItemBigIntString(stack[2]),
-	                        warnThreshold: tupleItemBigIntString(stack[3]),
-	                        slashThreshold: tupleItemBigIntString(stack[4])
-	                      };
-	                    })()
-	                  : null;
-
-	              sections.systemHealth = ok({
-	                controlState,
-	                riskState,
-	                feeRouterState,
-	                feeRouterTargets,
-	                buybackConfig,
-	                anchorGuardConfig,
-	                anchorGuardState,
-	                anchorGuardEnabled,
-	                anchorGuardGovernance,
-	                clusterGuardConfig
-	              });
-	            } catch (error) {
-	              sections.systemHealth = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeSystemHealthDetailed) {
-	        tasks.push(
-	          (async () => {
-	            const riskVault = normalizedContracts.riskVault;
-	            const automationRegistry = normalizedContracts.automationRegistry;
-	            const bucketIds = [1, 2, 3];
-	            const riskBucketStates: Record<number, RiskBucketStateSnapshot | null> = {};
-	            bucketIds.forEach((id) => {
-	              riskBucketStates[id] = null;
-	            });
-	            try {
-	              let responded = false;
-	              if (riskVault) {
-	                const bucketResults = await Promise.all(
-	                  bucketIds.map((id) =>
-	                    this.runGetMethodSourceCached(riskVault, 'bucket_state', [{ type: 'int', value: BigInt(id) }]).catch(
-	                      () => null
-	                    )
-	                  )
-	                );
-	                bucketResults.forEach((res, index) => {
-	                  if (!res || res.exitCode !== 0) return;
-	                  responded = true;
-	                  const stack = res.stack;
-	                  const id = bucketIds[index];
-	                  riskBucketStates[id] = {
-	                    exists: tupleItemBool(stack[0]),
-	                    controller: tupleItemAddress(stack[1]),
-	                    payoutHook: tupleItemAddress(stack[2]),
-	                    liquidationHook: tupleItemAddress(stack[3]),
-	                    utilisationCapBps: tupleItemBigIntString(stack[4]),
-	                    payoutCapBps: tupleItemBigIntString(stack[5]),
-	                    collateralMultiplierBps: tupleItemBigIntString(stack[6]),
-	                    outstandingNotional: tupleItemBigIntString(stack[7]),
-	                    lockedCollateral: tupleItemBigIntString(stack[8]),
-	                    pendingPayouts: tupleItemBigIntString(stack[9]),
-	                    automationJobId: tupleItemBigIntString(stack[10]),
-	                    automationCadence: tupleItemBigIntString(stack[11]),
-	                    automationBacklog: tupleItemBigIntString(stack[12]),
-	                    registryVersion: tupleItemBigIntString(stack[13]),
-	                    surplus: tupleItemBigIntString(stack[14]),
-	                    utilisationBps: tupleItemBigIntString(stack[15]),
-	                    deficit: tupleItemBool(stack[16]),
-	                    lastReportTs: tupleItemBigIntString(stack[17])
-	                  };
-	                });
-	              }
-
-	              let automationConfig: AutomationConfigSnapshot | null = null;
-	              let jobQueueConfig: JobConfigSnapshot | null = null;
-	              const automationModules: Record<number, AutomationModuleTelemetrySnapshot | null> = {};
-	              const jobQueueJobs: Record<number, JobRecordSnapshot | null> = {};
-
-	              const parseJobId = (value: string | null) => {
-	                if (!value) return null;
-	                try {
-	                  const big = BigInt(value);
-	                  if (big <= 0n) return null;
-	                  const asNumber = Number(big);
-	                  return Number.isFinite(asNumber) ? Math.trunc(asNumber) : null;
-	                } catch {
-	                  return null;
-	                }
-	              };
-
-	              const moduleIds = Array.from(
-	                new Set(
-	                  Object.values(riskBucketStates)
-	                    .map((state) => parseJobId(state?.automationJobId ?? null))
-	                    .filter((id): id is number => typeof id === 'number' && Number.isFinite(id))
-	                )
-	              ).sort((a, b) => a - b);
-
-	              let queueAddress: string | null = null;
-	              if (automationRegistry) {
-	                const configRes = await this.runGetMethodSourceCached(automationRegistry, 'config', []).catch(() => null);
-	                if (configRes?.exitCode === 0) {
-	                  responded = true;
-	                  queueAddress = tupleItemAddress(configRes.stack[0]);
-	                  automationConfig = { queue: queueAddress };
-	                } else {
-	                  automationConfig = null;
-	                }
-	              }
-
-	              if (queueAddress) {
-	                const jobConfigRes = await this.runGetMethodSourceCached(queueAddress, 'job_config', []).catch(() => null);
-	                if (jobConfigRes?.exitCode === 0) {
-	                  responded = true;
-	                  jobQueueConfig = {
-	                    maxJobs: tupleItemBigIntString(jobConfigRes.stack[0]),
-	                    minValue: tupleItemBigIntString(jobConfigRes.stack[1]),
-	                    maxLaneJobs: tupleItemBigIntString(jobConfigRes.stack[2]),
-	                    maxPriorityJobs: tupleItemBigIntString(jobConfigRes.stack[3])
-	                  };
-	                }
-	              }
-
-	              if (automationRegistry && moduleIds.length) {
-	                const telemetryRes = await Promise.all(
-	                  moduleIds.map((id) =>
-	                    this.runGetMethodSourceCached(automationRegistry, 'module', [{ type: 'int', value: BigInt(id) }]).catch(
-	                      () => null
-	                    )
-	                  )
-	                );
-	                telemetryRes.forEach((res, index) => {
-	                  const id = moduleIds[index];
-	                  if (!res || res.exitCode !== 0) {
-	                    automationModules[id] = null;
-	                    return;
-	                  }
-	                  responded = true;
-	                  const stack = res.stack;
-	                  automationModules[id] = {
-	                    lastTimestamp: tupleItemBigIntString(stack[0]),
-	                    lastStatus: tupleItemBigIntString(stack[1]),
-	                    lastProcessed: tupleItemBigIntString(stack[2]),
-	                    lastRemaining: tupleItemBigIntString(stack[3]),
-	                    successCount: tupleItemBigIntString(stack[4]),
-	                    failureCount: tupleItemBigIntString(stack[5]),
-	                    totalProcessed: tupleItemBigIntString(stack[6])
-	                  };
-	                });
-	              }
-
-	              if (queueAddress && moduleIds.length) {
-	                const jobRes = await Promise.all(
-	                  moduleIds.map((id) =>
-	                    this.runGetMethodSourceCached(queueAddress, 'job', [{ type: 'int', value: BigInt(id) }]).catch(
-	                      () => null
-	                    )
-	                  )
-	                );
-	                jobRes.forEach((res, index) => {
-	                  const id = moduleIds[index];
-	                  if (!res || res.exitCode !== 0) {
-	                    jobQueueJobs[id] = null;
-	                    return;
-	                  }
-	                  responded = true;
-	                  const stack = res.stack;
-	                  jobQueueJobs[id] = {
-	                    exists: tupleItemBool(stack[0]),
-	                    jobId: tupleItemBigIntString(stack[1]),
-	                    target: tupleItemAddress(stack[2]),
-	                    scheduledAt: tupleItemBigIntString(stack[3]),
-	                    forwardedValue: tupleItemBigIntString(stack[4]),
-	                    dispatchValue: tupleItemBigIntString(stack[5]),
-	                    payloadHash: tupleItemBigIntString(stack[6]),
-	                    attempts: tupleItemBigIntString(stack[7]),
-	                    maxAttempts: tupleItemBigIntString(stack[8]),
-	                    status: tupleItemBigIntString(stack[9]),
-	                    lastDispatchAt: tupleItemBigIntString(stack[10]),
-	                    lastResult: tupleItemBigIntString(stack[11]),
-	                    wakeAt: tupleItemBigIntString(stack[12]),
-	                    ackTimeoutAt: tupleItemBigIntString(stack[13]),
-	                    dispatchHash: tupleItemBigIntString(stack[14]),
-	                    owner: tupleItemAddress(stack[15]),
-	                    priority: tupleItemBigIntString(stack[16]),
-	                    lane: tupleItemBigIntString(stack[17]),
-	                    deadlineAt: tupleItemBigIntString(stack[18]),
-	                    maxWork: tupleItemBigIntString(stack[19])
-	                  };
-	                });
-	              }
-
-	              if (!responded) {
-	                throw new Error('System health detailed snapshot unavailable.');
-	              }
-
-	              sections.systemHealthDetailed = ok({
-	                riskBucketStates,
-	                automationConfig,
-	                automationModules,
-	                jobQueueConfig,
-	                jobQueueJobs
-	              });
-	            } catch (error) {
-	              sections.systemHealthDetailed = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeModules) {
-	        tasks.push(
-	          (async () => {
-	            try {
-	              const statuses: Record<string, ModuleStatusSnapshot | null> = {};
-	              if (normalizedModules.length === 0) {
-	                sections.modules = ok(statuses);
-	              } else {
-	                const results = await Promise.all(
-	                  normalizedModules.map(async (module) => {
-	                    const enabledGetter = module.enabledGetter?.trim() || 'registry_enabled';
-	                    const governanceGetter = includeModuleGovernance ? module.governanceGetter : null;
-	                    const [enabledRes, governanceRes] = await Promise.all([
-	                      this.runGetMethodSourceCached(module.address!, enabledGetter, []).catch(() => null),
-	                      governanceGetter
-	                        ? this.runGetMethodSourceCached(module.address!, governanceGetter.trim(), []).catch(() => null)
-	                        : Promise.resolve(null)
-	                    ]);
-	                    if (!enabledRes || enabledRes.exitCode !== 0) {
-	                      return { key: module.key, status: null };
-	                    }
-	                    const enabled = tupleItemBool(enabledRes.stack[0]);
-	                    const governance =
-	                      governanceRes && governanceRes.exitCode === 0 ? tupleItemAddress(governanceRes.stack[0]) : null;
-	                    return { key: module.key, status: { enabled, governance } as ModuleStatusSnapshot };
-	                  })
-	                );
-	                results.forEach((entry) => {
-	                  statuses[entry.key] = entry.status;
-	                });
-	                sections.modules = ok(statuses);
-	              }
-	            } catch (error) {
-	              sections.modules = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeGovernance) {
-	        tasks.push(
-	          (async () => {
-	            const voting = normalizedContracts.voting;
-	            if (!voting) {
-	              sections.governance = err('voting missing');
-	              return;
-	            }
-	            try {
-	              sections.governance = ok(
-	                await this.getGovernanceSnapshot(voting, {
-	                  owner: normalizedOwner ?? undefined,
-	                  maxScan: govMaxScan,
-	                  maxConsecutiveMisses: govMaxMisses
-	                })
-	              );
-	            } catch (error) {
-	              sections.governance = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeFarms) {
-	        tasks.push(
-	          (async () => {
-	            const factory = normalizedContracts.farmFactory;
-	            if (!factory) {
-	              sections.farms = err('farmFactory missing');
-	              return;
-	            }
-	            try {
-	              sections.farms = ok(
-	                await this.getFarmSnapshot(factory, {
-	                  maxScan: farmMaxScan,
-	                  maxConsecutiveMisses: farmMaxMisses
-	                })
-	              );
-	            } catch (error) {
-	              sections.farms = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      if (includeCover) {
-	        tasks.push(
-	          (async () => {
-	            const manager = normalizedContracts.coverManager;
-	            if (!manager) {
-	              sections.cover = err('coverManager missing');
-	              return;
-	            }
-	            try {
-	              sections.cover = ok(
-	                await this.getCoverSnapshot(manager, {
-	                  owner: normalizedOwner ?? undefined,
-	                  maxScan: coverMaxScan,
-	                  maxConsecutiveMisses: coverMaxMisses
-	                })
-	              );
-	            } catch (error) {
-	              sections.cover = err(error);
-	            }
-	          })()
-	        );
-	      }
-
-	      await Promise.all(tasks);
-
-	      return {
-	        owner: normalizedOwner,
-	        network: this.network,
-        updated_at: Math.floor(Date.now() / 1000),
-        sections
-      };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.defiSnapshotInFlight.set(cacheKey, requestPromise);
-    }
-
-    try {
-      const response = await requestPromise;
-      if (this.config.responseCacheEnabled) {
-        this.defiSnapshotCache.set(cacheKey, response);
-      }
-      return response;
-    } finally {
-      this.defiSnapshotInFlight.delete(cacheKey);
-    }
-  }
-
-  async getDlmmPoolsSnapshot(request: DlmmPoolsSnapshotRequest): Promise<DlmmPoolsSnapshotResponse> {
+  async getDlmmPoolsSnapshot(request: DlmmPoolsSnapshotRequest, readOptions: ServiceReadOptions = {}): Promise<DlmmPoolsSnapshotResponse> {
     const normalizeValidAddress = (value?: string | null) => {
       if (!value) return null;
       const trimmed = value.trim();
@@ -3180,14 +566,9 @@ export class IndexerService {
     ).sort((a, b) => a.localeCompare(b));
 
     const cacheKey = [t3Root, registry ?? '', factory ?? '', tokens.join(',')].join('|');
-    if (this.config.responseCacheEnabled) {
-      const cached = this.dlmmPoolsSnapshotCache.get(cacheKey);
-      if (cached) return cached;
-      const pending = this.dlmmPoolsSnapshotInFlight.get(cacheKey);
-      if (pending) return pending;
-    }
-
-    const requestPromise = (async () => {
+    return this.readSnapshot({ key: 'getDlmmPoolsSnapshot|' + cacheKey, deadlineMs: 10_000, signal: readOptions.signal,
+      reuse: { maxAgeMs: DLMM_POOLS_SNAPSHOT_CACHE_TTL_MS }, load: async ({head, signal}) => {
+      const getter = this.pinnedGetter(head, signal);
       const decodeRecord = (res: { exitCode: number; stack: TupleItem[] } | null) => {
         if (!res || res.exitCode !== 0) return null;
         const stack = unwrapTupleStack(res.stack);
@@ -3214,16 +595,16 @@ export class IndexerService {
         tokens.map(async (token) => {
           const [registryRes, factoryRes] = await Promise.all([
             registry
-              ? this.runGetMethodSourceCached(registry, 'pool_for', [
+              ? getter(registry, 'pool_for', [
                   { type: 'slice', cell: buildSliceCell(t3Root) },
                   { type: 'slice', cell: buildSliceCell(token) }
-                ]).catch(() => null)
+                ])
               : Promise.resolve(null),
             factory
-              ? this.runGetMethodSourceCached(factory, 'pool_record', [
+              ? getter(factory, 'pool_record', [
                   { type: 'slice', cell: buildSliceCell(t3Root) },
                   { type: 'slice', cell: buildSliceCell(token) }
-                ]).catch(() => null)
+                ])
               : Promise.resolve(null)
           ]);
 
@@ -3249,7 +630,7 @@ export class IndexerService {
           let binReserves: DlmmPoolBinReserves | null = null;
 
           if (resolvedPool) {
-            const activeRes = await this.runGetMethodSourceCached(resolvedPool, 'active_price_q64', []).catch(() => null);
+            const activeRes = await getter(resolvedPool, 'active_price_q64', []);
             if (!activeRes || activeRes.exitCode !== 0) {
               // Pool address can be deterministic but not actually deployed. Hide it.
               resolvedPool = null;
@@ -3261,9 +642,9 @@ export class IndexerService {
                 activeBinId = Number.isFinite(asNumber) ? Math.trunc(asNumber) : null;
               }
               if (activeBinId !== null) {
-                const binRes = await this.runGetMethodSourceCached(resolvedPool, 'bin_state', [
+                const binRes = await getter(resolvedPool, 'bin_state', [
                   { type: 'int', value: BigInt(activeBinId) }
-                ]).catch(() => null);
+                ]);
                 if (binRes && binRes.exitCode === 0) {
                   const binStack = unwrapTupleStack(binRes.stack);
                   binReserves = {
@@ -3272,11 +653,11 @@ export class IndexerService {
                   };
                 }
               }
-              const walletCodeHashRes = await this.runGetMethodSourceCached(
+              const walletCodeHashRes = await getter(
                 resolvedPool,
                 'wallet_code_hash',
                 []
-              ).catch(() => null);
+              );
               if (walletCodeHashRes && walletCodeHashRes.exitCode === 0) {
                 const walletCodeHashStack = unwrapTupleStack(walletCodeHashRes.stack);
                 walletCodeHash = tupleItemBigIntString(walletCodeHashStack[0]);
@@ -3306,42 +687,20 @@ export class IndexerService {
         network: this.network,
         updated_at: Math.floor(Date.now() / 1000)
       };
-    })();
-
-    if (this.config.responseCacheEnabled) {
-      this.dlmmPoolsSnapshotInFlight.set(cacheKey, requestPromise);
-    }
-
-    try {
-      const response = await requestPromise;
-      if (this.config.responseCacheEnabled) {
-        this.dlmmPoolsSnapshotCache.set(cacheKey, response);
-      }
-      return response;
-    } finally {
-      this.dlmmPoolsSnapshotInFlight.delete(cacheKey);
-    }
+    }});
   }
 
-  async getTransactions(address: string, page: number) {
+  async getTransactionEvidence(address: string, limit: number, lt?: string, hash?: string, options: ServiceReadOptions = {}) {
+    if (Boolean(lt) !== Boolean(hash)) throw new Error('Transaction evidence requires both cursor fields.');
+    const page = await withReadDeadline(options, this.config.initialHistoryTimeoutMs, signal =>
+      readOriginalTransactionEvidence(this.source, address, limit, lt && hash ? {lt, hash} : undefined, {signal}));
+    return page.map(originalTransactionToToncenter);
+  }
+
+  async getTransactions(address: string, page: number, options: ServiceReadOptions = {}) {
+    address = normalizeAddress(address);
     this.store.touch(address);
-    try {
-      await this.ensureInitialTransactions(address);
-    } catch (_error) {
-      const fallback = this.store.getPage(address, page);
-      if (!fallback) {
-        return {
-          page,
-          page_size: this.config.pageSize,
-          total_txs: 0,
-          total_pages: null,
-          total_pages_min: 0,
-          history_complete: false,
-          txs: [],
-          network: this.network,
-        };
-      }
-    }
+    await this.ensureInitialTransactions(address, options);
 
     const entry = this.store.get(address);
     const signature = this.getTxPageSignature(entry, page);
@@ -3367,7 +726,11 @@ export class IndexerService {
     }
 
     if (!result.historyComplete && this.enqueueBackfill) {
-      const backfillCapped = result.totalPagesMin >= this.config.backfillMaxPagesPerAddress;
+      const maxPages = Math.min(
+        this.config.backfillMaxPagesPerAddress,
+        this.config.maxPagesPerAddress
+      );
+      const backfillCapped = result.totalTxs >= this.config.pageSize * maxPages;
       if (!backfillCapped && page >= result.totalPagesMin) {
         this.enqueueBackfill(address);
       }
@@ -3389,25 +752,10 @@ export class IndexerService {
     return response;
   }
 
-  async getTransactionsByCursor(address: string, lt: string, hash: string) {
+  async getTransactionsByCursor(address: string, lt: string, hash: string, options: ServiceReadOptions = {}) {
+    address = normalizeAddress(address);
     this.store.touch(address);
-    try {
-      await this.ensureInitialTransactions(address);
-    } catch (_error) {
-      const fallback = this.store.getPageByCursor(address, { lt, hash });
-      if (!fallback) {
-        return {
-          page: 1,
-          page_size: this.config.pageSize,
-          total_txs: 0,
-          total_pages: null,
-          total_pages_min: 0,
-          history_complete: false,
-          txs: [],
-          network: this.network,
-        };
-      }
-    }
+    await this.ensureInitialTransactions(address, options);
 
     const entry = this.store.get(address);
     const signature = this.getTxCursorSignature(entry, lt, hash);
@@ -3447,65 +795,27 @@ export class IndexerService {
     return response;
   }
 
-  async getSwapExecutions(
-    address: string,
+  async getMarketCandles(
+    marketKey: string,
+    marketAddress: string,
     options: {
-      limit?: number;
+      assetSymbol: string;
+      quoteSymbol: string;
+      assetDecimals?: number;
+      quoteDecimals?: number;
+      interval?: MarketCandleInterval;
       fromUtime?: number;
       toUtime?: number;
-      payToken?: string;
-      receiveToken?: string;
-      executionType?: SwapExecutionType;
-      status?: SwapExecutionStatus;
-      includeReverse?: boolean;
-    } = {}
-  ): Promise<AccountSwapsResponse> {
+      limit?: number;
+    }, readOptions: ServiceReadOptions = {}
+  ): Promise<MarketCandlesResponse> {
+    marketAddress = normalizeAddress(marketAddress);
     const syncedAt = Math.trunc(Date.now() / 1000);
-    const emptySummary: AccountSwapsSummary = {
-      status_counts: { success: 0, failed: 0, pending: 0 },
-      execution_type_counts: { market: 0, limit: 0, twap: 0, unknown: 0 },
-      twap_run_count: 0,
-      pending_limit_count: 0,
-    };
-
-    this.store.touch(address);
-    try {
-      await this.ensureInitialTransactions(address);
-    } catch (_error) {
-      const fallback = this.store.get(address);
-      if (!fallback) {
-        return {
-          address,
-          total_swaps: 0,
-          returned_swaps: 0,
-          history_complete: false,
-          synced_at: syncedAt,
-          network: this.network,
-          swaps: [],
-          summary: emptySummary,
-          twap_runs: [],
-          pending_limits: [],
-        };
-      }
+    const interval = options.interval ?? '1m';
+    const intervalSeconds = MARKET_CANDLE_INTERVAL_SECONDS[interval];
+    if (!intervalSeconds) {
+      throw new Error('unsupported candle interval');
     }
-
-    const entry = this.store.get(address);
-    if (!entry) {
-      return {
-        address,
-        total_swaps: 0,
-        returned_swaps: 0,
-        history_complete: false,
-        synced_at: syncedAt,
-        network: this.network,
-        swaps: [],
-        summary: emptySummary,
-        twap_runs: [],
-        pending_limits: [],
-      };
-    }
-
-    const limit = Math.max(1, Math.min(500, Math.trunc(options.limit ?? 100)));
     const fromUtime =
       typeof options.fromUtime === 'number' && Number.isFinite(options.fromUtime)
         ? Math.max(1, Math.trunc(options.fromUtime))
@@ -3514,196 +824,391 @@ export class IndexerService {
       typeof options.toUtime === 'number' && Number.isFinite(options.toUtime)
         ? Math.max(1, Math.trunc(options.toUtime))
         : null;
-    const payToken = normalizeTokenSymbol(options.payToken);
-    const receiveToken = normalizeTokenSymbol(options.receiveToken);
-    const includeReverse = Boolean(options.includeReverse);
-    const executionType = options.executionType;
-    const status = options.status;
+    if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
+      throw new Error('fromUtime must be less than or equal to toUtime');
+    }
+    const limit =
+      typeof options.limit === 'number' && Number.isFinite(options.limit)
+        ? Math.max(1, Math.min(1_000, Math.trunc(options.limit)))
+        : 320;
+    const assetSymbol = normalizeTokenSymbol(options.assetSymbol);
+    const quoteSymbol = normalizeTokenSymbol(options.quoteSymbol);
+    if (!assetSymbol || !quoteSymbol || assetSymbol === quoteSymbol) {
+      throw new Error('assetSymbol and quoteSymbol must be distinct non-empty symbols');
+    }
+    const assetDecimals =
+      typeof options.assetDecimals === 'number' && Number.isFinite(options.assetDecimals)
+        ? Math.max(0, Math.min(30, Math.trunc(options.assetDecimals)))
+        : 9;
+    const quoteDecimals =
+      typeof options.quoteDecimals === 'number' && Number.isFinite(options.quoteDecimals)
+        ? Math.max(0, Math.min(30, Math.trunc(options.quoteDecimals)))
+        : 9;
 
-    const summary: AccountSwapsSummary = {
-      status_counts: { success: 0, failed: 0, pending: 0 },
-      execution_type_counts: { market: 0, limit: 0, twap: 0, unknown: 0 },
-      twap_run_count: 0,
-      pending_limit_count: 0,
-    };
-    const swaps: AccountSwapExecution[] = [];
-    const pendingLimits: AccountPendingLimitOrder[] = [];
-    const twapRuns = new Map<
-      string,
-      {
-        id: string;
-        payToken?: string;
-        receiveToken?: string;
-        totalSlices: number;
-        confirmedSlices: number;
-        pendingSlices: number;
-        failedSlices: number;
-        firstUtime: number;
-        lastUtime: number;
-      }
-    >();
-    let totalSwaps = 0;
-    const pendingLimitCap = 64;
-    const twapRunCap = 64;
+    this.store.touch(marketAddress);
+    await this.ensureInitialTransactions(marketAddress, readOptions);
 
+    const entry = this.store.get(marketAddress);
+    if (!entry) {
+      return {
+        market_key: marketKey,
+        market_address: marketAddress,
+        interval,
+        from_utime: fromUtime,
+        to_utime: toUtime,
+        candle_count: 0,
+        history_complete: false,
+        synced_at: syncedAt,
+        network: this.network,
+        candles: [],
+      };
+    }
+
+    const trades: Array<{
+      utime: number;
+      lt: bigint;
+      txId: string;
+      price: number;
+      base: number;
+      quote: number;
+    }> = [];
+    const poolSettlementEvidence = resolveDlmmPoolSettlementEvidence(marketAddress, entry.txs);
     for (const tx of entry.txs) {
       const swap = this.toSwapExecution(tx);
-      if (!swap) continue;
+      if (!swap || swap.status !== 'success') continue;
+      const receiveAmount =
+        swap.receiveAmountSource === 'actual'
+          ? swap.receiveAmount
+          : poolSettlementEvidence.get(swap.txId)?.amountOutRaw;
+      if (receiveAmount === undefined) continue;
       if (fromUtime !== null && swap.utime < fromUtime) continue;
       if (toUtime !== null && swap.utime > toUtime) continue;
-      if (status && swap.status !== status) continue;
-      if (executionType && swap.executionType !== executionType) continue;
-      if (!this.matchesSwapPairFilter(swap, payToken, receiveToken, includeReverse)) continue;
-      totalSwaps += 1;
-      summary.status_counts[swap.status] += 1;
-      summary.execution_type_counts[swap.executionType] += 1;
 
-      if (swap.executionType === 'limit' && swap.status === 'pending') {
-        summary.pending_limit_count += 1;
-        if (pendingLimits.length < pendingLimitCap) {
-          pendingLimits.push({
-            txId: swap.txId,
-            lt: swap.lt,
-            hash: swap.hash,
-            utime: swap.utime,
-            status: swap.status,
-            payToken: swap.payToken,
-            receiveToken: swap.receiveToken,
-            payAmount: swap.payAmount,
-            receiveAmount: swap.receiveAmount,
-            queryId: swap.queryId,
-            querySequence: swap.querySequence,
-            queryNonce: swap.queryNonce,
-          });
-        }
+      const paySymbolRaw = normalizeTokenSymbol(swap.payToken);
+      const receiveSymbolRaw = normalizeTokenSymbol(swap.receiveToken);
+      const paySymbol: string | null = paySymbolRaw === 'X' ? assetSymbol : paySymbolRaw;
+      const receiveSymbol: string | null = receiveSymbolRaw === 'X' ? assetSymbol : receiveSymbolRaw;
+
+      let baseRaw: string | undefined;
+      let quoteRaw: string | undefined;
+      if (paySymbol === assetSymbol && receiveSymbol === quoteSymbol) {
+        baseRaw = swap.payAmount;
+        quoteRaw = receiveAmount;
+      } else if (paySymbol === quoteSymbol && receiveSymbol === assetSymbol) {
+        baseRaw = receiveAmount;
+        quoteRaw = swap.payAmount;
+      } else {
+        continue;
       }
 
-      if (swap.executionType === 'twap' && swap.twapRunId) {
-        const run = twapRuns.get(swap.twapRunId) ?? {
-          id: swap.twapRunId,
-          payToken: swap.payToken,
-          receiveToken: swap.receiveToken,
-          totalSlices: 0,
-          confirmedSlices: 0,
-          pendingSlices: 0,
-          failedSlices: 0,
-          firstUtime: swap.utime,
-          lastUtime: swap.utime,
-        };
-        if (!run.payToken && swap.payToken) run.payToken = swap.payToken;
-        if (!run.receiveToken && swap.receiveToken) run.receiveToken = swap.receiveToken;
-        run.totalSlices = Math.max(run.totalSlices, swap.twapTotal ?? 0);
-        run.firstUtime = Math.min(run.firstUtime, swap.utime);
-        run.lastUtime = Math.max(run.lastUtime, swap.utime);
-        if (swap.status === 'success') {
-          run.confirmedSlices += 1;
-        } else if (swap.status === 'failed') {
-          run.failedSlices += 1;
-        } else {
-          run.pendingSlices += 1;
-        }
-        twapRuns.set(run.id, run);
-      }
+      const base = rawAmountToNumber(baseRaw, assetDecimals);
+      const quote = rawAmountToNumber(quoteRaw, quoteDecimals);
+      if (base === null || quote === null) continue;
+      const price = quote / base;
+      if (!Number.isFinite(price) || price <= 0) continue;
+      trades.push({
+        utime: swap.utime,
+        lt: BigInt(swap.lt),
+        txId: swap.txId,
+        price,
+        base,
+        quote,
+      });
+    }
 
-      if (swaps.length < limit) {
-        swaps.push(swap);
+    trades.sort((left, right) => {
+      if (left.utime !== right.utime) return left.utime - right.utime;
+      if (left.lt !== right.lt) return left.lt < right.lt ? -1 : 1;
+      return left.txId.localeCompare(right.txId);
+    });
+
+    const byBucket = new Map<number, MarketCandle>();
+    for (const trade of trades) {
+      const ts = Math.floor(trade.utime / intervalSeconds) * intervalSeconds;
+      const candle = byBucket.get(ts);
+      if (!candle) {
+        byBucket.set(ts, {
+          ts,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+          volumeBase: trade.base,
+          volumeQuote: trade.quote,
+          tradeCount: 1,
+          sourceTxIds: [trade.txId],
+        });
+        continue;
+      }
+      candle.high = Math.max(candle.high, trade.price);
+      candle.low = Math.min(candle.low, trade.price);
+      candle.close = trade.price;
+      candle.volumeBase += trade.base;
+      candle.volumeQuote += trade.quote;
+      candle.tradeCount += 1;
+      if (!candle.sourceTxIds.includes(trade.txId)) {
+        candle.sourceTxIds.push(trade.txId);
       }
     }
 
-    summary.twap_run_count = twapRuns.size;
-
-    const twapRunSummaries: AccountTwapRunSummary[] = [...twapRuns.values()]
-      .sort((left, right) => right.lastUtime - left.lastUtime)
-      .slice(0, twapRunCap)
-      .map((run) => {
-        let runStatus: AccountTwapRunSummary['status'] = 'completed';
-        if (run.pendingSlices > 0) {
-          runStatus = 'running';
-        } else if (run.failedSlices > 0 && run.confirmedSlices === 0) {
-          runStatus = 'failed';
-        } else if (run.failedSlices > 0 || (run.totalSlices > 0 && run.confirmedSlices < run.totalSlices)) {
-          runStatus = 'partial';
-        }
-        return {
-          id: run.id,
-          payToken: run.payToken,
-          receiveToken: run.receiveToken,
-          totalSlices: run.totalSlices > 0 ? run.totalSlices : undefined,
-          confirmedSlices: run.confirmedSlices,
-          pendingSlices: run.pendingSlices,
-          failedSlices: run.failedSlices,
-          firstUtime: run.firstUtime,
-          lastUtime: run.lastUtime,
-          status: runStatus,
-        };
-      });
-
+    const candles = [...byBucket.values()]
+      .sort((left, right) => left.ts - right.ts)
+      .slice(-limit);
     return {
-      address,
-      total_swaps: totalSwaps,
-      returned_swaps: swaps.length,
+      market_key: marketKey,
+      market_address: marketAddress,
+      interval,
+      from_utime: fromUtime,
+      to_utime: toUtime,
+      candle_count: candles.length,
       history_complete: entry.stats.historyComplete,
       synced_at: syncedAt,
       network: this.network,
-      swaps,
-      summary,
-      twap_runs: twapRunSummaries,
-      pending_limits: pendingLimits,
+      candles,
     };
   }
 
-  async refreshAccountState(address: string, options: { lite?: boolean } = {}) {
-    const previous = this.store.get(address)?.balance;
-    const previousSignature = balanceStateSignature(previous);
-    const state =
-      options.lite && this.source.getAccountStateLite
-        ? await this.source.getAccountStateLite(address)
-        : await this.source.getAccountState(address);
+  async refreshAccountState(
+    address: string,
+    options: ServiceReadOptions = {},
+    expectedWorkflowGeneration?: number
+  ) {
+    address = normalizeAddress(address);
+    return this.store.withAddressLock(
+      address,
+      () => this.refreshAccountStateUnlocked(address, options),
+      expectedWorkflowGeneration
+    );
+  }
+
+  /** Caller must already hold MemoryStore's lock for this normalized address. */
+  async refreshAccountStateWithinAddressLock(
+    address: string,
+    options: ServiceReadOptions = {}
+  ) {
+    address = normalizeAddress(address);
+    return this.refreshAccountStateUnlocked(address, options);
+  }
+
+  private async refreshAccountStateUnlocked(address: string, options: ServiceReadOptions = {}) {
+    const state = await withReadDeadline(options, 5_000, signal => this.source.getAccountState(address, {signal}));
+    options.signal?.throwIfAborted();
     const accountState: AccountState = {
       address,
       balance: state.balance,
       lastTxLt: state.lastTxLt,
       lastTxHash: state.lastTxHash,
       accountState: state.accountState ?? null,
-      codeBoc: state.codeBoc ?? previous?.codeBoc ?? null,
-      dataBoc: state.dataBoc ?? previous?.dataBoc ?? null,
+      codeBoc: state.codeBoc ?? null,
+      dataBoc: state.dataBoc ?? null,
       updatedAt: Date.now(),
     };
+    this.storeAccountState(address, accountState);
+  }
+
+  /** Caller must hold MemoryStore's lock for this normalized address. */
+  private storeAccountState(address: string, accountState: AccountState) {
     this.store.setBalance(address, accountState);
-    const nextSignature = balanceStateSignature(accountState);
-    if (nextSignature !== previousSignature) {
-      this.emitBalanceChanged(address);
+    const retainedHead = this.store.get(address)?.txs[0];
+    const hasHeadLt = typeof accountState.lastTxLt === 'string' && accountState.lastTxLt.length > 0;
+    const hasHeadHash = typeof accountState.lastTxHash === 'string' && accountState.lastTxHash.length > 0;
+    const retainedHeadMatches =
+      hasHeadLt &&
+      hasHeadHash &&
+      retainedHead?.lt === accountState.lastTxLt &&
+      retainedHead?.hash === accountState.lastTxHash;
+    if (
+      hasHeadLt !== hasHeadHash ||
+      (hasHeadLt && hasHeadHash && !retainedHeadMatches) ||
+      (!hasHeadLt && !hasHeadHash && retainedHead)
+    ) {
+      this.store.markHistoryIncomplete(address);
     }
   }
 
-  async ensureInitialTransactions(address: string) {
-    const entry = this.store.get(address);
-    if (entry && entry.txs.length > 0) return;
+  async ensureInitialTransactions(address: string, options: ServiceReadOptions = {}) {
+    address = normalizeAddress(address);
+    return withReadDeadline(options, this.config.initialHistoryTimeoutMs, signal =>
+      this.store.withAddressLock(address, () => this.ensureInitialTransactionsUnlocked(address, {signal}))
+    );
+  }
 
-    const limit = this.config.pageSize * this.config.backfillPageBatch;
-    const raw = await this.source.getTransactions(address, limit);
+  private async ensureInitialTransactionsUnlocked(address: string, options: ServiceReadOptions) {
+    options.signal?.throwIfAborted();
+    const entry = this.store.get(address);
+    let replaceRetainedHistory = false;
+    const maxPages = Math.min(
+      this.config.backfillMaxPagesPerAddress,
+      this.config.maxPagesPerAddress
+    );
+    const maxTransactions = this.config.pageSize * maxPages;
+    if (entry && entry.txs.length > 0) {
+      const newest = entry.txs[0];
+      const oldest = entry.txs[entry.txs.length - 1];
+      const retainedSegmentIsLinked = Boolean(
+        newest &&
+        oldest &&
+        transactionPageIsLinkedInclusiveSegment(entry.txs, newest, oldest)
+      );
+      const retainedCompleteHistoryIsValid = Boolean(
+        retainedSegmentIsLinked &&
+        newest &&
+        entry.balance?.lastTxLt === newest.lt &&
+        entry.balance?.lastTxHash === newest.hash &&
+        transactionPageReachesHistoryStart(entry.txs, newest)
+      );
+      const hasBalanceHeadLt = Boolean(entry.balance?.lastTxLt);
+      const hasBalanceHeadHash = Boolean(entry.balance?.lastTxHash);
+      const retainedHistoryContradictsBalance = Boolean(
+        entry.balance &&
+        (
+          hasBalanceHeadLt !== hasBalanceHeadHash ||
+          (!hasBalanceHeadLt && !hasBalanceHeadHash) ||
+          (hasBalanceHeadLt &&
+            hasBalanceHeadHash &&
+            (entry.balance.lastTxLt !== newest?.lt || entry.balance.lastTxHash !== newest?.hash))
+        )
+      );
+      if (entry.stats.historyComplete && !retainedCompleteHistoryIsValid) {
+        this.store.markHistoryIncomplete(address);
+      }
+      if (!retainedSegmentIsLinked || retainedHistoryContradictsBalance) {
+        // Legacy or malformed snapshots cannot be extended safely because the
+        // retained transactions no longer prove one predecessor chain or its
+        // head is contradicted by the last observed account state. Keep the
+        // old incomplete suffix available until a replacement source page has
+        // been fetched, linked, and anchored to a fresh account head.
+        replaceRetainedHistory = true;
+        this.store.markHistoryIncomplete(address);
+        this.store.setLastBackfillLt(address, undefined);
+      } else {
+        if (
+          !entry.stats.historyComplete &&
+          entry.stats.txCount < maxTransactions &&
+          this.enqueueBackfill
+        ) {
+          this.enqueueBackfill(address);
+        }
+        return;
+      }
+    }
+
+    const limit = Math.min(
+      this.config.pageSize * this.config.backfillPageBatch,
+      maxTransactions
+    );
+    const head = await withReadDeadline(options, this.config.initialHistoryTimeoutMs, signal => this.source.getAccountState(address, {signal}));
+    options.signal?.throwIfAborted();
+    const receivedRaw = ((!head.lastTxLt && !head.lastTxHash && head.accountState === 'uninitialized') || head.lastTxLt === '0') ? [] :
+      head.lastTxLt && head.lastTxHash ? await withReadDeadline(options, this.config.initialHistoryTimeoutMs, signal => this.source.getTransactions(address, limit, head.lastTxLt!, head.lastTxHash!, {signal})) :
+      (() => { throw new ChainReadError('upstream_unavailable'); })();
+    options.signal?.throwIfAborted();
+    const initialResponseTruncated = receivedRaw.length > limit;
+    const raw = receivedRaw.slice(0, limit);
+    if (raw.length === 0) {
+      await this.refreshAccountStateUnlocked(address, options);
+      const balance = this.store.get(address)?.balance;
+      const hasHeadLt = typeof balance?.lastTxLt === 'string' && balance.lastTxLt.length > 0;
+      const hasHeadHash = typeof balance?.lastTxHash === 'string' && balance.lastTxHash.length > 0;
+      this.store.setLastBackfillLt(address, undefined);
+      if (!hasHeadLt && !hasHeadHash) {
+        if (replaceRetainedHistory) this.store.replaceTransactions(address, []);
+        this.store.markHistoryComplete(address);
+        return;
+      }
+      this.store.markHistoryIncomplete(address);
+      if (this.enqueueBackfill) this.enqueueBackfill(address);
+      return;
+    }
+
+    this.store.markHistoryIncomplete(address);
+    const firstRaw = raw[0];
+    const lastRaw = raw[raw.length - 1];
+    if (
+      !firstRaw ||
+      !lastRaw ||
+      !transactionPageIsLinkedInclusiveSegment(
+        raw,
+        { lt: firstRaw.lt, hash: firstRaw.hash },
+        { lt: lastRaw.lt, hash: lastRaw.hash }
+      )
+    ) {
+      this.store.setLastBackfillLt(address, undefined);
+      await this.refreshAccountStateUnlocked(address, options);
+      const current = this.store.get(address)?.balance;
+      if (current?.lastTxLt && current.lastTxHash && this.enqueueBackfill) {
+        this.enqueueBackfill(address);
+      }
+      return;
+    }
+    await this.refreshAccountStateUnlocked(address, options);
+    const observedHead = this.store.get(address)?.balance;
+    if (
+      observedHead?.lastTxLt !== firstRaw.lt ||
+      observedHead?.lastTxHash !== firstRaw.hash
+    ) {
+      this.store.setLastBackfillLt(address, undefined);
+      this.store.markHistoryIncomplete(address);
+      if (observedHead?.lastTxLt && observedHead.lastTxHash && this.enqueueBackfill) {
+        this.enqueueBackfill(address);
+      }
+      return;
+    }
+    const reachesHistoryStart = transactionPageReachesHistoryStart(raw);
+
     this.poolTracker?.observeTransactions(raw);
     const indexed = raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
-    this.store.addTransactions(address, indexed);
+    if (replaceRetainedHistory) {
+      this.store.replaceTransactions(address, indexed);
+    } else {
+      this.store.addTransactions(address, indexed);
+    }
 
     const updated = this.store.get(address);
     if (!updated) return;
     const oldest = updated.txs[updated.txs.length - 1];
     this.store.setLastBackfillLt(address, oldest?.lt);
-
-    if (raw.length < limit) {
-      this.store.markHistoryComplete(address);
-    } else if (this.enqueueBackfill) {
+    if (
+      !initialResponseTruncated &&
+      reachesHistoryStart &&
+      retainedExactInitialTransactionPage(raw, updated.txs)
+    ) {
+      const confirmed = this.store.get(address);
+      const newest = confirmed?.txs[0];
+      if (
+        confirmed &&
+        newest &&
+        confirmed.balance?.lastTxLt === newest.lt &&
+        confirmed.balance?.lastTxHash === newest.hash &&
+        transactionPageReachesHistoryStart(confirmed.txs, {
+          lt: newest.lt,
+          hash: newest.hash
+        }) &&
+        retainedExactInitialTransactionPage(raw, confirmed.txs)
+      ) {
+        this.store.markHistoryComplete(address);
+        return;
+      }
+    }
+    // Lite servers may return a proof-size-capped short page even when older
+    // transactions exist. Without an intact predecessor chain through the
+    // canonical history-start marker, the page remains incomplete.
+    this.store.markHistoryIncomplete(address);
+    if (updated.stats.txCount < maxTransactions && this.enqueueBackfill) {
       this.enqueueBackfill(address);
     }
   }
 
   async updateWithNewTransactions(address: string, rawTxs: IndexedTx[]) {
+    address = normalizeAddress(address);
     if (rawTxs.length === 0) return;
-    this.store.addTransactions(address, rawTxs);
+    await this.store.withAddressLock(address, () => {
+      this.store.addTransactions(address, rawTxs);
+    });
   }
 
   classify(address: string, raw: any[]): IndexedTx[] {
+    address = normalizeAddress(address);
     return raw.map((tx) => classifyTransaction(address, tx, this.opcodes));
   }
 
@@ -3716,18 +1221,20 @@ export class IndexerService {
       swapAction?.tokenIn?.kind === 'jetton'
         ? swapAction.tokenIn.symbol
         : swapAction?.tokenIn?.kind === 'ton'
-          ? 'TON'
+          ? 'GRAM'
           : undefined;
     const actionReceiveToken =
       swapAction?.tokenOut?.kind === 'jetton'
         ? swapAction.tokenOut.symbol
         : swapAction?.tokenOut?.kind === 'ton'
-          ? 'TON'
+          ? 'GRAM'
           : undefined;
     const executionType = detail?.executionType ?? swapAction?.executionType ?? 'unknown';
     const querySequence = detail?.querySequence ?? swapAction?.querySequence;
     const queryNonce = detail?.queryNonce ?? swapAction?.queryNonce;
     const twapRunId = executionType === 'twap' && querySequence !== undefined ? `seq:${querySequence}` : undefined;
+
+    const actualReceiveAmount = tx.ui.status === 'success' ? swapAction?.amountOut : undefined;
 
     return {
       txId: tx.ui.txId,
@@ -3739,7 +1246,9 @@ export class IndexerService {
       payToken: detail?.payToken ?? actionPayToken,
       receiveToken: detail?.receiveToken ?? actionReceiveToken,
       payAmount: detail?.payAmount ?? swapAction?.amountIn,
-      receiveAmount: detail?.receiveAmount ?? swapAction?.amountOut ?? swapAction?.minOut,
+      receiveAmount: actualReceiveAmount,
+      receiveAmountSource: actualReceiveAmount !== undefined ? 'actual' : undefined,
+      minimumReceiveAmount: swapAction?.minOut,
       queryId: detail?.queryId ?? swapAction?.queryId,
       executionType,
       twapSlice: detail?.twapSlice ?? swapAction?.twapSlice,
@@ -3750,30 +1259,12 @@ export class IndexerService {
     };
   }
 
-  private matchesSwapPairFilter(
-    swap: AccountSwapExecution,
-    payToken: string | null,
-    receiveToken: string | null,
-    includeReverse: boolean
-  ) {
-    if (!payToken && !receiveToken) return true;
-
-    const swapPayToken = normalizeTokenSymbol(swap.payToken);
-    const swapReceiveToken = normalizeTokenSymbol(swap.receiveToken);
-
-    const directPayMatch = !payToken || swapPayToken === payToken;
-    const directReceiveMatch = !receiveToken || swapReceiveToken === receiveToken;
-    if (directPayMatch && directReceiveMatch) return true;
-
-    if (!includeReverse || !payToken || !receiveToken) return false;
-    return swapPayToken === receiveToken && swapReceiveToken === payToken;
-  }
-
   private toApiTx(tx: IndexedTx): UiTx & {
     kind: string;
     actions: any[];
     lt: string;
     hash: string;
+    totalFeesRaw?: string;
     inMessage?: IndexedTx['inMessage'];
     outMessages?: IndexedTx['outMessages'];
   } {
@@ -3783,6 +1274,7 @@ export class IndexerService {
       actions: tx.actions,
       lt: tx.lt,
       hash: tx.hash,
+      totalFeesRaw: tx.totalFeesRaw,
       inMessage: tx.inMessage,
       outMessages: tx.outMessages,
     };

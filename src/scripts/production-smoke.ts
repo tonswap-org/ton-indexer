@@ -1,7 +1,22 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { Address } from '@ton/core';
+import { constants as osConstants } from 'node:os';
+import { isAbsolute } from 'node:path';
+import { publicIndexerPath, publicIndexerUrl } from '../api/publicMount';
+import { RELEASE_IDENTITY_HEADER } from '../api/serviceMetadata';
+import {
+  readCanonicalReleaseManifest,
+  type RegistrySpotMarketMetadata,
+} from '../config/releaseManifest';
+
 type OpenApiSpec = {
+  openapi?: string;
   info?: {
     title?: string;
+    version?: string;
   };
+  servers?: Array<{ url?: unknown }>;
   paths?: Record<string, unknown>;
 };
 
@@ -16,11 +31,16 @@ type ServiceInfo = {
   endpoints?: {
     openapi?: unknown;
   };
+  release?: {
+    releaseId?: unknown;
+    manifestHash?: unknown;
+  };
 };
 
 type HealthInfo = {
-  lastMasterSeqno?: unknown;
-  indexerLagSec?: unknown;
+  chain?: {peersConfigured?: unknown; peersReady?: unknown; headSeqno?: unknown; headAgeSec?: unknown};
+  ledger?: unknown;
+  disk?: unknown;
   ok?: unknown;
   serviceId?: unknown;
   ecosystem?: unknown;
@@ -28,389 +48,766 @@ type HealthInfo = {
   network?: unknown;
 };
 
-type FetchLike = (input: URL, init?: RequestInit) => Promise<Response>;
-
-export type ProductionSmokeOptions = {
-  fetchImpl?: FetchLike;
-  timeoutMs?: number;
-  maxResponseBytes?: number;
-  maxHealthLagSec?: number;
+type ContractsInfo = {
+  network?: unknown;
+  count?: unknown;
+  release?: { releaseId?: unknown; manifestHash?: unknown };
+  contracts?: unknown;
 };
 
-const DEFAULT_BASE_URL = 'https://ti.soramitsu.io';
-const BODY_PREVIEW_LIMIT = 300;
-const DIAGNOSTIC_LIMIT = 300;
-const DIAGNOSTIC_SCAN_LIMIT = 4_096;
-const DEFAULT_TIMEOUT_MS = 10_000;
-const MAX_TIMEOUT_MS = 60_000;
-const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
-const MAX_RESPONSE_BYTES = 5_242_880;
-const DEFAULT_MAX_HEALTH_LAG_SEC = 300;
-const MAX_HEALTH_LAG_SEC = 3_600;
+type MarketCandle = {
+  ts?: unknown;
+  open?: unknown;
+  high?: unknown;
+  low?: unknown;
+  close?: unknown;
+  volumeBase?: unknown;
+  volumeQuote?: unknown;
+  tradeCount?: unknown;
+  sourceTxIds?: unknown;
+};
+
+type MarketCandlesInfo = {
+  market_key?: unknown;
+  market_address?: unknown;
+  token_root?: unknown;
+  asset_symbol?: unknown;
+  quote_symbol?: unknown;
+  asset_decimals?: unknown;
+  quote_decimals?: unknown;
+  interval?: unknown;
+  from_utime?: unknown;
+  to_utime?: unknown;
+  candle_count?: unknown;
+  history_complete?: unknown;
+  synced_at?: unknown;
+  network?: unknown;
+  candles?: unknown;
+};
+
+export type ProductionSmokeOptions = {
+  expectedNetwork?: 'mainnet' | 'testnet' | 'localnet';
+  expectedServiceId?: string;
+  expectedPublicBaseUrl?: string;
+  expectedReleaseId?: string;
+  expectedReleaseManifestHash?: string;
+  expectedReleaseManifestPath?: string;
+  expectedCorsOrigin?: string;
+  hostileCorsOrigin?: string;
+  /** Isolated transport-test seam. The production CLI always requires a manifest. */
+  allowUnboundRelease?: boolean;
+};
+
 const JSON_CONTENT_TYPE = /^application\/(?:json|[a-z0-9!#$&^_.+-]+\+json)(?:\s*;\s*[a-z0-9!#$%&'*+.^_`|~-]+\s*=\s*(?:[a-z0-9!#$%&'*+.^_`|~-]+|"[^"\r\n]*"))*\s*$/i;
-const TON_HEALTH_DEPLOYMENT_HINT =
-  'Production health must expose serviceId=ti.soramitsu.io, ecosystem=ton, chainId=ton:mainnet, network=mainnet, and lastMasterSeqno. Deploy the current ton-indexer image to ti.soramitsu.io.';
-const TON_SERVICE_INFO_DEPLOYMENT_HINT =
-  'Production service-info must expose schemaVersion=1, serviceId=ti.soramitsu.io, ecosystem=ton, chainId=ton:mainnet, network=mainnet, publicBaseUrl=https://ti.soramitsu.io, readOnly=true, and endpoints.openapi=/api/indexer/v1/openapi.json. Deploy the current ton-indexer image to ti.soramitsu.io.';
-const TON_OPENAPI_DEPLOYMENT_HINT =
-  'Production OpenAPI must expose title TONSWAP Indexer API and required TON wallet routes at /api/indexer/v1/openapi.json. Deploy the current ton-indexer image to ti.soramitsu.io.';
+class SmokeError extends Error {}
+
+function transportCode(error: unknown) {
+  for (let depth = 0; depth < 4 && error instanceof Error; depth++, error = error.cause) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (typeof code === 'string' && (Object.hasOwn(osConstants.errno, code) ||
+        ['ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT'].includes(code))) return code;
+  }
+  return undefined;
+}
+
+function smokeCliDiagnostic(error: unknown): string {
+  if (error instanceof SmokeError || (error instanceof assert.AssertionError && !error.generatedMessage)) {
+    // Node can append its actual/expected diff even to explicit assertion messages.
+    return error.message.split('\n', 1)[0].replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 512);
+  }
+  return 'The release manifest or service response could not be validated.';
+}
+
+const DEFAULT_HOSTILE_CORS_ORIGIN = 'https://hostile.tonswap.invalid';
+const SHA256_RE = /^[0-9a-f]{64}$/;
+type StrictReleaseExpectation = {
+  indexer: string;
+  releaseId: string;
+  releaseManifestHash: string;
+  contracts: Record<string, string>;
+  markets: RegistrySpotMarketMetadata[];
+  tokens: Array<{root: string; symbol: string; decimals: number}>;
+  expectedCorsOrigin: string;
+  hostileCorsOrigin: string;
+};
 
 export function normalizeBaseUrl(value: string): URL {
-  const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('TON production smoke URL must use http or https');
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new SmokeError('TON indexer base URL must be a canonical public HTTP(S) URL.');
   }
-  if (url.username || url.password) {
-    throw new Error('TON production smoke URL must not contain credentials');
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new SmokeError(
+      'TON indexer base URL must be HTTP(S) and must not contain credentials, query parameters, or fragments.'
+    );
   }
-  if (url.search || url.hash) {
-    throw new Error('TON production smoke URL must not contain query strings or fragments');
-  }
-  const isLocalhost = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase());
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocalhost)) {
-    throw new Error('TON production smoke URL must use HTTPS outside localhost smoke tests');
+  if (url.protocol === 'http:' && !['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname)) {
+    throw new SmokeError('Production smoke requires HTTPS outside loopback.');
   }
   url.pathname = url.pathname.replace(/\/+$/, '');
   return url;
 }
 
-function baseUrlForFailureLog(value: string): string {
+export function redactedBaseUrl(value: string | undefined): string {
+  if (value === undefined) return '<native manifest indexer>';
   try {
-    return normalizeBaseUrl(value).toString();
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return '<invalid public base URL>';
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    url.pathname = url.pathname.replace(/\/+$/, '');
+    return url.toString();
   } catch {
+    return '<invalid public base URL>';
+  }
+}
+
+export function productionSmokeBaseUrl(target: string | undefined, indexer?: string): URL {
+  const selected = target ?? indexer;
+  if (!selected) throw new SmokeError('Smoke requires the native manifest indexer URL or an explicit transport-test target.');
+  const base = normalizeBaseUrl(selected);
+  if (indexer === undefined) {
+    // The explicitly unbound transport-test seam has an origin/prefix, not a native manifest.
+    base.pathname = `${base.pathname.replace(/\/+$/, '')}/api/indexer`;
+    return base;
+  }
+  const mount = new URL(indexer).pathname.replace(/\/+$/, '');
+  const requested = base.pathname.replace(/\/+$/, '');
+  if (requested && requested !== mount) throw new SmokeError('Smoke target path differs from the native indexer mount');
+  base.pathname = mount || '/';
+  // Validate the complete mount using the same builder as discovery.
+  publicIndexerPath(indexer, '/api/indexer/v1/health');
+  return base;
+}
+
+function smokeLimit(name: string, fallback: number, maximum: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!/^[1-9][0-9]*$/.test(raw) || value > maximum) {
+    throw new SmokeError(`${name} must be an integer from 1 to ${maximum}.`);
+  }
+  return value;
+}
+
+function createSmokeTransport(baseUrl: URL) {
+  const timeoutMs = smokeLimit('TON_INDEXER_SMOKE_TIMEOUT_MS', 10_000, 60_000);
+  const maxBytes = smokeLimit('TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES', 1_048_576, 5_242_880);
+
+  async function request(path: string, init: RequestInit, searchParams?: URLSearchParams) {
+    const url = publicIndexerUrl(baseUrl.toString(), path, searchParams);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const url = new URL(value);
-      url.username = '';
-      url.password = '';
-      url.search = '';
-      url.hash = '';
-      return url.toString();
-    } catch {
-      return '<invalid URL>';
-    }
-  }
-}
-
-function endpoint(baseUrl: URL, path: string): URL {
-  const url = new URL(baseUrl.toString());
-  url.pathname = `${baseUrl.pathname}${path}`.replace(/\/{2,}/g, '/');
-  return url;
-}
-
-function redactSecrets(value: string): string {
-  return value
-    .replace(/("(?:access[_-]?token|refresh[_-]?token|token|password|passwd|api[-_]?key|secret|authorization|cookie|set-cookie)"\s*:\s*)(?:"(?:\\.|[^"\\])*"|[^,}\]\s]+)/gi, '$1"<redacted>"')
-    .replace(/(\b(?:bearer|basic)\s+)[A-Za-z0-9+/=_~.-]+/gi, '$1<redacted>')
-    .replace(/(https?:\/\/)[^/\s@]+@/gi, '$1<redacted>@')
-    .replace(/([?&](?:access[_-]?token|refresh[_-]?token|token|password|passwd|api[-_]?key|secret|authorization|key)=)[^&#\s]*/gi, '$1<redacted>')
-    .replace(/(\b(?:access[_-]?token|refresh[_-]?token|token|password|passwd|api[-_]?key|secret|authorization)\b\s*[:=]\s*)(?:["'][^"'\r\n]*["']|[^\s,;&]+)/gi, '$1<redacted>');
-}
-
-function bodyPreview(value: string): string {
-  const compact = redactSecrets(value.slice(0, DIAGNOSTIC_SCAN_LIMIT)).replace(/\s+/g, ' ').trim();
-  if (!compact) return '<empty body>';
-  return compact.length > BODY_PREVIEW_LIMIT ? `${compact.slice(0, BODY_PREVIEW_LIMIT)}...` : compact;
-}
-
-function diagnosticPreview(value: unknown): string {
-  const compact = redactSecrets(String(value ?? '').slice(0, DIAGNOSTIC_SCAN_LIMIT))
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!compact) return '<empty>';
-  return compact.length > DIAGNOSTIC_LIMIT ? `${compact.slice(0, DIAGNOSTIC_LIMIT)}...` : compact;
-}
-
-class RequestTimeoutError extends Error {}
-class ResponseTooLargeError extends Error {}
-class RedirectRejectedError extends Error {
-  constructor(readonly status: number) {
-    super(`redirect response HTTP ${status}`);
-  }
-}
-
-function boundedInteger(value: unknown, name: string, fallback: number, max: number): number {
-  if (value === undefined) return fallback;
-  const candidate = typeof value === 'string' ? value : String(value);
-  if (!/^[1-9][0-9]*$/.test(candidate)) {
-    throw new Error(`${name} must be an integer between 1 and ${max}`);
-  }
-  const parsed = Number(candidate);
-  if (!Number.isSafeInteger(parsed) || parsed > max) {
-    throw new Error(`${name} must be an integer between 1 and ${max}`);
-  }
-  return parsed;
-}
-
-async function withinDeadline<T>(
-  operation: () => Promise<T>,
-  controller: AbortController,
-  timeoutMs: number,
-): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
+      const response = await fetch(url, { ...init, redirect: 'manual', signal: controller.signal });
+      if (response.status >= 300 && response.status < 400) {
+        throw new SmokeError(`${path} refused redirect HTTP ${response.status}.`);
+      }
+      const tooLarge = () => new SmokeError(`${path} response exceeded the ${maxBytes}-byte limit.`);
+      if (Number(response.headers.get('content-length')) > maxBytes) throw tooLarge();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      const reader = response.body?.getReader();
+      if (reader) {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > maxBytes) throw tooLarge();
+            chunks.push(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+      return { response, bytes: Buffer.concat(chunks, size) };
+    } catch (error) {
+      if (controller.signal.aborted) throw new SmokeError(`${path} timed out after ${timeoutMs}ms.`);
+      if (error instanceof SmokeError) throw error;
+      const code = transportCode(error);
+      throw new SmokeError(`${path} request failed${code ? ` (${code})` : ''}.`);
+    } finally {
+      clearTimeout(timer);
       controller.abort();
-      reject(new RequestTimeoutError(`timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([operation(), timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
+    }
   }
+
+  type JsonOptions = { headers?: Record<string, string>; searchParams?: URLSearchParams; expectedStatus?: number };
+  async function fetchJsonResponse(path: string, options: JsonOptions = {}) {
+    const { response, bytes } = await request(path, {
+      headers: { accept: 'application/json', ...options.headers },
+    }, options.searchParams);
+    const failure = (reason: string) => {
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      return new SmokeError(`${path} ${reason}. Body evidence: ${bytes.length} bytes, sha256=${digest}. Target: ${baseUrl}.`);
+    };
+    if (options.expectedStatus === undefined ? !response.ok : response.status !== options.expectedStatus) {
+      throw failure(`returned HTTP ${response.status}`);
+    }
+    const contentType = response.headers.get('content-type')?.trim() ?? '';
+    if (!JSON_CONTENT_TYPE.test(contentType)) {
+      throw failure('did not return JSON');
+    }
+    try {
+      return { body: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown, headers: response.headers };
+    } catch {
+      throw failure('returned invalid JSON');
+    }
+  }
+  async function fetchJson(path: string, options?: JsonOptions) {
+    return (await fetchJsonResponse(path, options)).body;
+  }
+  async function fetchCorsPreflight(path: string, origin: string) {
+    const { response } = await request(path, {
+      method: 'OPTIONS',
+      headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': `content-type,accept,${RELEASE_IDENTITY_HEADER}` },
+    });
+    return response;
+  }
+  return { fetchJson, fetchJsonResponse, fetchCorsPreflight };
 }
 
-async function readBoundedBody(response: Response, maxResponseBytes: number): Promise<string> {
-  const contentLength = response.headers.get('content-length');
-  if (contentLength && /^(?:0|[1-9][0-9]*)$/.test(contentLength)) {
-    const declared = Number(contentLength);
-    if (Number.isSafeInteger(declared) && declared > maxResponseBytes) {
-      throw new ResponseTooLargeError(`declared ${declared} bytes`);
-    }
-  }
-
-  if (!response.body?.getReader) {
-    const text = await response.text();
-    const bytes = Buffer.byteLength(text, 'utf8');
-    if (bytes > maxResponseBytes) throw new ResponseTooLargeError(`received more than ${maxResponseBytes} bytes`);
-    return text;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8', { fatal: true });
-  let bytes = 0;
-  let text = '';
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > maxResponseBytes) {
-        void reader.cancel().catch(() => undefined);
-        throw new ResponseTooLargeError(`received more than ${maxResponseBytes} bytes`);
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    return text;
-  } finally {
-    reader.releaseLock();
-  }
+function assertPath(spec: OpenApiSpec, path: string) {
+  assert.ok(spec.paths?.[path], `OpenAPI is missing ${path}`);
 }
 
-function isJsonContentType(value: string): boolean {
-  return JSON_CONTENT_TYPE.test(value.trim());
-}
+const expectedNetworkFromEnv = (): 'mainnet' | 'testnet' | 'localnet' => {
+  const raw = (process.env.TON_INDEXER_EXPECTED_NETWORK || 'mainnet').trim().toLowerCase();
+  if (raw === 'mainnet' || raw === 'testnet' || raw === 'localnet') return raw;
+  throw new SmokeError(`TON_INDEXER_EXPECTED_NETWORK must be mainnet, testnet, or localnet.`);
+};
 
-function formatFailureCause(cause: unknown, depth = 0): string {
-  if (depth >= 3) return '<nested cause omitted>';
-  if (cause instanceof Error) {
-    const details = [diagnosticPreview(cause.message || cause.name)];
-    const metadata = cause as unknown as Record<string, unknown>;
-    for (const key of ['code', 'errno', 'syscall', 'hostname', 'address', 'port']) {
-      const value = metadata[key];
-      if (value !== undefined) details.push(`${key}=${diagnosticPreview(value)}`);
-    }
-    if ('cause' in cause && cause.cause !== undefined) {
-      details.push(`cause=${formatFailureCause(cause.cause, depth + 1)}`);
-    }
-    return diagnosticPreview(details.join('; '));
+const optionalTrimmed = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const optionOrEnv = (option: string | undefined, envName: string): string | undefined =>
+  optionalTrimmed(option) ?? optionalTrimmed(process.env[envName]);
+
+const headerTokens = (headers: Headers, name: string): string[] =>
+  (headers.get(name) ?? '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+const canonicalPublicBaseUrl = (value: string): string => {
+  const parsed = normalizeBaseUrl(value);
+  const serialized = parsed.toString();
+  return parsed.pathname === '/' ? serialized.replace(/\/$/, '') : serialized;
+};
+
+const requireSha256 = (value: string | undefined, label: string): string => {
+  if (!value || !SHA256_RE.test(value)) {
+    throw new SmokeError(`${label} must be an explicit lowercase 64-character SHA-256 digest.`);
   }
+  return value;
+};
 
-  if (typeof cause === 'string') return diagnosticPreview(cause);
+const requireCanonicalOrigin = (value: string | undefined, label: string): string => {
+  if (!value) throw new SmokeError(`${label} must be explicitly set for a release-bound smoke.`);
+  let parsed: URL;
   try {
-    return diagnosticPreview(JSON.stringify(cause));
+    parsed = new URL(value);
   } catch {
-    return diagnosticPreview(cause);
+    throw new SmokeError(`${label} must be a canonical HTTP(S) origin.`);
   }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== '/' ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.origin !== value
+  ) {
+    throw new SmokeError(`${label} must be a canonical HTTP(S) origin.`);
+  }
+  return value;
+};
+
+function resolveStrictReleaseExpectation(
+  options: ProductionSmokeOptions,
+  expectedNetwork: 'mainnet' | 'testnet' | 'localnet',
+  expectedNetworkWasExplicit: boolean
+): StrictReleaseExpectation | null {
+  const releaseId = optionOrEnv(options.expectedReleaseId, 'TON_INDEXER_EXPECTED_RELEASE_ID');
+  const releaseManifestHash = optionOrEnv(
+    options.expectedReleaseManifestHash,
+    'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH'
+  );
+  const releaseManifestPath = optionOrEnv(
+    options.expectedReleaseManifestPath,
+    'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH'
+  );
+  const expectedCorsOrigin = optionOrEnv(
+    options.expectedCorsOrigin,
+    'TON_INDEXER_EXPECTED_CORS_ORIGIN'
+  );
+  const configuredHostileCorsOrigin = optionOrEnv(
+    options.hostileCorsOrigin,
+    'TON_INDEXER_HOSTILE_CORS_ORIGIN'
+  );
+  const hostileCorsOrigin = configuredHostileCorsOrigin ?? DEFAULT_HOSTILE_CORS_ORIGIN;
+  const releaseInputPresent = [
+    releaseId,
+    releaseManifestHash,
+    releaseManifestPath,
+    expectedCorsOrigin,
+    configuredHostileCorsOrigin,
+  ].some((value) => value !== undefined);
+  if (!releaseInputPresent) {
+    if (options.allowUnboundRelease === true) return null;
+    throw new SmokeError(
+      'Release-bound production smoke requires explicit network, release ID, manifest path/hash, and allowed CORS origin inputs.'
+    );
+  }
+  if (!expectedNetworkWasExplicit) {
+    throw new SmokeError(
+      'TON_INDEXER_EXPECTED_NETWORK must be explicitly set for a release-bound smoke.'
+    );
+  }
+  if (!releaseId) {
+    throw new SmokeError('TON_INDEXER_EXPECTED_RELEASE_ID must be explicitly set for a release-bound smoke.');
+  }
+  const exactReleaseManifestHash = requireSha256(
+    releaseManifestHash,
+    'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH'
+  );
+  if (!releaseManifestPath || !isAbsolute(releaseManifestPath)) {
+    throw new SmokeError(
+      'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH must be an explicit canonical absolute path for a release-bound smoke.'
+    );
+  }
+  const exactExpectedCorsOrigin = requireCanonicalOrigin(
+    expectedCorsOrigin,
+    'TON_INDEXER_EXPECTED_CORS_ORIGIN'
+  );
+  const exactHostileCorsOrigin = requireCanonicalOrigin(
+    hostileCorsOrigin,
+    'TON_INDEXER_HOSTILE_CORS_ORIGIN'
+  );
+  if (exactExpectedCorsOrigin === exactHostileCorsOrigin) {
+    throw new SmokeError('Expected and hostile CORS origins must be distinct.');
+  }
+
+  const manifest = readCanonicalReleaseManifest(releaseManifestPath, expectedNetwork);
+  assert.equal(
+    manifest.releaseId,
+    releaseId,
+    `release manifest releaseId must be ${releaseId}`
+  );
+  assert.equal(
+    manifest.manifestHash,
+    exactReleaseManifestHash,
+    `release manifest manifestHash must be ${exactReleaseManifestHash}`
+  );
+  assert.ok(Object.keys(manifest.contracts).length > 0, 'release manifest must bind deployed contracts');
+  if (expectedNetwork === 'testnet') assert.ok(manifest.contracts.TestnetFaucet, 'release manifest must include TestnetFaucet');
+  assert.ok(manifest.spotMarkets.length > 0, 'release manifest must contain configured spot markets');
+
+  return {
+    indexer: manifest.runtime.services.indexer,
+    releaseId,
+    releaseManifestHash: exactReleaseManifestHash,
+    contracts: manifest.contracts,
+    markets: manifest.spotMarkets,
+    tokens: manifest.runtime.tokens,
+    expectedCorsOrigin: exactExpectedCorsOrigin,
+    hostileCorsOrigin: exactHostileCorsOrigin,
+  };
 }
 
-function requestFailureReason(error: unknown): string {
-  if (error instanceof Error) {
-    const cause = 'cause' in error && error.cause !== undefined
-      ? `; cause: ${formatFailureCause(error.cause)}`
-      : '';
-    return diagnosticPreview(`${error.message}${cause}`);
-  }
-  return diagnosticPreview(error);
+function assertExactReleaseContracts(
+  rawContracts: unknown,
+  expected: StrictReleaseExpectation
+): asserts rawContracts is Record<string, string> {
+  assert.ok(
+    rawContracts && typeof rawContracts === 'object' && !Array.isArray(rawContracts),
+    'contracts payload must include a contracts object'
+  );
+  const contracts = rawContracts as Record<string, unknown>;
+  assert.equal(
+    Object.keys(contracts).length,
+    Object.keys(expected.contracts).length,
+    'contracts payload count must match the supplied release manifest'
+  );
+  assert.deepEqual(contracts, expected.contracts, 'contracts payload must exactly match the release manifest');
 }
 
-function deploymentHint(path: string): string {
-  if (path === '/api/indexer/v1/service-info') {
-    return 'Production routing must serve the TON v1 wallet API; deploy the current ton-indexer image to ti.soramitsu.io and expose /api/indexer/v1/service-info.';
-  }
-  if (path === '/api/indexer/v1/openapi.json') {
-    return 'Production routing must serve the TON OpenAPI contract at /api/indexer/v1/openapi.json.';
-  }
-  return 'Production routing must serve the TON indexer contract at ti.soramitsu.io.';
-}
+function assertCandleHistory(
+  raw: unknown,
+  market: RegistrySpotMarketMetadata,
+  expectedNetwork: 'mainnet' | 'testnet' | 'localnet',
+  allSeenTransactions: Set<string>,
+): void {
+  assert.ok(raw && typeof raw === 'object' && !Array.isArray(raw), `${market.marketKey} candles must be an object`);
+  const history = raw as MarketCandlesInfo;
+  assert.equal(history.market_key, market.marketKey, `${market.marketKey} market_key mismatch`);
+  assert.equal(history.market_address, market.marketAddress, `${market.marketKey} market_address mismatch`);
+  assert.equal(history.token_root, market.tokenRoot, `${market.marketKey} token_root mismatch`);
+  assert.equal(history.asset_symbol, market.assetSymbol, `${market.marketKey} asset_symbol mismatch`);
+  assert.equal(history.quote_symbol, market.quoteSymbol, `${market.marketKey} quote_symbol mismatch`);
+  assert.equal(history.asset_decimals, market.assetDecimals, `${market.marketKey} asset_decimals mismatch`);
+  assert.equal(history.quote_decimals, market.quoteDecimals, `${market.marketKey} quote_decimals mismatch`);
+  assert.equal(history.interval, '1m', `${market.marketKey} interval must be 1m`);
+  assert.equal(history.from_utime, null, `${market.marketKey} from_utime must reflect the unbounded manifest query`);
+  assert.equal(history.to_utime, null, `${market.marketKey} to_utime must reflect the unbounded manifest query`);
+  assert.equal(history.network, expectedNetwork, `${market.marketKey} network must be ${expectedNetwork}`);
+  assert.equal(history.history_complete, true, `${market.marketKey} history_complete must be true`);
+  assert.ok(
+    Number.isSafeInteger(history.synced_at) && Number(history.synced_at) > 0,
+    `${market.marketKey} synced_at must be a positive safe integer`
+  );
+  assert.ok(Array.isArray(history.candles), `${market.marketKey} candles must be an array`);
+  assert.equal(history.candle_count, history.candles.length, `${market.marketKey} candle_count must match its array`);
+  assert.ok(history.candles.length <= 2, `${market.marketKey} candles exceed the requested limit`);
 
-async function fetchJson(
-  baseUrl: URL,
-  path: string,
-  { fetchImpl, timeoutMs, maxResponseBytes }: Required<Pick<ProductionSmokeOptions, 'fetchImpl' | 'timeoutMs' | 'maxResponseBytes'>>,
-): Promise<unknown> {
-  const requestUrl = endpoint(baseUrl, path);
-  const controller = new AbortController();
-  let response: Response;
-  let rawBody: string;
-  try {
-    ({ response, rawBody } = await withinDeadline(async () => {
-      const received = await fetchImpl(requestUrl, {
-        headers: { accept: 'application/json' },
-        redirect: 'manual',
-        signal: controller.signal,
-      });
-      if (received.status >= 300 && received.status < 400) {
-        throw new RedirectRejectedError(received.status);
-      }
-      return { response: received, rawBody: await readBoundedBody(received, maxResponseBytes) };
-    }, controller, timeoutMs));
-  } catch (error) {
-    if (error instanceof RedirectRejectedError) {
-      throw new Error(`${path} refused redirect HTTP ${error.status}; production smoke redirects are forbidden. ${deploymentHint(path)}`);
+  let previousTimestamp = -1;
+  for (const [index, rawCandle] of history.candles.entries()) {
+    assert.ok(
+      rawCandle && typeof rawCandle === 'object' && !Array.isArray(rawCandle),
+      `${market.marketKey} candle ${index} must be an object`
+    );
+    const candle = rawCandle as MarketCandle;
+    assert.ok(
+      Number.isSafeInteger(candle.ts) && Number(candle.ts) > previousTimestamp && Number(candle.ts) % 60 === 0,
+      `${market.marketKey} candle ${index} must have a strictly increasing one-minute timestamp`
+    );
+    previousTimestamp = Number(candle.ts);
+    for (const field of ['open', 'high', 'low', 'close', 'volumeBase', 'volumeQuote'] as const) {
+      assert.ok(
+        typeof candle[field] === 'number' && Number.isFinite(candle[field]) && candle[field] > 0,
+        `${market.marketKey} candle ${index} ${field} must be a positive finite number`
+      );
     }
-    if (error instanceof ResponseTooLargeError) {
-      throw new Error(`${path} response exceeded the ${maxResponseBytes}-byte limit. ${deploymentHint(path)}`);
+    assert.ok(Number.isSafeInteger(candle.tradeCount) && Number(candle.tradeCount) > 0,
+      `${market.marketKey} candle ${index} must have positive tradeCount`);
+    assert.ok(Number(candle.high) >= Math.max(Number(candle.open), Number(candle.close)) &&
+      Number(candle.low) <= Math.min(Number(candle.open), Number(candle.close)), `${market.marketKey} invalid OHLC bounds`);
+    if (candle.tradeCount === 1) {
+      assert.equal(candle.open, candle.high, `${market.marketKey} single-trade candle open/high mismatch`);
+      assert.equal(candle.open, candle.low, `${market.marketKey} single-trade candle open/low mismatch`);
+      assert.equal(candle.open, candle.close, `${market.marketKey} single-trade candle open/close mismatch`);
+      const derivedPrice = Number(candle.volumeQuote) / Number(candle.volumeBase),
+        priceDelta = Math.abs(derivedPrice - Number(candle.close)),
+        priceScale = Math.max(1, Math.abs(derivedPrice), Math.abs(Number(candle.close)));
+      assert.ok(priceDelta <= Number.EPSILON * 8 * priceScale, `${market.marketKey} single-trade candle price must match its volumes`);
     }
-    throw new Error(`${path} request to ${requestUrl.toString()} failed: ${requestFailureReason(error)}. ${deploymentHint(path)}`);
-  }
-  if (!response.ok) {
-    throw new Error(`${path} returned HTTP ${response.status}. Body preview: ${bodyPreview(rawBody)}. ${deploymentHint(path)}`);
-  }
-
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!isJsonContentType(contentType)) {
-    throw new Error(`${path} did not return JSON. Content-Type: ${contentType ? diagnosticPreview(contentType) : '<missing>'}. Body preview: ${bodyPreview(rawBody)}. ${deploymentHint(path)}`);
-  }
-
-  try {
-    return JSON.parse(rawBody);
-  } catch {
-    throw new Error(`${path} returned invalid JSON. Body preview: ${bodyPreview(rawBody)}. ${deploymentHint(path)}`);
-  }
-}
-
-function objectKeys(value: unknown): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return '<non-object>';
-  return Object.keys(value as Record<string, unknown>).sort().join(',') || '<empty object>';
-}
-
-function formatValue(value: unknown): string {
-  if (value === undefined) return '<missing>';
-  if (typeof value === 'string') return diagnosticPreview(value);
-  return diagnosticPreview(JSON.stringify(value));
-}
-
-function assertHealthField(value: unknown, expected: string, message: string) {
-  if (value !== expected) {
-    throw new Error(`${message}; received ${formatValue(value)}. ${TON_HEALTH_DEPLOYMENT_HINT}`);
-  }
-}
-
-function assertServiceInfoField(value: unknown, expected: unknown, message: string) {
-  if (value !== expected) {
-    throw new Error(`${message}; received ${formatValue(value)}. ${TON_SERVICE_INFO_DEPLOYMENT_HINT}`);
-  }
-}
-
-function assertOpenApiTitle(value: unknown) {
-  if (value !== 'TONSWAP Indexer API') {
-    throw new Error(`OpenAPI title must be TONSWAP Indexer API; received ${formatValue(value)}. ${TON_OPENAPI_DEPLOYMENT_HINT}`);
-  }
-}
-
-function assertOpenApiPath(spec: OpenApiSpec, path: string) {
-  if (!spec.paths?.[path]) {
-    throw new Error(`OpenAPI is missing ${path}. ${TON_OPENAPI_DEPLOYMENT_HINT}`);
+    assert.ok(Array.isArray(candle.sourceTxIds) && candle.sourceTxIds.length > 0 &&
+      candle.sourceTxIds.length <= Number(candle.tradeCount), `${market.marketKey} candle ${index} must bind source transactions`);
+    for (const transactionId of candle.sourceTxIds) {
+      assert.ok(typeof transactionId === 'string' && transactionId.length > 0 && transactionId.length <= 512 &&
+        transactionId === transactionId.trim() && !/[\u0000-\u001f\u007f]/.test(transactionId), `${market.marketKey} invalid source transaction`);
+      assert.ok(!allSeenTransactions.has(transactionId), 'all release-market candle source transactions must be distinct');
+      allSeenTransactions.add(transactionId);
+    }
   }
 }
 
 export async function runProductionSmoke(
-  baseUrlInput = process.env.TON_INDEXER_BASE_URL || DEFAULT_BASE_URL,
-  options: ProductionSmokeOptions = {},
+  baseUrlInput?: string,
+  options: ProductionSmokeOptions = {}
 ) {
-  const baseUrl = normalizeBaseUrl(baseUrlInput);
-  const requestOptions = {
-    fetchImpl: options.fetchImpl ?? globalThis.fetch,
-    timeoutMs: boundedInteger(
-      options.timeoutMs ?? process.env.TON_INDEXER_SMOKE_TIMEOUT_MS,
-      'TON_INDEXER_SMOKE_TIMEOUT_MS',
-      DEFAULT_TIMEOUT_MS,
-      MAX_TIMEOUT_MS,
-    ),
-    maxResponseBytes: boundedInteger(
-      options.maxResponseBytes ?? process.env.TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES,
-      'TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES',
-      DEFAULT_MAX_RESPONSE_BYTES,
-      MAX_RESPONSE_BYTES,
-    ),
-  };
-  const maxHealthLagSec = boundedInteger(
-    options.maxHealthLagSec ?? process.env.TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC,
-    'TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC',
-    DEFAULT_MAX_HEALTH_LAG_SEC,
-    MAX_HEALTH_LAG_SEC,
+  const expectedNetworkWasExplicit =
+    options.expectedNetwork !== undefined ||
+    optionalTrimmed(process.env.TON_INDEXER_EXPECTED_NETWORK) !== undefined;
+  const expectedNetwork = options.expectedNetwork ?? expectedNetworkFromEnv();
+  const strictRelease = resolveStrictReleaseExpectation(
+    options,
+    expectedNetwork,
+    expectedNetworkWasExplicit
   );
-  const health = await fetchJson(baseUrl, '/api/indexer/v1/health', requestOptions) as HealthInfo;
-  if ('ok' in health) {
-    throw new Error('TI production routing points at a Solswap indexer contract: health contains ok. Route ti.soramitsu.io to the TON indexer deployment.');
+  const baseUrl = productionSmokeBaseUrl(baseUrlInput ?? process.env.TON_INDEXER_BASE_URL, strictRelease?.indexer);
+  const { fetchJson, fetchJsonResponse, fetchCorsPreflight } = createSmokeTransport(baseUrl);
+  const maxHeadAgeSec = smokeLimit('TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC', 300, 3_600);
+  const publicPath = (route: string) => publicIndexerPath(strictRelease?.indexer, route);
+  const nativeUrl = strictRelease ? new URL(strictRelease.indexer) : undefined;
+  const nativeServiceId = nativeUrl && `${nativeUrl.host}${nativeUrl.pathname.replace(/\/$/, '')}`;
+  const expectedServiceId = options.expectedServiceId ?? process.env.TON_INDEXER_EXPECTED_SERVICE_ID ?? nativeServiceId;
+  const publicBaseOverride = options.expectedPublicBaseUrl ?? process.env.TON_INDEXER_EXPECTED_PUBLIC_BASE_URL;
+  if (!expectedServiceId || !strictRelease && !publicBaseOverride)
+    throw new SmokeError('Unbound transport smoke requires an explicit expected service identity and public URL.');
+  const expectedPublicBaseUrl = strictRelease?.indexer ?? canonicalPublicBaseUrl(publicBaseOverride!);
+  if (strictRelease) {
+    assert.equal(expectedServiceId, nativeServiceId, 'Expected service identity differs from the native manifest');
+    if (publicBaseOverride !== undefined) {
+      assert.equal(publicBaseOverride, strictRelease.indexer, 'Expected public URL differs from the native manifest');
+    }
   }
-  if (health.lastMasterSeqno === undefined) {
-    throw new Error(`TI production routing does not expose the TON health contract: expected lastMasterSeqno, received keys ${objectKeys(health)}. ${TON_HEALTH_DEPLOYMENT_HINT}`);
+  const expectedChainId = `ton:${expectedNetwork}`;
+  const health = await fetchJson('/api/indexer/v1/health') as HealthInfo;
+  if (health && typeof health === 'object' && 'ok' in health) {
+    throw new SmokeError('Production routing points at a Solswap indexer contract: health contains ok. Route the selected manifest mount to its TON indexer deployment.');
   }
-  if (!Number.isSafeInteger(health.lastMasterSeqno) || Number(health.lastMasterSeqno) <= 0) {
-    throw new Error(`health lastMasterSeqno must be a positive safe integer; received ${formatValue(health.lastMasterSeqno)}. ${TON_HEALTH_DEPLOYMENT_HINT}`);
+  if (!health?.chain || typeof health.chain !== 'object' || Array.isArray(health.chain)) {
+    throw new SmokeError('Production routing does not expose the TON health contract: expected a chain object.');
   }
-  if (typeof health.indexerLagSec !== 'number' || !Number.isFinite(health.indexerLagSec) || health.indexerLagSec < 0) {
-    throw new Error(`health indexerLagSec must be a non-negative finite number; received ${formatValue(health.indexerLagSec)}. ${TON_HEALTH_DEPLOYMENT_HINT}`);
-  }
-  if (health.indexerLagSec > maxHealthLagSec) {
-    throw new Error(`health indexerLagSec must be at most ${maxHealthLagSec}; received ${formatValue(health.indexerLagSec)}. ${TON_HEALTH_DEPLOYMENT_HINT}`);
-  }
-  assertHealthField(health.serviceId, 'ti.soramitsu.io', 'health serviceId must be ti.soramitsu.io');
-  assertHealthField(health.ecosystem, 'ton', 'health ecosystem must be ton');
-  assertHealthField(health.chainId, 'ton:mainnet', 'health chainId must be ton:mainnet');
-  assertHealthField(health.network, 'mainnet', 'health network must be mainnet');
+  assert.ok(Number.isSafeInteger(health.chain.peersConfigured) && Number(health.chain.peersConfigured) > 0, 'health chain must configure peers');
+  assert.ok(Number.isSafeInteger(health.chain.peersReady) && Number(health.chain.peersReady) > 0, 'health chain must have ready peers');
+  assert.ok(Number.isSafeInteger(health.chain.headSeqno) && Number(health.chain.headSeqno) > 0, 'health chain must expose a positive safe integer head sequence');
+  const age = health.chain.headAgeSec;
+  assert.ok(typeof age === 'number' && Number.isSafeInteger(age) && age >= 0 && age <= maxHeadAgeSec,
+    `health chain head age must be between 0 and ${maxHeadAgeSec} seconds`);
+  assert.ok(['disabled','connecting','ready','unavailable'].includes(String(health.ledger)), 'health ledger state is required');
+  assert.ok(['ok','low','critical'].includes(String(health.disk)), 'health disk state is required');
+  assert.equal('liteserverPoolStatus' in health, false, 'health must not expose the retired pool status');
+  assert.equal(health.serviceId, expectedServiceId, `health serviceId must be ${expectedServiceId}`);
+  assert.equal(health.ecosystem, 'ton', 'health ecosystem must be ton');
+  assert.equal(health.chainId, expectedChainId, `health chainId must be ${expectedChainId}`);
+  assert.equal(health.network, expectedNetwork, `health network must be ${expectedNetwork}`);
 
-  const serviceInfo = await fetchJson(baseUrl, '/api/indexer/v1/service-info', requestOptions) as ServiceInfo;
-  assertServiceInfoField(serviceInfo.serviceId, 'ti.soramitsu.io', 'service-info serviceId must be ti.soramitsu.io');
-  assertServiceInfoField(serviceInfo.schemaVersion, 1, 'service-info schemaVersion must be 1');
-  assertServiceInfoField(serviceInfo.ecosystem, 'ton', 'service-info ecosystem must be ton');
-  assertServiceInfoField(serviceInfo.chainId, 'ton:mainnet', 'service-info chainId must be ton:mainnet');
-  assertServiceInfoField(serviceInfo.network, 'mainnet', 'service-info network must be mainnet');
-  assertServiceInfoField(
+  const serviceInfo = await fetchJson('/api/indexer/v1/service-info') as ServiceInfo;
+  assert.equal(serviceInfo.serviceId, expectedServiceId, `service-info serviceId must be ${expectedServiceId}`);
+  assert.equal(serviceInfo.schemaVersion, 1, 'service-info schemaVersion must be 1');
+  assert.equal(serviceInfo.ecosystem, 'ton', 'service-info ecosystem must be ton');
+  assert.equal(serviceInfo.chainId, expectedChainId, `service-info chainId must be ${expectedChainId}`);
+  assert.equal(serviceInfo.network, expectedNetwork, `service-info network must be ${expectedNetwork}`);
+  assert.equal(
     serviceInfo.publicBaseUrl,
-    'https://ti.soramitsu.io',
-    'service-info publicBaseUrl must be https://ti.soramitsu.io',
+    expectedPublicBaseUrl,
+    `service-info publicBaseUrl must be ${expectedPublicBaseUrl}`,
   );
-  assertServiceInfoField(serviceInfo.readOnly, true, 'service-info readOnly must be true');
-  assertServiceInfoField(
+  assert.equal(serviceInfo.readOnly, true, 'service-info readOnly must be true');
+  assert.equal(
     serviceInfo.endpoints?.openapi,
-    '/api/indexer/v1/openapi.json',
-    'service-info openapi endpoint must be /api/indexer/v1/openapi.json',
+    publicPath('/api/indexer/v1/openapi.json'),
+    'service-info openapi endpoint must match the native indexer mount',
   );
+  if (strictRelease) {
+    assert.deepEqual(Object.keys(serviceInfo.release ?? {}).sort(), ['manifestHash', 'releaseId']);
+    assert.equal(
+      serviceInfo.release?.releaseId,
+      strictRelease.releaseId,
+      `service-info releaseId must be ${strictRelease.releaseId}`
+    );
+    assert.equal(
+      serviceInfo.release?.manifestHash,
+      strictRelease.releaseManifestHash,
+      `service-info manifestHash must be ${strictRelease.releaseManifestHash}`
+    );
+  }
 
-  const spec = await fetchJson(baseUrl, '/api/indexer/v1/openapi.json', requestOptions) as OpenApiSpec;
-  assertOpenApiTitle(spec.info?.title);
-  assertOpenApiPath(spec, '/api/indexer/v1/service-info');
-  assertOpenApiPath(spec, '/api/indexer/v1/accounts/{addr}/balance');
-  assertOpenApiPath(spec, '/api/indexer/v1/accounts/{addr}/balances');
-  assertOpenApiPath(spec, '/api/indexer/v1/accounts/{addr}/assets');
-  assertOpenApiPath(spec, '/api/indexer/v1/accounts/{addr}/txs');
-  assertOpenApiPath(spec, '/api/indexer/v1/accounts/{addr}/state');
-  assertOpenApiPath(spec, '/api/indexer/v1/runGetMethod');
-  assertOpenApiPath(spec, '/api/indexer/v1/runGetMethods');
+  const contracts = await fetchJson('/api/indexer/v1/contracts') as ContractsInfo;
+  assert.equal(contracts.network, expectedNetwork, `contracts network must be ${expectedNetwork}`);
+  assert.ok(
+    contracts.contracts && typeof contracts.contracts === 'object' && !Array.isArray(contracts.contracts),
+    'contracts payload must include a contracts object'
+  );
+  assert.equal(
+    contracts.count,
+    Object.keys(contracts.contracts as Record<string, unknown>).length,
+    'contracts count must match the contract map'
+  );
+  if (strictRelease) {
+    assertExactReleaseContracts(contracts.contracts, strictRelease);
+    assert.equal(
+      contracts.count,
+      Object.keys(strictRelease.contracts).length,
+      'contracts count must match the supplied release manifest'
+    );
+    assert.deepEqual(Object.keys(contracts.release ?? {}).sort(), ['manifestHash', 'releaseId']);
+    assert.equal(
+      contracts.release?.releaseId,
+      strictRelease.releaseId,
+      `contracts releaseId must be ${strictRelease.releaseId}`
+    );
+    assert.equal(
+      contracts.release?.manifestHash,
+      strictRelease.releaseManifestHash,
+      `contracts manifestHash must be ${strictRelease.releaseManifestHash}`
+    );
+  }
+
+  const account = Address.parse(String((contracts.contracts as Record<string,string>).T3Hub ?? Object.values(contracts.contracts as Record<string,string>)[0])).toRawString();
+  const balances = await fetchJson(`/api/indexer/v1/accounts/${account}/balances`) as Record<string, any>;
+  assert.deepEqual(Object.keys(balances).sort(), ['address','assets','complete','head_seqno','head_utime','network']);
+  assert.equal(balances.address, account); assert.equal(balances.network, expectedNetwork);
+  assert.ok(Number.isSafeInteger(balances.head_seqno) && balances.head_seqno > 0, 'balances must expose a chain head');
+  assert.ok(Number.isSafeInteger(balances.head_utime) && balances.head_utime > 0, 'balances must expose chain time');
+  assert.equal(typeof balances.complete, 'boolean'); assert.ok(Array.isArray(balances.assets));
+  const native = balances.assets.filter((row: any) => row.kind === 'native');
+  assert.equal(native.length, 1); assert.equal(native[0].symbol,'GRAM'); assert.equal(native[0].status,'ok'); assert.equal(native[0].decimals,9);
+  assert.deepEqual(Object.keys(native[0]).sort(), ['balance_raw','decimals','kind','status','symbol']);
+  const jettons = balances.assets.filter((row: any) => row.kind === 'jetton');
+  assert.equal(native.length + jettons.length, balances.assets.length);
+  if (strictRelease) assert.deepEqual(jettons.map((row: any) => [row.root,row.symbol,row.decimals]).sort(),
+    strictRelease.tokens.map(row => [row.root,row.symbol,row.decimals]).sort(), 'balances must include every manifest token with explicit precision');
+  for (const row of balances.assets) {
+    assert.ok(Number.isInteger(row.decimals) && row.decimals >= 0 && row.decimals <= 255);
+    if (row.kind === 'jetton') {
+      assert.equal(Address.parse(row.root).toRawString(),row.root);
+      assert.ok(row.wallet === null || Address.parse(row.wallet).toRawString() === row.wallet);
+      assert.ok(['ok','not_deployed','unavailable'].includes(row.status));
+      assert.deepEqual(Object.keys(row).sort(), (row.status === 'unavailable'
+        ? ['balance_raw','decimals','kind','reason','root','status','symbol','wallet']
+        : ['balance_raw','decimals','kind','root','status','symbol','wallet']));
+    }
+    if (row.status === 'unavailable') { assert.equal(row.balance_raw,null); assert.ok(['timeout','upstream','code_mismatch','root_unqualified'].includes(row.reason)); }
+    else { assert.match(row.balance_raw,/^(0|[1-9][0-9]*)$/); if (row.status === 'not_deployed') assert.equal(row.balance_raw,'0'); }
+  }
+  assert.equal(balances.complete, balances.assets.every((row: any) => row.status !== 'unavailable'));
+  const missing = await fetchJson('/api/indexer/v1/smoke-unknown-route', { expectedStatus: 404 }) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(missing).sort(),['code','error']); assert.equal(missing.code,'not_found');
+  assert.equal(typeof missing.error,'string'); assert.equal(String(missing.error).includes('smoke-unknown-route'),false);
+
+  const spec = await fetchJson('/api/indexer/v1/openapi.json') as OpenApiSpec;
+  assert.equal(spec.openapi, '3.1.0', 'OpenAPI version must be 3.1.0');
+  assert.equal(spec.info?.title, 'TONSWAP Indexer API', 'OpenAPI title must be TONSWAP Indexer API');
+  assert.equal(spec.info?.version, '1.0.0', 'OpenAPI info.version must be 1.0.0');
+  assert.equal(spec.servers?.[0]?.url, '/', 'OpenAPI primary server URL must be /');
+  assertPath(spec, publicPath('/api/indexer/v1/service-info'));
+  assertPath(spec, publicPath('/api/indexer/v1/contracts'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/balances'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/txs'));
+  assertPath(spec, publicPath('/api/indexer/v1/accounts/{addr}/state'));
+  assertPath(spec, publicPath('/api/indexer/v1/markets/{market}/candles'));
+  assertPath(spec, publicPath('/api/indexer/v1/runGetMethod'));
+
+  if (strictRelease) {
+    const allowedCors = await fetchJsonResponse('/api/indexer/v1/service-info', {
+      headers: { origin: strictRelease.expectedCorsOrigin },
+    });
+    assert.equal(
+      allowedCors.headers.get('access-control-allow-origin'),
+      strictRelease.expectedCorsOrigin,
+      `allowed CORS origin must be ${strictRelease.expectedCorsOrigin}`
+    );
+    assert.equal(
+      allowedCors.headers.get('access-control-allow-credentials'),
+      'true',
+      'allowed production CORS must enable credentials'
+    );
+    assert.ok(
+      headerTokens(allowedCors.headers, 'vary').includes('origin'),
+      'allowed production CORS must vary on Origin'
+    );
+
+    assert.equal(allowedCors.headers.get(RELEASE_IDENTITY_HEADER), strictRelease.releaseManifestHash,
+      'service-info release header must match the manifest');
+    assert.ok(headerTokens(allowedCors.headers, 'access-control-expose-headers').includes(RELEASE_IDENTITY_HEADER),
+      'allowed browser origin must be able to read the release header');
+
+    const hostileCors = await fetchJsonResponse('/api/indexer/v1/service-info', {
+      headers: { origin: strictRelease.hostileCorsOrigin },
+    });
+    assert.equal(
+      hostileCors.headers.get('access-control-allow-origin'),
+      null,
+      `hostile CORS origin ${strictRelease.hostileCorsOrigin} must be denied`
+    );
+    assert.equal(
+      hostileCors.headers.get('access-control-allow-credentials'),
+      null,
+      'hostile CORS origin must not receive credentials'
+    );
+
+    const allowedPreflight = await fetchCorsPreflight(
+      '/api/indexer/v1/runGetMethod',
+      strictRelease.expectedCorsOrigin
+    );
+    assert.ok(
+      allowedPreflight.ok,
+      `allowed production CORS preflight must succeed; got HTTP ${allowedPreflight.status}`
+    );
+    assert.equal(
+      allowedPreflight.headers.get('access-control-allow-origin'),
+      strictRelease.expectedCorsOrigin,
+      `allowed preflight origin must be ${strictRelease.expectedCorsOrigin}`
+    );
+    assert.equal(
+      allowedPreflight.headers.get('access-control-allow-credentials'),
+      'true',
+      'allowed production preflight must enable credentials'
+    );
+    assert.ok(
+      headerTokens(allowedPreflight.headers, 'vary').includes('origin'),
+      'allowed production preflight must vary on Origin'
+    );
+    assert.ok(
+      headerTokens(allowedPreflight.headers, 'access-control-allow-methods').includes('post'),
+      'allowed production preflight must permit POST'
+    );
+    const allowedHeaders = headerTokens(
+      allowedPreflight.headers,
+      'access-control-allow-headers'
+    );
+    for (const requiredHeader of ['content-type', 'accept', RELEASE_IDENTITY_HEADER]) {
+      assert.ok(
+        allowedHeaders.includes(requiredHeader),
+        `allowed production preflight must permit ${requiredHeader}`
+      );
+    }
+
+    const hostilePreflight = await fetchCorsPreflight(
+      '/api/indexer/v1/runGetMethod',
+      strictRelease.hostileCorsOrigin
+    );
+    assert.ok(
+      hostilePreflight.status < 500,
+      `hostile preflight denial must not be a server failure; got HTTP ${hostilePreflight.status}`
+    );
+    assert.equal(
+      hostilePreflight.headers.get('access-control-allow-origin'),
+      null,
+      `hostile preflight origin ${strictRelease.hostileCorsOrigin} must be denied`
+    );
+    assert.equal(
+      hostilePreflight.headers.get('access-control-allow-credentials'),
+      null,
+      'hostile preflight origin must not receive credentials'
+    );
+
+    // The canonical release manifest binds market identities and query metadata,
+    // but does not carry the certified swap transaction IDs or time windows.
+    // The canonical release wrapper verifies those proof-only values separately.
+    const seenCandleTransactions = new Set<string>();
+    for (const market of strictRelease.markets) {
+      const history = await fetchJson(
+        `/api/indexer/v1/markets/${encodeURIComponent(market.marketKey)}/candles`,
+        {
+          searchParams: new URLSearchParams({
+            market_address: market.marketAddress,
+            asset_symbol: market.assetSymbol,
+            quote_symbol: market.quoteSymbol,
+            asset_decimals: String(market.assetDecimals),
+            quote_decimals: String(market.quoteDecimals),
+            interval: '1m',
+            limit: '2',
+          }),
+        }
+      );
+      assertCandleHistory(history, market, expectedNetwork, seenCandleTransactions);
+    }
+
+  }
 
   process.stdout.write(`ton production smoke ok: ${baseUrl.toString()}\n`);
 }
 
 if (require.main === module) {
-  const baseUrlInput = process.argv[2] || process.env.TON_INDEXER_BASE_URL || DEFAULT_BASE_URL;
-  runProductionSmoke(baseUrlInput).catch((error) => {
-    console.error(`ton production smoke failed for ${baseUrlForFailureLog(baseUrlInput)}`);
-    console.error(error);
+  const baseUrlInput = process.argv[2] || process.env.TON_INDEXER_BASE_URL;
+  const expectedNetwork = process.argv[3] as ProductionSmokeOptions['expectedNetwork'] | undefined;
+  const extraArguments = process.argv.slice(4);
+  if (extraArguments.length > 0) {
+    console.error(`ton production smoke failed for ${redactedBaseUrl(baseUrlInput)}`);
+    console.error('Production smoke accepts only optional base URL and expected network positional arguments.');
+    process.exit(1);
+  }
+  runProductionSmoke(baseUrlInput, { expectedNetwork }).catch((error) => {
+    console.error(`ton production smoke failed for ${redactedBaseUrl(baseUrlInput)}`);
+    console.error(smokeCliDiagnostic(error));
     process.exit(1);
   });
 }

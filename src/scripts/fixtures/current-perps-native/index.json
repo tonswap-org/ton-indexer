@@ -1,0 +1,341 @@
+{
+  "schema": "tonswap-current-perps-fixtures-v1",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "producerReceiptSha256": "7c530328b6cc05b8ffe7b1187520bdeb433a56df9bd5f34130028e403a65f003",
+  "logSha256": "844caf72cf94e109673ed16d9ff8d5884b23bcfcaa4e172452d84c70c3a7abb7",
+  "sourceInventorySha256": "f2e125fc6ff840b4ff1498e306a3d32ef0656dee5e71e44edfec75355e9b3adf",
+  "files": [
+    {
+      "originalFile": "addMargin-default.json",
+      "originalBytes": 6584145,
+      "originalSha256": "735c6d89d61786746074d8b395dbea910fb2d00c404118a1a4e02339c8019046"
+    },
+    {
+      "originalFile": "addMargin-x6.json",
+      "originalBytes": 6584725,
+      "originalSha256": "4a21049f71f2a2cc12cf0adbf46149e5f903ab4ba38dfdf0813653a8f8a569f5"
+    },
+    {
+      "originalFile": "close-default.json",
+      "originalBytes": 8068840,
+      "originalSha256": "63131e02e46f3adeaeba67b4c92328da6e8ef7f2613405fb89109d026b551783"
+    },
+    {
+      "originalFile": "close-x6.json",
+      "originalBytes": 8069508,
+      "originalSha256": "268b36b00757c1ef4e2e648c49e5a8325e4af45b7f766142cfa4947752a652b4"
+    },
+    {
+      "originalFile": "funding-default.json",
+      "originalBytes": 7099394,
+      "originalSha256": "079de6667b8ed85c3ecf917e855ab2ba08da181e320da4567f63cbc495b439b1"
+    },
+    {
+      "originalFile": "funding-x6.json",
+      "originalBytes": 7100039,
+      "originalSha256": "6f89058e3b4c78dbaf723a98a9d3ba663f21c0244c8765ab468ba06adc61be89"
+    },
+    {
+      "originalFile": "incoming-before-mark-default.json",
+      "originalBytes": 6052327,
+      "originalSha256": "8bcdea009e88461d243e01b83375e36741ff1552906c406cbb9011128346c08f"
+    },
+    {
+      "originalFile": "incoming-before-mark-x6.json",
+      "originalBytes": 6053127,
+      "originalSha256": "916fe59c232bb589c5d074c84a40249807029c7c743428d12a4b3e472a76ab6e"
+    },
+    {
+      "originalFile": "incoming-marked-default.json",
+      "originalBytes": 6245134,
+      "originalSha256": "54192c13cd774c4038d44d89b6bbf0b3c7e72fc27f185492081f3cad8d2e1a92"
+    },
+    {
+      "originalFile": "incoming-marked-x6.json",
+      "originalBytes": 6245952,
+      "originalSha256": "b628e5357b083fca3f758059d4ee793f93471aac16e07dd8eda3347cbb6119f7"
+    },
+    {
+      "originalFile": "incoming-open-default.json",
+      "originalBytes": 4835878,
+      "originalSha256": "baa109ee6a1b6f02df5f51b827a907cfdb105243424d064649c74f3e0b417998"
+    },
+    {
+      "originalFile": "incoming-open-x6.json",
+      "originalBytes": 4836387,
+      "originalSha256": "75e5edc4b3e602ea78d971c8d0dc88143a7d747f5f52208e6fc24c1edfa46d12"
+    },
+    {
+      "originalFile": "incoming-refunded-default.json",
+      "originalBytes": 6699268,
+      "originalSha256": "bfb2cc12b989966ba55587b9a5190e73a8197ceed8579efa15892301560641e1"
+    },
+    {
+      "originalFile": "incoming-refunded-x6.json",
+      "originalBytes": 6700132,
+      "originalSha256": "9dfb5bf34b68f41f59674cfc295e6f60d803d64aae8e1f23e129a1b40a730128"
+    },
+    {
+      "originalFile": "increase-default.json",
+      "originalBytes": 5949810,
+      "originalSha256": "a64a5904e1ac0ff2c315ece1e3cbcb46af68cbfb8c103af2ab259d0ce10e4285"
+    },
+    {
+      "originalFile": "increase-x6.json",
+      "originalBytes": 5950360,
+      "originalSha256": "a6aa9d094158c54c9503ae922096d6c96c7837de67cd0c34ca7a0b82f7946347"
+    },
+    {
+      "originalFile": "open-default.json",
+      "originalBytes": 4943067,
+      "originalSha256": "e8213efecc997abc001ec498caed101a1406bb0a5d826d899c7b23756e3e75c2"
+    },
+    {
+      "originalFile": "open-x6.json",
+      "originalBytes": 4943577,
+      "originalSha256": "303a6906e75ac4bc90b7fc82a428d3cfda7e006ff0ec60dd7deb09e48dfca240"
+    },
+    {
+      "originalFile": "owed-before-claim-default.json",
+      "originalBytes": 6233309,
+      "originalSha256": "ef57a63be2f9c66b932dce847811deda5d1fb052d00925d720cb9124cbed3b37"
+    },
+    {
+      "originalFile": "owed-before-claim-x6.json",
+      "originalBytes": 6234109,
+      "originalSha256": "a89b907615ccace00f4a30ef51564e705253ec1b5cbda9aeab8fbd2c504286bf"
+    },
+    {
+      "originalFile": "owed-open-default.json",
+      "originalBytes": 4835878,
+      "originalSha256": "bf97d3ba7bc46a9b304705b40d2efa69e057c6e9a1012211caf4d4ba6022d9ee"
+    },
+    {
+      "originalFile": "owed-open-x6.json",
+      "originalBytes": 4836387,
+      "originalSha256": "2b039ad322464608bf89591eb24f5439a01120b9302df889c2646c701f4e8149"
+    },
+    {
+      "originalFile": "owed-paid-default.json",
+      "originalBytes": 6774274,
+      "originalSha256": "2e8811358e737259694079c1c1f60952f3ce014642fddcedea8a2aadf6ef7083"
+    },
+    {
+      "originalFile": "owed-paid-x6.json",
+      "originalBytes": 6775106,
+      "originalSha256": "10c6469408ee5916623df3e6fcac33cec260526f0c1bb1587a206b6663896a95"
+    },
+    {
+      "originalFile": "profit-plain-close-default.json",
+      "originalBytes": 6384596,
+      "originalSha256": "48938b8fac9f2ddce345e62fdcff3f4cd4a3fa4ef7ae3200d31db761bcd11a7c"
+    },
+    {
+      "originalFile": "profit-plain-close-x6.json",
+      "originalBytes": 6385243,
+      "originalSha256": "9c73da26f0e4a72e9de7b2da94cdc3770bd515a86799acb7ca896fd0093bf0b9"
+    },
+    {
+      "originalFile": "profit-plain-open-default.json",
+      "originalBytes": 4835878,
+      "originalSha256": "e400a6d4dc5241964e1a2e146127e8ed103ff44dff94533e953688d8a0727cdd"
+    },
+    {
+      "originalFile": "profit-plain-open-x6.json",
+      "originalBytes": 4836387,
+      "originalSha256": "0a6eaae71d874a4ede4ea03c27a82cb2fd9fb5dd669d57e25e326845ad8cc5d2"
+    },
+    {
+      "originalFile": "profit-plain-paid-default.json",
+      "originalBytes": 6549954,
+      "originalSha256": "442fc0cdd3ec1c6a2b8406c9926a227352a36893ac227b6518e08e85b485b2d1"
+    },
+    {
+      "originalFile": "profit-plain-paid-x6.json",
+      "originalBytes": 6550606,
+      "originalSha256": "195f9d6c49f8c64586f41fb32a97c030c38ea93538b7043bffb8d97b1b259dc9"
+    },
+    {
+      "originalFile": "profit-riskOwed-close-default.json",
+      "originalBytes": 7009120,
+      "originalSha256": "03c1433bb1111c2eea6b1a0c34551ade571d21a234d152b3e0a3c7d8431261de"
+    },
+    {
+      "originalFile": "profit-riskOwed-close-x6.json",
+      "originalBytes": 7010028,
+      "originalSha256": "5bf2ab3c0115226f6fd84573169e4c1066a5633436865df94d078a222ac600a9"
+    },
+    {
+      "originalFile": "profit-riskOwed-open-default.json",
+      "originalBytes": 4835878,
+      "originalSha256": "e400a6d4dc5241964e1a2e146127e8ed103ff44dff94533e953688d8a0727cdd"
+    },
+    {
+      "originalFile": "profit-riskOwed-open-x6.json",
+      "originalBytes": 4836387,
+      "originalSha256": "0a6eaae71d874a4ede4ea03c27a82cb2fd9fb5dd669d57e25e326845ad8cc5d2"
+    },
+    {
+      "originalFile": "profit-riskOwed-paid-default.json",
+      "originalBytes": 7492268,
+      "originalSha256": "4ff6ac42c44c4779bb2c62ced90d3d43ae042db57c8c62a9b1250c4ea3304db5"
+    },
+    {
+      "originalFile": "profit-riskOwed-paid-x6.json",
+      "originalBytes": 7493208,
+      "originalSha256": "9ce4b6723468b89431cbfd7b9f3724b0f4d80b4f55ae3c5704940c7935c9c0d2"
+    },
+    {
+      "originalFile": "profit-riskRetry-close-default.json",
+      "originalBytes": 7023452,
+      "originalSha256": "8124b17355740e665fb257c7421d1459b27520b662270a4d8cc592b62c7a3031"
+    },
+    {
+      "originalFile": "profit-riskRetry-close-x6.json",
+      "originalBytes": 7024380,
+      "originalSha256": "22fc4395d1d864621ef3562899f47445ab2e0caa813e40734fc11ce9b2f7e351"
+    },
+    {
+      "originalFile": "profit-riskRetry-marked-default.json",
+      "originalBytes": 7306188,
+      "originalSha256": "33b75258c212618aacd0810f62082279b018402d811e9c90fb2c4c2abedd7082"
+    },
+    {
+      "originalFile": "profit-riskRetry-marked-x6.json",
+      "originalBytes": 7307142,
+      "originalSha256": "f10a9beb9f0f54e73df72b632b7bda8927b9ff9fcc32f2ef395252a9ce6f590b"
+    },
+    {
+      "originalFile": "profit-riskRetry-open-default.json",
+      "originalBytes": 4835878,
+      "originalSha256": "e400a6d4dc5241964e1a2e146127e8ed103ff44dff94533e953688d8a0727cdd"
+    },
+    {
+      "originalFile": "profit-riskRetry-open-x6.json",
+      "originalBytes": 4836387,
+      "originalSha256": "0a6eaae71d874a4ede4ea03c27a82cb2fd9fb5dd669d57e25e326845ad8cc5d2"
+    },
+    {
+      "originalFile": "profit-riskRetry-paid-default.json",
+      "originalBytes": 7661088,
+      "originalSha256": "725f508e1862da35f97f920440bd9f8c1c7b5e33674e39fde633ff0d3b436896"
+    },
+    {
+      "originalFile": "profit-riskRetry-paid-x6.json",
+      "originalBytes": 7662076,
+      "originalSha256": "73576aa160f3581ac84f46a375bfe422a9d509c107d6fdd7a6eb89b05f0ee4a8"
+    },
+    {
+      "originalFile": "profit-settleRetry-close-default.json",
+      "originalBytes": 6863064,
+      "originalSha256": "35b7e58df8f6021093969ec3b789f0ae5ceb69318ac25bf7dc74eb9803a5ec9b"
+    },
+    {
+      "originalFile": "profit-settleRetry-close-x6.json",
+      "originalBytes": 6863963,
+      "originalSha256": "e6d9ee0f146215e009d2dbe3cd1353a20e06c69aaaa0668097a38cddfd213c98"
+    },
+    {
+      "originalFile": "profit-settleRetry-open-default.json",
+      "originalBytes": 4835878,
+      "originalSha256": "e400a6d4dc5241964e1a2e146127e8ed103ff44dff94533e953688d8a0727cdd"
+    },
+    {
+      "originalFile": "profit-settleRetry-open-x6.json",
+      "originalBytes": 4836387,
+      "originalSha256": "0a6eaae71d874a4ede4ea03c27a82cb2fd9fb5dd669d57e25e326845ad8cc5d2"
+    },
+    {
+      "originalFile": "profit-settleRetry-paid-default.json",
+      "originalBytes": 7619720,
+      "originalSha256": "8b1ffdea0790cb75d9c25d38157f194526974f99934bfa004a60b2d1143ad70e"
+    },
+    {
+      "originalFile": "profit-settleRetry-paid-x6.json",
+      "originalBytes": 7620675,
+      "originalSha256": "d7487a07d61263c7f1754c05f4175a0964de3056bbe993ed86c05d5adba473a9"
+    },
+    {
+      "originalFile": "recovery-open-default.json",
+      "originalBytes": 5957419,
+      "originalSha256": "ae04a477ed4ccb69d1a0c6943a5cbe919de952690e5e24eef1a93b4c8d4f1ede"
+    },
+    {
+      "originalFile": "recovery-open-x6.json",
+      "originalBytes": 5958020,
+      "originalSha256": "8c3e2d5495a1e67b12ca4eeb9af7e628e4d81f94f5c77d10d2dbfbaaaba0589a"
+    },
+    {
+      "originalFile": "refund-default.json",
+      "originalBytes": 4952586,
+      "originalSha256": "af7841997980c5cc76d3d4572a4b3f5c5278652b7c7a5adf9f6b4e82344d8967"
+    },
+    {
+      "originalFile": "refund-x6.json",
+      "originalBytes": 4953127,
+      "originalSha256": "5a1d007dd6ee496fd87f2a284d8cca31029d4938132096103b5984b087969fc5"
+    },
+    {
+      "originalFile": "refusal-default.json",
+      "originalBytes": 6555147,
+      "originalSha256": "52b61161582412d9bc902ca7734531fa85b07f72121d5fb8d3255172a29fb509"
+    },
+    {
+      "originalFile": "refusal-x6.json",
+      "originalBytes": 6555770,
+      "originalSha256": "1bd42fbeb073650ff97a571b998876f41ab05c97697aa80e883e9f3b47d1b40b"
+    },
+    {
+      "originalFile": "removeMargin-default.json",
+      "originalBytes": 7246954,
+      "originalSha256": "dc7a17cb4207c3f0cc85f24c1e7ad6ead4b82a3a4575211517681e3e0c2efd77"
+    },
+    {
+      "originalFile": "removeMargin-x6.json",
+      "originalBytes": 7247568,
+      "originalSha256": "d489bdccdbdd6346f729a5ab6262aadb6ec05b8abcdaf7c5f34fdeafa15a5248"
+    },
+    {
+      "originalFile": "retry-before-mark-default.json",
+      "originalBytes": 6135534,
+      "originalSha256": "4594dc600c95cb17d13a388ca680cfbe5352bc94e7e90ff257c0a2e0e2381907"
+    },
+    {
+      "originalFile": "retry-before-mark-x6.json",
+      "originalBytes": 6136342,
+      "originalSha256": "5bfa270ef73ce8cedbb45b26ba62becd4c0e710340a08affbc2ac30cf9d2ece8"
+    },
+    {
+      "originalFile": "retry-marked-default.json",
+      "originalBytes": 6381373,
+      "originalSha256": "20168cfbd85588a7c782c1c5493df04bac59f5c9bea035c2316bd9151ce2809b"
+    },
+    {
+      "originalFile": "retry-marked-x6.json",
+      "originalBytes": 6382199,
+      "originalSha256": "7d8952300244205eb3757d7ff30e69b5efd025dde1e7d78c44d613ec9da8053a"
+    },
+    {
+      "originalFile": "retry-open-default.json",
+      "originalBytes": 4835878,
+      "originalSha256": "4943f03a5a5785391c73e97abb227b10efe25f9dd7b339feadc1a64984a4ae69"
+    },
+    {
+      "originalFile": "retry-open-x6.json",
+      "originalBytes": 4836387,
+      "originalSha256": "84ca1daa480d71676c078d5562024bf2e53188d5ecef8f7357afc52b8f368ea4"
+    },
+    {
+      "originalFile": "retry-paid-default.json",
+      "originalBytes": 6662946,
+      "originalSha256": "d2f46d5831477b62fa478be2285f2dd3ed9447194a213442a50ac6e6d77c42f9"
+    },
+    {
+      "originalFile": "retry-paid-x6.json",
+      "originalBytes": 6663794,
+      "originalSha256": "570c792db08d8853e01a2204c2c808ff9a1fe35df5a5e77bb0222f269b852182"
+    }
+  ],
+  "pooledFile": "originals.json.gz",
+  "pooledSha256": "15a2f6be233562b9ea0cf117ce155b59e610d87cd97b432ebc9b4bfa6bc04b0d"
+}

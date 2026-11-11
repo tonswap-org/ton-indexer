@@ -16,13 +16,19 @@ Feature PRs are squash-merged after review and green CI. Release PRs to
 
 ## Local Checks
 
-Run these before submitting a PR:
+Use Node 22. For this audit/release phase, set `npm_config_offline=true`, edit only the package's assigned paths and run its named scripts plus scoped TypeScript check. Do not install, uninstall, audit or fetch packages in the shared worktree; retain node_modules unchanged. Dependency cleanup edits package files by hand and verifies an offline install in an isolated scratch copy. Capture verification requires a canonical physical sibling contract root: copy its frozen contracts and opcode configuration into the scratch area and verify their bytes. A symlinked root does not satisfy capture verification. The original contract repository stays read-only.
+
+Whole-suite and native-database checks belong to stage gates:
 
 ```sh
-npm ci
 npm test
+env -i PATH="$PATH" LANG=C npm run test:ledger
 npm run build
 ```
+
+Only a gate starts/stops the owned isolated PostgreSQL 16 server. Each native script uses `INDEXER_TEST_DATABASE_URL` pointing to that loopback database and owns its random schema. Keep native sections optional so the ordinary ledger suite needs only PATH and LANG. Preserve the cluster, release state and all evidence; no generic output-tree cleanup.
+
+After package acceptance, stage and commit only explicit owned paths on the existing branch. Do not stage other agents' edits or generated files. Read the native cross-repository store/readiness contract before changing SQL, build identity inputs or public exports. CI installs and audits on its own host; that does not authorize a local registry read.
 
 ## Pull Requests
 

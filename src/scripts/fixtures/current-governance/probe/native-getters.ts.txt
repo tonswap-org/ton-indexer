@@ -1,0 +1,39 @@
+import fs from 'node:fs';
+import { Address, Cell, loadShardAccount } from '@ton/core';
+import { Blockchain } from '@ton/sandbox';
+import { createNativeTransactionExecutor } from '../../tests/helpers/nativeTransactionExecutor';
+import { releaseTestConfig } from '../../tests/deploy/networkConfig';
+import { governanceStateFromCell } from '../../wrappers/utils/governanceBook';
+async function main() {
+ const native = await createNativeTransactionExecutor({ nativeGetters: true });
+ const rows:any[]=[];
+ try {
+  for(const [name, fee] of [['case-01.json','default'],['case-02.json','x6']] as const) {
+   const config=releaseTestConfig(fee), bc=await Blockchain.create({config,executor:native});
+   const capture=JSON.parse(fs.readFileSync(`.local/state/governance-v1/${name}`,'utf8'));
+   const seen=new Set<string>(); let savedParams=false;
+   for(const row of capture.transactions) {
+    const shard=loadShardAccount(Cell.fromBase64(row.after.originalShardAccount).beginParse());
+    if(shard.account?.storage.state.type!=='active'||shard.account.storage.state.state.code?.hash().toString('hex')!=='066334981f9f2a287abcf4e640832d0d136311ec2daffb82900c0f48d3cc7226')continue;
+    const state=governanceStateFromCell(shard.account.storage.state.state.data!), address=Address.parse(row.account);
+    await bc.setShardAccount(address,shard);bc.now=row.utime;
+    if(!savedParams) {
+     const params=[];for(let kind=0;kind<3;kind++){const r=await bc.runGetMethod(address,'get_params',[{type:'int',value:BigInt(kind)}]);params.push(r.stack.map(x=>{if(x.type!=='int')throw Error('Unexpected params');return x.value.toString();}));}
+     rows.push({case:name,transactionHash:row.hash,configBoc:config.toBoc().toString('base64'),params}); savedParams=true;
+    }
+    for(const [id,p] of state.props.proposals){
+     const key=`${p.class}:${p.queued}:${p.decidedAt===0}`;if(seen.has(key))continue;seen.add(key);
+     const at=async(now:number)=>{bc.now=now;const r=await bc.runGetMethod(address,'get_proposal',[{type:'int',value:BigInt(id)}]); const end=r.stack.slice(-3).map(x=>{if(x.type!=='int')throw Error('Unexpected timing');return Number(x.value);});return{now,close:end[0],eta:end[1],status:end[2]};};
+     const first=await at(row.utime),grace=(p.class===2?1:7)*600;
+     const observations=[];for(const now of new Set([row.utime,first.close-1,first.close,first.eta,first.eta+grace,first.eta+grace+1]))observations.push(await at(now));
+     bc.now=row.utime;
+     rows.push({case:name,transactionHash:row.hash,id,observations});
+    }
+   }
+  }
+  if(native.transactions()!==0)throw Error('Getter probe executed a transaction');
+  fs.writeFileSync('.local/state/governance-getters.json',JSON.stringify({schema:'tonswap-governance-native-getters-v1',node:process.version,transactions:0,rows},null,2)+'\n',{flag:'wx'});
+  console.log(`Native getter probe passed: ${rows.length} original-state rows, zero transactions`);
+ } finally {await native.close();}
+}
+main().catch(e=>{console.error(e);process.exitCode=1});

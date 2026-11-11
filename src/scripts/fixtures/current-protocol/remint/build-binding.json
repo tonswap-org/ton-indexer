@@ -1,0 +1,130 @@
+{
+  "schema": "tonswap-capture-build-v1",
+  "producer": "remint",
+  "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+  "tolkVersion": "1.5.0",
+  "sandboxVersion": "0.42.0",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d",
+  "targets": {
+    "JettonV21Minter": {
+      "source": "contracts/vendor/jetton-v2.1/JettonMinter.tolk",
+      "codeHash": "37fb274466a01db790720de6ea3e5b2797aadaa517cad7f9dc6e35d49b189c4f",
+      "artifact": "build/JettonV21Minter.boc",
+      "artifactSha256": "e6e9ca2348b06b4414b966592fd895f4fcd7bbfc0ca3290bf9ad3c0722292234",
+      "inputs": {
+        "contracts/generated/JettonWallet.code.tolk": "3ed2954e59a955cd3ae4c0fbf21d8c1541de54bb2e5ba7d9e12ee6a589f68298",
+        "contracts/vendor/jetton-v2.1/errors.tolk": "480df1ae5d924bac198579a80daae2d1f3bf90d7385cee83f0c0a1dcac5be91e",
+        "contracts/vendor/jetton-v2.1/fees-management.tolk": "8676718dffaf33c0f01e1126743e25272bb20c7fad49ef52a9309de6c115acf8",
+        "contracts/vendor/jetton-v2.1/jetton-utils.tolk": "a693f71e69017a524c963e2cb3a3eb6caeec3747bf7a20bbcdd173c34e59fe1d",
+        "contracts/vendor/jetton-v2.1/JettonMinter.tolk": "1f2706111e63d5fe4241e1c362d271f2038e6612a1b6418cd5bdaddd3e6819bd",
+        "contracts/vendor/jetton-v2.1/messages.tolk": "c1ba257033aa9e9dcb823fc8970ac7df37722c0af2976a0bcffd6238ade5c39b",
+        "contracts/vendor/jetton-v2.1/sharding.tolk": "b5f0df1edc90bcfea0a9b155255c4e6ddddf3d0d468a01a152aea0b7dafdedca",
+        "contracts/vendor/jetton-v2.1/storage.tolk": "bea2c27d85738a293d8b30801ec40462fdb45da6ecdb26755450f98820645fb1"
+      },
+      "inputsSha256": "03899773807b75d390ed7a925dc4f6784ec4cd973bafabbc247b0c8b4e114fd4"
+    },
+    "JettonV21Wallet": {
+      "source": "contracts/vendor/jetton-v2.1/JettonWallet.tolk",
+      "codeHash": "fdd0e33b685ba04a6a5b6beb6b103b76312b5649ac0c55a1ebe680e08d83efee",
+      "artifact": "build/JettonV21Wallet.boc",
+      "artifactSha256": "332b673ea75b5d30f7b467299ea8c6b8814dc6f439f573184843ee3ed640152c",
+      "inputs": {
+        "contracts/vendor/jetton-v2.1/errors.tolk": "480df1ae5d924bac198579a80daae2d1f3bf90d7385cee83f0c0a1dcac5be91e",
+        "contracts/vendor/jetton-v2.1/fees-management.tolk": "8676718dffaf33c0f01e1126743e25272bb20c7fad49ef52a9309de6c115acf8",
+        "contracts/vendor/jetton-v2.1/jetton-utils.tolk": "a693f71e69017a524c963e2cb3a3eb6caeec3747bf7a20bbcdd173c34e59fe1d",
+        "contracts/vendor/jetton-v2.1/JettonWallet.tolk": "53d5b55e04da9c09a94d306a19454b5817cce2499f6d82b53fa1ae24b5c12f7d",
+        "contracts/vendor/jetton-v2.1/messages.tolk": "c1ba257033aa9e9dcb823fc8970ac7df37722c0af2976a0bcffd6238ade5c39b",
+        "contracts/vendor/jetton-v2.1/sharding.tolk": "b5f0df1edc90bcfea0a9b155255c4e6ddddf3d0d468a01a152aea0b7dafdedca",
+        "contracts/vendor/jetton-v2.1/storage.tolk": "bea2c27d85738a293d8b30801ec40462fdb45da6ecdb26755450f98820645fb1"
+      },
+      "inputsSha256": "933b69364daee33c44dac4ebc396aad7349e836f89887ba45dd42bae85bf67a0"
+    },
+    "Remint": {
+      "source": "contracts/governance/remint.tolk",
+      "codeHash": "530e85d1b97b10c5788810ad99fa4efb75e7ea7a7323f88ba5c01ea5b8654575",
+      "artifact": "build/Remint.boc",
+      "artifactSha256": "8c8ba22aa05e9bee36b7465c90aee24721fab48c8efbbfa46965079df6ef6d40",
+      "inputs": {
+        "contracts/generated/JettonMinter.code.tolk": "679464ba3fbf363f76737f32aaec15c403b18f2a499d213f8783a23bfd4816de",
+        "contracts/generated/op/governance.tolk": "bfa1c2bfa74d49fe9fb0a2addda0f34184706133280ca62ad41b6a45c3d19bca",
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_jetton_claim_admin.tolk": "be86372dd21c79a5018a32cd7809dcdd84f9b9336405981736d04f8a5fe6dafd",
+        "contracts/generated/op/restricted_jetton_mint.tolk": "fb9e40fe371e3eb4852d45858313a01878411cf09dd6b6f2f1a523f395eba592",
+        "contracts/generated/op/restricted_jetton_top_up.tolk": "e29dee29c77be31004aad72ac853550385d52a5ff870a5a0eccb79dafc095104",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/governance/genesis_types.tolk": "a8a52c854c5cf248b768b4c940940bdcfcfe96f9ec6b5d0a3487150f6d9bb266",
+        "contracts/governance/remint.tolk": "1d0fb23447631eb048943b2a5bc702b2f2b6989a0dc642b67b161e6479066fec",
+        "contracts/shared/jetton/jetton_quotes.tolk": "c1ba468a6644795ae21d6ead7676a0bd74f6914eda9c703bf046aac794e0be0e",
+        "contracts/shared/jetton/jetton_slots.tolk": "76f1cc5ede8f953c37557cf28a8a118c1dd20f01e10a93256bb552e25a898fd6",
+        "contracts/shared/jetton/jetton_sweep.tolk": "8b03f4982c992940be4ef738eccf4e6112120d5627401aea068b031e8099d146",
+        "contracts/shared/jetton/owed_archive.tolk": "58eacacbcb66eff792aa5047f2817ffb102c209dfc4336987097f9772df6000d",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/jetton/tep89_codec.tolk": "03cb6f24ead5ff36de3b4352a2968cd1b2fc4b1573c0610d627fdc5894d005e8",
+        "contracts/shared/jetton/vendor_minter.tolk": "b52f374ef212b79a6b95054cb32208a2f8cf63434887e909f246205d832296de",
+        "contracts/shared/utils/error_codes.tolk": "02ee5172283568fca3fc65ddb586734742ac8f0914df6fc66c320613d5dff19c",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8"
+      },
+      "inputsSha256": "8739f42e12e462eafee2a4f0cb9619cb9f4599c4fafee69fdf158ce2fd072c0c"
+    },
+    "T3Wallet": {
+      "source": "contracts/t3/wallet.tolk",
+      "codeHash": "3bd7020c846ba45b9291003c3d0fe79fb6e9428a26819ee63e3ed30e0dd9abf6",
+      "artifact": "build/T3Wallet.boc",
+      "artifactSha256": "9bfaea10002418ef0f9714783ebaa72745bf46a7dedd5cb861900fbb711a38e7",
+      "inputs": {
+        "contracts/generated/op/jetton.tolk": "0775e79e018bb8c4454dc23fb5ad028a86303823344d01ac0ac6714bf09edd2c",
+        "contracts/generated/op/restricted_owed_claim_receipt.tolk": "8c433430184767520aa04e22aea3632fd7af17163e4b945d05accc9cf6217447",
+        "contracts/generated/op/t3.tolk": "f83691efaa414aacc996d87202f860e99a62c6f34ad81ea28cffe39dbd037fcb",
+        "contracts/generated/op/tep.tolk": "711f959aa6dd9f308b6e72ce02fc1712080c715d07c826163b6c5aa7fbeeeeea",
+        "contracts/shared/jetton/protected_credit.tolk": "1f7ed42f92916e0b994c946b9a061d72c0395c304144cbd193253475858271ca",
+        "contracts/shared/jetton/tep74_codec.tolk": "aa5bb6af5d7374fbf269d564d41408b79ebe350a998188ff12f1b54854be2148",
+        "contracts/shared/utils/rich_bounce.tolk": "9a335a6e60b06384a7b39d716472438d5846e06affcdf5f07bb74159ae07cfd8",
+        "contracts/t3/recovery_types.tolk": "8985e0572cfefb4f43fa2c40b3eea71331b80a44c615d2cb560db94a81a96b2d",
+        "contracts/t3/wallet_budget.tolk": "83e7fb8b154c72e496e2666c7a0c2366c4145163b3c6a32b179aa810de39c107",
+        "contracts/t3/wallet_tree.tolk": "689f119d58bbcc11afb768fc613295ef2be22895931ae804f7ccde58938440f4",
+        "contracts/t3/wallet_types.tolk": "43d30a774779dd49ec5b1032a84c722c3cf14302724848a43892dffc0f21cd72",
+        "contracts/t3/wallet.tolk": "541047231bf34b54ae8b1a6f162ef05db6009e0f1fa7414389f4623105757373"
+      },
+      "inputsSha256": "204376b2cdc56374a93b53d52a3232312ab899c4ac6979bc878e02caf4f35855"
+    }
+  },
+  "captures": {
+    "case-01.json": {
+      "executed": [
+        "JettonV21Minter",
+        "JettonV21Wallet",
+        "Remint",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "JettonV21Minter",
+        "JettonV21Wallet",
+        "Remint",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    },
+    "case-02.json": {
+      "executed": [
+        "JettonV21Minter",
+        "JettonV21Wallet",
+        "Remint",
+        "T3Wallet"
+      ],
+      "embedded": [
+        "JettonV21Minter",
+        "JettonV21Wallet",
+        "Remint",
+        "T3Wallet"
+      ],
+      "unbuiltCode": [
+        "d992502b94ea96e7b34e5d62ffb0c6fc73d78b3e61f11f0848fb3a1eb1afc912"
+      ]
+    }
+  }
+}

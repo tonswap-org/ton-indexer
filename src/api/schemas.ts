@@ -6,17 +6,9 @@ export const addressParamsSchema = {
   required: ['addr'],
 };
 
-export const jettonTransferPayloadParamsSchema = {
-  type: 'object',
-  properties: {
-    jetton: { type: 'string' },
-    owner: { type: 'string' },
-  },
-  required: ['jetton', 'owner'],
-};
-
 export const txQuerySchema = {
   type: 'object',
+  propertyNames: { enum: ['page', 'cursor_lt', 'cursor_hash'] },
   properties: {
     page: { type: 'integer', minimum: 1 },
     cursor_lt: { type: 'string', pattern: '^\\d+$' },
@@ -24,30 +16,28 @@ export const txQuerySchema = {
   },
 };
 
-export const tonSccpBurnProofQuerySchema = {
+export const marketCandleParamsSchema = {
   type: 'object',
   properties: {
-    jetton_master: { type: 'string' },
-    message_id: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
-    trusted_checkpoint_seqno: { type: 'integer', minimum: 1 },
-    trusted_checkpoint_hash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
-    target_seqno: { type: 'integer', minimum: 1 },
+    market: { type: 'string', minLength: 1, maxLength: 160 },
   },
-  required: ['jetton_master', 'message_id'],
+  required: ['market'],
 };
 
-export const swapQuerySchema = {
+export const marketCandleQuerySchema = {
   type: 'object',
   properties: {
-    limit: { type: 'integer', minimum: 1, maximum: 500 },
+    market_address: { type: 'string' },
+    asset_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    quote_symbol: { type: 'string', minLength: 1, maxLength: 32 },
+    asset_decimals: { type: 'integer', minimum: 0, maximum: 30 },
+    quote_decimals: { type: 'integer', minimum: 0, maximum: 30 },
+    interval: { type: 'string', enum: ['1m', '5m', '15m', '1h', '4h', '1d'] },
     from_utime: { type: 'integer', minimum: 1 },
     to_utime: { type: 'integer', minimum: 1 },
-    pay_token: { type: 'string', minLength: 1, maxLength: 32 },
-    receive_token: { type: 'string', minLength: 1, maxLength: 32 },
-    execution_type: { type: 'string', enum: ['market', 'limit', 'twap', 'unknown'] },
-    status: { type: 'string', enum: ['success', 'failed', 'pending'] },
-    include_reverse: { type: 'string', enum: ['1', '0', 'true', 'false', 'yes', 'no'] },
+    limit: { type: 'integer', minimum: 1, maximum: 1000 },
   },
+  required: ['market_address', 'asset_symbol', 'quote_symbol'],
 };
 
 export const debugQuerySchema = {
@@ -57,55 +47,12 @@ export const debugQuerySchema = {
   },
 };
 
-export const perpsSnapshotQuerySchema = {
-  type: 'object',
-  properties: {
-    market_ids: { type: 'string' },
-    max_markets: { type: 'integer', minimum: 1, maximum: 128 },
-  },
-};
-
-export const volIndexSnapshotQuerySchema = {
-  type: 'object',
-  properties: {
-    pool: { type: 'string' },
-    route_ids: { type: 'string' },
-  },
-};
-
 export const governanceSnapshotQuerySchema = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     owner: { type: 'string' },
+    start_id: { type: 'string', pattern: '^[1-9][0-9]{0,9}$' },
     max_scan: { type: 'integer', minimum: 1, maximum: 64 },
-    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
-  },
-};
-
-export const farmsSnapshotQuerySchema = {
-  type: 'object',
-  properties: {
-    max_scan: { type: 'integer', minimum: 1, maximum: 64 },
-    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
-  },
-};
-
-export const optionsSnapshotQuerySchema = {
-  type: 'object',
-  properties: {
-    start_id: { type: 'integer', minimum: 0, maximum: 1000000 },
-    max_series_id: { type: 'integer', minimum: 1, maximum: 1000000 },
-    window_size: { type: 'integer', minimum: 1, maximum: 256 },
-    max_empty_windows: { type: 'integer', minimum: 1, maximum: 64 },
-    min_probe_windows: { type: 'integer', minimum: 0, maximum: 4096 },
-  },
-};
-
-export const coverSnapshotQuerySchema = {
-  type: 'object',
-  properties: {
-    owner: { type: 'string' },
-    max_scan: { type: 'integer', minimum: 1, maximum: 64 },
-    max_misses: { type: 'integer', minimum: 1, maximum: 8 },
   },
 };

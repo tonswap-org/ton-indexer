@@ -1,98 +1,106 @@
+import { readOwedRequest, readOwedOperationRequest } from '../runtime/owedEvidence';
 import { Address, Cell } from '@ton/core';
-import { getHttpEndpoints } from '@orbs-network/ton-access';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { IndexerService } from '../indexerService';
+import {
+  IndexerService,
+  MarketCandleInterval
+} from '../indexerService';
+import type { RegistryMetadata } from '../config/releaseManifest';
+import type { Network } from '../config';
+import { PUBLIC_RPC_ZERO_STATES } from './rpcNetwork';
 import { MetricsService } from '../metrics';
 import { SnapshotService } from '../snapshotService';
 import { DebugService } from '../debugService';
-import { RateLimiter } from './rateLimit';
+import { RateLimiter, rateLimitKey } from './rateLimit';
 import { isValidAddress, isValidHashBase64, isValidLt, parsePositiveInt } from './validation';
 import {
   addressParamsSchema,
-  coverSnapshotQuerySchema,
   debugQuerySchema,
-  farmsSnapshotQuerySchema,
-  jettonTransferPayloadParamsSchema,
   governanceSnapshotQuerySchema,
-  optionsSnapshotQuerySchema,
-  perpsSnapshotQuerySchema,
-  volIndexSnapshotQuerySchema,
-  tonSccpBurnProofQuerySchema,
-  swapQuerySchema,
+  marketCandleParamsSchema,
+  marketCandleQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
 import { buildDocsHtml } from './docsHtml';
-import { publicErrorMessage, sendError } from './errors';
+import { publicIndexerPath } from './publicMount';
+import { installErrorHandlers, sendError, sendFailure } from './errors';
+import { requestDeadline, ROUTE_DEADLINE_MS } from './deadline';
+import { ChainReadError, type ChainSource, type TonBlockIdExt } from '../data/dataSource';
+import type { BalanceService } from '../balances/balanceService';
+import { BalanceStreamCapacityError, type BalanceStreamHub } from '../balances/balanceStream';
+import { BalanceStreamAdmission, BalanceStreamWriter } from './balanceStreamTransport';
+import type { RuntimeMetrics } from '../runtimeMetrics';
+import { isRetiredPerpsGetter } from '../data/currentGetters';
+import type { FreshReadCall } from '../data/freshRead';
+import { currentNativeRuntime, resolveServiceMetadata, installReleaseIdentity } from './serviceMetadata';
+import { errorDiagnostic, type Logger } from '../utils/logger';
+import { OrderPageError, type CurrentOrdersRuntime } from '../runtime/ordersRuntime';
+import { readT3OperationRequest, T3EvidenceError } from '../runtime/t3OperationRequest';
+import { readT3WalletClaimRequest } from '../runtime/t3WalletClaimEvidence';
+import { readAccountStorage } from '../runtime/accountStorage';
+import { readPoolOperationRequest } from '../runtime/poolOperationEvidence';
+import { readPoolWalletClaimRequest } from '../runtime/poolWalletClaimEvidence';
+import { readLaunchpadWalletClaimRequest } from '../runtime/launchpadWalletClaimEvidence';
+import { readLaunchpadOwedArchiveRequest } from '../runtime/launchpadOwedArchiveEvidence';
+import { readLaunchpadHolderRecoveryRequest } from '../runtime/launchpadHolderRecoveryEvidence';
+import { readLaunchpadHolderProofSessionRequest } from '../runtime/launchpadHolderProofSession';
+import { readLaunchpadSalesRequest } from '../runtime/launchpadSalesEvidence';
+import { readPerpsOperationRequest } from '../runtime/perpsOperationEvidence';
+import { readPerpsWalletClaimRequest } from '../runtime/perpsWalletClaimEvidence';
+import { readWalletTransferEvidenceRequest } from '../runtime/walletTransferEvidence';
+import { readLaunchpadTokenRequest } from '../runtime/launchpadTokenEvidence';
+import { readLaunchpadOperationRequest } from '../runtime/launchpadOperationEvidence';
+import { readOptionsOperationRequest } from '../runtime/optionsOperationEvidence';
+import { readFaucetProofSessionRequest } from '../runtime/t3ProofSession';
+import { readFaucetRecoveryRequest } from '../runtime/faucetRecoveryEvidence';
+import { readOptionsWalletClaimRequest } from '../runtime/optionsWalletClaimEvidence';
+import { readFaucetOperationRequest } from '../runtime/faucetOperationEvidence';
+import { ProductEvidenceError } from '../runtime/productEvidence';
+import { readOrderWalletClaimRequest } from '../runtime/orderWalletClaimEvidence';
+import { readSpotOperationRequest, SpotEvidenceError } from '../runtime/spotOperationRequest';
+import { createGovernanceSnapshotReader } from '../runtime/governanceSnapshot';
+import { currentJettonConfigPrices } from '../data/configPrices';
+import { assertFreshHeadTime } from '../data/freshHead';
 
-const BALANCE_STREAM_POLL_MS = 1_500;
-const BALANCE_STREAM_KEEPALIVE_MS = 15_000;
 const BALANCE_STREAM_MAX_ADDRESSES = 8;
 const GET_METHOD_MAX_STACK_ITEMS = 16;
-const GET_METHOD_MAX_BATCH_CALLS = 64;
-const GET_METHOD_BATCH_CONCURRENCY = 10;
-const GET_METHOD_CALL_TIMEOUT_MS = 6_000;
-const RPC_PROXY_DEFAULT_TIMEOUT_MS = 30_000;
-const RPC_PROXY_DEFAULT_RETRY_ATTEMPTS = 4;
-const RPC_PROXY_DEFAULT_RETRY_DELAY_MS = 600;
-const RPC_PROXY_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-const TON_RPC_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'estimateFee', 'getMasterchainInfo']);
-const TON_RPC_WRITE_PROXY_METHODS = new Set(['sendBoc', 'sendBocReturnHash', 'estimateFee']);
+const FRESH_READ_MAX_CALLS = 32;
 
 type ToncenterStackEntry = [string, unknown];
 type ToncenterRpcCompatResponse<T> = { ok: true; result: T } | { ok: false; error: string; code?: number };
-type ToncenterRpcCompatRequest = {
-  id?: number | string | null;
-  jsonrpc?: string;
-  method?: string;
-  params?: Record<string, unknown> | null;
-};
 
 type RoutesConfig = {
-  adminToken?: string;
-  network?: string;
+  network: Network;
   pageSize?: number;
-  rpcProxyEndpoint?: string;
-  rpcProxyEndpoints?: string[];
   enableWriteRpc?: boolean;
-  rpcProxyApiKey?: string;
-  rpcProxyTimeoutMs?: number;
-  rpcProxyRetryAttempts?: number;
-  rpcProxyRetryDelayMs?: number;
+  edgeKey?: string;
+  adminToken?: string;
 };
 
-type IndexedTxMessageCompat = {
-  source?: string;
-  destination?: string;
-  value?: string;
-  op?: number;
-  body?: string;
-};
-
-type IndexedTxCompat = {
-  txId?: string;
-  lt?: string;
-  hash?: string;
-  utime?: number;
-  status?: 'success' | 'failed' | 'pending';
-  reason?: string;
-  inMessage?: IndexedTxMessageCompat;
-  outMessages?: IndexedTxMessageCompat[];
-};
-
-const normalizeBase64 = (input: string) => {
-  let value = input.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = value.length % 4;
-  if (pad === 2) value += '==';
-  if (pad === 3) value += '=';
-  if (pad === 1) return null;
-  return value;
+const decodeCanonicalBase64 = (input: string): Buffer | null => {
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(input)) return null;
+  if (/[+/]/.test(input) && /[-_]/.test(input)) return null;
+  const standardInput = input.replace(/-/g, '+').replace(/_/g, '/');
+  const unpadded = standardInput.replace(/=+$/, '');
+  if (unpadded.length % 4 === 1) return null;
+  const padded = unpadded.padEnd(Math.ceil(unpadded.length / 4) * 4, '=');
+  try {
+    const decoded = Buffer.from(padded, 'base64');
+    const canonical = decoded.toString('base64');
+    if (standardInput !== canonical && standardInput !== canonical.replace(/=+$/, '')) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
 };
 
 const parseBigIntLike = (value: unknown): bigint | null => {
   if (typeof value === 'bigint') return value;
-  if (typeof value === 'number') return Number.isSafeInteger(value) ? BigInt(value) : null;
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value);
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -146,11 +154,11 @@ const parseStackArgs = (stack: unknown): { ok: boolean; args?: any[]; error?: st
       if (typeof value !== 'string') {
         return { ok: false, error: 'invalid cell stack value' };
       }
-      const normalizedB64 = normalizeBase64(value);
-      if (!normalizedB64) return { ok: false, error: 'invalid base64 stack value' };
+      const boc = decodeCanonicalBase64(value);
+      if (!boc) return { ok: false, error: 'invalid base64 stack value' };
       let cell: Cell;
       try {
-        cell = Cell.fromBoc(Buffer.from(normalizedB64, 'base64'))[0];
+        cell = Cell.fromBoc(boc)[0];
       } catch {
         return { ok: false, error: 'invalid boc stack value' };
       }
@@ -168,15 +176,16 @@ const parseStackArgs = (stack: unknown): { ok: boolean; args?: any[]; error?: st
   return { ok: true, args };
 };
 
-const parseStreamAddresses = (query: { address?: string; wallet?: string; addresses?: string }) => {
-  const fromCsv = query.addresses
-    ? query.addresses
+const parseStreamAddresses = (query: { address?: unknown; addresses?: unknown }) => {
+  const rawAddresses = query.addresses;
+  const fromCsv = typeof rawAddresses === 'string'
+    ? rawAddresses
         .split(',')
         .map((value) => value.trim())
         .filter((value) => value.length > 0)
     : [];
-  const candidates = [query.address, query.wallet, ...fromCsv]
-    .map((value) => value?.trim())
+  const candidates = [query.address, ...fromCsv]
+    .map((value) => (typeof value === 'string' ? value.trim() : undefined))
     .filter((value): value is string => Boolean(value));
   const normalized: string[] = [];
   for (const candidate of candidates) {
@@ -192,12 +201,6 @@ const parseStreamAddresses = (query: { address?: string; wallet?: string; addres
     }
   }
   return normalized.slice(0, BALANCE_STREAM_MAX_ADDRESSES);
-};
-
-const parseBooleanQuery = (value?: string) => {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 };
 
 const parsePositiveIntQuery = (value?: string | number) => {
@@ -222,7 +225,19 @@ const parseNonNegativeIntQuery = (value?: string | number) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
-const HEX_256_RE = /^0x[0-9a-fA-F]{64}$/;
+const readHeaderValue = (value: string | string[] | undefined) => {
+  if (Array.isArray(value)) return value[0];
+  return value;
+};
+
+const getAdminToken = (request: FastifyRequest) => {
+  const explicit = readHeaderValue(request.headers['x-indexer-admin-token']);
+  if (explicit) return explicit;
+  const authorization = readHeaderValue(request.headers.authorization);
+  const match = authorization?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1];
+};
+
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -235,127 +250,20 @@ const readString = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const normalizeRpcEndpoint = (value: string) => value.trim().replace(/\/+$/, '');
-
-const rankRpcEndpoint = (endpoint: string) => {
-  const normalized = endpoint.toLowerCase();
-  if (normalized.includes('toncenter')) return 2;
-  if (normalized.includes('tonapi')) return 1;
-  return 0;
-};
-
-const uniqueRpcEndpoints = (endpoints: string[]) => {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const endpoint of endpoints) {
-    const normalized = normalizeRpcEndpoint(endpoint);
-    if (!normalized) continue;
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  out.sort((left, right) => rankRpcEndpoint(left) - rankRpcEndpoint(right));
-  return out;
-};
-
-const mapIndexerMessageToToncenter = (message?: IndexedTxMessageCompat | null) => {
-  if (!message || typeof message !== 'object') return null;
-  const mapped: Record<string, unknown> = {};
-  if (typeof message.source === 'string' && message.source) mapped.source = message.source;
-  if (typeof message.destination === 'string' && message.destination) mapped.destination = message.destination;
-  if (typeof message.value === 'string' && message.value) mapped.value = message.value;
-  if (typeof message.body === 'string' && message.body) {
-    mapped.msg_data = { body: message.body };
-  }
-  return mapped;
-};
-
-const mapIndexerStatusToToncenterDescription = (status?: string, reason?: string) => {
-  if (status === 'success') {
-    return {
-      aborted: false,
-      compute_ph: { success: true, exit_code: 0 },
-      action: { success: true, valid: true, result_code: 0 }
-    };
-  }
-  if (status === 'failed') {
-    return {
-      aborted: false,
-      compute_ph: { type: 'skipped', reason: reason ?? 'Transaction failed.' },
-      action: { success: false, valid: false, result_code: 1 }
-    };
-  }
-  return undefined;
-};
-
-const mapIndexerTxToToncenterTransaction = (entry: IndexedTxCompat) => {
-  const txIdRaw = typeof entry.txId === 'string' ? entry.txId : null;
-  const split = txIdRaw && txIdRaw.includes(':') ? txIdRaw.split(':') : null;
-  const lt = readString(entry.lt) ?? (split ? readString(split[0]) : null) ?? '';
-  const hash = readString(entry.hash) ?? (split ? readString(split[1]) : null) ?? '';
-  const inMsg = mapIndexerMessageToToncenter(entry.inMessage ?? null) ?? undefined;
-  const outMsgs = Array.isArray(entry.outMessages)
-    ? entry.outMessages
-        .map((message) => mapIndexerMessageToToncenter(message))
-        .filter((message): message is Record<string, unknown> => Boolean(message))
-    : [];
-
-  return {
-    transaction_id: { lt, hash },
-    utime: typeof entry.utime === 'number' ? entry.utime : undefined,
-    in_msg: inMsg,
-    out_msgs: outMsgs,
-    description: mapIndexerStatusToToncenterDescription(entry.status, entry.reason)
-  };
-};
-
-const mapConcurrent = async <T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> => {
-  const results = new Array<R>(items.length);
-  if (items.length === 0) return results;
-
-  const safeConcurrency = Math.max(1, Math.trunc(concurrency));
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(items.length, safeConcurrency) }, () =>
-    (async () => {
-      while (true) {
-        const current = nextIndex;
-        nextIndex += 1;
-        if (current >= items.length) return;
-        results[current] = await fn(items[current], current);
-      }
-    })()
-  );
-  await Promise.all(workers);
-  return results;
-};
-
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
-  const ms = Math.max(1, Math.trunc(timeoutMs));
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('timeout')), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-};
-
 const classifyRateLimitBucket = (url: string) => {
   const path = url.split('?')[0] || '';
-  if (path === '/jsonRPC' || path === '/api/v2/jsonRPC' || path.startsWith('/api/indexer/v1/runGetMethod')) {
+  if (path === '/jsonRPC' || path === '/api/v2/jsonRPC' || path.startsWith('/api/indexer/v1/runGetMethod')
+    || path === '/api/indexer/v1/readFresh') {
     return 'rpc' as const;
   }
   if (path.startsWith('/api/indexer/v1/stream')) return 'stream' as const;
   if (path.includes('/snapshot')) return 'snapshot' as const;
-  if (path.startsWith('/api/indexer/v1/accounts')) return 'accounts' as const;
+  if (
+    path.startsWith('/api/indexer/v1/accounts') ||
+    path.startsWith('/api/indexer/v1/markets')
+  ) {
+    return 'accounts' as const;
+  }
   if (
     path.startsWith('/api/indexer/v1/docs') ||
     path.startsWith('/api/indexer/v1/openapi.json') ||
@@ -377,84 +285,150 @@ export const registerRoutes = (
   snapshots?: SnapshotService,
   debug?: DebugService,
   rateLimiter?: RateLimiter,
-  contracts?: Record<string, string>
+  contracts?: Record<string, string>,
+  registryMetadata?: RegistryMetadata,
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
+  installErrorHandlers(app);
+  installReleaseIdentity(app, config.network, registryMetadata);
+  const network = config.network;
+  if (network !== 'mainnet' && network !== 'testnet' && network !== 'localnet') {
+    throw new Error('Routes require an explicit mainnet, testnet, or localnet network.');
+  }
+  const activeBalanceStreams = new Set<() => void>();
+  const balanceStreamAdmission = new BalanceStreamAdmission();
+  let closing = false;
+  // Hijacked SSE responses must end before Fastify waits for HTTP connections.
+  app.addHook('preClose', async () => {
+    closing = true;
+    for (const closeStream of activeBalanceStreams) closeStream();
+  });
+
   const contractEntries = Object.entries(contracts ?? {}).sort(([left], [right]) => left.localeCompare(right));
-  // Snapshot reload mutates live indexed state. Public read access and proxy
-  // headers are not authorization for operational controls.
-  const requireAdmin = (request: FastifyRequest, reply: FastifyReply): boolean => {
-    const token = config.adminToken;
-    if (!token || !/^[A-Za-z0-9_-]{32,256}$/.test(token)) {
-      sendError(reply, 404, 'admin_disabled', 'administrative API disabled');
-      return false;
-    }
-    const supplied = request.headers.authorization;
-    const expected = Buffer.from(`Bearer ${token}`);
-    const actual = Buffer.from(typeof supplied === 'string' ? supplied : '');
-    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-      sendError(reply, 401, 'unauthorized', 'administrative authorization required');
-      return false;
-    }
-    return true;
-  };
   const contractMap = Object.fromEntries(contractEntries);
-  const network = String(config.network || 'mainnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+  const canonicalMarkets = registryMetadata?.markets ?? [];
+  const canonicalCandleMarkets = [
+    ...(registryMetadata?.spotMarkets ?? []),
+    ...canonicalMarkets.map(market => ({ ...market, marketKey: market.perpsCandleMarketKey, marketAddress: market.perpsPool })),
+  ];
+  const rawAddress = (value: string) => {
+    try {
+      return Address.parse(value).toRawString();
+    } catch {
+      return null;
+    }
+  };
+  const adminToken = config.adminToken ? Buffer.from(config.adminToken) : null;
+  const requireAdmin = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    disabledCode: 'snapshot_disabled' | 'debug_disabled' | 'metrics_disabled',
+    disabledMessage: string
+  ) => {
+    if (!adminToken) {
+      return sendError(reply, 400, disabledCode, disabledMessage);
+    }
+    const supplied = Buffer.from(getAdminToken(request) ?? '');
+    if (supplied.length !== adminToken.length || !timingSafeEqual(supplied, adminToken)) {
+      return sendError(reply, 401, 'unauthorized', 'admin token required');
+    }
+    return null;
+  };
+  const { serviceId, publicBaseUrl, freshReads } = resolveServiceMetadata(config, registryMetadata);
+  const nativeRuntime = currentNativeRuntime(config.network, registryMetadata);
+  let governanceSnapshot: ReturnType<typeof createGovernanceSnapshotReader> | undefined;
+  const indexer = nativeRuntime?.services.indexer;
   const serviceIdentity = {
-    serviceId: 'ti.soramitsu.io',
+    serviceId,
     ecosystem: 'ton',
-    chainId: network === 'mainnet' ? 'ton:mainnet' : 'ton:testnet',
+    chainId: `ton:${network}`,
     network
   } as const;
   const serviceInfo = {
     schemaVersion: 1,
     ...serviceIdentity,
     serviceName: 'TON Indexer',
-    publicBaseUrl: 'https://ti.soramitsu.io',
+    publicBaseUrl,
     readOnly: !config.enableWriteRpc,
     capabilities: [
-      'account-balance',
       'account-balances',
-      'account-assets',
       'account-transactions',
       'account-state',
       'run-get-method',
-      'run-get-methods'
+      ...(freshReads ? ['fresh-read'] : []),
+      ...(freshReads && runtime.orders ? ['open-orders'] : []),
+      ...(freshReads && runtime.source ? ['config-prices'] : []),
+      ...(freshReads && runtime.orders?.operationEvidence ? ['t3-operation-evidence'] : []),
+      ...(freshReads && runtime.orders?.spotOperationEvidence ? ['spot-operation-evidence'] : []),
+      'market-candles'
     ],
-    endpoints: {
+    endpoints: Object.fromEntries(Object.entries({
       health: '/api/indexer/v1/health',
       openapi: '/api/indexer/v1/openapi.json',
-      balance: '/api/indexer/v1/accounts/{addr}/balance',
       balances: '/api/indexer/v1/accounts/{addr}/balances',
-      assets: '/api/indexer/v1/accounts/{addr}/assets',
       transactions: '/api/indexer/v1/accounts/{addr}/txs',
       state: '/api/indexer/v1/accounts/{addr}/state',
       runGetMethod: '/api/indexer/v1/runGetMethod',
-      runGetMethods: '/api/indexer/v1/runGetMethods'
+      ...(freshReads ? { readFresh: '/api/indexer/v1/readFresh' } : {}),
+      ...(freshReads && runtime.orders ? { openOrders: '/api/indexer/v1/orders/open' } : {}),
+      ...(freshReads && runtime.source ? { configPrices: '/api/indexer/v1/config-prices' } : {}),
+      ...(freshReads && runtime.orders?.operationEvidence ? { t3OperationEvidence: '/api/indexer/v1/t3/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.walletClaimEvidence ? { t3WalletClaimEvidence: '/api/indexer/v1/t3/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.orderWalletClaimEvidence ? { orderWalletClaimEvidence: '/api/indexer/v1/spot/order-wallet-claim-evidence' } : {}),
+      ...(freshReads ? { accountStorage: '/api/indexer/v1/account-storage' } : {}),
+      ...(freshReads && runtime.orders?.spotOperationEvidence ? { spotOperationEvidence: '/api/indexer/v1/spot/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.poolOperationEvidence ? { poolOperationEvidence: '/api/indexer/v1/pools/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.poolWalletClaimEvidence ? { poolWalletClaimEvidence: '/api/indexer/v1/pools/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadTokenEvidence ? { launchpadTokenEvidence: '/api/indexer/v1/launchpad/token-evidence' } : {}),
+      ...(freshReads && runtime.orders?.perpsOperationEvidence ? { perpsOperationEvidence: '/api/indexer/v1/perps/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.perpsWalletClaimEvidence ? { perpsWalletClaimEvidence: '/api/indexer/v1/perps/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.walletTransferEvidence ? { walletTransferEvidence: '/api/indexer/v1/wallet/transfers/evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadWalletClaimEvidence ? { launchpadWalletClaimEvidence: '/api/indexer/v1/launchpad/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.owedEvidence ? { owedEvidence: '/api/indexer/v1/owed/evidence' } : {}),
+      ...(freshReads && runtime.orders?.owedOperationEvidence ? { owedOperationEvidence: '/api/indexer/v1/owed/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.owedWalletClaimEvidence ? { owedWalletClaimEvidence: '/api/indexer/v1/owed/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadOwedArchiveEvidence ? { launchpadOwedArchiveEvidence: '/api/indexer/v1/launchpad/owed-archive-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadHolderRecoveryEvidence ? { launchpadHolderRecoveryEvidence: '/api/indexer/v1/launchpad/holder-recovery-evidence' } : {}),
+      ...(freshReads && runtime.orders?.launchpadHolderProofSession ? { launchpadHolderProofSession: '/api/indexer/v1/launchpad/holder-proof-session' } : {}),
+      ...(freshReads && runtime.orders?.launchpadSales ? { launchpadSales: '/api/indexer/v1/launchpad/sales' } : {}),
+      ...(freshReads && runtime.orders?.launchpadOperationEvidence ? { launchpadOperationEvidence: '/api/indexer/v1/launchpad/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.optionsOperationEvidence ? { optionsOperationEvidence: '/api/indexer/v1/options/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.optionsWalletClaimEvidence ? { optionsWalletClaimEvidence: '/api/indexer/v1/options/wallet-claim-evidence' } : {}),
+      ...(freshReads && runtime.orders?.faucetProofSession ? { faucetProofSession: '/api/indexer/v1/t3/faucet-proof-session' } : {}),
+      ...(freshReads && runtime.orders?.faucetRecoveryEvidence ? { faucetRecoveryEvidence: '/api/indexer/v1/faucet/recovery-evidence' } : {}),
+      ...(freshReads && runtime.orders?.faucetOperationEvidence ? { faucetOperationEvidence: '/api/indexer/v1/faucet/operation-evidence' } : {}),
+      marketCandles: '/api/indexer/v1/markets/{market}/candles'
+    }).map(([name, route]) => [name, publicIndexerPath(indexer, route)])),
+    release: {
+      releaseId: nativeRuntime?.releaseId ?? null,
+      manifestHash: nativeRuntime?.manifestHash ?? null
     }
   };
 
-  if (rateLimiter?.isEnabled()) {
-    app.addHook('onRequest', async (request, reply) => {
+  app.addHook('onRequest', async (request, reply) => {
       if (request.method === 'OPTIONS') return;
       const url = request.url ?? '';
-      const ip = request.ip || 'unknown';
+      const visitor = rateLimitKey(request.raw, config.edgeKey);
+      runtime.metrics?.count('http_requests_total', 1, { identity: visitor.identity });
+      if (!rateLimiter?.isEnabled()) return;
       const bucket = classifyRateLimitBucket(url);
-      const result = rateLimiter.check(ip, bucket);
+      const result = rateLimiter.check(visitor.key, bucket);
       reply.header('x-ratelimit-bucket', bucket);
       reply.header('x-ratelimit-limit', result.limit);
       reply.header('x-ratelimit-remaining', result.remaining);
       reply.header('x-ratelimit-reset', result.resetAt);
       if (!result.allowed) {
-        return sendError(reply, 429, 'rate_limited', 'rate limit exceeded');
+        return sendError(reply, 429, 'rate_limited', 'rate limit exceeded', { retryAfterSeconds: result.retryAfterSeconds });
       }
-    });
-  }
+  });
 
   app.get('/', async () => ({ status: 'ok' }));
 
-  app.get('/api/indexer/v1/health', async () => {
+  app.get('/api/indexer/v1/health', async (_request, reply) => {
+    const health = service.getHealth();
+    if (!health.chain.peersReady || health.disk === 'critical') reply.status(503);
     return {
-      ...service.getHealth(),
+      ...health,
       ...serviceIdentity
     };
   });
@@ -463,18 +437,428 @@ export const registerRoutes = (
     return {
       network: config.network ?? null,
       count: contractEntries.length,
-      contracts: contractMap
+      contracts: contractMap,
+      release: serviceInfo.release,
+      ...(nativeRuntime ? { templates: nativeRuntime.templates, tokens: nativeRuntime.tokens,
+        spotMarkets: nativeRuntime.spotMarkets, perpsMarkets: nativeRuntime.perpsMarkets,
+        options: nativeRuntime.options } : {})
     };
   });
 
   app.get('/api/indexer/v1/service-info', async () => serviceInfo);
 
+  app.post('/api/indexer/v1/pools/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.poolOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPoolOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.poolOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Pool evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Pool evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/pools/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.poolWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPoolWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.poolWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Pool evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Pool evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    }
+  });
+  app.get('/api/indexer/v1/launchpad/sales', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadSales) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad discovery is unavailable.');
+    try {
+      const parsed = readLaunchpadSalesRequest(request.query, nativeRuntime);
+      return await runtime.orders.launchpadSales(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad discovery unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad discovery is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad discovery is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/perps/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.perpsOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Perps operation evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPerpsOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.perpsOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Perps operation evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Perps operation evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Perps operation evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/perps/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.perpsWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Perps wallet-claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPerpsWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.perpsWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Perps wallet-claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Perps wallet-claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Perps wallet-claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/wallet/transfers/evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.walletTransferEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current wallet transfer evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readWalletTransferEvidenceRequest(request.body, nativeRuntime);
+      return await runtime.orders.walletTransferEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current wallet transfer evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current wallet transfer evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current wallet transfer evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/token-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadTokenEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current creator-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadTokenRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadTokenEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current creator-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current creator-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current creator-token evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad wallet-claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad wallet-claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad wallet-claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad wallet-claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/holder-proof-session', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadHolderProofSession) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder proof session evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadHolderProofSessionRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadHolderProofSession(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad holder proof session evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad holder proof session evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder proof session evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/holder-recovery-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadHolderRecoveryEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder recovery evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadHolderRecoveryRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadHolderRecoveryEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad holder recovery evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad holder recovery evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad holder recovery evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/owed/evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.owedEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOwedRequest(request.body, nativeRuntime);
+      return await runtime.orders.owedEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current owed-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current owed-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/owed/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.owedOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOwedOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.owedOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current owed-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current owed-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/owed/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.owedWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOwedOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.owedWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current owed-token evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current owed-token evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current owed-token evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/launchpad/owed-archive-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.launchpadOwedArchiveEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad owed-archive evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readLaunchpadOwedArchiveRequest(request.body, nativeRuntime);
+      return await runtime.orders.launchpadOwedArchiveEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Launchpad owed-archive evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad owed-archive evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad owed-archive evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/options/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.optionsOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current options evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOptionsOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.optionsOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current options evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current options evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current options evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/faucet/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.faucetOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current faucet evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readFaucetOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.faucetOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current faucet evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current faucet evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current faucet evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/faucet/recovery-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.faucetRecoveryEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current faucet recovery evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readFaucetRecoveryRequest(request.body, nativeRuntime);
+      return await runtime.orders.faucetRecoveryEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current faucet recovery evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current faucet recovery evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current faucet recovery evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/t3/faucet-proof-session', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.faucetProofSession) return sendError(reply, 503, 'upstream_unavailable', 'Current faucet proof session is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readFaucetProofSessionRequest(request.body, nativeRuntime);
+      return await runtime.orders.faucetProofSession(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current faucet proof session unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current faucet proof session is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current faucet proof session is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/options/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.optionsWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Options wallet claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readOptionsWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.optionsWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Options wallet claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Options wallet claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Options wallet claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/t3/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.operationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current T3 evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The T3 evidence endpoint has no query parameters.');
+      const parsed = readT3OperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.operationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof T3EvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current T3 evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current T3 evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current T3 evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/t3/wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.walletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current T3 wallet claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The T3 wallet claim endpoint has no query parameters.');
+      const parsed = readT3WalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.walletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof T3EvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current T3 wallet claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current T3 wallet claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current T3 wallet claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/spot/order-wallet-claim-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.orderWalletClaimEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current order wallet claim evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The order wallet claim endpoint has no query parameters.');
+      const parsed = readOrderWalletClaimRequest(request.body, nativeRuntime);
+      return await runtime.orders.orderWalletClaimEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof SpotEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current order wallet claim evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current order wallet claim evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current order wallet claim evidence is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/spot/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.spotOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Spot evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The Spot evidence endpoint has no query parameters.');
+      const parsed = readSpotOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.spotOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof SpotEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Spot evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Spot evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Spot evidence is unavailable.');
+    }
+  });
+
+  app.get('/api/indexer/v1/orders/open', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const query = asRecord(request.query) ?? {};
+    if (Object.keys(query).some(key => !['cursor', 'limit'].includes(key))
+      || (query.cursor !== undefined && (typeof query.cursor !== 'string' || !query.cursor || query.cursor.length > 1024))
+      || (query.limit !== undefined && (typeof query.limit !== 'string' || !/^[1-9][0-9]{0,2}$/.test(query.limit) || Number(query.limit) > 100)))
+      return sendError(reply, 400, 'invalid_cursor', 'Use an optional cursor and a limit from 1 to 100.');
+    if (!nativeRuntime || !runtime.orders) return sendError(reply, 503, 'upstream_unavailable', 'Current order evidence is unavailable.');
+    try {
+      const page = await runtime.orders.page({ cursor: query.cursor as string | undefined,
+        limit: query.limit === undefined ? undefined : Number(query.limit) });
+      for (const [name, value] of Object.entries(page.headers)) reply.header(name, value);
+      return page.body;
+    } catch (error) {
+      if (error instanceof OrderPageError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current order page unavailable', { error: errorDiagnostic(error) });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current order evidence is unavailable.');
+    }
+  });
+
+  app.get('/api/indexer/v1/account-storage', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const query = asRecord(request.query) ?? {};
+    if (Object.keys(query).sort().join(',') !== 'address,blockRootHash,masterchainSeqno'
+      || typeof query.address !== 'string' || !/^0:[0-9a-f]{64}$/.test(query.address)
+      || typeof query.masterchainSeqno !== 'string' || !/^[1-9][0-9]{0,9}$/.test(query.masterchainSeqno)
+      || Number(query.masterchainSeqno) > 0xffffffff || typeof query.blockRootHash !== 'string' || !/^[0-9a-f]{64}$/.test(query.blockRootHash))
+      return sendError(reply, 400, 'bad_request', 'Supply the raw basechain address and exact current masterchainSeqno and blockRootHash.');
+    if (!nativeRuntime || !runtime.source) return sendError(reply, 503, 'upstream_unavailable', 'Current account storage is unavailable.');
+    const signal = requestDeadline(request, ROUTE_DEADLINE_MS.fresh);
+    try {
+      const head = await runtime.source.head({ signal }); assertFreshHeadTime(head.utime);
+      if (head.seqno !== Number(query.masterchainSeqno) || head.rootHashHex !== query.blockRootHash)
+        return sendError(reply, 409, 'head_mismatch', 'The chain head changed. Refresh the current read.');
+      return await readAccountStorage(nativeRuntime, runtime.source, query.address, head, signal);
+    } catch (error) {
+      runtime.logger?.warn('current account storage unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current account storage is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current account storage is unavailable.');
+    }
+  });
+
+  app.get('/api/indexer/v1/config-prices', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const query = asRecord(request.query) ?? {};
+    if (Object.keys(query).sort().join(',') !== 'blockRootHash,masterchainSeqno'
+      || typeof query.masterchainSeqno !== 'string' || !/^[1-9][0-9]{0,9}$/.test(query.masterchainSeqno)
+      || Number(query.masterchainSeqno) > 0xffffffff || typeof query.blockRootHash !== 'string' || !/^[0-9a-f]{64}$/.test(query.blockRootHash))
+      return sendError(reply, 400, 'bad_request', 'Supply the exact masterchainSeqno and blockRootHash from the current read.');
+    if (!nativeRuntime || !runtime.source) return sendError(reply, 503, 'upstream_unavailable', 'Current network prices are unavailable.');
+    const signal = requestDeadline(request, ROUTE_DEADLINE_MS.fresh);
+    try {
+      const head = await runtime.source.head({ signal }); assertFreshHeadTime(head.utime);
+      if (head.seqno !== Number(query.masterchainSeqno) || head.rootHashHex !== query.blockRootHash)
+        return sendError(reply, 409, 'head_mismatch', 'The chain head changed. Refresh the current read.');
+      const config = await runtime.source.getConfig({ at: head, signal });
+      if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex', 'utime'] as const).some(key => config.head[key] !== head[key]))
+        throw new ChainReadError('upstream_unavailable');
+      const basechain = currentJettonConfigPrices(config.configBoc, head.utime); assertFreshHeadTime(head.utime);
+      return { schema: 'tonswap-config-prices-v1', releaseId: nativeRuntime.releaseId, manifestHash: nativeRuntime.manifestHash,
+        asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex }, basechain };
+    } catch (error) {
+      runtime.logger?.warn('current config prices unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current network prices are unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current network prices are unavailable.');
+    }
+  });
+
   const sendToncenterCompat = <T>(
     reply: FastifyReply,
     payload: ToncenterRpcCompatResponse<T>,
-    id?: number | string | null
+    id?: number | string | null,
+    status = payload.ok ? 200 : payload.code ?? 500
   ) => {
-    reply.code(200);
+    reply.code(status);
+    if (!payload.ok) { reply.header('cache-control', 'no-store'); if ([429, 503, 504].includes(status)) reply.header('retry-after', status === 503 ? 2 : 1); }
     return reply.send({
       id: id ?? 1,
       jsonrpc: '2.0',
@@ -482,322 +866,25 @@ export const registerRoutes = (
     });
   };
 
-  const resolveNativeBalanceRaw = async (address: string, state: unknown) => {
-    const stateBalanceRaw = readString((state as { balance_raw?: unknown } | null)?.balance_raw);
-    if (stateBalanceRaw) return stateBalanceRaw;
-    const balances = await service.getBalances(address);
-    return balances.ton_raw ?? '0';
-  };
-
-  type ToncenterCompatState = {
-    account_state?: unknown;
-    last_tx_lt?: unknown;
-    last_tx_hash?: unknown;
-    last_confirmed_seqno?: unknown;
-    last_seen_utime?: unknown;
-    code_boc?: unknown;
-    data_boc?: unknown;
-    balance_raw?: unknown;
-  };
-
-  const getToncenterCompatState = async (address: string): Promise<ToncenterCompatState> => {
-    const nativeStateReader = (service as IndexerService & { getNativeState?: (addr: string) => Promise<unknown> })
-      .getNativeState;
-    const state = nativeStateReader ? await nativeStateReader.call(service, address) : await service.getState(address);
-    return (state ?? {}) as ToncenterCompatState;
-  };
-
-  let discoveredRpcProxyEndpoints: string[] | null = null;
-  let rpcEndpointDiscoveryPromise: Promise<string[]> | null = null;
-
-  const resolveRpcProxyEndpoints = async (): Promise<string[]> => {
-    const configured = uniqueRpcEndpoints([
-      ...(Array.isArray(config.rpcProxyEndpoints) ? config.rpcProxyEndpoints : []),
-      ...(config.rpcProxyEndpoint ? [config.rpcProxyEndpoint] : [])
-    ]);
-    if (configured.length > 0) return configured;
-
-    if (discoveredRpcProxyEndpoints) return discoveredRpcProxyEndpoints;
-    if (rpcEndpointDiscoveryPromise) return rpcEndpointDiscoveryPromise;
-
-    const network = String(config.network || 'testnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
-    rpcEndpointDiscoveryPromise = getHttpEndpoints({ network })
-      .then((endpoints) => uniqueRpcEndpoints(endpoints ?? []))
-      .catch(() => [])
-      .then((endpoints) => {
-        discoveredRpcProxyEndpoints = endpoints;
-        return endpoints;
-      })
-      .finally(() => {
-        rpcEndpointDiscoveryPromise = null;
-      });
-    return rpcEndpointDiscoveryPromise;
-  };
-
-  const normalizeRpcProxyPayload = (payload: unknown): ToncenterRpcCompatResponse<unknown> => {
-    const record = asRecord(payload);
-    if (!record) {
-      return { ok: false, code: 502, error: 'Invalid upstream RPC payload.' };
-    }
-
-    if (typeof record.ok === 'boolean') {
-      if (record.ok) {
-        return { ok: true, result: record.result };
-      }
-      const errorCode =
-        typeof record.code === 'number' && Number.isFinite(record.code) ? Math.trunc(record.code) : 500;
-      return { ok: false, code: errorCode, error: 'Upstream RPC returned an error.' };
-    }
-
-    if ('result' in record) {
-      return { ok: true, result: record.result };
-    }
-
-    const rpcError = asRecord(record.error);
-    if (rpcError) {
-      const errorCode =
-        typeof rpcError.code === 'number' && Number.isFinite(rpcError.code) ? Math.trunc(rpcError.code) : 500;
-      return { ok: false, code: errorCode, error: 'Upstream RPC error.' };
-    }
-
-    return { ok: false, code: 502, error: 'Unsupported upstream RPC payload.' };
-  };
-
-  const isRetryableRpcFailure = (result: ToncenterRpcCompatResponse<unknown>) => {
-    if (result.ok) return false;
-    const status = typeof result.code === 'number' ? result.code : null;
-    if (status !== null && RPC_PROXY_RETRYABLE_STATUS_CODES.has(status)) return true;
-    const message = String(result.error || '').toLowerCase();
-    return (
-      message.includes('timeout') ||
-      message.includes('timed out') ||
-      message.includes('service unavailable') ||
-      message.includes('bad gateway') ||
-      message.includes('connection reset') ||
-      message.includes('econnreset') ||
-      message.includes('eai_again')
-    );
-  };
-
-  const normalizeSendBocCompat = (
-    method: string,
-    result: ToncenterRpcCompatResponse<unknown>
-  ): ToncenterRpcCompatResponse<unknown> => {
-    if (
-      result.ok &&
-      method === 'sendBoc' &&
-      (!asRecord(result.result) || readString(asRecord(result.result)?.['@type']) !== 'ok')
-    ) {
-      // Some JSON-RPC providers return hash/string for sendBoc.
-      // TonClient expects toncenter's {"@type":"ok"} shape.
-      return { ok: true, result: { '@type': 'ok' } };
-    }
-    return result;
-  };
-
-  const callRpcEndpoint = async (
-    endpoint: string,
-    method: string,
-    params: Record<string, unknown>,
-    id?: number | string | null
-  ): Promise<ToncenterRpcCompatResponse<unknown>> => {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json'
-    };
-    const apiKey = config.rpcProxyApiKey?.trim();
-    if (apiKey) headers['x-api-key'] = apiKey;
-
-    const timeoutMs =
-      typeof config.rpcProxyTimeoutMs === 'number' &&
-      Number.isFinite(config.rpcProxyTimeoutMs) &&
-      config.rpcProxyTimeoutMs > 0
-        ? Math.trunc(config.rpcProxyTimeoutMs)
-        : RPC_PROXY_DEFAULT_TIMEOUT_MS;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          id: id ?? 1,
-          jsonrpc: '2.0',
-          method,
-          params
-        }),
-        signal: controller.signal
-      });
-
-      const text = await response.text();
-      let payload: unknown = null;
-      if (text.trim()) {
-        try {
-          payload = JSON.parse(text);
-        } catch (_error) {
-          if (!response.ok) {
-            return { ok: false, code: response.status, error: `Upstream RPC HTTP ${response.status}.` };
-          }
-          return { ok: false, code: 502, error: 'Invalid upstream RPC JSON payload.' };
-        }
-      }
-
-      if (!response.ok) {
-        const normalized = normalizeRpcProxyPayload(payload);
-        if (!normalized.ok) {
-          return {
-            ok: false,
-            code: normalized.code ?? response.status,
-            error: normalized.error
-          };
-        }
-        return {
-          ok: false,
-          code: response.status,
-          error: `Upstream RPC HTTP ${response.status}.`
-        };
-      }
-
-      return normalizeSendBocCompat(method, normalizeRpcProxyPayload(payload));
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return { ok: false, code: 504, error: 'Upstream RPC timed out.' };
-      }
-      return {
-        ok: false,
-        code: 502,
-        error: 'Upstream RPC request failed.'
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
-  const proxyTonRpcMethod = async (
-    method: string,
-    params: Record<string, unknown>,
-    id?: number | string | null
-  ): Promise<ToncenterRpcCompatResponse<unknown> | null> => {
-    if (!TON_RPC_PROXY_METHODS.has(method)) return null;
-    if (TON_RPC_WRITE_PROXY_METHODS.has(method) && !config.enableWriteRpc) {
-      return { ok: false, code: 403, error: `method disabled: ${method}` };
-    }
-
-    const endpoints = await resolveRpcProxyEndpoints();
-    if (endpoints.length === 0) return null;
-
-    const retryAttempts =
-      typeof config.rpcProxyRetryAttempts === 'number' &&
-      Number.isFinite(config.rpcProxyRetryAttempts) &&
-      config.rpcProxyRetryAttempts > 0
-        ? Math.trunc(config.rpcProxyRetryAttempts)
-        : RPC_PROXY_DEFAULT_RETRY_ATTEMPTS;
-    const retryDelayMs =
-      typeof config.rpcProxyRetryDelayMs === 'number' &&
-      Number.isFinite(config.rpcProxyRetryDelayMs) &&
-      config.rpcProxyRetryDelayMs >= 0
-        ? Math.trunc(config.rpcProxyRetryDelayMs)
-        : RPC_PROXY_DEFAULT_RETRY_DELAY_MS;
-
-    let lastError: ToncenterRpcCompatResponse<unknown> = {
-      ok: false,
-      code: 502,
-      error: 'Upstream RPC unavailable.'
-    };
-
-    for (let attempt = 0; attempt < retryAttempts; attempt += 1) {
-      for (const endpoint of endpoints) {
-        const result = await callRpcEndpoint(endpoint, method, params, id);
-        if (result.ok) return result;
-        lastError = result;
-        if (!isRetryableRpcFailure(result)) {
-          return result;
-        }
-      }
-      if (attempt < retryAttempts - 1 && retryDelayMs > 0) {
-        // Linear backoff to keep submit latency bounded but robust to short provider outages.
-        // eslint-disable-next-line no-await-in-loop
-        await sleep(retryDelayMs * (attempt + 1));
-      }
-    }
-    return lastError;
-  };
-
-  const collectIndexedTransactions = async (
-    address: string,
-    limit: number,
-    lt?: string | null,
-    hash?: string | null
-  ): Promise<IndexedTxCompat[]> => {
-    const defaultPageSize = Math.max(1, Math.trunc(config.pageSize ?? 10));
-    const txs: IndexedTxCompat[] = [];
-    const seen = new Set<string>();
-    const appendUnique = (entries: IndexedTxCompat[]) => {
-      let added = 0;
-      for (const entry of entries) {
-        const entryLt = readString(entry.lt);
-        const entryHash = readString(entry.hash);
-        const key = entryLt && entryHash ? `${entryLt}:${entryHash}` : readString(entry.txId);
-        if (key && seen.has(key)) continue;
-        if (key) seen.add(key);
-        txs.push(entry);
-        added += 1;
-        if (txs.length >= limit) break;
-      }
-      return added;
-    };
-
-    if (lt && hash) {
-      let cursorLt = lt;
-      let cursorHash = hash;
-      let pageSize = defaultPageSize;
-      const maxRequests = Math.max(1, Math.ceil(limit / Math.max(1, pageSize - 1)) + 2);
-      for (let requestIndex = 0; requestIndex < maxRequests && txs.length < limit; requestIndex += 1) {
-        const response = await service.getTransactionsByCursor(address, cursorLt, cursorHash);
-        const entries = (response?.txs ?? []) as IndexedTxCompat[];
-        if (entries.length === 0) break;
-        pageSize =
-          typeof response?.page_size === 'number' && Number.isFinite(response.page_size) && response.page_size > 0
-            ? Math.trunc(response.page_size)
-            : pageSize;
-        const added = appendUnique(entries);
-        const last = entries[entries.length - 1];
-        const lastLt = readString(last?.lt);
-        const lastHash = readString(last?.hash);
-        if (!lastLt || !lastHash || entries.length < pageSize) break;
-        if (lastLt === cursorLt && lastHash === cursorHash) break;
-        if (added === 0) break;
-        cursorLt = lastLt;
-        cursorHash = lastHash;
-      }
-      return txs;
-    }
-
-    const maxPages = Math.max(1, Math.ceil(limit / defaultPageSize) + 1);
-    for (let page = 1; page <= maxPages && txs.length < limit; page += 1) {
-      const response = await service.getTransactions(address, page);
-      const entries = (response?.txs ?? []) as IndexedTxCompat[];
-      if (entries.length === 0) break;
-      const pageSize =
-        typeof response?.page_size === 'number' && Number.isFinite(response.page_size) && response.page_size > 0
-          ? Math.trunc(response.page_size)
-          : defaultPageSize;
-      appendUnique(entries);
-      if (entries.length < pageSize) break;
-    }
-    return txs;
-  };
+  const blockId = (block: TonBlockIdExt) => ({ '@type': 'ton.blockIdExt', workchain: block.workchain,
+    shard: block.shard, seqno: block.seqno, root_hash: Buffer.from(block.rootHashHex, 'hex').toString('base64'),
+    file_hash: Buffer.from(block.fileHashHex, 'hex').toString('base64') });
 
   const handleToncenterCompat = async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = (request.body ?? null) as ToncenterRpcCompatRequest | null;
-    const method = typeof body?.method === 'string' ? body.method.trim() : undefined;
-    const id = body?.id ?? 1;
+    const body = asRecord(request.body);
+    const method = readString(body?.method);
+    const rawId = body?.id;
+    const id =
+      typeof rawId === 'number' || typeof rawId === 'string' || rawId === null
+        ? rawId
+        : 1;
     const params = asRecord(body?.params ?? null) ?? {};
 
     if (!method) {
       return sendToncenterCompat(reply, { ok: false, code: 400, error: 'missing method' }, id);
     }
 
+    const signal = requestDeadline(request, ROUTE_DEADLINE_MS.rpc);
     try {
       if (method === 'runGetMethod') {
         const address = readString(params.address);
@@ -805,86 +892,27 @@ export const registerRoutes = (
         if (!address || !isValidAddress(address)) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
         }
-        if (!getter || !/^[a-zA-Z0-9_]{1,64}$/.test(getter)) {
+        if (!getter || !/^[a-zA-Z0-9_]{1,64}$/.test(getter) || isRetiredPerpsGetter(getter)) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid method' }, id);
         }
         const argsResult = parseStackArgs(params.stack);
         if (!argsResult.ok) {
           return sendToncenterCompat(reply, { ok: false, code: 400, error: argsResult.error ?? 'invalid stack' }, id);
         }
-        const result = await withTimeout(
-          service.runGetMethod(address, getter, argsResult.args ?? []),
-          GET_METHOD_CALL_TIMEOUT_MS
-        );
+        const result = await service.runGetMethod(address, getter, argsResult.args ?? [], { signal });
         return sendToncenterCompat(reply, { ok: true, result }, id);
       }
 
-      if (method === 'getAddressBalance') {
+      if (method === 'getAddressBalance' || method === 'getAddressInformation') {
         const address = readString(params.address);
-        if (!address || !isValidAddress(address)) {
-          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
-        }
-        const state = await getToncenterCompatState(address);
-        const balanceRaw = await resolveNativeBalanceRaw(address, state);
-        return sendToncenterCompat(reply, { ok: true, result: balanceRaw }, id);
-      }
-
-      if (method === 'getAddressInformation') {
-        const address = readString(params.address);
-        if (!address || !isValidAddress(address)) {
-          return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
-        }
-        const state = await getToncenterCompatState(address);
-        const balanceRaw = await resolveNativeBalanceRaw(address, state);
-        const normalizedState =
-          state.account_state === 'active' ||
-          state.account_state === 'uninitialized' ||
-          state.account_state === 'frozen'
-            ? state.account_state
-            : 'uninitialized';
-        const zeroHashB64 = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-        const lastTxLt =
-          typeof state.last_tx_lt === 'string' && state.last_tx_lt.trim() ? state.last_tx_lt.trim() : '0';
-        const lastTxHash =
-          typeof state.last_tx_hash === 'string' && state.last_tx_hash.trim()
-            ? state.last_tx_hash.trim()
-            : zeroHashB64;
-        const lastSeqno =
-          typeof state.last_confirmed_seqno === 'number' && Number.isFinite(state.last_confirmed_seqno)
-            ? Math.max(0, Math.trunc(state.last_confirmed_seqno))
-            : 0;
-        const syncUtime =
-          typeof state.last_seen_utime === 'number' && Number.isFinite(state.last_seen_utime)
-            ? Math.max(0, Math.trunc(state.last_seen_utime))
-            : Math.floor(Date.now() / 1000);
-        return sendToncenterCompat(
-          reply,
-          {
-            ok: true,
-            result: {
-              state: normalizedState,
-              balance: balanceRaw,
-              code: typeof state.code_boc === 'string' ? state.code_boc : '',
-              data: typeof state.data_boc === 'string' ? state.data_boc : '',
-              extra_currencies: [],
-              last_transaction_id: {
-                '@type': 'internal.transactionId',
-                lt: lastTxLt,
-                hash: lastTxHash
-              },
-              block_id: {
-                '@type': 'ton.blockIdExt',
-                workchain: -1,
-                shard: '-9223372036854775808',
-                seqno: lastSeqno,
-                root_hash: zeroHashB64,
-                file_hash: zeroHashB64
-              },
-              sync_utime: syncUtime
-            }
-          },
-          id
-        );
+        if (!address || !isValidAddress(address)) return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid address' }, id);
+        const { state, head, anchor } = await service.getAccountAnchor(address, { signal });
+        if (method === 'getAddressBalance') return sendToncenterCompat(reply, { ok: true, result: state.balance }, id);
+        return sendToncenterCompat(reply, { ok: true, result: {
+          state: state.accountState, balance: state.balance, code: state.codeBoc ?? '', data: state.dataBoc ?? '', extra_currencies: [],
+          last_transaction_id: { '@type': 'internal.transactionId', lt: state.lastTxLt ?? '0',
+            hash: state.lastTxHash && /^[a-f0-9]{64}$/i.test(state.lastTxHash) ? Buffer.from(state.lastTxHash, 'hex').toString('base64') : state.lastTxHash ?? Buffer.alloc(32).toString('base64') }, block_id: blockId(head), sync_utime: anchor.genUtime
+        } }, id);
       }
 
       if (method === 'getTransactions') {
@@ -907,37 +935,84 @@ export const registerRoutes = (
           return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid cursor' }, id);
         }
 
-        const indexedTxs = await collectIndexedTransactions(address, limit, lt, hash);
-        const txs = indexedTxs.map((entry: IndexedTxCompat) => mapIndexerTxToToncenterTransaction(entry));
+        const txs = await service.getTransactionEvidence(address, limit, lt ?? undefined, hash ?? undefined, { signal });
         return sendToncenterCompat(reply, { ok: true, result: txs }, id);
       }
 
-      const proxied = await proxyTonRpcMethod(method, params, id);
-      if (proxied) {
-        return sendToncenterCompat(reply, proxied, id);
+      if (method === 'getMasterchainInfo') {
+        if (!runtime.source) throw new ChainReadError('upstream_unavailable');
+        const head = await runtime.source.head({ signal });
+        return sendToncenterCompat(reply, { ok: true, result: { last: blockId(head),
+          ...(network === 'localnet' ? {} : { init: PUBLIC_RPC_ZERO_STATES[network] }) } }, id);
+      }
+      if ((method === 'sendBoc' || method === 'sendBocReturnHash') && config.enableWriteRpc) {
+        const bytes = typeof params.boc === 'string' ? decodeCanonicalBase64(params.boc) : null;
+        let cell: Cell | undefined;
+        try { if (bytes) { const cells = Cell.fromBoc(bytes); if (cells.length === 1) cell = cells[0]; } } catch { /* Invalid input is a client error. */ }
+        if (!bytes || !cell) return sendToncenterCompat(reply, { ok: false, code: 400, error: 'invalid message BOC' }, id);
+        if (!runtime.source) throw new ChainReadError('upstream_unavailable');
+        await runtime.source.sendMessage(bytes, { signal });
+        return sendToncenterCompat(reply, { ok: true, result: method === 'sendBocReturnHash' ? { '@type': 'raw.extMessageInfo', hash: cell.hash().toString('hex') } : { '@type': 'ok' } }, id);
       }
 
       return sendToncenterCompat(reply, { ok: false, code: 404, error: `unsupported method: ${method}` }, id);
     } catch (error) {
-      return sendToncenterCompat(
-        reply,
-        { ok: false, code: 500, error: publicErrorMessage(error, 'JSON-RPC request failed') },
-        id
-      );
+      const status = error instanceof ChainReadError ? error.code === 'upstream_timeout' ? 504 : 503 : 500;
+      return sendToncenterCompat(reply, { ok: false, code: status, error: status === 500 ? 'JSON-RPC request failed' : error instanceof ChainReadError ? error.code : 'upstream_unavailable' }, id, status);
     }
   };
 
   app.post('/jsonRPC', handleToncenterCompat);
   app.post('/api/v2/jsonRPC', handleToncenterCompat);
 
+  app.post('/api/indexer/v1/readFresh', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const body = asRecord(request.body);
+    const rawCalls = body?.calls;
+    if (!body || Object.keys(body).some(key => key !== 'calls') || !Array.isArray(rawCalls)
+      || rawCalls.length < 1 || rawCalls.length > FRESH_READ_MAX_CALLS)
+      return sendError(reply, 400, 'invalid_fresh_read', 'Use 1 to 32 current chain read calls.');
+    const calls: FreshReadCall[] = [];
+    for (const raw of rawCalls) {
+      const call = asRecord(raw);
+      const address = readString(call?.address);
+      if (!call || !address || !isValidAddress(address))
+        return sendError(reply, 400, 'invalid_fresh_read', 'Invalid fresh read address.');
+      if (call.kind === 'account' && Object.keys(call).every(key => ['kind', 'address'].includes(key))) {
+        calls.push({ kind: 'account', address: Address.parse(address).toRawString() });
+      } else if (call.kind === 'getter' && Object.keys(call).every(key => ['kind', 'address', 'method', 'stack'].includes(key))) {
+        const method = readString(call.method);
+        if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method) || isRetiredPerpsGetter(method))
+          return sendError(reply, 400, 'invalid_fresh_read', 'Invalid fresh getter method.');
+        const parsed = parseStackArgs(call.stack);
+        if (!parsed.ok) return sendError(reply, 400, 'invalid_fresh_read', parsed.error ?? 'Invalid fresh getter stack.');
+        calls.push({ kind: 'getter', address: Address.parse(address).toRawString(), method, args: parsed.args ?? [] });
+      } else return sendError(reply, 400, 'invalid_fresh_read', 'Use an account or getter read.');
+    }
+    // Only the active native manifest may describe this fresh runtime. Old
+    // registry metadata or a configured URL cannot establish release identity.
+    const manifest = currentNativeRuntime(network, registryMetadata);
+    if (!manifest)
+      return sendError(reply, 503, 'upstream_unavailable', 'Fresh chain read unavailable.');
+    const startedAt = Date.now();
+    try {
+      const response = await service.readFresh(calls, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.fresh) });
+      return { ...response, release: { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash } };
+    } catch (error) {
+      runtime.logger?.warn('fresh chain read unavailable', { elapsedMs: Date.now() - startedAt, calls: calls.length,
+        releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, error: errorDiagnostic(error) });
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Fresh chain read unavailable.' });
+    }
+  });
+
   app.post('/api/indexer/v1/runGetMethod', async (request, reply) => {
-    const body = request.body as { address?: string; method?: string; stack?: ToncenterStackEntry[] } | null;
-    const address = typeof body?.address === 'string' ? body.address.trim() : undefined;
-    const method = typeof body?.method === 'string' ? body.method.trim() : undefined;
+    const body = asRecord(request.body);
+    const address = readString(body?.address);
+    const method = readString(body?.method);
     if (!address || !isValidAddress(address)) {
       return sendError(reply, 400, 'invalid_address', 'invalid address');
     }
-    if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method)) {
+    if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method) || isRetiredPerpsGetter(method)) {
       return sendError(reply, 400, 'invalid_method', 'invalid method');
     }
     const argsResult = parseStackArgs(body?.stack);
@@ -945,72 +1020,19 @@ export const registerRoutes = (
       return sendError(reply, 400, 'invalid_stack', argsResult.error ?? 'invalid stack');
     }
     try {
-      return await withTimeout(
-        service.runGetMethod(address, method, argsResult.args ?? []),
-        GET_METHOD_CALL_TIMEOUT_MS
-      );
+      return await service.runGetMethod(address, method, argsResult.args ?? [], { signal: requestDeadline(request, ROUTE_DEADLINE_MS.getter) });
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'get method call failed'));
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'get method call failed' });
     }
-  });
-
-  app.post('/api/indexer/v1/runGetMethods', async (request, reply) => {
-    const body = request.body as
-      | { calls?: Array<{ address?: string; method?: string; stack?: ToncenterStackEntry[] }> }
-      | null;
-    const calls = body?.calls;
-    if (!Array.isArray(calls)) {
-      return sendError(reply, 400, 'bad_request', 'calls must be an array');
-    }
-    if (calls.length > GET_METHOD_MAX_BATCH_CALLS) {
-      return sendError(reply, 400, 'bad_request', 'calls too large');
-    }
-
-    type BatchResult =
-      | { ok: true; stack: ToncenterStackEntry[]; exit_code: number; gas_used: number }
-      | { ok: false; code: string; error: string };
-
-    const results = await mapConcurrent(calls, GET_METHOD_BATCH_CONCURRENCY, async (call) => {
-      const address = typeof call?.address === 'string' ? call.address.trim() : undefined;
-      const method = typeof call?.method === 'string' ? call.method.trim() : undefined;
-      if (!address || !isValidAddress(address)) {
-        return { ok: false, code: 'invalid_address', error: 'invalid address' } satisfies BatchResult;
-      }
-      if (!method || !/^[a-zA-Z0-9_]{1,64}$/.test(method)) {
-        return { ok: false, code: 'invalid_method', error: 'invalid method' } satisfies BatchResult;
-      }
-      const argsResult = parseStackArgs(call.stack);
-      if (!argsResult.ok) {
-        return {
-          ok: false,
-          code: 'invalid_stack',
-          error: argsResult.error ?? 'invalid stack'
-        } satisfies BatchResult;
-      }
-      try {
-        const response = await withTimeout(
-          service.runGetMethod(address, method, argsResult.args ?? []),
-          GET_METHOD_CALL_TIMEOUT_MS
-        );
-        return { ok: true, ...response } satisfies BatchResult;
-      } catch (error) {
-        if (error instanceof Error && error.message === 'timeout') {
-          return { ok: false, code: 'timeout', error: 'get method timed out' } satisfies BatchResult;
-        }
-        return { ok: false, code: 'bad_request', error: 'get method call failed' } satisfies BatchResult;
-      }
-    });
-
-    return { results };
   });
 
   app.get('/api/indexer/v1/openapi.json', async () => {
-    return buildOpenApi(config as any);
+    return buildOpenApi(config, registryMetadata);
   });
 
   app.get('/api/indexer/v1/docs', async (_request, reply) => {
     const nonce = randomBytes(16).toString('base64');
-    const html = buildDocsHtml(nonce);
+    const html = buildDocsHtml(nonce, indexer);
     reply.header(
       'content-security-policy',
       [
@@ -1031,32 +1053,20 @@ export const registerRoutes = (
     return html;
   });
 
-  app.get('/api/indexer/v1/metrics', async () => {
-    if (!metrics) return { error: 'metrics disabled', code: 'metrics_disabled' };
+  app.get('/api/indexer/v1/metrics', async (request, reply) => {
+    const denied = requireAdmin(request, reply, 'metrics_disabled', 'metrics disabled');
+    if (denied) return denied;
+    if (!metrics) return sendError(reply, 400, 'metrics_disabled', 'metrics disabled');
     return metrics.getMetrics();
   });
 
-  app.get('/api/indexer/v1/metrics/prometheus', async (_request, reply) => {
+  app.get('/api/indexer/v1/metrics/prometheus', async (request, reply) => {
+    const denied = requireAdmin(request, reply, 'metrics_disabled', 'metrics disabled');
+    if (denied) return denied;
     if (!metrics) return sendError(reply, 400, 'metrics_disabled', 'metrics disabled');
     reply.type('text/plain');
     return metrics.getPrometheus();
   });
-
-  app.get(
-    '/api/indexer/v1/accounts/:addr/balance',
-    { schema: { params: addressParamsSchema } },
-    async (request, reply) => {
-      const addr = (request.params as { addr: string }).addr;
-      if (!isValidAddress(addr)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid address');
-      }
-      try {
-        return await service.getBalance(addr);
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balance request failed'));
-      }
-    }
-  );
 
   app.get(
     '/api/indexer/v1/accounts/:addr/balances',
@@ -1067,381 +1077,36 @@ export const registerRoutes = (
         return sendError(reply, 400, 'invalid_address', 'invalid address');
       }
       try {
-        return await service.getBalances(addr);
+        if (!runtime.balances) throw new ChainReadError('upstream_unavailable');
+        return await runtime.balances.read(addr, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.balances) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balances request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Balance source is temporarily unavailable.' });
       }
     }
   );
 
   app.get(
-    '/api/indexer/v1/accounts/:addr/assets',
-    { schema: { params: addressParamsSchema } },
+    '/api/indexer/v1/governance/:governance/snapshot',
+    { schema: {
+      params: { type: 'object', properties: { governance: { type: 'string' } }, required: ['governance'] },
+      querystring: governanceSnapshotQuerySchema
+    } },
     async (request, reply) => {
-      const addr = (request.params as { addr: string }).addr;
-      if (!isValidAddress(addr)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid address');
-      }
+      const governance = (request.params as { governance: string }).governance;
+      if (!isValidAddress(governance)) return sendError(reply, 400, 'invalid_address', 'invalid governance address');
+      const query = request.query as { owner?: string; max_scan?: number; start_id?: string };
+      if (query.owner && !isValidAddress(query.owner)) return sendError(reply, 400, 'invalid_address', 'invalid owner address');
+      if (query.start_id !== undefined && BigInt(query.start_id) > 0xffffffffn)
+        return sendError(reply, 400, 'bad_request', 'Invalid uint32 proposal start ID.');
+      if (!nativeRuntime?.contracts.Governance || !runtime.source) return sendError(reply, 503, 'upstream_unavailable', 'Current Governance snapshot is unavailable.');
+      if (Address.parse(governance).toRawString() !== nativeRuntime!.contracts.Governance!.address)
+        return sendError(reply, 400, 'bad_request', 'Governance differs from the current release.');
       try {
-        return await service.getBalances(addr);
+        governanceSnapshot ??= createGovernanceSnapshotReader(nativeRuntime, runtime.source);
+        return await governanceSnapshot(governance, { owner: query.owner, startId: query.start_id, maxScan: query.max_scan },
+          requestDeadline(request, ROUTE_DEADLINE_MS.snapshot));
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'balances request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/jettons/:jetton/transfer/:owner/payload',
-    { schema: { params: jettonTransferPayloadParamsSchema } },
-    async (request, reply) => {
-      const { jetton, owner } = request.params as { jetton: string; owner: string };
-      if (!isValidAddress(jetton)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid jetton address');
-      }
-      if (!isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-      try {
-        return await service.getJettonTransferPayload(jetton, owner);
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'payload request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/perps/:engine/snapshot',
-    { schema: { params: { type: 'object', properties: { engine: { type: 'string' } }, required: ['engine'] }, querystring: perpsSnapshotQuerySchema } },
-    async (request, reply) => {
-      const engine = (request.params as { engine: string }).engine;
-      if (!isValidAddress(engine)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid engine address');
-      }
-
-      const query = request.query as { market_ids?: string; max_markets?: string | number };
-      const marketIds = (query.market_ids ?? '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => /^\d+$/.test(value))
-        .map((value) => Number.parseInt(value, 10))
-        .filter((value) => Number.isFinite(value) && value > 0);
-      const maxMarketsParsed =
-        typeof query.max_markets === 'number'
-          ? (Number.isInteger(query.max_markets) && query.max_markets > 0 ? query.max_markets : null)
-          : parsePositiveInt(query.max_markets);
-      const maxMarkets = maxMarketsParsed ? Math.min(128, maxMarketsParsed) : undefined;
-
-      try {
-        return await service.getPerpsSnapshot(engine, {
-          marketIds: marketIds.length ? marketIds : undefined,
-          maxMarkets
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'perps snapshot request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/vol-index/:volIndex/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { volIndex: { type: 'string' } }, required: ['volIndex'] },
-        querystring: volIndexSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const volIndex = (request.params as { volIndex: string }).volIndex;
-      if (!isValidAddress(volIndex)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid VolIndex address');
-      }
-
-      const query = request.query as { pool?: string; route_ids?: string };
-      const pool = query.pool?.trim() ? query.pool.trim() : undefined;
-      if (pool && !isValidAddress(pool)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid pool address');
-      }
-      const routeIds = (query.route_ids ?? '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => /^\d+$/.test(value))
-        .map((value) => Number.parseInt(value, 10))
-        .filter((value) => Number.isFinite(value) && value > 0)
-        .slice(0, 64);
-
-      try {
-        return await service.getVolIndexSnapshot(volIndex, {
-          sourcePool: pool,
-          routeIds: routeIds.length ? routeIds : undefined
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'vol-index snapshot request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/governance/:voting/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { voting: { type: 'string' } }, required: ['voting'] },
-        querystring: governanceSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const voting = (request.params as { voting: string }).voting;
-      if (!isValidAddress(voting)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid voting address');
-      }
-
-      const query = request.query as {
-        owner?: string;
-        max_scan?: string | number;
-        max_misses?: string | number;
-      };
-      const owner = query.owner?.trim() ? query.owner.trim() : undefined;
-      if (owner && !isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-      const maxScanParsed =
-        typeof query.max_scan === 'number'
-          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
-          : parsePositiveInt(query.max_scan);
-      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
-
-      const maxMissesParsed =
-        typeof query.max_misses === 'number'
-          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
-          : parsePositiveInt(query.max_misses);
-      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
-
-      try {
-        return await service.getGovernanceSnapshot(voting, {
-          owner,
-          maxScan,
-          maxConsecutiveMisses
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'governance snapshot request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/farms/:factory/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { factory: { type: 'string' } }, required: ['factory'] },
-        querystring: farmsSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const factory = (request.params as { factory: string }).factory;
-      if (!isValidAddress(factory)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid factory address');
-      }
-
-      const query = request.query as {
-        max_scan?: string | number;
-        max_misses?: string | number;
-      };
-      const maxScanParsed =
-        typeof query.max_scan === 'number'
-          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
-          : parsePositiveInt(query.max_scan);
-      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
-
-      const maxMissesParsed =
-        typeof query.max_misses === 'number'
-          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
-          : parsePositiveInt(query.max_misses);
-      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
-
-      try {
-        return await service.getFarmSnapshot(factory, {
-          maxScan,
-          maxConsecutiveMisses
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'farm snapshot request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/options/:factory/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { factory: { type: 'string' } }, required: ['factory'] },
-        querystring: optionsSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const factory = (request.params as { factory: string }).factory;
-      if (!isValidAddress(factory)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid options factory address');
-      }
-
-      const query = request.query as {
-        start_id?: string | number;
-        max_series_id?: string | number;
-        window_size?: string | number;
-        max_empty_windows?: string | number;
-        min_probe_windows?: string | number;
-      };
-      const startIdParsed = parseNonNegativeIntQuery(query.start_id);
-      const startId = startIdParsed !== null ? Math.min(1_000_000, startIdParsed) : undefined;
-      const maxSeriesIdParsed = parsePositiveIntQuery(query.max_series_id);
-      const maxSeriesId = maxSeriesIdParsed !== null ? Math.min(1_000_000, maxSeriesIdParsed) : undefined;
-      const windowSizeParsed = parsePositiveIntQuery(query.window_size);
-      const windowSize = windowSizeParsed !== null ? Math.min(256, windowSizeParsed) : undefined;
-      const maxEmptyWindowsParsed = parsePositiveIntQuery(query.max_empty_windows);
-      const maxEmptyWindows = maxEmptyWindowsParsed !== null ? Math.min(64, maxEmptyWindowsParsed) : undefined;
-      const minProbeWindowsParsed = parseNonNegativeIntQuery(query.min_probe_windows);
-      const minProbeWindows = minProbeWindowsParsed !== null ? Math.min(4096, minProbeWindowsParsed) : undefined;
-
-      try {
-        return await service.getOptionsSnapshot(factory, {
-          startId,
-          maxSeriesId,
-          windowSize,
-          maxEmptyWindows,
-          minProbeWindows
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'options snapshot request failed'));
-      }
-    }
-  );
-
-  app.get(
-    '/api/indexer/v1/cover/:manager/snapshot',
-    {
-      schema: {
-        params: { type: 'object', properties: { manager: { type: 'string' } }, required: ['manager'] },
-        querystring: coverSnapshotQuerySchema
-      }
-    },
-    async (request, reply) => {
-      const manager = (request.params as { manager: string }).manager;
-      if (!isValidAddress(manager)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid cover manager address');
-      }
-
-      const query = request.query as {
-        owner?: string;
-        max_scan?: string | number;
-        max_misses?: string | number;
-      };
-      const owner = query.owner?.trim() ? query.owner.trim() : undefined;
-      if (owner && !isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-
-      const maxScanParsed =
-        typeof query.max_scan === 'number'
-          ? (Number.isInteger(query.max_scan) && query.max_scan > 0 ? query.max_scan : null)
-          : parsePositiveInt(query.max_scan);
-      const maxScan = maxScanParsed ? Math.min(64, maxScanParsed) : undefined;
-
-      const maxMissesParsed =
-        typeof query.max_misses === 'number'
-          ? (Number.isInteger(query.max_misses) && query.max_misses > 0 ? query.max_misses : null)
-          : parsePositiveInt(query.max_misses);
-      const maxConsecutiveMisses = maxMissesParsed ? Math.min(8, maxMissesParsed) : undefined;
-
-      try {
-        return await service.getCoverSnapshot(manager, {
-          owner,
-          maxScan,
-          maxConsecutiveMisses
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'cover snapshot request failed'));
-      }
-    }
-  );
-
-  app.post(
-    '/api/indexer/v1/defi/snapshot',
-    {
-      schema: {
-        body: {
-          type: 'object',
-          properties: {
-            owner: { type: ['string', 'null'] },
-            include: { type: 'object', additionalProperties: true },
-            options: { type: 'object', additionalProperties: true },
-            contracts: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
-            modules: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  key: { type: 'string' },
-                  address: { type: 'string' },
-                  enabledGetter: { type: ['string', 'null'] },
-                  governanceGetter: { type: ['string', 'null'] }
-                },
-                required: ['key', 'address']
-              }
-            }
-          },
-          required: ['contracts']
-        }
-      }
-    },
-    async (request, reply) => {
-      const body = request.body as any;
-      const owner = typeof body?.owner === 'string' ? body.owner.trim() : null;
-      if (owner && !isValidAddress(owner)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid owner address');
-      }
-      const contracts = body?.contracts ?? null;
-      if (!contracts || typeof contracts !== 'object') {
-        return sendError(reply, 400, 'bad_request', 'contracts object is required');
-      }
-      const contractKeys = [
-        'activationGate',
-        'dlmmRegistry',
-        't3Hub',
-        'controlMesh',
-        'riskVault',
-        'feeRouter',
-        'buybackExecutor',
-        'automationRegistry',
-        'anchorGuard',
-        'clusterGuard',
-        'voting',
-        'farmFactory',
-        'coverManager'
-      ] as const;
-      for (const key of contractKeys) {
-        const value = contracts[key];
-        if (typeof value === 'string' && value.trim() && !isValidAddress(value.trim())) {
-          return sendError(reply, 400, 'invalid_address', `invalid contract address for ${key}`);
-        }
-      }
-      const modules = Array.isArray(body?.modules) ? body.modules : [];
-      if (modules.length > 64) {
-        return sendError(reply, 400, 'bad_request', 'too many modules');
-      }
-      for (const entry of modules) {
-        const address = typeof entry?.address === 'string' ? entry.address.trim() : '';
-        if (!address || !isValidAddress(address)) {
-          return sendError(reply, 400, 'invalid_address', 'invalid module address');
-        }
-      }
-      try {
-        return await service.getDefiSnapshot({
-          owner,
-          include: typeof body?.include === 'object' && body.include ? body.include : undefined,
-          options: typeof body?.options === 'object' && body.options ? body.options : undefined,
-          contracts,
-          modules
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'DeFi snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'governance snapshot request failed' });
       }
     }
   );
@@ -1495,137 +1160,61 @@ export const registerRoutes = (
           dlmmRegistry: registry,
           dlmmFactory: factory,
           tokens
-        });
+        }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'DLMM pools snapshot request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'DLMM pools snapshot request failed' });
       }
     }
   );
 
   const handleBalanceStream = async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as { address?: string; wallet?: string; addresses?: string };
+    if (closing) return sendError(reply, 503, 'shutting_down', 'server is shutting down');
+    const query = asRecord(request.query) ?? {};
     const addresses = parseStreamAddresses(query);
     if (addresses.length === 0) {
       return sendError(reply, 400, 'invalid_address', 'at least one valid address is required');
     }
 
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
+    if (!runtime.streams) return sendError(reply, 503, 'upstream_unavailable', 'Balance stream unavailable.');
+    const admission = balanceStreamAdmission.reserve(rateLimitKey(request.raw, config.edgeKey).key);
+    if ('status' in admission) return sendError(reply, admission.status,
+      admission.status === 429 ? 'rate_limited' : 'upstream_unavailable', 'Balance stream capacity is full.', { retryAfterSeconds: 5 });
+    let unsubscribe = () => {};
+    const closeStream = () => writer.close();
+    const writer = new BalanceStreamWriter(reply.raw, () => {
+      activeBalanceStreams.delete(closeStream);
+      request.raw.off('close', closeStream);
+      try { unsubscribe(); } finally { admission.release(); }
     });
-
-    let closed = false;
-    let seq = 0;
-    let inFlight = false;
-    const signatures = new Map<string, string>();
-
-    const writeEvent = (payload: unknown, eventName?: string) => {
-      if (closed) return;
-      if (eventName) {
-        reply.raw.write(`event: ${eventName}\n`);
-      }
-      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
-    };
-
-    const pollSnapshots = async (targets: string[]) => {
-      if (closed || inFlight) return;
-      inFlight = true;
-      try {
-        for (const address of targets) {
-          const balances = await service.getBalances(address);
-          const signature = service.getBalancesSignature(balances);
-          const previous = signatures.get(address);
-          const changed = previous !== undefined && previous !== signature;
-          signatures.set(address, signature);
-
-          const jettons = balances.assets
-            .filter((asset) => asset.kind === 'jetton' && typeof asset.address === 'string' && asset.address.length > 0)
-            .map((asset) => asset.address as string);
-          const ts = Date.now();
-
-          if (changed) {
-            writeEvent({
-              type: 'balances_changed',
-              address,
-              seq: ++seq,
-              ts,
-              hints: {
-                ton: true,
-                jettons: jettons.length > 0 ? jettons : null,
-              },
-            });
-          }
-
-          if (previous === undefined || changed) {
-            writeEvent({
-              type: 'balances_snapshot',
-              address,
-              seq: ++seq,
-              ts,
-              balances,
-            });
-          }
-        }
-      } catch (error) {
-        writeEvent(
-          {
-            type: 'error',
-            address: null,
-            seq: ++seq,
-            ts: Date.now(),
-            message: publicErrorMessage(error, 'stream update failed'),
-          },
-          'error'
-        );
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const unsubscribe = service.subscribeBalanceChanges(addresses, (event) => {
-      if (closed) return;
-      void pollSnapshots([event.address]);
-    });
-
-    const pollTimer = setInterval(() => {
-      void pollSnapshots(addresses);
-    }, BALANCE_STREAM_POLL_MS);
-
-    const keepAliveTimer = setInterval(() => {
-      if (closed) return;
-      reply.raw.write(': keepalive\n\n');
-    }, BALANCE_STREAM_KEEPALIVE_MS);
-
-    const closeStream = () => {
-      if (closed) return;
-      closed = true;
-      clearInterval(pollTimer);
-      clearInterval(keepAliveTimer);
-      unsubscribe();
-      try {
-        reply.raw.end();
-      } catch {
-        // ignore close errors
-      }
-    };
-
+    activeBalanceStreams.add(closeStream);
     request.raw.on('close', closeStream);
-    reply.raw.on('close', closeStream);
-    writeEvent({
-      type: 'subscribed',
-      addresses,
-      seq: ++seq,
-      ts: Date.now(),
+    // The hub may synchronously emit cached snapshots. Keep the initial event first
+    // and reserve both transport and hub capacity before committing HTTP success.
+    writer.event({ type: 'subscribed', addresses, seq: 1, ts: Date.now() });
+    try {
+      if (!writer.closed) unsubscribe = runtime.streams.subscribe(addresses, payload => writer.event(payload));
+      if (writer.closed) {
+        unsubscribe();
+        return sendError(reply, 503, 'upstream_unavailable', 'Balance stream unavailable.');
+      }
+    } catch (error) {
+      writer.close();
+      return sendError(reply, 503, 'upstream_unavailable', error instanceof BalanceStreamCapacityError
+        ? 'Balance stream capacity is full.' : 'Balance stream unavailable.', { retryAfterSeconds: 5 });
+    }
+    const inheritedHeaders = reply.getHeaders();
+    writer.start(() => {
+      reply.hijack();
+      for (const [name, value] of Object.entries(inheritedHeaders)) if (value !== undefined) reply.raw.setHeader(name, value);
+      reply.raw.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no',
+      });
     });
-    void pollSnapshots(addresses);
     return reply;
   };
 
   app.get('/api/indexer/v1/stream/balances', handleBalanceStream);
-  app.get('/api/indexer/v1/stream', handleBalanceStream);
 
   app.get(
     '/api/indexer/v1/accounts/:addr/txs',
@@ -1641,50 +1230,75 @@ export const registerRoutes = (
       const cursorHash = query.cursor_hash;
 
       try {
-        if ((cursorLt && !cursorHash) || (!cursorLt && cursorHash)) {
+        if (query.page !== undefined && (cursorLt !== undefined || cursorHash !== undefined)) {
+          return sendError(reply, 400, 'cursor_mismatch', 'page and cursor fields are mutually exclusive');
+        }
+        if ((cursorLt !== undefined) !== (cursorHash !== undefined)) {
           return sendError(reply, 400, 'cursor_mismatch', 'cursor_lt and cursor_hash must be provided together');
         }
-        if (cursorLt && cursorHash) {
+        if (cursorLt !== undefined && cursorHash !== undefined) {
           if (!isValidLt(cursorLt) || !isValidHashBase64(cursorHash)) {
             return sendError(reply, 400, 'invalid_cursor', 'invalid cursor');
           }
         }
-        if (cursorLt && cursorHash) {
-          return await service.getTransactionsByCursor(addr, cursorLt, cursorHash);
+        if (cursorLt !== undefined && cursorHash !== undefined) {
+          return await service.getTransactionsByCursor(addr, cursorLt, cursorHash, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
         }
-        return await service.getTransactions(addr, page);
+        return await service.getTransactions(addr, page, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'transaction request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'transaction request failed' });
       }
     }
   );
 
   app.get(
-    '/api/indexer/v1/accounts/:addr/swaps',
-    { schema: { params: addressParamsSchema, querystring: swapQuerySchema } },
+    '/api/indexer/v1/markets/:market/candles',
+    { schema: { params: marketCandleParamsSchema, querystring: marketCandleQuerySchema } },
     async (request, reply) => {
-      const addr = (request.params as { addr: string }).addr;
-      if (!isValidAddress(addr)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid address');
-      }
+      const marketKey = (request.params as { market: string }).market.trim();
       const query = request.query as {
-        limit?: number | string;
+        market_address: string;
+        asset_symbol: string;
+        quote_symbol: string;
+        asset_decimals?: number | string;
+        quote_decimals?: number | string;
+        interval?: MarketCandleInterval;
         from_utime?: number | string;
         to_utime?: number | string;
-        pay_token?: string;
-        receive_token?: string;
-        execution_type?: 'market' | 'limit' | 'twap' | 'unknown';
-        status?: 'success' | 'failed' | 'pending';
-        include_reverse?: string;
+        limit?: number | string;
       };
-      const limitRaw = query.limit;
-      const limitFromString = typeof limitRaw === 'string' ? parsePositiveInt(limitRaw) : null;
-      const limit =
-        typeof limitRaw === 'number' && Number.isFinite(limitRaw)
-          ? Math.max(1, Math.min(500, Math.trunc(limitRaw)))
-          : limitFromString !== null
-            ? Math.max(1, Math.min(500, limitFromString))
-            : 100;
+      if (!marketKey) {
+        return sendError(reply, 400, 'bad_request', 'market must not be empty');
+      }
+      if (!isValidAddress(query.market_address)) {
+        return sendError(reply, 400, 'invalid_address', 'invalid market_address');
+      }
+      const assetSymbol = query.asset_symbol?.trim().toUpperCase();
+      const quoteSymbol = query.quote_symbol?.trim().toUpperCase();
+      if (!assetSymbol || !quoteSymbol || assetSymbol === quoteSymbol) {
+        return sendError(reply, 400, 'bad_request', 'asset_symbol and quote_symbol must be distinct');
+      }
+      const canonicalMarket =
+        canonicalCandleMarkets.length > 0
+          ? canonicalCandleMarkets.find((market) => market.marketKey === marketKey)
+          : undefined;
+      if (registryMetadata?.manifestHash && !canonicalMarket) {
+        return sendError(reply, 404, 'not_found', 'market is absent from the canonical release manifest');
+      }
+      if (
+        canonicalMarket &&
+        (rawAddress(query.market_address) !== rawAddress(canonicalMarket.marketAddress) ||
+          assetSymbol !== canonicalMarket.assetSymbol ||
+          quoteSymbol !== canonicalMarket.quoteSymbol)
+      ) {
+        return sendError(
+          reply,
+          400,
+          'bad_request',
+          'market address and symbols must match the canonical release manifest'
+        );
+      }
+
       const hasFromUtime = query.from_utime !== undefined;
       const hasToUtime = query.to_utime !== undefined;
       const fromUtime = parsePositiveIntQuery(query.from_utime);
@@ -1698,76 +1312,51 @@ export const registerRoutes = (
       if (fromUtime !== null && toUtime !== null && fromUtime > toUtime) {
         return sendError(reply, 400, 'bad_request', 'from_utime must be less than or equal to to_utime');
       }
-      try {
-        return await service.getSwapExecutions(addr, {
-          limit,
-          fromUtime: fromUtime ?? undefined,
-          toUtime: toUtime ?? undefined,
-          payToken: query.pay_token,
-          receiveToken: query.receive_token,
-          executionType: query.execution_type,
-          status: query.status,
-          includeReverse: parseBooleanQuery(query.include_reverse),
-        });
-      } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'swaps request failed'));
-      }
-    }
-  );
 
-  app.get(
-    '/api/indexer/v1/sccp/ton/burn-proof-material',
-    { schema: { querystring: tonSccpBurnProofQuerySchema } },
-    async (request, reply) => {
-      const query = request.query as {
-        jetton_master: string;
-        message_id: string;
-        trusted_checkpoint_seqno?: string | number;
-        trusted_checkpoint_hash?: string;
-        target_seqno?: string | number;
-      };
-      if (!isValidAddress(query.jetton_master)) {
-        return sendError(reply, 400, 'invalid_address', 'invalid jetton_master');
+      const hasAssetDecimals = query.asset_decimals !== undefined;
+      const hasQuoteDecimals = query.quote_decimals !== undefined;
+      const assetDecimals = parseNonNegativeIntQuery(query.asset_decimals);
+      const quoteDecimals = parseNonNegativeIntQuery(query.quote_decimals);
+      if (hasAssetDecimals && (assetDecimals === null || assetDecimals > 30)) {
+        return sendError(reply, 400, 'bad_request', 'asset_decimals must be an integer from 0 to 30');
       }
-      if (!HEX_256_RE.test(query.message_id)) {
-        return sendError(reply, 400, 'bad_request', 'message_id must be 0x-prefixed 32-byte hex');
-      }
-      if ((query.trusted_checkpoint_seqno === undefined) !== (query.trusted_checkpoint_hash === undefined)) {
-        return sendError(
-          reply,
-          400,
-          'bad_request',
-          'trusted_checkpoint_seqno and trusted_checkpoint_hash must be provided together'
-        );
+      if (hasQuoteDecimals && (quoteDecimals === null || quoteDecimals > 30)) {
+        return sendError(reply, 400, 'bad_request', 'quote_decimals must be an integer from 0 to 30');
       }
       if (
-        query.trusted_checkpoint_hash !== undefined &&
-        !HEX_256_RE.test(query.trusted_checkpoint_hash)
+        canonicalMarket &&
+        ((hasAssetDecimals && assetDecimals !== canonicalMarket.assetDecimals) ||
+          (hasQuoteDecimals && quoteDecimals !== canonicalMarket.quoteDecimals))
       ) {
-        return sendError(reply, 400, 'bad_request', 'trusted_checkpoint_hash must be 0x-prefixed 32-byte hex');
+        return sendError(reply, 400, 'bad_request', 'market decimals must match the canonical release manifest');
       }
-      const trustedCheckpointSeqno =
-        query.trusted_checkpoint_seqno === undefined
-          ? undefined
-          : parsePositiveIntQuery(query.trusted_checkpoint_seqno);
-      if (query.trusted_checkpoint_seqno !== undefined && trustedCheckpointSeqno === null) {
-        return sendError(reply, 400, 'bad_request', 'trusted_checkpoint_seqno must be a positive integer');
-      }
-      const targetSeqno =
-        query.target_seqno === undefined ? undefined : parsePositiveIntQuery(query.target_seqno);
-      if (query.target_seqno !== undefined && targetSeqno === null) {
-        return sendError(reply, 400, 'bad_request', 'target_seqno must be a positive integer');
-      }
+      const limitRaw = parsePositiveIntQuery(query.limit);
+      const limit = Math.min(1_000, limitRaw ?? 320);
+
       try {
-        return await service.getTonSccpBurnProofMaterial({
-          jettonMaster: query.jetton_master,
-          messageIdHex: query.message_id,
-          trustedCheckpointSeqno: trustedCheckpointSeqno ?? undefined,
-          trustedCheckpointHashHex: query.trusted_checkpoint_hash,
-          targetSeqno: targetSeqno ?? undefined,
-        });
+        const history = await service.getMarketCandles(
+          canonicalMarket?.marketKey ?? marketKey,
+          canonicalMarket?.marketAddress ?? query.market_address,
+          {
+          assetSymbol: canonicalMarket?.assetSymbol ?? assetSymbol,
+          quoteSymbol: canonicalMarket?.quoteSymbol ?? quoteSymbol,
+          assetDecimals: canonicalMarket?.assetDecimals ?? assetDecimals ?? undefined,
+          quoteDecimals: canonicalMarket?.quoteDecimals ?? quoteDecimals ?? undefined,
+          interval: query.interval,
+          fromUtime: fromUtime ?? undefined,
+          toUtime: toUtime ?? undefined,
+          limit,
+          }, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.snapshot) }
+        );
+        return {...history,
+          token_root: canonicalMarket?.tokenRoot ?? null,
+          asset_symbol: canonicalMarket?.assetSymbol ?? assetSymbol,
+          quote_symbol: canonicalMarket?.quoteSymbol ?? quoteSymbol,
+          asset_decimals: canonicalMarket?.assetDecimals ?? assetDecimals ?? null,
+          quote_decimals: canonicalMarket?.quoteDecimals ?? quoteDecimals ?? null,
+        };
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'proof material request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'candles request failed' });
       }
     }
   );
@@ -1781,30 +1370,32 @@ export const registerRoutes = (
         return sendError(reply, 400, 'invalid_address', 'invalid address');
       }
       try {
-        return await service.getState(addr);
+        return await service.getState(addr, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
       } catch (error) {
-        return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'state request failed'));
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'state request failed' });
       }
     }
   );
 
   app.post('/api/indexer/v1/snapshot/save', async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
     if (!snapshots) return sendError(reply, 400, 'snapshot_disabled', 'snapshot disabled');
+    const denied = requireAdmin(request, reply, 'snapshot_disabled', 'snapshot disabled');
+    if (denied) return denied;
     try {
-      return { ok: true, ...(snapshots.save() as object) };
+      return { ok: true, ...(await snapshots.save()) };
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'snapshot save failed'));
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'snapshot save failed' });
     }
   });
 
   app.post('/api/indexer/v1/snapshot/load', async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
     if (!snapshots) return sendError(reply, 400, 'snapshot_disabled', 'snapshot disabled');
+    const denied = requireAdmin(request, reply, 'snapshot_disabled', 'snapshot disabled');
+    if (denied) return denied;
     try {
       return { ok: true, ...(snapshots.load() as object) };
     } catch (error) {
-      return sendError(reply, 400, 'bad_request', publicErrorMessage(error, 'snapshot load failed'));
+      return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'snapshot load failed' });
     }
   });
 
@@ -1812,8 +1403,9 @@ export const registerRoutes = (
     '/api/indexer/v1/debug',
     { schema: { querystring: debugQuerySchema } },
     async (request, reply) => {
-      if (!requireAdmin(request, reply)) return;
       if (!debug) return sendError(reply, 400, 'debug_disabled', 'debug disabled');
+      const denied = requireAdmin(request, reply, 'debug_disabled', 'debug disabled');
+      if (denied) return denied;
       const query = request.query as { limit?: string };
       const limit = Math.max(1, Math.min(500, Number(query.limit ?? 100)));
       return debug.getStatus(limit);

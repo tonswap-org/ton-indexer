@@ -1,0 +1,433 @@
+{
+  "network": "testnet",
+  "owner": "0:0000000000000000000000000000000000000000000000000000000000000065",
+  "ownerWallet": "0:0000000000000000000000000000000000000000000000000000000000000068",
+  "factoryWallet": "0:0000000000000000000000000000000000000000000000000000000000000069",
+  "factory": "0:0000000000000000000000000000000000000000000000000000000000000066",
+  "root": "0:0000000000000000000000000000000000000000000000000000000000000067",
+  "series": "0:000000000000000000000000000000000000000000000000000000000000006a",
+  "seriesId": "7",
+  "positionId": "3",
+  "queryId": "1234",
+  "events": [
+    {
+      "id": "c16af487e026c46372a5ad2ee84f8a7b3c394f224763615fe76e61cc35717d84",
+      "network": "testnet",
+      "account": "0:0000000000000000000000000000000000000000000000000000000000000065",
+      "lt": "10",
+      "hash": "SkTcFTZCBKgP6A6QOUVcwWCCgYIP4rJPHlIzreavHdU=",
+      "txId": "10:SkTcFTZCBKgP6A6QOUVcwWCCgYIP4rJPHlIzreavHdU=",
+      "utime": 1700000010,
+      "status": "success",
+      "kind": "option_buy",
+      "totalFeesRaw": "200",
+      "movements": [
+        {
+          "id": "c16af487e026c46372a5ad2ee84f8a7b3c394f224763615fe76e61cc35717d84:1",
+          "direction": "fee",
+          "asset": {
+            "kind": "native",
+            "id": "testnet:native",
+            "symbol": "TON",
+            "decimals": 9
+          },
+          "amountRaw": "100",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "evidence": {
+            "kind": "transaction_fee",
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000065",
+                "lt": "10",
+                "hash": "SkTcFTZCBKgP6A6QOUVcwWCCgYIP4rJPHlIzreavHdU=",
+                "utime": 1700000010
+              }
+            ]
+          }
+        },
+        {
+          "id": "c16af487e026c46372a5ad2ee84f8a7b3c394f224763615fe76e61cc35717d84:forward:0",
+          "direction": "fee",
+          "asset": {
+            "kind": "native",
+            "id": "testnet:native",
+            "symbol": "TON",
+            "decimals": 9
+          },
+          "amountRaw": "3",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "evidence": {
+            "kind": "message_forward_fee",
+            "messageIndex": 0,
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000065",
+                "lt": "10",
+                "hash": "SkTcFTZCBKgP6A6QOUVcwWCCgYIP4rJPHlIzreavHdU=",
+                "utime": 1700000010
+              }
+            ]
+          }
+        },
+        {
+          "id": "eb6f4396a00cbb904c4817bde8d35b39083b7e0b80d0ad6934dcb114693d6a7a:1",
+          "direction": "out",
+          "asset": {
+            "kind": "native",
+            "id": "testnet:native",
+            "symbol": "TON",
+            "decimals": 9
+          },
+          "amountRaw": "100",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000068",
+          "destination": "0:0000000000000000000000000000000000000000000000000000000000000069",
+          "evidence": {
+            "kind": "native_message",
+            "messageIndex": 0,
+            "opcode": 395134233,
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+                "lt": "20",
+                "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+                "utime": 1700000020
+              }
+            ]
+          }
+        },
+        {
+          "id": "eb6f4396a00cbb904c4817bde8d35b39083b7e0b80d0ad6934dcb114693d6a7a:2",
+          "direction": "fee",
+          "asset": {
+            "kind": "native",
+            "id": "testnet:native",
+            "symbol": "TON",
+            "decimals": 9
+          },
+          "amountRaw": "100",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000068",
+          "evidence": {
+            "kind": "transaction_fee",
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+                "lt": "20",
+                "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+                "utime": 1700000020
+              }
+            ]
+          }
+        },
+        {
+          "id": "eb6f4396a00cbb904c4817bde8d35b39083b7e0b80d0ad6934dcb114693d6a7a:forward:0",
+          "direction": "fee",
+          "asset": {
+            "kind": "native",
+            "id": "testnet:native",
+            "symbol": "TON",
+            "decimals": 9
+          },
+          "amountRaw": "3",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000068",
+          "evidence": {
+            "kind": "message_forward_fee",
+            "messageIndex": 0,
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+                "lt": "20",
+                "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+                "utime": 1700000020
+              }
+            ]
+          }
+        },
+        {
+          "id": "c154acf4536c8edf638b268a29eb40783ef53a3816123e281a115c3ba46dc7bd:out:option_premium",
+          "direction": "out",
+          "asset": {
+            "kind": "jetton",
+            "id": "testnet:jetton:0:0000000000000000000000000000000000000000000000000000000000000067",
+            "master": "0:0000000000000000000000000000000000000000000000000000000000000067",
+            "wallet": "0:0000000000000000000000000000000000000000000000000000000000000068",
+            "owner": "0:0000000000000000000000000000000000000000000000000000000000000065",
+            "decimals": 9
+          },
+          "amountRaw": "100",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "destination": "0:0000000000000000000000000000000000000000000000000000000000000066",
+          "evidence": {
+            "kind": "jetton_transfer",
+            "messageIndex": 0,
+            "opcode": 395134233,
+            "bodyHash": "16efc684fcaaef454eb097227108467eab9b8f4b470ade3c22fb84e4e5ef426d",
+            "requestBodyHash": "e27a599aba028762a4cceda27fc9ed4472a158dde6f781fa237254b5e12b6413",
+            "queryId": "1234",
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+                "lt": "20",
+                "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+                "utime": 1700000020
+              },
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000069",
+                "lt": "30",
+                "hash": "YktgxYydi/tv8YhsL9YF0q3rbqTaV2BoIBtsaVjOk/Q=",
+                "utime": 1700000030
+              }
+            ]
+          },
+          "purpose": "option_premium"
+        },
+        {
+          "id": "c154acf4536c8edf638b268a29eb40783ef53a3816123e281a115c3ba46dc7bd:out:option_collateral",
+          "direction": "out",
+          "asset": {
+            "kind": "jetton",
+            "id": "testnet:jetton:0:0000000000000000000000000000000000000000000000000000000000000067",
+            "master": "0:0000000000000000000000000000000000000000000000000000000000000067",
+            "wallet": "0:0000000000000000000000000000000000000000000000000000000000000068",
+            "owner": "0:0000000000000000000000000000000000000000000000000000000000000065",
+            "decimals": 9
+          },
+          "amountRaw": "1100",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "destination": "0:0000000000000000000000000000000000000000000000000000000000000066",
+          "evidence": {
+            "kind": "jetton_transfer",
+            "messageIndex": 0,
+            "opcode": 395134233,
+            "bodyHash": "16efc684fcaaef454eb097227108467eab9b8f4b470ade3c22fb84e4e5ef426d",
+            "requestBodyHash": "e27a599aba028762a4cceda27fc9ed4472a158dde6f781fa237254b5e12b6413",
+            "queryId": "1234",
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+                "lt": "20",
+                "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+                "utime": 1700000020
+              },
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000069",
+                "lt": "30",
+                "hash": "YktgxYydi/tv8YhsL9YF0q3rbqTaV2BoIBtsaVjOk/Q=",
+                "utime": 1700000030
+              }
+            ]
+          },
+          "purpose": "option_collateral"
+        },
+        {
+          "id": "c154acf4536c8edf638b268a29eb40783ef53a3816123e281a115c3ba46dc7bd:out:protocol_fee",
+          "direction": "fee",
+          "asset": {
+            "kind": "jetton",
+            "id": "testnet:jetton:0:0000000000000000000000000000000000000000000000000000000000000067",
+            "master": "0:0000000000000000000000000000000000000000000000000000000000000067",
+            "wallet": "0:0000000000000000000000000000000000000000000000000000000000000068",
+            "owner": "0:0000000000000000000000000000000000000000000000000000000000000065",
+            "decimals": 9
+          },
+          "amountRaw": "20",
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "destination": "0:0000000000000000000000000000000000000000000000000000000000000066",
+          "evidence": {
+            "kind": "jetton_transfer",
+            "messageIndex": 0,
+            "opcode": 395134233,
+            "bodyHash": "16efc684fcaaef454eb097227108467eab9b8f4b470ade3c22fb84e4e5ef426d",
+            "requestBodyHash": "e27a599aba028762a4cceda27fc9ed4472a158dde6f781fa237254b5e12b6413",
+            "queryId": "1234",
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+                "lt": "20",
+                "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+                "utime": 1700000020
+              },
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000069",
+                "lt": "30",
+                "hash": "YktgxYydi/tv8YhsL9YF0q3rbqTaV2BoIBtsaVjOk/Q=",
+                "utime": 1700000030
+              }
+            ]
+          },
+          "purpose": "protocol_fee"
+        },
+        {
+          "id": "option-position:testnet:0:0000000000000000000000000000000000000000000000000000000000000066:7:3",
+          "direction": "in",
+          "amountRaw": "1",
+          "asset": {
+            "kind": "option_position",
+            "id": "testnet:option-position:0:0000000000000000000000000000000000000000000000000000000000000066:7:3",
+            "factory": "0:0000000000000000000000000000000000000000000000000000000000000066",
+            "series": "0:000000000000000000000000000000000000000000000000000000000000006a",
+            "seriesId": "7",
+            "positionId": "3",
+            "owner": "0:0000000000000000000000000000000000000000000000000000000000000065",
+            "decimals": 0
+          },
+          "source": "0:0000000000000000000000000000000000000000000000000000000000000066",
+          "destination": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "evidence": {
+            "bodyHash": "e34fac132b6dc08de3e58d47adb4c6c0c09e26b00a1c9a7ed4c3bbe1b508d28a",
+            "transactions": [
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+                "lt": "20",
+                "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+                "utime": 1700000020
+              },
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000069",
+                "lt": "30",
+                "hash": "YktgxYydi/tv8YhsL9YF0q3rbqTaV2BoIBtsaVjOk/Q=",
+                "utime": 1700000030
+              },
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000066",
+                "lt": "40",
+                "hash": "1Z7O0d7Qf4TBRVkvZb34VDWOAJxc1wX1IVvxhpf+0QM=",
+                "utime": 1700000040
+              },
+              {
+                "account": "0:000000000000000000000000000000000000000000000000000000000000006a",
+                "lt": "50",
+                "hash": "GmViWQ7xnRBF0GxAVXQtOCiOnm3NcczeXO6A8dWndOs=",
+                "utime": 1700000050
+              },
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000066",
+                "lt": "60",
+                "hash": "OfqewZDu57b03/EQDWND4QkY0ETHXqyPnpollhc/gMk=",
+                "utime": 1700000060
+              },
+              {
+                "account": "0:000000000000000000000000000000000000000000000000000000000000006a",
+                "lt": "70",
+                "hash": "/1oa4BKvpdTIicUK1Ceq9UXTGk+sBP/BxNA9QDukJQo=",
+                "utime": 1700000070
+              },
+              {
+                "account": "0:0000000000000000000000000000000000000000000000000000000000000066",
+                "lt": "80",
+                "hash": "SESaFKT/fXm7ehtvPUiOujl8Nu8lY0wRG0m682JRGvw=",
+                "utime": 1700000080
+              }
+            ],
+            "stateBeforeHash": "1a6c2af83f404feb52bb25701f9df6c420cc8e91628bbcce826b8ef2ad6b3ab9",
+            "stateAfterHash": "fb631e319e56881e0d92985b075c4cd844a6da9cc7fd5852c32e1d0194aa28b8",
+            "beforeSeqno": 60,
+            "afterSeqno": 80,
+            "kind": "option_activation",
+            "optionPosition": {
+              "factory": "0:0000000000000000000000000000000000000000000000000000000000000066",
+              "factoryCodeHash": "644e68a539c5107401d194bc82169cbf0ad1635796891551e0750705ab2d74ae",
+              "seriesId": "7",
+              "positionId": "3",
+              "owner": "0:0000000000000000000000000000000000000000000000000000000000000065",
+              "sourceWallet": "0:0000000000000000000000000000000000000000000000000000000000000069",
+              "notionalRaw": "10000",
+              "premiumRaw": "100",
+              "collateralRaw": "1100",
+              "seriesWireId": "55",
+              "custodyWireId": "56",
+              "protocolFeeRaw": "20",
+              "excessRaw": "0",
+              "beforeBuyStateRaw": "269",
+              "buyStateRaw": "525"
+            }
+          }
+        }
+      ],
+      "actions": [
+        {
+          "kind": "transfer",
+          "asset": {
+            "kind": "jetton",
+            "master": "unknown"
+          },
+          "amount": "1220",
+          "from": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "to": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZsM8",
+          "source": "out"
+        },
+        {
+          "kind": "transfer",
+          "asset": {
+            "kind": "jetton",
+            "master": "unknown"
+          },
+          "amount": "1220",
+          "from": "0:0000000000000000000000000000000000000000000000000000000000000065",
+          "to": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZsM8",
+          "source": "out"
+        }
+      ],
+      "issues": [],
+      "settlement": {
+        "status": "confirmed",
+        "protocol": "options",
+        "operation": "option_buy",
+        "queryId": "1234",
+        "factory": "0:0000000000000000000000000000000000000000000000000000000000000066",
+        "seriesId": "7",
+        "notionalRaw": "10000",
+        "series": "0:000000000000000000000000000000000000000000000000000000000000006a",
+        "positionId": "3",
+        "wireId": "55",
+        "positionHash": "e34fac132b6dc08de3e58d47adb4c6c0c09e26b00a1c9a7ed4c3bbe1b508d28a",
+        "premiumRaw": "100",
+        "collateralRaw": "1100",
+        "protocolFeeRaw": "20",
+        "evidence": [
+          {
+            "account": "0:0000000000000000000000000000000000000000000000000000000000000068",
+            "lt": "20",
+            "hash": "9co490ih1ur3JrikL7V1w8cfGGSoFDMBeC3hPaLZICs=",
+            "utime": 1700000020
+          },
+          {
+            "account": "0:0000000000000000000000000000000000000000000000000000000000000069",
+            "lt": "30",
+            "hash": "YktgxYydi/tv8YhsL9YF0q3rbqTaV2BoIBtsaVjOk/Q=",
+            "utime": 1700000030
+          },
+          {
+            "account": "0:0000000000000000000000000000000000000000000000000000000000000066",
+            "lt": "40",
+            "hash": "1Z7O0d7Qf4TBRVkvZb34VDWOAJxc1wX1IVvxhpf+0QM=",
+            "utime": 1700000040
+          },
+          {
+            "account": "0:000000000000000000000000000000000000000000000000000000000000006a",
+            "lt": "50",
+            "hash": "GmViWQ7xnRBF0GxAVXQtOCiOnm3NcczeXO6A8dWndOs=",
+            "utime": 1700000050
+          },
+          {
+            "account": "0:0000000000000000000000000000000000000000000000000000000000000066",
+            "lt": "60",
+            "hash": "OfqewZDu57b03/EQDWND4QkY0ETHXqyPnpollhc/gMk=",
+            "utime": 1700000060
+          },
+          {
+            "account": "0:000000000000000000000000000000000000000000000000000000000000006a",
+            "lt": "70",
+            "hash": "/1oa4BKvpdTIicUK1Ceq9UXTGk+sBP/BxNA9QDukJQo=",
+            "utime": 1700000070
+          },
+          {
+            "account": "0:0000000000000000000000000000000000000000000000000000000000000066",
+            "lt": "80",
+            "hash": "SESaFKT/fXm7ehtvPUiOujl8Nu8lY0wRG0m682JRGvw=",
+            "utime": 1700000080
+          }
+        ]
+      }
+    }
+  ]
+}

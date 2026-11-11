@@ -1,0 +1,13 @@
+{
+  "description": "Current real Tolk original transaction captures; copied without rewriting BOCs or hash links. Range qualification only, not a deployed engine upgrade.",
+  "sources": [
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/ton-indexer/src/scripts/fixtures/perps-oracle-execution/open-accepted.json",
+      "sha256": "41cb3e5b56707127461662505c0e7beb868c500094da6c186712571ddb574b14"
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/ton-indexer/src/scripts/fixtures/perps-oracle-execution/close-accepted.json",
+      "sha256": "f630be694dce089d71b7b9d39966234d8b7a5f8f8e697b1941bfe68781a65bc0"
+    }
+  ]
+}

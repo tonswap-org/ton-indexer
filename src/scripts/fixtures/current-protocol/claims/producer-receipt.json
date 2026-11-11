@@ -1,0 +1,54 @@
+{
+  "schema": "tonswap-capture-producer-v1",
+  "producer": "claims",
+  "suite": "tests/system/ReleaseGovernance.spec.ts",
+  "tests": 2,
+  "captureDirectory": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/.local/state/current-protocol-captures-20261018-v1/claims",
+  "exitCode": 0,
+  "runtime": {
+    "node": "v22.23.3",
+    "tolk": "1.5.0",
+    "sandbox": "0.42.0"
+  },
+  "logSha256": "1b681e7e699d7c3b80bdcc3a8888f2ba8677a515f88e0b0fe25a4e0a6262cae7",
+  "build": {
+    "file": "build-binding.json",
+    "sha256": "864374257eab0e0ec39f493aed040668d8d6e042cf7c3005a123f86647950f70",
+    "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+    "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d"
+  },
+  "compiled": {
+    "EmissionsSplitter": {
+      "file": "current-compiled/EmissionsSplitter.json",
+      "sha256": "3c3e8fae23dd539d9339f93bcb91a146df22565b639491e672cc1dab2b44fe84",
+      "codeHash": "3bd40826c3cdd82f58137a18e12961ff13ae310339c52c3ef33955e8c73ef5e3",
+      "boc": "compiler/EmissionsSplitter.boc",
+      "bocSha256": "f2e15fe0984771db219f8895c4d15c4f5a203d9b6888ea8ad9cc21ae1842bd51"
+    },
+    "MerkleClaim": {
+      "file": "current-compiled/MerkleClaim.json",
+      "sha256": "c42bf1e3815e0ee4d3c563a84b577bb5cff71d35f68d892ffdb3d1595e320ad1",
+      "codeHash": "eaecc5c158557cb49a71d913a0d084c81e4421d7e0fec081c0153a076199ef48",
+      "boc": "compiler/MerkleClaim.boc",
+      "bocSha256": "75a8c226034e761411f5046f549e74513d3c4a19f6f89a73b0faeed75312a8f8"
+    },
+    "Treasury": {
+      "file": "current-compiled/Treasury.json",
+      "sha256": "e5e2c54eefb0bfe7d3c6521320485319916c00424137628487f301566a842422",
+      "codeHash": "36617c2af95ea29e112ca933130dc2ad1a880ff0ca8259907184b9618a3f4fef",
+      "boc": "compiler/Treasury.boc",
+      "bocSha256": "6fde34f75f0d7e49d86326b8483c60bec68105a562c91a380220695ccf842d63"
+    }
+  },
+  "artifacts": {
+    "build-binding.json": "864374257eab0e0ec39f493aed040668d8d6e042cf7c3005a123f86647950f70",
+    "case-01.json": "7845963c270117f615d8c8517aba7fc005fc2d33c3332503f675f2256c8334b9",
+    "case-02.json": "f663483a1911af97b19ea668e6e79387ad55c17a4c678e2b6feeb234a077f328",
+    "compiler/EmissionsSplitter.boc": "f2e15fe0984771db219f8895c4d15c4f5a203d9b6888ea8ad9cc21ae1842bd51",
+    "compiler/MerkleClaim.boc": "75a8c226034e761411f5046f549e74513d3c4a19f6f89a73b0faeed75312a8f8",
+    "compiler/Treasury.boc": "6fde34f75f0d7e49d86326b8483c60bec68105a562c91a380220695ccf842d63",
+    "current-compiled/EmissionsSplitter.json": "3c3e8fae23dd539d9339f93bcb91a146df22565b639491e672cc1dab2b44fe84",
+    "current-compiled/MerkleClaim.json": "c42bf1e3815e0ee4d3c563a84b577bb5cff71d35f68d892ffdb3d1595e320ad1",
+    "current-compiled/Treasury.json": "e5e2c54eefb0bfe7d3c6521320485319916c00424137628487f301566a842422"
+  }
+}

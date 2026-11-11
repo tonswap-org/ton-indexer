@@ -1,0 +1,66 @@
+import { assertCaptureCode } from './capture-build';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join, resolve, dirname, basename } from 'node:path';
+import { Address, Cell } from '@ton/core';
+import { Blockchain, createShardAccount } from '@ton/sandbox';
+import { readPerpsState } from '../ledger/perpsState';
+import { accruePerpsFunding } from '../ledger/perpsEconomics';
+import { perpsRiskFixtureFolder, readPerpsRiskFixtureProvenance } from './perps-risk-fixture';
+import { assertPerpsProducerReceipt, producerSha256, assertPerpsStressChainConfig } from './perps-fixture-producer';
+
+async function main() {
+  const directory = process.env.TONSWAP_PERPS_FUNDING_FIXTURE_DIR ??
+    join(__dirname, 'fixtures/perps-funding-checkpoint-current');
+  const bytes = readFileSync(join(directory, 'funding-remainder.json'));
+  const provenance = JSON.parse(readFileSync(join(directory, 'provenance.json'), 'utf8'));
+  assert.equal(provenance.qualification, 'qualified-pure-build-target-closure');
+  const saved = JSON.parse(bytes.toString('utf8'));
+  assertPerpsStressChainConfig(saved.chainConfig);
+  {
+    assertPerpsProducerReceipt(provenance.producerReceipt,'funding',resolve(__dirname,'../../../tonswap_tolk'),
+      dirname(provenance.originalCapture),Buffer.from(provenance.producerLog??''),provenance.buildBinding);
+    assert(provenance.buildBinding.captures[basename(provenance.originalCapture)]);
+    assertCaptureCode('PerpsEngine', saved.codeBoc, provenance.buildBinding);
+    assert.equal(producerSha256(bytes),provenance.producerReceipt.artifacts[basename(provenance.originalCapture)]);
+  }
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), provenance.sha256);
+  const riskDirectory = perpsRiskFixtureFolder;
+  const expectedCode = readPerpsRiskFixtureProvenance().engineCodeHash;
+  const code = Cell.fromBase64(saved.codeBoc), data = Cell.fromBase64(saved.dataBoc);
+  assert.equal(code.hash().toString('hex'), expectedCode);
+  assert.equal(saved.codeHash, expectedCode);
+  assert.equal(provenance.engineCodeHash, expectedCode);
+  const currentAdmission = JSON.parse(readFileSync(join(riskDirectory, 'open-accepted.json'), 'utf8'));
+  const state = readPerpsState(saved.dataBoc, expectedCode);
+  assert.equal(state.walletCode.hash().toString('hex'), Cell.fromBase64(currentAdmission.walletCode).hash().toString('hex'),
+    'The actual checkpoint state must embed the same current immutable Wallet as the admission captures');
+  const market = state.markets.get(saved.marketId);
+  assert(market);
+  assert.equal(market.fundingIndexRaw, saved.fundingIndex);
+  assert.equal(market.fundingRemainderRaw, '300');
+  assert.equal(market.fundingRemainderRaw, saved.fundingRemainder);
+  assert.equal(market.lastFundingTs, saved.lastFundingTs);
+  assert.equal(market.fundingRateBpsRaw, saved.fundingRateBps);
+  assert.equal(market.fundingValidUntil, saved.fundingValidUntil);
+
+  // Execute only a read-only getter over the original compiled code and data.
+  // This synthetic account envelope is not a claim of deployment or history.
+  const chain = await Blockchain.create({config: Cell.fromBase64(saved.chainConfig)}), address = Address.parse(saved.engine);
+  await chain.setShardAccount(address, createShardAccount({ address, code, data, balance: 1_000_000_000n }));
+  const result = await chain.runGetMethod(address, 'funding_accrual_state', [{ type: 'int', value: BigInt(saved.marketId) }]);
+  assert.equal(result.stackReader.remaining, 6);
+  const actual = Array.from({ length: 6 }, () => result.stackReader.readBigNumber().toString());
+  assert.deepEqual(actual, [market.fundingIndexRaw, market.fundingRemainderRaw, '3600', market.lastFundingTs,
+    market.fundingRateBpsRaw, market.fundingValidUntil]);
+  assert.equal(result.stackReader.remaining, 0);
+  assert.equal(market.fundingRateBpsRaw, '0');
+  assert.equal(BigInt(market.fundingValidUntil), BigInt(market.lastFundingTs) + 600n);
+  const idle = accruePerpsFunding(market, BigInt(market.lastFundingTs) + 864_000n);
+  assert.equal(idle.fundingIndexRaw, market.fundingIndexRaw);
+  assert.equal(idle.fundingRemainderRaw, '300', 'A zero-rate checkpoint preserves the actual fractional remainder over an idle gap');
+  console.log('PASS current funding checkpoint: strict257-bit decode, actual six-field getter replay, and fractional idle preservation');
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1; });

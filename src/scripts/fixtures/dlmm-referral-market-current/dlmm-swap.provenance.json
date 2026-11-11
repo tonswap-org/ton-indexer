@@ -1,0 +1,18 @@
+{
+  "full-partial": {
+    "file": "dlmm-swap-full-partial.json.gz",
+    "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/full-partial/dlmm-market-settlements.json",
+    "sha256": "928c68bd7f001e8e822b8a83da1886b109419638cdce0cb88118cfc249d65973",
+    "transactions": 88,
+    "compressed": true,
+    "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
+  },
+  "first-refund": {
+    "file": "dlmm-swap-first-refund.json.gz",
+    "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/first-refund/dlmm-market-settlements.json",
+    "sha256": "3082839a762375a9214d459e572ce52d9afc497a65846add6c6c67247ad1bf9a",
+    "transactions": 66,
+    "compressed": true,
+    "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
+  }
+}

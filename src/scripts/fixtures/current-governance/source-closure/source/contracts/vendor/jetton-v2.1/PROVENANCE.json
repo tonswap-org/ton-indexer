@@ -1,0 +1,41 @@
+{
+  "schema": "tonswap-vendored-source-v1",
+  "upstream": {
+    "repository": "https://github.com/ton-blockchain/acton-contracts",
+    "commit": "92225ba47468edde6c86e0a68218b27f4b721890",
+    "path": "jetton-v2.1/contracts",
+    "license": "MIT; LICENSE is the file at the root of the upstream repository",
+    "audit": "The upstream package names no audit at this commit (README.md, VERSION_HISTORY.md)."
+  },
+  "files": {
+    "JettonMinter.tolk": "1f2706111e63d5fe4241e1c362d271f2038e6612a1b6418cd5bdaddd3e6819bd",
+    "JettonWallet.tolk": "53d5b55e04da9c09a94d306a19454b5817cce2499f6d82b53fa1ae24b5c12f7d",
+    "LICENSE": "f668e6538d3e3bddf985af87f9b74fd6da1784115395157ea2f70d6c7aab439d",
+    "errors.tolk": "480df1ae5d924bac198579a80daae2d1f3bf90d7385cee83f0c0a1dcac5be91e",
+    "fees-management.tolk": "8676718dffaf33c0f01e1126743e25272bb20c7fad49ef52a9309de6c115acf8",
+    "jetton-utils.tolk": "a693f71e69017a524c963e2cb3a3eb6caeec3747bf7a20bbcdd173c34e59fe1d",
+    "messages.tolk": "c1ba257033aa9e9dcb823fc8970ac7df37722c0af2976a0bcffd6238ade5c39b",
+    "sharding.tolk": "b5f0df1edc90bcfea0a9b155255c4e6ddddf3d0d468a01a152aea0b7dafdedca",
+    "storage.tolk": "bea2c27d85738a293d8b30801ec40462fdb45da6ecdb26755450f98820645fb1",
+    "types.tolk": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "compiler": {
+    "version": "1.5.0",
+    "source": "https://codeload.github.com/ton-blockchain/tolk-js/tar.gz/50d69ab6678de0607db03a7e0e8e3e1c62e07dce"
+  },
+  "targets": {
+    "JettonV21Wallet": {
+      "source": "JettonWallet.tolk",
+      "codeHash": "fdd0e33b685ba04a6a5b6beb6b103b76312b5649ac0c55a1ebe680e08d83efee",
+      "module": "contracts/generated/JettonWallet.code.tolk",
+      "function": "jettonWalletCompiledCode"
+    },
+    "JettonV21Minter": {
+      "source": "JettonMinter.tolk",
+      "codeHash": "37fb274466a01db790720de6ea3e5b2797aadaa517cad7f9dc6e35d49b189c4f",
+      "module": "contracts/generated/JettonMinter.code.tolk",
+      "function": "jettonMinterCompiledCode"
+    }
+  },
+  "moduleForm": "fun <function>(): cell asm \"B{<code BOC, hex>} B>boc PUSHREF\";"
+}

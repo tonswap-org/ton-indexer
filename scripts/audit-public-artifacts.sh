@@ -16,7 +16,12 @@ trap 'rm -f "$tracked_files" "$tmp_matches"' EXIT
 
 git ls-files > "$tracked_files"
 
-if grep -E '(^|/)(dist|coverage|build)(/|$)' "$tracked_files" > "$tmp_matches"; then
+# Retained compiler source manifests are original fixture inputs, not build output.
+if grep -E '(^|/)(dist|coverage|build)(/|$)' "$tracked_files" |
+  grep -F -x -v \
+    -e 'src/scripts/fixtures/current-capture-build/source/scripts/build/compiler.json' \
+    -e 'src/scripts/fixtures/current-protocol/source-closure/source/scripts/build/compiler.json' \
+    -e 'src/scripts/fixtures/current-t3/source-closure/source/scripts/build/compiler.json' > "$tmp_matches"; then
   cat "$tmp_matches" >&2
   fail 'generated build output is tracked'
 fi
@@ -26,7 +31,7 @@ if grep -E '\.(pem|p12|pfx|key|keystore|jks|mobileprovision)$' "$tracked_files" 
   fail 'private key or signing artifact is tracked'
 fi
 
-if grep -E '(^|/)\.env($|\.|/)' "$tracked_files" | grep -Ev '^\.env\.example$' > "$tmp_matches"; then
+if grep -E '(^|/)\.env($|\.|/)' "$tracked_files" | grep -Ev '^(\.env\.example|services/platform/\.env\.example)$' > "$tmp_matches"; then
   cat "$tmp_matches" >&2
   fail 'unexpected env file is tracked'
 fi
@@ -36,7 +41,7 @@ if git grep -n -I -E -- '-----BEGIN (RSA |DSA |EC |OPENSSH |ENCRYPTED )?PRIVATE 
   fail 'tracked content contains private key material or OAuth client IDs'
 fi
 
-for env_file in .env.example; do
+for env_file in .env.example services/platform/.env.example; do
   [[ -f "$env_file" ]] || continue
 
   while IFS= read -r line || [[ -n "$line" ]]; do

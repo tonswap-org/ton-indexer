@@ -1,1 +1,7 @@
-# Existing TODO/FIXME/STOPSHIP baseline. Keep this file comment-only while there is no accepted source debt.
+# Exact non-debt literals: tests and producer validators must reject Jest todo results.
+# No implementation placeholders are accepted; the audit still rejects new, stale,
+# duplicate and crashing markers. Keep these entries tied to their complete source lines.
+scripts/refresh-options-rejected-ingress-fixture.test.cjs	['todo', value => { value.numTodoTests = 1; }],
+src/scripts/current-capture-build.ts	assert.doesNotMatch(log,/^(?:FAIL\s|(?:Test Suites|Tests):.*(?:failed|skipped|pending|todo))/mi,'Current producer did not fully pass');
+src/scripts/perps-direct-fee-qualification-test.ts	'Test Suites: 1 pending, 1 total', 'Test Suites: 1 todo, 1 total', 'Tests: 1 todo, 1 total',
+src/scripts/perps-fixture-producer.ts	assert.doesNotMatch(log, /^(?:FAIL\s|(?:Test Suites|Tests):.*(?:failed|skipped|pending|todo))/mi);

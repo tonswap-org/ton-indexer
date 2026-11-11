@@ -1,0 +1,9 @@
+{
+  "time": "2026-10-18T10:39:45.506523+00:00",
+  "verifier": "ton-indexer/src/scripts/current-capture-build.ts readCurrentCaptureManifest + assertCurrentCaptureTargets",
+  "targets": 59,
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "exitCode": 0,
+  "nodeVersion": "v22.23.3",
+  "verifierSourceSha256": "d97459aaf35133fcc41fc34e53d8ec8b5edc799e2893052a6058516bdf81a557"
+}

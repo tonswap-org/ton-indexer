@@ -1,192 +1,58 @@
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { Address, Cell, TupleItem, TupleReader, beginCell, loadTransaction, parseTuple, serializeTuple } from '@ton/core';
-import { LiteClient, LiteRoundRobinEngine, LiteSingleEngine, LiteEngine } from 'ton-lite-client';
+import { decodeOriginalTransaction, assertOriginalTransactionPage } from './transactionEvidence';
+import {
+  Address,
+  Cell,
+  CellType,
+  TupleItem,
+  beginCell,
+  loadShardAccount,
+  loadTransaction,
+  parseTuple,
+  serializeTuple,
+} from '@ton/core';
+import { provenShardAccount, provenConfig, proofRoots } from './liteProof';
+import { LiteClient, type LiteEngine } from 'ton-lite-client';
+import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError, UnusableLiteAnswer } from './boundedLiteEngine';
+import type { LiteserverPeer } from './liteserverPool';
+import { HeadTracker } from './headTracker';
+import { createLiteClientCache } from './liteAccountCache';
+import { readAccountAnchor, blockHeaderTime } from './accountAnchor';
+import { executeFreshCalls, freshMasterchainBlock,
+  FreshReadUnavailableError, type FreshReadCall } from './freshRead';
+import { errorDiagnostic, type Logger } from '../utils/logger';
 import { Functions } from 'ton-lite-client/dist/schema';
 import { Network } from '../models';
 import {
   AccountStateResponse,
-  MasterchainInfo,
-  RawMessage,
   RawTransaction,
-  RawTransactionStatus,
-  TonBlockIdExt,
-  TonSccpBurnProofMaterial,
-  TonSccpBurnProofMaterialRequest,
-  TonDataSource,
+  ChainReadError, type ChainSource, type ChainHead, type ReadOptions,
+  TransactionCursor,
+  type RecoveryProofAnchor, type RecoveryProofHistory,
 } from './dataSource';
-import { parseJettonMetadata } from '../utils/jettonMetadata';
-
-type LiteServerConfig = {
-  ip: number;
-  port: number;
-  id: { key: string };
-};
-
-type GlobalConfig = {
-  liteservers?: LiteServerConfig[];
-};
-
-type LiteServer = {
-  host: string;
-  publicKey: Buffer;
-};
-
-const intToIP = (int: number) => {
-  const part1 = int & 255;
-  const part2 = (int >> 8) & 255;
-  const part3 = (int >> 16) & 255;
-  const part4 = (int >> 24) & 255;
-  return `${part4}.${part3}.${part2}.${part1}`;
-};
-
-const parseGlobalConfig = (data: GlobalConfig): LiteServer[] => {
-  const servers = data.liteservers ?? [];
-  return servers
-    .filter((entry) => entry?.ip && entry?.port && entry?.id?.key)
-    .map((entry) => ({
-      host: `tcp://${intToIP(entry.ip)}:${entry.port}`,
-      publicKey: Buffer.from(entry.id.key, 'base64'),
-    }));
-};
-
-const readConfigFromPath = (path: string): LiteServer[] => {
-  const raw = readFileSync(path, 'utf8');
-  return parseGlobalConfig(JSON.parse(raw));
-};
-
-const readConfigFromUrl = async (url: string): Promise<LiteServer[]> => {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  const data = (await res.json()) as GlobalConfig;
-  return parseGlobalConfig(data);
-};
-
-const parsePoolList = (pool: string): LiteServer[] => {
-  const items = pool.split(',').map((entry) => entry.trim()).filter(Boolean);
-  const servers: LiteServer[] = [];
-  for (const item of items) {
-    const [hostPart, portPart, keyPart] = item.split(':');
-    if (!hostPart || !portPart || !keyPart) continue;
-    const host = hostPart.match(/^\d+$/) ? intToIP(Number(hostPart)) : hostPart;
-    const port = Number(portPart);
-    if (!Number.isFinite(port)) continue;
-    servers.push({
-      host: `tcp://${host}:${port}`,
-      publicKey: Buffer.from(keyPart, 'base64'),
-    });
-  }
-  return servers;
-};
-
-const normalizePoolInput = (network: Network, pool?: string): string | undefined => {
-  if (!pool) return pool;
-  const trimmed = pool.trim();
-  if (
-    network === 'testnet' &&
-    /^https?:\/\/ton\.org\/global\.config\.json\/?$/i.test(trimmed)
-  ) {
-    return 'https://ton.org/testnet-global.config.json';
-  }
-  return trimmed;
-};
-
-const resolveLiteServers = async (network: Network, pool?: string): Promise<LiteServer[]> => {
-  const normalizedPool = normalizePoolInput(network, pool);
-  if (normalizedPool) {
-    if (normalizedPool.startsWith('http://') || normalizedPool.startsWith('https://')) {
-      return await readConfigFromUrl(normalizedPool);
-    }
-    const resolvedPath = resolve(process.cwd(), normalizedPool);
-    if (normalizedPool.endsWith('.json') || existsSync(resolvedPath)) {
-      return readConfigFromPath(normalizedPool.endsWith('.json') ? normalizedPool : resolvedPath);
-    }
-    const list = parsePoolList(normalizedPool);
-    if (list.length > 0) return list;
-  }
-
-  const defaultUrl =
-    network === 'mainnet'
-      ? 'https://ton.org/global.config.json'
-      : 'https://ton.org/testnet-global.config.json';
-  return await readConfigFromUrl(defaultUrl);
-};
-
-const cellToBase64 = (cell: Cell | null | undefined): string | undefined => {
-  if (!cell) return undefined;
-  return cell.toBoc({ idx: false }).toString('base64');
-};
-
-const bytesToBase64 = (value: Buffer | Uint8Array) => Buffer.from(value).toString('base64');
-const bytesToHex = (value: Buffer | Uint8Array) => `0x${Buffer.from(value).toString('hex')}`;
-
-const isHex256 = (value: string) => /^0x[0-9a-fA-F]{64}$/.test(value.trim());
-
-const parseHex256 = (value: string, label: string) => {
-  const trimmed = value.trim();
-  if (!isHex256(trimmed)) {
-    throw new Error(`${label} must be 0x-prefixed 32-byte hex`);
-  }
-  return Buffer.from(trimmed.slice(2), 'hex');
-};
-
-const blockIdToResponse = (id: {
+import { validateRecoveryProofHistory } from './t3ProofBundle';
+import {
+  MAX_HISTORICAL_REPLAY_TRANSACTIONS, replayHistoricalAccount, replayBlockContext,
+  verifiedReplayBlock, type HistoricalReplayStep,
+} from './historicalReplay';
+type LiteBlockId = {
   seqno: number;
   workchain: number;
   shard: string;
   rootHash: Buffer;
   fileHash: Buffer;
-}): TonBlockIdExt => ({
-  seqno: id.seqno,
-  workchain: id.workchain,
-  shard: id.shard,
-  rootHashHex: bytesToHex(id.rootHash),
-  fileHashHex: bytesToHex(id.fileHash),
-});
-
-const decodeOp = (cell: Cell | null | undefined): number | undefined => {
-  if (!cell) return undefined;
-  try {
-    const slice = cell.beginParse();
-    if (slice.remainingBits < 32) return undefined;
-    return Number(slice.loadUint(32));
-  } catch {
-    return undefined;
-  }
 };
 
-const toFriendlyAddress = (addr?: Address | null): string | undefined => {
-  if (!addr) return undefined;
-  return addr.toString({ urlSafe: true, bounceable: true });
-};
+const blockIdsEqual = (actual: LiteBlockId, expected: LiteBlockId) =>
+  actual.seqno === expected.seqno &&
+  actual.workchain === expected.workchain &&
+  actual.shard === expected.shard &&
+  actual.rootHash.equals(expected.rootHash) &&
+  actual.fileHash.equals(expected.fileHash);
 
-const mapMessage = (message: any): RawMessage | undefined => {
-  if (!message) return undefined;
-  const info = message.info;
-  let source: string | undefined;
-  let destination: string | undefined;
-  let value: string | undefined;
-
-  if (info?.type === 'internal') {
-    source = toFriendlyAddress(info.src);
-    destination = toFriendlyAddress(info.dest);
-    value = info.value?.coins?.toString();
-  } else if (info?.type === 'external-in') {
-    destination = toFriendlyAddress(info.dest);
-  } else if (info?.type === 'external-out') {
-    source = toFriendlyAddress(info.src);
+const assertBlockId = (actual: LiteBlockId, expected: LiteBlockId, label: string) => {
+  if (!blockIdsEqual(actual, expected)) {
+    throw new Error(`${label} does not match the requested block.`);
   }
-
-  const body = cellToBase64(message.body);
-  const op = decodeOp(message.body);
-
-  return {
-    source,
-    destination,
-    value,
-    op,
-    body,
-  };
 };
 
 const bigintToBuffer = (value: bigint, bytes = 32) => {
@@ -198,165 +64,120 @@ const bigintToBuffer = (value: bigint, bytes = 32) => {
   return Buffer.concat([Buffer.alloc(bytes - buf.length, 0), buf]);
 };
 
-const formatComputeSkipReason = (reason?: string) => {
-  if (!reason) return 'Compute phase skipped.';
-  return `Compute phase skipped: ${reason}.`;
-};
+export type ChainSourceObserver = { query?(peer: number, ok: boolean, ms: number): void; head?(head: ChainHead): void };
+type SourceOptions = { network: Network; peers: LiteserverPeer[]; logger: Logger; observer?: ChainSourceObserver;
+  engineFactory?: (peer: LiteserverPeer) => LiteEngine };
+type Flight = { controller: AbortController; promise: Promise<unknown>; users: number };
+const liteBlock = (head: ChainHead): LiteBlockId => ({ workchain: head.workchain, shard: head.shard, seqno: head.seqno,
+  rootHash: Buffer.from(head.rootHashHex, 'hex'), fileHash: Buffer.from(head.fileHashHex, 'hex') });
 
-const evaluateStatus = (tx: any): { status: RawTransactionStatus; reason?: string; success: boolean } => {
-  const description = tx.description;
-  if (!description) return { status: 'pending', success: false };
-  if (description.aborted === true) {
-    const computeExit = description.computePhase?.exitCode;
-    const reason =
-      typeof computeExit === 'number'
-        ? `Transaction aborted (VM exit code ${computeExit}).`
-        : 'Transaction aborted by contract.';
-    return { status: 'failed', reason, success: false };
+export function createLiteChainSource(options: SourceOptions): LiteClientDataSource { return new LiteClientDataSource(options); }
+
+export class LiteClientDataSource implements ChainSource {
+  readonly network: Network;
+  private client!: LiteClient;
+  private engine?: BoundedLiteEngine;
+  private closed = false;
+  private readonly heads: HeadTracker;
+  private readonly flights = new Map<string, Flight>();
+  private readonly logger: Logger;
+  constructor(private readonly options: SourceOptions) {
+    if (!options.peers.length) throw new Error('No liteserver endpoints configured');
+    this.network = options.network;
+    this.logger = options.logger;
+    this.heads = new HeadTracker(this.network, options.observer?.head);
   }
-
-  const compute = description.computePhase;
-  if (compute?.type === 'skipped') {
-    return { status: 'failed', reason: formatComputeSkipReason(compute.reason), success: false };
+  private ensure(): BoundedLiteEngine {
+    if (this.closed) throw new ChainReadError('upstream_unavailable');
+    if (!this.engine) {
+      const engines = this.options.peers.map(peer => this.options.engineFactory?.(peer)
+        ?? new AbortableLitePeer(`tcp://${peer.host}:${peer.port}`, peer.publicKey));
+      this.engine = new BoundedLiteEngine(engines, undefined, this.options.observer?.query);
+      this.client = new LiteClient({ engine: this.engine, cacheMap: createLiteClientCache });
+    }
+    return this.engine;
   }
-  if (compute?.type === 'vm' && compute.success === false) {
-    const reason =
-      typeof compute.exitCode === 'number'
-        ? `VM execution failed (exit code ${compute.exitCode}).`
-        : 'VM execution failed.';
-    return { status: 'failed', reason, success: false };
-  }
-
-  const action = description.actionPhase;
-  if (
-    action &&
-    (action.valid === false ||
-      action.success === false ||
-      (typeof action.resultCode === 'number' && action.resultCode !== 0))
-  ) {
-    const reason =
-      typeof action.resultCode === 'number' && action.resultCode !== 0
-        ? `Action phase failed (result code ${action.resultCode}).`
-        : 'Action phase failed.';
-    return { status: 'failed', reason, success: false };
-  }
-
-  const computeOk = compute?.type === 'vm' && compute.success === true;
-  const actionOk = action?.success === true || action?.resultCode === 0;
-  if (computeOk || actionOk) {
-    return { status: 'success', success: true };
-  }
-
-  return { status: 'pending', success: false };
-};
-
-const decodeTransactions = (payload: Buffer): any[] => {
-  const cells = Cell.fromBoc(payload);
-  const parsed: any[] = [];
-  let parseFailures = 0;
-  let lastParseError: Error | null = null;
-
-  for (const cell of cells) {
+  private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> { this.ensure(); return fn(this.client); }
+  private async queryLite<T>(fn: () => Promise<T>): Promise<T> { this.ensure(); return fn(); }
+  private async scope<T>(options: { signal?: AbortSignal; at?: ChainHead }, run: (signal: AbortSignal) => Promise<T>, timeout = 5_000): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new ChainReadError('upstream_timeout')), timeout);
+    const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : [])]);
     try {
-      parsed.push(loadTransaction(cell.beginParse()));
-    } catch (error) {
-      parseFailures += 1;
-      if (error instanceof Error) {
-        lastParseError = error;
-      }
+      if (signal.aborted) throw new ChainReadError('upstream_timeout');
+      return await this.ensure().withOptions({ signal, awaitSeqno: options.at?.seqno }, () => new Promise<T>((resolve, reject) => {
+        const abort = () => { cleanup(); reject(new ChainReadError('upstream_timeout')); };
+        const cleanup = () => signal.removeEventListener('abort', abort);
+        signal.addEventListener('abort', abort, { once: true });
+        Promise.resolve().then(() => run(signal)).then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+      }));
+    } catch (cause) {
+      if (cause instanceof ChainReadError) throw cause;
+      throw new ChainReadError(signal.aborted || (cause instanceof BoundedLiteQueryError && cause.timedOut)
+        ? 'upstream_timeout' : 'upstream_unavailable', { cause });
+    } finally { clearTimeout(timer); }
+  }
+  private shared<T>(key: string, signal: AbortSignal, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (signal.aborted) return Promise.reject(new ChainReadError('upstream_timeout'));
+    let flight = this.flights.get(key);
+    if (!flight) {
+      const controller = new AbortController();
+      const promise = Promise.resolve().then(() => run(controller.signal));
+      flight = { controller, promise, users: 0 }; this.flights.set(key, flight);
+      const current = flight;
+      const cleanup = () => { if (this.flights.get(key) === current) this.flights.delete(key); };
+      void promise.then(cleanup, cleanup);
     }
-  }
-
-  if (parseFailures > 0 && parsed.length === 0 && cells.length > 0) {
-    const suffix = lastParseError?.message ? `: ${lastParseError.message}` : '';
-    throw new Error(`Failed to decode transaction page${suffix}`);
-  }
-
-  return parsed;
-};
-
-const RETRY_ATTEMPTS = 3;
-const RETRY_BASE_DELAY_MS = 200;
-const MASTERCHAIN_INFO_TTL_MS = 1_000;
-type LiteMasterchainRef = Awaited<ReturnType<LiteClient['getMasterchainInfo']>>;
-
-export class LiteClientDataSource implements TonDataSource {
-  network: Network;
-  private client: LiteClient;
-  private masterchainRef: LiteMasterchainRef | null = null;
-  private masterchainRefExpiresAt = 0;
-  private masterchainRefPending: Promise<LiteMasterchainRef> | null = null;
-
-  private constructor(network: Network, client: LiteClient) {
-    this.network = network;
-    this.client = client;
-  }
-
-  static async create(network: Network, pool?: string) {
-    const servers = await resolveLiteServers(network, pool);
-    if (servers.length === 0) {
-      throw new Error('No liteserver endpoints resolved');
-    }
-    const engines: LiteEngine[] = servers.map(
-      (server) =>
-        new LiteSingleEngine({
-          host: server.host,
-          publicKey: server.publicKey,
-        })
-    );
-    const engine = new LiteRoundRobinEngine(engines);
-    const client = new LiteClient({ engine });
-    return new LiteClientDataSource(network, client);
-  }
-
-  private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt += 1) {
-      try {
-        return await fn(this.client);
-      } catch (error) {
-        lastError = error;
-        if (attempt < RETRY_ATTEMPTS - 1) {
-          await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_DELAY_MS * (attempt + 1)));
+    const current = flight; current.users++;
+    return new Promise<T>((resolve, reject) => {
+      let done = false;
+      const finish = (error?: unknown, value?: unknown) => {
+        if (done) return; done = true;
+        signal.removeEventListener('abort', abort);
+        if (--current.users === 0 && this.flights.get(key) === current) {
+          this.flights.delete(key); current.controller.abort(new ChainReadError('upstream_timeout'));
         }
-      }
-    }
-    throw lastError;
+        if (error) reject(error); else resolve(value as T);
+      };
+      const abort = () => finish(new ChainReadError('upstream_timeout'));
+      signal.addEventListener('abort', abort, { once: true });
+      current.promise.then(value => finish(undefined, value), error => finish(error));
+    });
   }
-
-  private async getMasterchainRef(force = false): Promise<LiteMasterchainRef> {
-    const now = Date.now();
-    if (!force && this.masterchainRef && this.masterchainRefExpiresAt > now) {
-      return this.masterchainRef;
-    }
-    if (!force && this.masterchainRefPending) {
-      return this.masterchainRefPending;
-    }
-    const pending = this.call((client) => client.getMasterchainInfo())
-      .then((master) => {
-        this.masterchainRef = master;
-        this.masterchainRefExpiresAt = Date.now() + MASTERCHAIN_INFO_TTL_MS;
-        return master;
-      })
-      .finally(() => {
-        this.masterchainRefPending = null;
+  /** A valid monotonic head remains usable for explicit-block reads even when
+   * current reads must wait for a fresh block or a consistent host clock. */
+  async head(options: { signal?: AbortSignal; current?: boolean } = {}): Promise<ChainHead> {
+    const current = options.current === true;
+    return this.scope(options, async signal => {
+      const cached = this.heads.fresh();
+      if (cached && (!current || this.heads.isCurrent(cached))) return cached;
+      return this.shared(current ? 'head:current' : 'head', signal, async signal => {
+        let accepted: ChainHead | undefined;
+        await this.ensure().query(Functions.liteServer_getMasterchainInfoExt, { kind: 'liteServer.getMasterchainInfoExt', mode: 0 }, {
+          signal, awaitSeqno: this.heads.current()?.seqno, validate: candidate => {
+            const head = this.heads.accept(candidate as Parameters<HeadTracker['accept']>[0]);
+            if (current) {
+              try { this.heads.assertCurrent(head); }
+              catch (cause) { throw new UnusableLiteAnswer(cause); }
+            }
+            accepted = head;
+          },
+        });
+        return accepted!;
       });
-    this.masterchainRefPending = pending;
-    return pending;
+    });
   }
-
-  private async queryLite<T>(fn: () => Promise<T>): Promise<T> {
-    return this.call((_client) => fn());
-  }
-
   private async lookupMasterchainBlock(seqno: number) {
-    return this.queryLite(() =>
+    const block = await this.queryLite(() =>
       this.client.lookupBlockByID({
         workchain: -1,
         shard: '-9223372036854775808',
         seqno,
       })
     );
+    if (block.id.seqno !== seqno) throw new Error('Masterchain lookup returned another sequence number.');
+    freshMasterchainBlock(block.id);
+    return block;
   }
 
   private async getBlockData(block: {
@@ -381,7 +202,7 @@ export class LiteClientDataSource implements TonDataSource {
     );
   }
 
-  private async getStateData(block: {
+  private async getMasterchainConfigProof(block: {
     seqno: number;
     workchain: number;
     shard: string;
@@ -389,8 +210,9 @@ export class LiteClientDataSource implements TonDataSource {
     fileHash: Buffer;
   }) {
     return this.queryLite(() =>
-      this.client.engine.query(Functions.liteServer_getState, {
-        kind: 'liteServer.getState',
+      this.client.engine.query(Functions.liteServer_getConfigAll, {
+        kind: 'liteServer.getConfigAll',
+        mode: 0,
         id: {
           kind: 'tonNode.blockIdExt',
           seqno: block.seqno,
@@ -403,179 +225,208 @@ export class LiteClientDataSource implements TonDataSource {
     );
   }
 
-  private async getBlockProof(
-    knownBlock: {
-      seqno: number;
-      workchain: number;
-      shard: string;
-      rootHash: Buffer;
-      fileHash: Buffer;
-    },
-    targetBlock: {
-      seqno: number;
-      workchain: number;
-      shard: string;
-      rootHash: Buffer;
-      fileHash: Buffer;
-    }
-  ) {
-    return this.queryLite(() =>
-      this.client.engine.query(Functions.liteServer_getBlockProof, {
-        kind: 'liteServer.getBlockProof',
-        mode: 0,
-        knownBlock: {
-          kind: 'tonNode.blockIdExt',
-          seqno: knownBlock.seqno,
-          shard: knownBlock.shard,
-          workchain: knownBlock.workchain,
-          rootHash: knownBlock.rootHash,
-          fileHash: knownBlock.fileHash,
-        },
-        targetBlock: {
-          kind: 'tonNode.blockIdExt',
-          seqno: targetBlock.seqno,
-          shard: targetBlock.shard,
-          workchain: targetBlock.workchain,
-          rootHash: targetBlock.rootHash,
-          fileHash: targetBlock.fileHash,
-        },
-      })
-    );
+  private async readConfigAtBlock(expected: LiteBlockId, signal: AbortSignal, expectedTime?: number): Promise<Cell> {
+    const owned = new AbortController();
+    const combined = AbortSignal.any([signal, owned.signal]);
+    const fail = (error: unknown): never => { owned.abort(error); throw error; };
+    // Drain both physical calls on either failure before releasing this read.
+    const [blockResult, configResult] = await this.ensure().withOptions({ signal: combined, awaitSeqno: expected.seqno }, () =>
+      Promise.allSettled([this.getBlockData(expected).catch(fail), this.getMasterchainConfigProof(expected).catch(fail)]));
+    if (blockResult.status === 'rejected') throw blockResult.reason;
+    if (configResult.status === 'rejected') throw configResult.reason;
+    const blockResponse = blockResult.value, configResponse = configResult.value;
+    assertBlockId(blockResponse.id, expected, 'Config block response');
+    assertBlockId(configResponse.id, expected, 'Config proof response');
+    const block = verifiedReplayBlock(blockResponse.data, expected);
+    const [blockProof] = proofRoots(configResponse.stateProof, 1);
+    if (!blockProof.hash(0).equals(block.hash(0))) throw new Error('Config block proof identity mismatch.');
+    const [state] = proofRoots(configResponse.configProof, 1);
+    return provenConfig(block, state, expected, expectedTime ?? blockHeaderTime(block, expected));
   }
 
-  private extractForwardSignatureSet(
-    proof: any,
-    target: {
-      seqno: number;
-      workchain: number;
-      shard: string;
-      rootHash: Buffer;
-      fileHash: Buffer;
-    }
-  ) {
-    const steps = Array.isArray(proof?.steps) ? proof.steps : [];
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      const step = steps[index];
-      if (!step || step.kind !== 'liteServer.blockLinkForward') continue;
-      const to = step.to;
-      if (
-        to?.seqno !== target.seqno ||
-        to?.workchain !== target.workchain ||
-        to?.shard !== target.shard ||
-        !Buffer.isBuffer(to?.rootHash) ||
-        !Buffer.isBuffer(to?.fileHash)
-      ) {
-        continue;
-      }
-      if (!to.rootHash.equals(target.rootHash) || !to.fileHash.equals(target.fileHash)) {
-        continue;
-      }
-      const signatures = Array.isArray(step.signatures?.signatures) ? step.signatures.signatures : [];
-      return {
-        validatorListHashShort: Number(step.signatures?.validatorSetHash ?? 0),
-        catchainSeqno: Number(step.signatures?.catchainSeqno ?? 0),
-        signatures: signatures.map((signature: any) => ({
-          nodeIdShortHex: bytesToHex(signature.nodeIdShort),
-          signatureHex: bytesToHex(signature.signature),
-        })),
-      };
-    }
-    throw new Error('Failed to locate a forward block-proof step for the target masterchain block.');
+  async getConfig(options: ReadOptions = {}): Promise<{ head: ChainHead; configBoc: string }> {
+    return this.scope(options, async signal => {
+      const head = { ...(options.at ?? await this.head({ signal })) };
+      const expected = liteBlock(head);
+      // Re-resolve the requested masterchain identity. Caller-supplied labels
+      // alone never authenticate config, including a caller-supplied timestamp.
+      const selected = await this.lookupMasterchainBlock(head.seqno);
+      assertBlockId(selected.id, expected, 'Config selected masterchain block');
+      const config = await this.readConfigAtBlock(expected, signal, head.utime);
+      return { head: { ...head }, configBoc: config.toBoc().toString('base64') };
+    });
   }
 
-  private async runGetMethodReader(address: Address, method: string, args: TupleItem[] = []): Promise<TupleReader> {
-    const master = await this.getMasterchainRef();
-    const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
-    const res = await this.call((client) => client.runMethod(address, method, params, master.last));
-    if (res.exitCode !== 0 && res.exitCode !== 1) {
-      throw new Error(`runMethod ${method} failed with exit code ${res.exitCode}`);
-    }
-    const tuple = res.result ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0]) : [];
-    return new TupleReader(tuple);
+  async getAccountState(address: string, options: ReadOptions = {}): Promise<AccountStateResponse> {
+    return this.scope(options, async signal => {
+      const head = options.at ?? await this.head({ signal });
+      const normalized = Address.parse(address).toRawString();
+      return this.shared(`account:${head.seqno}:${head.rootHashHex}:${head.fileHashHex}:${head.utime}:${normalized}`, signal, signal =>
+        this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, () => this.readAccountStateAtBlock(normalized, liteBlock(head), head)));
+    });
   }
 
-  async getMasterchainInfo(): Promise<MasterchainInfo> {
-    const master = await this.call((client) => client.getMasterchainInfoExt());
-    return {
-      seqno: master.last.seqno,
-      timestamp: master.now ?? undefined,
-    };
+  async getRecoveryProofAnchor(address: string, options: ReadOptions = {}): Promise<RecoveryProofAnchor> {
+    return this.scope(options, async signal => {
+      const head = { ...(options.at ?? await this.head({ signal })) }, parsed = Address.parse(address);
+      if (parsed.workChain !== 0) throw new Error('Recovery proofs require a basechain account.');
+      return this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, async () => {
+        const selected = await this.lookupMasterchainBlock(head.seqno);
+        assertBlockId(selected.id, liteBlock(head), 'Recovery selected masterchain block');
+        const state = await this.call(client => client.getAccountStateRaw(parsed, liteBlock(head)));
+        const exact = provenShardAccount(state, head, parsed);
+        if (!exact) throw new Error('Recovery account is absent.');
+        const id = state.shardBlock;
+        return { account: parsed.toRawString(), head, shardBlock: { workchain: id.workchain, shard: id.shard,
+          seqno: id.seqno, rootHashHex: id.rootHash.toString('hex'), fileHashHex: id.fileHash.toString('hex') },
+          masterchainProofBoc: state.shardProof.toString('base64'), accountProofBoc: state.proof.toString('base64'),
+          accountBoc: state.raw.toString('base64'), shardAccountBoc: exact.toBoc().toString('base64') };
+      });
+    });
   }
 
-  async getTonSccpBurnProofMaterial(
-    request: TonSccpBurnProofMaterialRequest
-  ): Promise<TonSccpBurnProofMaterial> {
-    if (request.trustedCheckpointSeqno === undefined || request.trustedCheckpointHashHex === undefined) {
-      throw new Error('trusted checkpoint must be resolved before querying TON proof material.');
-    }
-    const jettonMaster = Address.parse(request.jettonMaster);
-    const trustedCheckpointHash = parseHex256(request.trustedCheckpointHashHex, 'trustedCheckpointHashHex');
-    const trustedCheckpoint = await this.lookupMasterchainBlock(request.trustedCheckpointSeqno);
-    if (!trustedCheckpoint.id.rootHash.equals(trustedCheckpointHash)) {
-      throw new Error('Trusted checkpoint hash does not match the resolved masterchain block.');
-    }
-
-    const targetBlockId =
-      request.targetSeqno !== undefined
-        ? (await this.lookupMasterchainBlock(request.targetSeqno)).id
-        : (await this.getMasterchainRef()).last;
-    if (targetBlockId.seqno < trustedCheckpoint.id.seqno) {
-      throw new Error('Target masterchain block precedes the trusted checkpoint.');
-    }
-
-    const burnRecord = await this.runGetMethod(jettonMaster.toRawString(), 'get_sccp_burn_record', [
-      { type: 'int', value: BigInt(request.messageIdHex) },
-    ]);
-    const burnRecordPresent = Boolean(
-      burnRecord &&
-        burnRecord.exitCode === 0 &&
-        Array.isArray(burnRecord.stack) &&
-        burnRecord.stack.length > 0 &&
-        burnRecord.stack[0]?.type !== 'null'
-    );
-    if (!burnRecordPresent) {
-      throw new Error('Burn record is not available on the jetton master yet.');
-    }
-
-    const [checkpointBlockData, checkpointStateData, targetBlockData, targetStateData, targetProof, accountState] =
-      await Promise.all([
-        this.getBlockData(trustedCheckpoint.id),
-        this.getStateData(trustedCheckpoint.id),
-        this.getBlockData(targetBlockId),
-        this.getStateData(targetBlockId),
-        this.getBlockProof(trustedCheckpoint.id, targetBlockId),
-        this.call((client) => client.getAccountStateRaw(jettonMaster, targetBlockId)),
-      ]);
-
-    const shardBlockId = accountState.shardBlock;
-    const [shardBlockData, shardStateData] = await Promise.all([
-      this.getBlockData(shardBlockId),
-      this.getStateData(shardBlockId),
-    ]);
-
-    return {
-      trustedCheckpoint: blockIdToResponse(trustedCheckpoint.id),
-      targetMasterchain: blockIdToResponse(targetBlockId),
-      targetSignatures: this.extractForwardSignatureSet(targetProof, targetBlockId),
-      targetShard: blockIdToResponse(shardBlockId),
-      checkpointBlockBoc: bytesToBase64(checkpointBlockData.data),
-      checkpointStateBoc: bytesToBase64(checkpointStateData.data),
-      targetBlockBoc: bytesToBase64(targetBlockData.data),
-      targetStateBoc: bytesToBase64(targetStateData.data),
-      shardBlockBoc: bytesToBase64(shardBlockData.data),
-      shardStateBoc: bytesToBase64(shardStateData.data),
-      burnRecordPresent,
-    };
+  async getRecoveryProofHistory(anchor: ChainHead, options: ReadOptions = {}): Promise<RecoveryProofHistory> {
+    return this.scope(options, async signal => {
+      const head = { ...(options.at ?? await this.head({ signal })) };
+      if (anchor.seqno >= head.seqno) throw new Error('Recovery historical anchor is not earlier than the current head.');
+      return this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, async () => {
+        const selected = await this.lookupMasterchainBlock(head.seqno);
+        assertBlockId(selected.id, liteBlock(head), 'Recovery current masterchain block');
+        const old = await this.lookupMasterchainBlock(anchor.seqno);
+        assertBlockId(old.id, liteBlock(anchor), 'Recovery historical masterchain block');
+        const response = await this.queryLite(() => this.client.engine.query(Functions.liteServer_getBlockProof, {
+          kind: 'liteServer.getBlockProof', mode: 1,
+          knownBlock: { kind: 'tonNode.blockIdExt', ...liteBlock(head) },
+          targetBlock: { kind: 'tonNode.blockIdExt', ...liteBlock(anchor) },
+        }));
+        assertBlockId(response.from, liteBlock(head), 'Recovery history source');
+        assertBlockId(response.to, liteBlock(anchor), 'Recovery history target');
+        if (!response.complete || response.steps.length !== 1 || response.steps[0].kind !== 'liteServer.blockLinkBack') {
+          throw new Error('Direct original prev_blocks path is unavailable.');
+        }
+        const link = response.steps[0];
+        assertBlockId(link.from, liteBlock(head), 'Recovery history link source');
+        assertBlockId(link.to, liteBlock(anchor), 'Recovery history link target');
+        const [block] = proofRoots(link.proof, 1), [state] = proofRoots(link.stateProof, 1);
+        const result = { head, anchor: { ...anchor }, blockBoc: block.toBoc().toString('base64'), stateBoc: state.toBoc().toString('base64') };
+        validateRecoveryProofHistory(result);
+        return result;
+      });
+    });
   }
-
-  async getAccountState(address: string): Promise<AccountStateResponse> {
-    const master = await this.getMasterchainRef();
+  async read(calls: FreshReadCall[], options: ReadOptions = {}) {
+    return this.scope(options, async signal => {
+      const head = options.at ?? await this.head({ signal, current: true });
+      const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
+        if (ownedSignal.aborted) throw new ChainReadError('upstream_timeout');
+        const address = Address.parse(call.address).toRawString();
+        if (call.kind === 'account') return { kind: 'account', address, state: await this.getAccountState(address, { at: head, signal: ownedSignal }) };
+        return { kind: 'getter', address, ...await this.runGetMethod(address, call.method, call.args, { at: head, signal: ownedSignal }) };
+      }, signal);
+      // Unpinned reads are current preflight batches. Explicit historical/cycle
+      // boundaries retain their original block identity without wall-time reuse.
+      if (!options.at) this.heads.assertCurrent(head);
+      return { head, results };
+    }, 18_000);
+  }
+  async getAccountStateAtSeqno(address: string, seqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
+    return this.scope(options, async signal => this.ensure().withOptions({ signal, awaitSeqno: seqno }, async () => {
+      if (!Number.isSafeInteger(seqno) || seqno < 1) throw new Error('Invalid archival block');
+      const header = await this.lookupMasterchainBlock(seqno);
+      const proof = Cell.fromBoc(header.headerProof);
+      if (proof.length !== 1 || proof[0].type !== CellType.MerkleProof) throw new Error('Invalid archival header proof');
+      const head = { ...freshMasterchainBlock(header.id), utime: blockHeaderTime(proof[0].refs[0], header.id) };
+      return this.ensure().withOptions({ signal, awaitSeqno: seqno }, () => this.readAccountStateAtBlock(address, header.id, head));
+    }));
+  }
+  async getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
+    return this.scope(options, signal => this.ensure().withOptions({ signal, awaitSeqno: containingSeqno },
+      () => this.readAccountStateAtTransaction(address, cursor, containingSeqno, signal)), 30_000);
+  }
+  private async readAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, signal: AbortSignal): Promise<AccountStateResponse> {
+    if (!Number.isSafeInteger(containingSeqno) || containingSeqno < 1 ||
+        !/^[1-9][0-9]*$/.test(cursor.lt)) throw new Error('Invalid exact archival cursor.');
     const parsed = Address.parse(address);
-    const state = await this.call((client) => client.getAccountState(parsed, master.last));
-    const lastTx = state.lastTx;
-    const account = state.state ?? null;
+    if (parsed.workChain !== 0) throw new Error('Intermediate replay supports basechain accounts only.');
+    const beforeHeader = await this.lookupMasterchainBlock(containingSeqno - 1);
+    const beforeBlock = beforeHeader.id;
+    const [beforeHeaderRoot] = proofRoots(beforeHeader.headerProof, 1);
+    const beforeHead = { ...freshMasterchainBlock(beforeBlock), utime: blockHeaderTime(beforeHeaderRoot, beforeBlock) };
+    const before = await this.call((client) => client.getAccountStateRaw(parsed, beforeBlock));
+    const original = provenShardAccount(before, beforeHead, parsed);
+    // An absent dictionary entry has no serialized ShardAccount to preserve.
+    // Only authenticated absence permits the canonical empty genesis boundary.
+    const predecessor = original ?? beginCell().storeRef(beginCell().storeBit(false).endCell())
+      .storeUint(0, 256).storeUint(0, 64).endCell();
+    const beforePointer = loadShardAccount(predecessor.beginParse());
+    if (beforePointer.lastTransactionLt >= BigInt(cursor.lt)) {
+      throw new Error('Historical predecessor is not before the requested cursor.');
+    }
+    const containingHeader = await this.lookupMasterchainBlock(containingSeqno);
+    const [containingRoot] = proofRoots(containingHeader.headerProof, 1);
+    const containingHead = { ...freshMasterchainBlock(containingHeader.id), utime: blockHeaderTime(containingRoot, containingHeader.id) };
+    const containing = await this.call(client => client.getAccountStateRaw(parsed, containingHeader.id));
+    provenShardAccount(containing, containingHead, parsed);
+    const hash = /^[0-9a-f]{64}$/i.test(cursor.hash)
+      ? Buffer.from(cursor.hash, 'hex') : Buffer.from(cursor.hash, 'base64');
+    if (hash.length !== 32) throw new Error('Invalid exact archival hash.');
+    const page = await this.call((client) => client.getAccountTransactions(
+      parsed, cursor.lt, hash, MAX_HISTORICAL_REPLAY_TRANSACTIONS));
+    const roots = Cell.fromBoc(page.transactions);
+    if (!roots.length || roots.length !== page.ids.length || !roots[0].hash().equals(hash)) {
+      throw new Error('Historical transaction page identity mismatch.');
+    }
+    const selected: { transaction: Cell; blockId: LiteBlockId }[] = [];
+    let complete = false;
+    for (let index = 0; index < roots.length; index++) {
+      const tx = loadTransaction(roots[index].beginParse());
+      // Until an explicit shard ancestry proof is available, support only the
+      // block selected by this authenticated masterchain account boundary.
+      // Transaction-page block labels alone are not proof of chain membership.
+      assertBlockId(page.ids[index], containing.shardBlock, 'Historical transaction containing shard block');
+      selected.push({ transaction: roots[index], blockId: page.ids[index] });
+      if (tx.prevTransactionLt === beforePointer.lastTransactionLt && tx.prevTransactionHash === beforePointer.lastTransactionHash) {
+        complete = true; break;
+      }
+    }
+    if (!complete) throw new Error('Historical transaction replay exceeds its bounded predecessor segment.');
+    const contexts = new Map<string, { block: Cell; config: Cell }>();
+    const steps: HistoricalReplayStep[] = [];
+    for (const item of selected.reverse()) {
+      if (signal.aborted) throw new ChainReadError('upstream_timeout');
+      const key = item.blockId.rootHash.toString('hex');
+      let context = contexts.get(key);
+      if (!context) {
+        const blockResponse = await this.getBlockData(item.blockId);
+        assertBlockId(blockResponse.id, item.blockId, 'Historical shard block');
+        const block = verifiedReplayBlock(blockResponse.data, item.blockId);
+        const { masterRef } = replayBlockContext(block);
+        const config = await this.readConfigAtBlock(masterRef, signal);
+        context = { block, config };
+        contexts.set(key, context);
+      }
+      steps.push({ transaction: item.transaction, ...context });
+    }
+    const state = await replayHistoricalAccount({ address: parsed, cursor, predecessor, steps });
+    const final = selected.at(-1)!;
+    const genUtime = blockHeaderTime(steps.at(-1)!.block, final.blockId);
+    return Object.freeze({ ...state, sourceMasterchain: Object.freeze({ ...containingHead }), anchor: { shardBlock: { workchain: final.blockId.workchain, shard: final.blockId.shard,
+      seqno: final.blockId.seqno, rootHashHex: final.blockId.rootHash.toString('hex'), fileHashHex: final.blockId.fileHash.toString('hex') }, genUtime } });
+  }
+
+  private async readAccountStateAtBlock(address: string, block: LiteBlockId, head: ChainHead): Promise<AccountStateResponse> {
+    const parsed = Address.parse(address);
+    const state = await this.call(client => client.getAccountStateRaw(parsed, block));
+    assertBlockId(state.block, block, 'Account masterchain block');
+    const anchor = await readAccountAnchor(state, head, shard => this.client.getBlockHeader(shard), address);
+    const exact = provenShardAccount(state, head, parsed);
+    const proven = exact ? loadShardAccount(exact.beginParse()) : null;
+    const lastTx = proven ? { lt: proven.lastTransactionLt, hash: proven.lastTransactionHash } : null;
+    if (lastTx && (lastTx.lt === 0n) !== (lastTx.hash === 0n)) throw new Error('Invalid proven account transaction pointer.');
+    const account = proven?.account ?? null;
     const storageState = account?.storage?.state;
     const storageType = storageState?.type;
+    if (account && !['uninit', 'active', 'frozen'].includes(storageType ?? '')) throw new Error('Invalid current lite account storage state.');
     const accountState =
       !account || storageType === 'uninit'
         ? ('uninitialized' as const)
@@ -586,7 +437,11 @@ export class LiteClientDataSource implements TonDataSource {
     const codeCell = activeState?.code ?? null;
     const dataCell = activeState?.data ?? null;
     return {
-      balance: state.balance.coins.toString(),
+      anchor,
+      sourceMasterchain: Object.freeze({ ...head }),
+      balance: account?.storage.balance.coins.toString() ?? '0',
+      shardAccountBoc: exact?.toBoc().toString('base64'),
+      ...(exact === null ? { provenAbsent: true as const } : {}),
       lastTxLt: lastTx?.lt?.toString(),
       lastTxHash: lastTx ? bigintToBuffer(lastTx.hash).toString('base64') : undefined,
       accountState,
@@ -595,117 +450,79 @@ export class LiteClientDataSource implements TonDataSource {
     };
   }
 
-  async getTransactions(address: string, limit: number, lt?: string, hash?: string): Promise<RawTransaction[]> {
+  async getTransactions(address: string, limit: number, lt?: string, hash?: string, options: { signal?: AbortSignal } = {}): Promise<RawTransaction[]> {
+    return this.scope(options, signal => this.readTransactions(address, limit, lt, hash, signal));
+  }
+  private async readTransactions(address: string, limit: number, lt: string | undefined, hash: string | undefined, signal: AbortSignal): Promise<RawTransaction[]> {
     const parsed = Address.parse(address);
     let cursorLt = lt;
     let cursorHash = hash;
 
     if (!cursorLt || !cursorHash) {
-      const master = await this.getMasterchainRef();
-      const state = await this.call((client) => client.getAccountState(parsed, master.last));
-      const lastTx = state.lastTx;
-      if (!lastTx) return [];
-      cursorLt = lastTx.lt.toString();
-      cursorHash = bigintToBuffer(lastTx.hash).toString('base64');
+      const state = await this.getAccountState(address, { signal });
+      if (!state.lastTxLt || state.lastTxLt === '0') return [];
+      cursorLt = state.lastTxLt; cursorHash = state.lastTxHash!;
     }
 
     const txs = await this.call((client) =>
       client.getAccountTransactions(parsed, cursorLt, Buffer.from(cursorHash, 'base64'), limit)
     );
 
-    const parsedTxs = decodeTransactions(txs.transactions);
-
-    return parsedTxs.map((tx) => {
-      const statusInfo = evaluateStatus(tx);
-      return {
-        lt: tx.lt.toString(),
-        hash: tx.hash().toString('base64'),
-        utime: tx.now,
-        success: statusInfo.success,
-        status: statusInfo.status,
-        reason: statusInfo.reason,
-        inMessage: mapMessage(tx.inMessage ? tx.inMessage : undefined),
-        outMessages: Array.from(tx.outMessages.values()).map(mapMessage).filter(Boolean) as RawMessage[],
-      };
-    });
+    const cells = Cell.fromBoc(txs.transactions);
+    if (txs.ids.length !== cells.length || txs.ids.some((block) => block.workchain !== parsed.workChain)) {
+      throw new Error('Transaction evidence block identities do not match the requested account workchain.');
+    }
+    const page = cells.map((cell) => decodeOriginalTransaction(cell, parsed));
+    if (page.length === 0) return [];
+    return assertOriginalTransactionPage(page, parsed, { lt: BigInt(cursorLt).toString(), hash: Buffer.from(cursorHash, 'base64').toString('base64') });
   }
 
-  async runGetMethod(
-    address: string,
+  async runGetMethod(address: string, method: string, args: TupleItem[] = [], options: ReadOptions = {}): Promise<{ exitCode: number; stack: TupleItem[] }> {
+    try {
+      return await this.scope(options, async signal => {
+        const head = options.at ?? await this.head({ signal }), target = Address.parse(address);
+        const encoded = serializeTuple(args).toBoc({ idx: false }).toString('base64');
+        return this.shared(`getter:${head.rootHashHex}:${target.toRawString()}:${method}:${encoded}`, signal, signal =>
+          this.ensure().withOptions({ signal, awaitSeqno: head.seqno }, () => this.runGetMethodAtBlock(target, method, args, liteBlock(head))));
+      });
+    } catch (error) {
+      this.logger.warn('liteserver getter unavailable', { address, method, error: errorDiagnostic(error) });
+      throw error;
+    }
+  }
+  private async runGetMethodAtBlock(
+    target: Address,
     method: string,
-    args: TupleItem[] = []
-  ): Promise<{ exitCode: number; stack: TupleItem[] } | null> {
-    try {
-      const target = Address.parse(address);
-      const master = await this.getMasterchainRef();
-      const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
-      const res = await this.call((client) => client.runMethod(target, method, params, master.last));
-      const exitCode = typeof res?.exitCode === 'number' ? res.exitCode : Number.NaN;
-      if (!Number.isFinite(exitCode)) return null;
-      const stack =
-        res?.result && typeof res.result === 'string'
-          ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0])
-          : [];
-      return {
-        exitCode,
-        stack
-      };
-    } catch {
-      return null;
-    }
+    args: TupleItem[],
+    block: LiteBlockId
+  ): Promise<{ exitCode: number; stack: TupleItem[] }> {
+    const params = args.length > 0 ? serializeTuple(args).toBoc({ idx: false, crc32: false }) : Buffer.alloc(0);
+    const res = await this.call((client) => client.runMethod(target, method, params, block));
+    assertBlockId(res.block, block, `Getter ${method} masterchain block`);
+    if (!Number.isSafeInteger(res.exitCode) || (res.result !== null && typeof res.result !== 'string'))
+      throw new FreshReadUnavailableError();
+    const exitCode = typeof res?.exitCode === 'number' ? res.exitCode : Number.NaN;
+    if (!Number.isSafeInteger(exitCode)) throw new ChainReadError('upstream_unavailable');
+    const stack =
+      res?.result && typeof res.result === 'string'
+        ? parseTuple(Cell.fromBoc(Buffer.from(res.result, 'base64'))[0])
+        : [];
+    return {
+      exitCode,
+      stack
+    };
   }
 
-  async getJettonBalance(owner: string, master: string): Promise<{ wallet: string; balance: string } | null> {
-    try {
-      const ownerAddr = Address.parse(owner);
-      const masterAddr = Address.parse(master);
-      const args: TupleItem[] = [{ type: 'slice', cell: beginCell().storeAddress(ownerAddr).endCell() }];
-      let walletAddr: Address | null = null;
-      for (const method of ['wallet_address', 'get_wallet_address']) {
-        try {
-          const walletReader = await this.runGetMethodReader(masterAddr, method, args);
-          walletAddr = walletReader.readAddress();
-          break;
-        } catch {
-          continue;
-        }
-      }
-      if (!walletAddr) return null;
-      let balance: bigint | null = null;
-      for (const method of ['wallet_data', 'get_wallet_data']) {
-        try {
-          const balanceReader = await this.runGetMethodReader(walletAddr, method);
-          balance = balanceReader.readBigNumber();
-          break;
-        } catch {
-          continue;
-        }
-      }
-      if (balance === null) return null;
-      return {
-        wallet: walletAddr.toString({ urlSafe: true, bounceable: true }),
-        balance: balance.toString(),
-      };
-    } catch {
-      return null;
-    }
+  async sendMessage(boc: Buffer, options: { signal?: AbortSignal } = {}): Promise<void> {
+    await this.scope(options, async () => { await this.client.sendMessage(boc); });
   }
-
-  async getJettonMetadata(master: string) {
-    try {
-      const masterAddr = Address.parse(master);
-      const reader = await this.runGetMethodReader(masterAddr, 'get_jetton_data');
-      reader.readBigNumber();
-      reader.readBoolean();
-      reader.readAddressOpt();
-      const content = reader.readCell();
-      return parseJettonMetadata(content);
-    } catch {
-      return null;
-    }
+  health() {
+    const peers = this.engine?.health() ?? this.options.peers.map((_, index) => ({ index, ready: false, open: false, failures: 0, latencyMs: null }));
+    return { peersConfigured: peers.length, peersReady: peers.filter(peer => peer.ready && !peer.open).length, head: this.heads.current(), peers };
   }
-
   async close(): Promise<void> {
-    // lite client has no explicit close
+    if (this.closed) return; this.closed = true;
+    for (const flight of this.flights.values()) flight.controller.abort(new ChainReadError('upstream_unavailable'));
+    this.flights.clear(); this.engine?.close();
   }
 }

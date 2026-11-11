@@ -1,0 +1,6 @@
+{
+  "source": "output/additional-review-20260914/indexer/lp-reused-query/dlmm-liquidity-settlements.json",
+  "sha256": "8db746cc33e02fcb811cc94d24502c0776657f0b171303354a5299128b682bb3",
+  "format": "gzip of byte-identical original Sandbox fixture; no transaction or archive edits",
+  "scope": "Two independent successful same-owner, same-bin, same-business-query deposits; all original raw BOCs and pool/wallet boundaries retained."
+}

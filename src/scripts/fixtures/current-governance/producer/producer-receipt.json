@@ -1,0 +1,36 @@
+{
+  "schema": "tonswap-capture-producer-v1",
+  "producer": "governance",
+  "suite": "tests/system/ReleaseGovernance.spec.ts",
+  "tests": 2,
+  "captureDirectory": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/.local/worktrees/current-governance-capture/.local/state/governance-v1",
+  "exitCode": 0,
+  "runtime": {
+    "node": "v22.23.3",
+    "tolk": "1.5.0",
+    "sandbox": "0.42.0"
+  },
+  "logSha256": "d141fd2db1ea5155534e256e9af99fcb689dec68af99cd5b8ff5344307938887",
+  "build": {
+    "file": "build-binding.json",
+    "sha256": "894351ddc414ee5bf71259e56ad7180d399ef47f01489795af21131c257649d2",
+    "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+    "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d"
+  },
+  "compiled": {
+    "Governance": {
+      "file": "current-compiled/Governance.json",
+      "sha256": "9f4e12b3d17bab6b4915e6006d771f5704632a168d94546a08419e40ab29dd12",
+      "codeHash": "066334981f9f2a287abcf4e640832d0d136311ec2daffb82900c0f48d3cc7226",
+      "boc": "compiler/Governance.boc",
+      "bocSha256": "744fb4baa9db6c2b3f2b00fd040356da0f4eee9fa7b4ea3bc5029bdfb71d544b"
+    }
+  },
+  "artifacts": {
+    "build-binding.json": "894351ddc414ee5bf71259e56ad7180d399ef47f01489795af21131c257649d2",
+    "case-01.json": "bf3205aca6c1d79e4db7c859dc437cb992ec4743c211c8be7ea84b274074ea53",
+    "case-02.json": "5cee2857d29f73e9521c7b3c216c785910e72682d233f694875a3c07c7f0b20b",
+    "compiler/Governance.boc": "744fb4baa9db6c2b3f2b00fd040356da0f4eee9fa7b4ea3bc5029bdfb71d544b",
+    "current-compiled/Governance.json": "9f4e12b3d17bab6b4915e6006d771f5704632a168d94546a08419e40ab29dd12"
+  }
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=TONSWAP auxiliary platform API and workers
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tonswap-platform
+Group=tonswap-platform
+WorkingDirectory=/opt/tonswap/tonswap-platform
+EnvironmentFile=/etc/tonswap/platform.env
+ExecStart=/usr/bin/node /opt/tonswap/tonswap-platform/dist/main.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

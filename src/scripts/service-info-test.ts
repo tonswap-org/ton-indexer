@@ -2,49 +2,84 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { registerRoutes } from '../api/routes';
 import { IndexerService } from '../indexerService';
+import { runtimeManifestFixture, runtimeMetadataFixture } from './fixtures/runtimeManifest';
+import type { Network } from '../config';
+
+const service = {
+
+  getHealth() { return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 123, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' }; },
+} as IndexerService;
+const capabilityRoutes = {
+  'account-balances': ['GET', '/api/indexer/v1/accounts/:addr/balances'],
+  'account-transactions': ['GET', '/api/indexer/v1/accounts/:addr/txs'],
+  'account-state': ['GET', '/api/indexer/v1/accounts/:addr/state'],
+  'run-get-method': ['POST', '/api/indexer/v1/runGetMethod'],
+  'fresh-read': ['POST', '/api/indexer/v1/readFresh'],
+  'market-candles': ['GET', '/api/indexer/v1/markets/:market/candles'],
+} as const;
 
 async function main() {
-  const app = Fastify();
-  registerRoutes(
-    app,
-    {
-      network: 'mainnet',
-      enableWriteRpc: false
-    },
-    {
-      getHealth() {
-        return { lastMasterSeqno: 123 };
+  for (const network of ['mainnet', 'testnet', 'localnet'] as Network[]) {
+    const metadata = runtimeMetadataFixture(network), runtime = metadata.runtime!, app = Fastify();
+    registerRoutes(app, { network, enableWriteRpc: false }, service, undefined, undefined, undefined, undefined,
+      { T3Hub: runtime.contracts.T3Hub!.address }, metadata);
+    try {
+      const healthResponse = await app.inject('/api/indexer/v1/health'); assert.equal(healthResponse.statusCode, 200);
+      const health = healthResponse.json();
+      const info = (await app.inject('/api/indexer/v1/service-info')).json();
+      assert.equal(info.schemaVersion, 1); assert.equal(info.serviceId, 'test.tonswap.org/api/indexer');
+      assert.equal(info.publicBaseUrl, runtime.services.indexer); assert.equal(info.ecosystem, 'ton');
+      assert.equal(info.chainId, `ton:${network}`); assert.equal(info.network, network); assert.equal(info.readOnly, true);
+      assert.equal(health.serviceId, info.serviceId); assert.equal(health.chainId, info.chainId); assert.equal(health.network, network);
+      assert.equal(health.chain.headSeqno, 123);
+      assert.deepEqual(info.release, { releaseId: runtime.releaseId, manifestHash: runtime.manifestHash });
+      for (const [name, path] of Object.entries(info.endpoints) as [string, string][]) {
+        const method = ['runGetMethod', 'readFresh'].includes(name) ? 'POST' : 'GET';
+        const url = path.replace(/\{([^}]+)\}/g, ':$1');
+        assert(app.hasRoute({ method, url }), `${name} must name a registered ${method} route`);
       }
-    } as IndexerService
-  );
+      assert.deepEqual([...info.capabilities].sort(), Object.keys(capabilityRoutes).sort());
+      for (const capability of info.capabilities as (keyof typeof capabilityRoutes)[]) {
+        const [method, url] = capabilityRoutes[capability];
+        assert(app.hasRoute({ method, url }), `${capability} must have a route`);
+      }
+      const contracts = (await app.inject('/api/indexer/v1/contracts')).json();
+      assert.equal(contracts.network, network); assert.deepEqual(contracts.release, info.release);
+      assert.equal('registry_hash' in contracts, false); assert.equal('release_manifest_hash' in contracts, false);
+      const spec = (await app.inject('/api/indexer/v1/openapi.json')).json();
+      for (const name of ['HealthStatus', 'ServiceInfoResponse']) {
+        assert.equal(spec.components.schemas[name].properties.serviceId.type, 'string');
+        assert.deepEqual(spec.components.schemas[name].properties.serviceId.enum, [info.serviceId]);
+      }
+      assert.equal(spec.components.schemas.ServiceInfoResponse.properties.publicBaseUrl.type, 'string');
+      assert.ok(spec.paths[info.endpoints.readFresh]);
+    } finally { await app.close(); }
+  }
 
-  const healthResponse = await app.inject({ method: 'GET', url: '/api/indexer/v1/health' });
-  assert.equal(healthResponse.statusCode, 200);
-  const health = healthResponse.json();
-  assert.equal(health.serviceId, 'ti.soramitsu.io');
-  assert.equal(health.ecosystem, 'ton');
-  assert.equal(health.chainId, 'ton:mainnet');
-  assert.equal(health.network, 'mainnet');
-  assert.equal(health.lastMasterSeqno, 123);
-
-  const response = await app.inject({ method: 'GET', url: '/api/indexer/v1/service-info' });
-  assert.equal(response.statusCode, 200);
-
-  const body = response.json();
-  assert.equal(body.schemaVersion, 1);
-  assert.equal(body.serviceId, 'ti.soramitsu.io');
-  assert.equal(body.ecosystem, 'ton');
-  assert.equal(body.chainId, 'ton:mainnet');
-  assert.equal(body.publicBaseUrl, 'https://ti.soramitsu.io');
-  assert.equal(body.readOnly, true);
-  assert.ok(body.capabilities.includes('account-transactions'));
-  assert.equal(body.endpoints.transactions, '/api/indexer/v1/accounts/{addr}/txs');
-
-  await app.close();
-  process.stdout.write('service-info ok\n');
+  const runtime = runtimeManifestFixture(), metadata = runtimeMetadataFixture();
+  for (const mismatch of [undefined, { ...metadata, releaseId: 'different-release' },
+    { ...metadata, manifestHash: 'f'.repeat(64) }, { ...metadata, runtime: { ...runtime, network: 'ton:mainnet' as const } },
+    { ...metadata, runtime: { ...runtime, globalId: -239 } }]) {
+    const app = Fastify();
+    // Removed JS object properties cannot restore a standalone or conflicting identity.
+    const poisoned = { network: 'testnet' as const, serviceId: 'unrelated', publicBaseUrl: 'https://unrelated.invalid' };
+    registerRoutes(app, poisoned, service, undefined, undefined, undefined, undefined, {}, mismatch);
+    try {
+      const info = (await app.inject('/api/indexer/v1/service-info')).json();
+      const health = (await app.inject('/api/indexer/v1/health')).json();
+      assert.equal(info.serviceId, null); assert.equal(health.serviceId, null); assert.equal(info.publicBaseUrl, null);
+      assert.equal(info.capabilities.includes('fresh-read'), false); assert.equal('readFresh' in info.endpoints, false);
+      const spec = (await app.inject('/api/indexer/v1/openapi.json')).json();
+      for (const name of ['HealthStatus', 'ServiceInfoResponse']) {
+        assert.equal(spec.components.schemas[name].properties.serviceId.type, 'null');
+        assert.deepEqual(spec.components.schemas[name].properties.serviceId.enum, [null]);
+      }
+      assert.equal(spec.components.schemas.ServiceInfoResponse.properties.publicBaseUrl.type, 'null');
+      const unavailable = await app.inject({ method: 'POST', url: '/api/indexer/v1/readFresh',
+        payload: { calls: [{ kind: 'account', address: runtime.contracts.T3Hub!.address }] } });
+      assert.equal(unavailable.statusCode, 503, 'Unbound or mismatched metadata must never serve fresh reads');
+    } finally { await app.close(); }
+  }
+  console.log('Manifest service identity, advertised routes, exact bound schemas and unavailable identity passed.');
 }
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main().catch(error => { console.error(error); process.exitCode = 1; });

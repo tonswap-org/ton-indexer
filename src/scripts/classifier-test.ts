@@ -20,7 +20,7 @@ const makeBodyBase64 = () => {
 const SWAP_EXECUTION_QUERY_MAGIC = 0xd2n;
 const SWAP_EXECUTION_QUERY_MAGIC_V1 = 0xd1n;
 const SWAP_EXECUTION_MODE_TWAP = 2n;
-const SWAP_TOKEN_CODE_TON = 1n;
+const SWAP_TOKEN_CODE_GRAM = 1n;
 const SWAP_TOKEN_CODE_T3 = 2n;
 
 const encodeSwapExecutionQueryId = (params: {
@@ -92,7 +92,52 @@ const makeJettonTransferWithSwapForwardBodyBase64 = (queryId: bigint) => {
   return cell.toBoc({ idx: false }).toString('base64');
 };
 
-const opcodes = loadOpcodes(undefined);
+const makeJettonNotificationWithSwapForwardBodyBase64 = (queryId: bigint) => {
+  const sender = Address.parseRaw(`0:${'7'.repeat(64)}`);
+  const senderWallet = Address.parseRaw(`0:${'8'.repeat(64)}`);
+  const swapRecipient = Address.parseRaw(`0:${'c'.repeat(64)}`);
+  const swapForward = beginCell()
+    .storeUint(0x53574150, 32)
+    .storeUint(queryId, 64)
+    .storeAddress(swapRecipient)
+    .storeCoins(456n)
+    .storeUint(1, 8)
+    .endCell();
+  return beginCell()
+    .storeUint(0x7362d09c, 32)
+    .storeUint(queryId, 64)
+    .storeCoins(789n)
+    .storeAddress(sender)
+    .storeAddress(senderWallet)
+    .storeCoins(0n)
+    .storeRef(swapForward)
+    .endCell()
+    .toBoc({ idx: false })
+    .toString('base64');
+};
+
+const makeJettonTransferBodyBase64 = (destination: Address, amount: bigint, queryId: bigint) =>
+  beginCell()
+    .storeUint(0x0f8a7ea5, 32)
+    .storeUint(queryId, 64)
+    .storeCoins(amount)
+    .storeAddress(destination)
+    .storeAddress(null)
+    .storeRef(beginCell().endCell())
+    .storeCoins(0n)
+    .storeRef(beginCell().endCell())
+    .endCell()
+    .toBoc({ idx: false })
+    .toString('base64');
+
+const opcodes = loadOpcodes();
+assert.deepEqual([...opcodes.jettonTransfer], [0x0f8a7ea5]);
+assert.deepEqual([...opcodes.jettonNotify], [0x7362d09c]);
+assert.equal(opcodes.jettonTransfer.has(0x7362d09c), false, 'A notification is not a transfer request');
+assert.equal(opcodes.jettonTransfer.has(0x4a544246), false, 'A transfer bounce is not a new transfer request');
+const separateOpcodes = loadOpcodes();
+separateOpcodes.swap.add(0xdeadbeef);
+assert.equal(loadOpcodes().swap.has(0xdeadbeef), false, 'Each decoder receives its own opcode sets');
 const body = makeBodyBase64();
 const swapBody = beginCell()
   .storeUint(0x53574150, 32)
@@ -150,7 +195,7 @@ const twapQueryId = encodeSwapExecutionQueryId({
   twapSlice: 2,
   twapTotal: 5,
   payTokenCode: SWAP_TOKEN_CODE_T3,
-  receiveTokenCode: SWAP_TOKEN_CODE_TON,
+  receiveTokenCode: SWAP_TOKEN_CODE_GRAM,
 });
 const swapViaJettonTx: RawTransaction = {
   lt: '3',
@@ -185,7 +230,7 @@ if (swapViaJettonIndexed.ui.detail.kind === 'swap') {
   assert.equal(swapViaJettonIndexed.ui.detail.querySequence, 7777);
   assert.equal(swapViaJettonIndexed.ui.detail.queryNonce, 9);
   assert.equal(swapViaJettonIndexed.ui.detail.payToken, 'T3');
-  assert.equal(swapViaJettonIndexed.ui.detail.receiveToken, 'TON');
+  assert.equal(swapViaJettonIndexed.ui.detail.receiveToken, 'GRAM');
 }
 
 const v1QueryId = encodeSwapExecutionQueryIdV1({ mode: SWAP_EXECUTION_MODE_TWAP, twapSlice: 7, twapTotal: 9 });
@@ -221,6 +266,57 @@ if (swapViaJettonV1Indexed.ui.detail.kind === 'swap') {
   assert.equal(swapViaJettonV1Indexed.ui.detail.twapTotal, 9);
   assert.equal(swapViaJettonV1Indexed.ui.detail.querySequence, 7777);
   assert.equal(swapViaJettonV1Indexed.ui.detail.queryNonce, 9);
+}
+
+const swapViaNotificationTx: RawTransaction = {
+  lt: '5',
+  hash: 'mno',
+  utime: 0,
+  success: true,
+  status: 'success',
+  inMessage: {
+    source: Address.parseRaw(`0:${'7'.repeat(64)}`).toString(),
+    destination: Address.parseRaw(`0:${'8'.repeat(64)}`).toString(),
+    value: '0',
+    op: 0x7362d09c,
+    body: makeJettonNotificationWithSwapForwardBodyBase64(twapQueryId),
+  },
+  outMessages: [
+    {
+      source: Address.parseRaw(`0:${'8'.repeat(64)}`).toString(),
+      destination: Address.parseRaw(`0:${'9'.repeat(64)}`).toString(),
+      value: '0',
+      op: 0x0f8a7ea5,
+      body: makeJettonTransferBodyBase64(
+        Address.parseRaw(`0:${'c'.repeat(64)}`),
+        999n,
+        twapQueryId + 1n
+      ),
+    },
+    {
+      source: Address.parseRaw(`0:${'8'.repeat(64)}`).toString(),
+      destination: Address.parseRaw(`0:${'9'.repeat(64)}`).toString(),
+      value: '0',
+      op: 0x0f8a7ea5,
+      body: makeJettonTransferBodyBase64(Address.parseRaw(`0:${'c'.repeat(64)}`), 555n, twapQueryId),
+    },
+  ],
+};
+const swapViaNotificationIndexed = classifyTransaction(
+  Address.parseRaw(`0:${'8'.repeat(64)}`).toRawString(),
+  swapViaNotificationTx,
+  opcodes
+);
+const swapViaNotificationAction = swapViaNotificationIndexed.actions[0];
+assert.equal(swapViaNotificationAction?.kind, 'swap');
+if (swapViaNotificationAction?.kind === 'swap') {
+  assert.equal(swapViaNotificationAction.amountIn, '789');
+  assert.equal(swapViaNotificationAction.amountOut, undefined, 'Outgoing transfer request is not recipient credit');
+  assert.equal(swapViaNotificationAction.minOut, '456');
+}
+if (swapViaNotificationIndexed.ui.detail.kind === 'swap') {
+  assert.equal(swapViaNotificationIndexed.ui.detail.receiveAmount, undefined);
+  assert.equal(swapViaNotificationIndexed.ui.detail.minimumReceiveAmount, '456');
 }
 
 console.log('classifier ok');

@@ -1,408 +1,798 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { runProductionSmoke } from './production-smoke';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  hashRegistry,
+  hashReleaseManifest,
+  readCanonicalReleaseManifest,
+} from '../config/releaseManifest';
+import {
+  runProductionSmoke,
+  productionSmokeBaseUrl,
+  type ProductionSmokeOptions,
+} from './production-smoke';
+import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 
 type Route = {
   status?: number;
   contentType?: string;
-  headers?: Record<string, string>;
-  delayMs?: number;
   body: unknown;
+  bodyMode?: 'chunked' | 'stall';
+  expectedSearchParams?: Record<string, string>;
+  releaseHeader?: string;
 };
 
 type Routes = Record<string, Route>;
+type ServerOptions = {
+  corsOrigins?: string[];
+  preflightCorsOrigins?: string[];
+  preflightAllowMethods?: string;
+  preflightAllowHeaders?: string;
+  mount?: string;
+  requests?: string[];
+};
+
+const unboundOptions: ProductionSmokeOptions = { allowUnboundRelease: true, expectedServiceId: 'indexer.example', expectedPublicBaseUrl: 'https://indexer.example' };
+const releaseId = runtimeManifestFixture().releaseId;
+const expectedCorsOrigin = 'https://test.tonswap.org';
+const hostileCorsOrigin = 'https://hostile.tonswap.invalid';
+const smokeEnvironmentNames = [
+  'TON_INDEXER_BASE_URL',
+  'TON_INDEXER_SMOKE_TIMEOUT_MS',
+  'TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES',
+  'TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC',
+  'TON_INDEXER_EXPECTED_NETWORK',
+  'TON_INDEXER_EXPECTED_SERVICE_ID',
+  'TON_INDEXER_EXPECTED_PUBLIC_BASE_URL',
+  'TON_INDEXER_EXPECTED_RELEASE_ID',
+  'TON_INDEXER_EXPECTED_REGISTRY_HASH',
+  'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH',
+  'TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH',
+  'TON_INDEXER_EXPECTED_CORS_ORIGIN',
+  'TON_INDEXER_HOSTILE_CORS_ORIGIN',
+] as const;
+
+const address = (value: number) => `0:${value.toString(16).padStart(64, '0')}`;
+const cloneRoutes = (routes: Routes): Routes => JSON.parse(JSON.stringify(routes)) as Routes;
 
 const openApiPaths = () => ({
   '/api/indexer/v1/service-info': {},
-  '/api/indexer/v1/accounts/{addr}/balance': {},
+  '/api/indexer/v1/contracts': {},
   '/api/indexer/v1/accounts/{addr}/balances': {},
-  '/api/indexer/v1/accounts/{addr}/assets': {},
   '/api/indexer/v1/accounts/{addr}/txs': {},
   '/api/indexer/v1/accounts/{addr}/state': {},
+  '/api/indexer/v1/markets/{market}/candles': {},
   '/api/indexer/v1/runGetMethod': {},
-  '/api/indexer/v1/runGetMethods': {},
 });
 
-const validRoutes = (): Routes => ({
+const openApi = () => ({
+  openapi: '3.1.0',
+  info: { title: 'TONSWAP Indexer API', version: '1.0.0' },
+  servers: [{ url: '/' }],
+  paths: openApiPaths(),
+});
+
+const balanceBody = (account: string, network: string, tokens: Array<{root:string;symbol:string;decimals:number}> = []) => ({
+  address: account, network, head_seqno: 123, head_utime: 1700000000, complete: true,
+  assets: [{kind:'native',symbol:'GRAM',status:'ok',balance_raw:'1000000000',decimals:9},
+    ...tokens.map(({ root, symbol, decimals }) => ({kind:'jetton',root,symbol,decimals,wallet:address(900),status:'not_deployed',balance_raw:'0'}))],
+});
+
+const basicRoutes = (): Routes => ({
+  [`/api/indexer/v1/accounts/${address(1)}/balances`]: {body:balanceBody(address(1),'mainnet')},
   '/api/indexer/v1/health': {
     body: {
-      serviceId: 'ti.soramitsu.io',
+      serviceId: 'indexer.example',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
       network: 'mainnet',
-      lastMasterSeqno: 123,
-      indexerLagSec: 0,
-      liteserverPoolStatus: 'ok',
+      chain: {peersConfigured: 2, peersReady: 2, headSeqno: 123, headAgeSec: 1}, ledger: 'ready', disk: 'ok',
     },
   },
   '/api/indexer/v1/service-info': {
     body: {
       schemaVersion: 1,
-      serviceId: 'ti.soramitsu.io',
+      serviceId: 'indexer.example',
       ecosystem: 'ton',
       chainId: 'ton:mainnet',
       network: 'mainnet',
-      publicBaseUrl: 'https://ti.soramitsu.io',
+      publicBaseUrl: 'https://indexer.example',
       readOnly: true,
-      endpoints: {
-        openapi: '/api/indexer/v1/openapi.json',
-      },
+      endpoints: { openapi: '/api/indexer/v1/openapi.json' },
+      release: { releaseId: null, manifestHash: null },
     },
   },
-  '/api/indexer/v1/openapi.json': {
+  '/api/indexer/v1/contracts': {
     body: {
-      openapi: '3.0.3',
-      info: { title: 'TONSWAP Indexer API' },
-      paths: openApiPaths(),
+      network: 'mainnet',
+      count: 1,
+      contracts: { T3Hub: address(1) },
+      release: { releaseId: null, manifestHash: null },
     },
   },
+  '/api/indexer/v1/openapi.json': { body: openApi() },
 });
 
-const withServer = async (routes: Routes, run: (baseUrl: string) => Promise<void>) => {
+const releaseMarkets = () => {
+  const fixture = runtimeManifestFixture();
+  return fixture.spotMarkets.map(spot => ({ ...spot,
+    tokenRoot: fixture.tokens.find(token => token.symbol === spot.symbol)!.root, decimals: 9 }));
+};
+const releaseContracts = (_markets: ReturnType<typeof releaseMarkets>) => Object.fromEntries(
+  Object.entries(runtimeManifestFixture().contracts).map(([role, contract]) => [role, contract!.address])
+);
+const writeReleaseManifest = (
+  root: string,
+  name: string,
+  contracts: Record<string, string>,
+  markets: ReturnType<typeof releaseMarkets>,
+  spots = markets,
+  indexer = 'https://indexer.example/api/indexer',
+) => {
+  const manifest = runtimeManifestFixture({
+    services: { ...runtimeManifestFixture().services, indexer },
+    contracts: Object.fromEntries(Object.entries(contracts).map(([role, address]) => [role, { address, codeHash: runtimeManifestFixture().contracts[role as keyof ReturnType<typeof runtimeManifestFixture>['contracts']]!.codeHash }])),
+    spotMarkets: spots.map(({ symbol, pool, binSpacing, feePips, xDecimals, walletGasX, walletGramX, walletBudgetX }) => ({ symbol, pool, binSpacing, feePips, xDecimals, walletGasX, walletGramX, walletBudgetX })),
+    perpsMarkets: markets.map((market, i) => ({ marketId: i + 1, symbol: market.symbol, pool: market.pool })),
+  });
+  const manifestPath = join(root, name);
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  return { manifest, manifestPath };
+};
+
+const strictFixture = (root: string, comparisonOnly = false, indexer = 'https://indexer.example/api/indexer') => {
+  const markets = releaseMarkets();
+  const contracts = releaseContracts(markets);
+  const { manifest, manifestPath } = writeReleaseManifest(
+    root,
+    `${comparisonOnly ? 'paired-' : ''}${indexer.includes('indexer-r2') ? 'r2-' : ''}${indexer.endsWith('/') ? 'trailing-' : ''}release-manifest.json`,
+    contracts,
+    comparisonOnly ? markets.slice(0, 1) : markets,
+    comparisonOnly ? markets.slice(0, 2) : markets,
+    indexer,
+  );
+  const parsed = readCanonicalReleaseManifest(manifestPath, 'testnet');
+  const routes: Routes = {
+    '/api/indexer/v1/health': {
+      body: {
+        serviceId: `${new URL(indexer).host}${new URL(indexer).pathname.replace(/\/$/, '')}`,
+        ecosystem: 'ton',
+        chainId: 'ton:testnet',
+        network: 'testnet',
+        chain: {peersConfigured: 2, peersReady: 2, headSeqno: 123, headAgeSec: 1}, ledger: 'ready', disk: 'ok',
+      },
+    },
+    '/api/indexer/v1/service-info': {
+      body: {
+        schemaVersion: 1,
+        serviceId: `${new URL(indexer).host}${new URL(indexer).pathname.replace(/\/$/, '')}`,
+        ecosystem: 'ton',
+        chainId: 'ton:testnet',
+        network: 'testnet',
+        publicBaseUrl: indexer,
+        readOnly: true,
+        endpoints: { openapi: '/api/indexer/v1/openapi.json' },
+        release: {
+          releaseId,
+          manifestHash: parsed.manifestHash,
+        },
+      },
+    },
+    '/api/indexer/v1/contracts': {
+      body: {
+        network: 'testnet',
+        count: Object.keys(contracts).length,
+        contracts: parsed.contracts,
+        release: { releaseId, manifestHash: parsed.manifestHash },
+      },
+    },
+    '/api/indexer/v1/openapi.json': { body: openApi() },
+  };
+  routes['/api/indexer/v1/service-info'].releaseHeader = parsed.manifestHash;
+  routes[`/api/indexer/v1/accounts/${parsed.contracts.T3Hub}/balances`] = {body:balanceBody(parsed.contracts.T3Hub!, 'testnet', parsed.runtime.tokens)};
+  for (const [index, market] of parsed.spotMarkets.entries()) {
+    const routePath = `/api/indexer/v1/markets/${encodeURIComponent(market.marketKey)}/candles`;
+    routes[routePath] = {
+      expectedSearchParams: {
+        market_address: market.marketAddress,
+        asset_symbol: market.assetSymbol,
+        quote_symbol: market.quoteSymbol,
+        asset_decimals: String(market.assetDecimals),
+        quote_decimals: String(market.quoteDecimals),
+        interval: '1m',
+        limit: '2',
+      },
+      body: {
+        market_key: market.marketKey,
+        market_address: market.marketAddress,
+        token_root: market.tokenRoot, asset_symbol: market.assetSymbol, quote_symbol: market.quoteSymbol,
+        asset_decimals: market.assetDecimals, quote_decimals: market.quoteDecimals,
+        interval: '1m',
+        from_utime: null,
+        to_utime: null,
+        candle_count: 2,
+        history_complete: true,
+        synced_at: 200,
+        network: 'testnet',
+        candles: [
+          {
+            ts: 120,
+            open: index + 2,
+            high: index + 2,
+            low: index + 2,
+            close: index + 2,
+            volumeBase: 1,
+            volumeQuote: index + 2,
+            tradeCount: 1,
+            sourceTxIds: [`${index + 1}:tx-a`],
+          },
+          {
+            ts: 180,
+            open: index + 3,
+            high: index + 3,
+            low: index + 3,
+            close: index + 3,
+            volumeBase: 1,
+            volumeQuote: index + 3,
+            tradeCount: 1,
+            sourceTxIds: [`${index + 1}:tx-b`],
+          },
+        ],
+      },
+    };
+  }
+  const options: ProductionSmokeOptions = {
+    expectedNetwork: 'testnet',
+    expectedReleaseId: releaseId,
+    expectedReleaseManifestHash: parsed.manifestHash,
+    expectedReleaseManifestPath: manifestPath,
+    expectedCorsOrigin,
+    hostileCorsOrigin,
+  };
+  return { contracts, manifest, manifestPath, markets, options, routes };
+};
+
+const withServer = async (
+  routes: Routes,
+  run: (baseUrl: string) => Promise<void>,
+  options: ServerOptions = {}
+) => {
   const server = createServer((request, response) => {
-    const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-    const route = routes[path];
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const origin = request.headers.origin;
+    options.requests?.push(`${request.method} ${url.pathname}`);
+    if (request.method === 'OPTIONS' && url.pathname === `${options.mount ?? '/api/indexer'}/v1/runGetMethod`) {
+      const preflightOrigins = options.preflightCorsOrigins ?? options.corsOrigins;
+      if (typeof origin === 'string' && preflightOrigins?.includes(origin)) {
+        response.setHeader('access-control-allow-origin', origin);
+        response.setHeader('access-control-allow-credentials', 'true');
+        response.setHeader('access-control-allow-methods', options.preflightAllowMethods ?? 'POST');
+        response.setHeader(
+          'access-control-allow-headers',
+          options.preflightAllowHeaders ?? 'content-type,accept,x-tonswap-release'
+        );
+        response.setHeader('vary', 'Origin');
+      }
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
+    const route = routes[url.pathname];
     if (!route) {
       response.statusCode = 404;
       response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ error: 'not_found' }));
+      response.end(JSON.stringify({ error: 'not found', code: 'not_found' }));
       return;
     }
 
-    const send = () => {
-      if (response.destroyed) return;
-      response.statusCode = route.status ?? 200;
-      response.setHeader('content-type', route.contentType ?? 'application/json');
-      for (const [name, value] of Object.entries(route.headers ?? {})) response.setHeader(name, value);
-      response.end(typeof route.body === 'string' ? route.body : JSON.stringify(route.body));
-    };
-    if (route.delayMs) setTimeout(send, route.delayMs);
-    else send();
+    if (route.releaseHeader) {
+      response.setHeader('x-tonswap-release', route.releaseHeader);
+      response.setHeader('access-control-expose-headers', 'x-tonswap-release');
+    }
+
+    if (route.expectedSearchParams) {
+      const actual = Object.fromEntries([...url.searchParams.entries()].sort());
+      const expected = Object.fromEntries(Object.entries(route.expectedSearchParams).sort());
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        response.statusCode = 400;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ error: 'unexpected_search_parameters' }));
+        return;
+      }
+    }
+    if (typeof origin === 'string' && options.corsOrigins?.includes(origin)) {
+      response.setHeader('access-control-allow-origin', origin);
+      response.setHeader('access-control-allow-credentials', 'true');
+      response.setHeader('vary', 'Origin');
+    }
+    response.statusCode = route.status ?? 200;
+    response.setHeader('content-type', route.contentType ?? 'application/json');
+    const body = typeof route.body === 'string' ? route.body : JSON.stringify(route.body);
+    if (route.bodyMode) {
+      response.write(body);
+      if (route.bodyMode === 'chunked') response.end();
+    } else {
+      response.end(body);
+    }
   });
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address() as AddressInfo;
+  const serverAddress = server.address() as AddressInfo;
   try {
-    await run(`http://127.0.0.1:${address.port}`);
+    await run(`http://127.0.0.1:${serverAddress.port}`);
   } finally {
-    server.closeAllConnections();
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
+      server.closeAllConnections();
     });
   }
+};
+
+const runSmokeCli = async (
+  args: string[],
+  environment: NodeJS.ProcessEnv
+): Promise<{ status: number | null; stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    const child = spawn('npm', ['run', '--silent', 'smoke:production', '--', ...args], {
+      cwd: join(__dirname, '..', '..'),
+      env: environment,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', reject);
+    child.once('close', (status) => resolve({ status, stdout, stderr }));
+  });
+
+const smokeCliEnvironment = (
+  values: Partial<Record<(typeof smokeEnvironmentNames)[number], string>> = {}
+): NodeJS.ProcessEnv => {
+  const environment = { ...process.env };
+  for (const name of smokeEnvironmentNames) delete environment[name];
+  for (const [name, value] of Object.entries(values)) {
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
 };
 
 const assertSmokeRejects = async (
   routes: Routes,
   expected: RegExp,
-  options: Parameters<typeof runProductionSmoke>[1] = {},
+  smokeOptions: ProductionSmokeOptions = unboundOptions,
+  serverOptions: ServerOptions = {}
 ) => {
-  await withServer(routes, async (baseUrl) => {
-    await assert.rejects(() => runProductionSmoke(baseUrl, options), expected);
-  });
+  await withServer(
+    routes,
+    async (baseUrl) => {
+      await assert.rejects(() => runProductionSmoke(baseUrl, smokeOptions), expected);
+    },
+    serverOptions
+  );
 };
 
-const assertSmokeRejectsFetchFailure = async (error: Error, expected: RegExp) => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => {
-    throw error;
-  }) as typeof fetch;
+const withSmokeEnvironment = async (
+  values: Partial<Record<(typeof smokeEnvironmentNames)[number], string>>,
+  run: () => Promise<void>
+) => {
+  const previous = Object.fromEntries(
+    smokeEnvironmentNames.map((name) => [name, process.env[name]])
+  ) as Record<(typeof smokeEnvironmentNames)[number], string | undefined>;
   try {
-    await assert.rejects(() => runProductionSmoke('https://ti.soramitsu.io'), expected);
+    for (const name of smokeEnvironmentNames) delete process.env[name];
+    for (const [name, value] of Object.entries(values)) {
+      if (value !== undefined) process.env[name] = value;
+    }
+    await run();
   } finally {
-    globalThis.fetch = originalFetch;
-  }
-};
-
-const assertSmokeRejectsBeforeFetch = async (baseUrl: string, expected: RegExp) => {
-  const originalFetch = globalThis.fetch;
-  let called = false;
-  globalThis.fetch = (async () => {
-    called = true;
-    throw new Error('fetch should not be called for invalid smoke URL');
-  }) as typeof fetch;
-  try {
-    await assert.rejects(() => runProductionSmoke(baseUrl), expected);
-    assert.equal(called, false);
-  } finally {
-    globalThis.fetch = originalFetch;
+    for (const name of smokeEnvironmentNames) {
+      const value = previous[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 };
 
 const main = async () => {
-  await withServer(validRoutes(), async (baseUrl) => {
-    await runProductionSmoke(baseUrl);
-  });
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'ton-production-smoke-')));
+  await withSmokeEnvironment({}, async () => {
+    assert.throws(() => productionSmokeBaseUrl(undefined), /requires the native manifest/);
+    await assert.rejects(() => runProductionSmoke('http://127.0.0.1:1', { allowUnboundRelease: true }), /explicit expected service identity/);
+    await withServer(basicRoutes(), async (baseUrl) => {
+      await assert.rejects(
+        () => runProductionSmoke(baseUrl),
+        /Release-bound production smoke requires explicit/
+      );
+      await runProductionSmoke(baseUrl, unboundOptions);
+    });
 
-  await assertSmokeRejectsBeforeFetch(
-    'https://operator:secret@ti.soramitsu.io',
-    /TON production smoke URL must not contain credentials/
-  );
-  await assertSmokeRejectsBeforeFetch(
-    'file:///tmp/ton-indexer.json',
-    /TON production smoke URL must use http or https/
-  );
-  await assertSmokeRejectsBeforeFetch(
-    'https://ti.soramitsu.io?token=secret#fragment',
-    /TON production smoke URL must not contain query strings or fragments/
-  );
-  await assertSmokeRejectsBeforeFetch(
-    'http://ti.soramitsu.io',
-    /TON production smoke URL must use HTTPS outside localhost smoke tests/
-  );
-
-  const redirect = validRoutes();
-  redirect['/api/indexer/v1/health'] = {
-    status: 302,
-    headers: { location: '/redirect-target?secret=must-not-leak' },
-    body: 'redirecting',
-  };
-  redirect['/redirect-target'] = validRoutes()['/api/indexer/v1/health'];
-  await assertSmokeRejects(
-    redirect,
-    /refused redirect HTTP 302; production smoke redirects are forbidden/,
-  );
-
-  const slowHealth = validRoutes();
-  slowHealth['/api/indexer/v1/health'].delayMs = 200;
-  await assertSmokeRejects(
-    slowHealth,
-    /request .*timed out after 25ms.*Production routing must serve the TON indexer contract/,
-    { timeoutMs: 25 },
-  );
-
-  const startedAt = Date.now();
-  await assert.rejects(
-    () => runProductionSmoke('https://ti.soramitsu.io', {
-      timeoutMs: 25,
-      fetchImpl: async () => new Promise<Response>(() => undefined),
-    }),
-    /timed out after 25ms/,
-  );
-  assert.ok(Date.now() - startedAt < 500, 'a non-cooperative fetch must still be deadline-bounded');
-
-  const oversizedHealth = validRoutes();
-  oversizedHealth['/api/indexer/v1/health'].body = {
-    ...(oversizedHealth['/api/indexer/v1/health'].body as Record<string, unknown>),
-    padding: 'x'.repeat(512),
-  };
-  await assertSmokeRejects(
-    oversizedHealth,
-    /response exceeded the 128-byte limit/,
-    { maxResponseBytes: 128 },
-  );
-
-  for (const contentType of [
-    'text/application/json',
-    'application/jsonp',
-    'application/json, text/html',
-  ]) {
-    const misleadingContentType = validRoutes();
-    misleadingContentType['/api/indexer/v1/health'].contentType = contentType;
-    await assertSmokeRejects(misleadingContentType, /did not return JSON\. Content-Type:/);
-  }
-
-  const structuredJson = validRoutes();
-  structuredJson['/api/indexer/v1/health'].contentType = 'application/health+json; charset="utf-8"';
-  await withServer(structuredJson, async (baseUrl) => runProductionSmoke(baseUrl));
-
-  const solswapHealth = validRoutes();
-  solswapHealth['/api/indexer/v1/health'].body = { ok: true };
-  await assertSmokeRejects(solswapHealth, /TI production routing points at a Solswap indexer contract/);
-
-  const genericHealth = validRoutes();
-  genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
-  await assertSmokeRejects(genericHealth, /TI production routing does not expose the TON health contract/);
-
-  const networkError = new TypeError('fetch failed', {
-    cause: Object.assign(new Error('getaddrinfo ENOTFOUND ti.soramitsu.io'), {
-      code: 'ENOTFOUND',
-      syscall: 'getaddrinfo',
-      hostname: 'ti.soramitsu.io',
-    }),
-  });
-  await assertSmokeRejectsFetchFailure(
-    networkError,
-    /\/api\/indexer\/v1\/health request to https:\/\/ti\.soramitsu\.io\/api\/indexer\/v1\/health failed: fetch failed; cause: getaddrinfo ENOTFOUND ti\.soramitsu\.io; code=ENOTFOUND; syscall=getaddrinfo; hostname=ti\.soramitsu\.io.*Production routing must serve the TON indexer contract at ti\.soramitsu\.io/
-  );
-
-  const secretTransportError = new TypeError(
-    'fetch failed password=transport-password',
-    {
-      cause: new Error(
-        `upstream https://operator:transport-pass@ti.soramitsu.io/?api_key=transport-key Authorization: Bearer transport-bearer ${'x'.repeat(2_000)}`,
-      ),
-    },
-  );
-  await assert.rejects(
-    () => runProductionSmoke('https://ti.soramitsu.io', {
-      fetchImpl: async () => { throw secretTransportError; },
-    }),
-    (error: unknown) => {
-      const diagnostic = String(error);
-      assert.match(diagnostic, /<redacted>/);
-      for (const secret of ['transport-password', 'transport-pass', 'transport-key', 'transport-bearer']) {
-        assert.doesNotMatch(diagnostic, new RegExp(secret));
+    const healthPath = '/api/indexer/v1/health';
+    assert.throws(() => productionSmokeBaseUrl('http://indexer.example'), /requires HTTPS/);
+    await assertSmokeRejects({ [healthPath]: { status: 302, body: '' } }, /health refused redirect HTTP 302/);
+    await withSmokeEnvironment({ TON_INDEXER_SMOKE_TIMEOUT_MS: '100' }, async () => {
+      await assertSmokeRejects({ [healthPath]: { body: '{', bodyMode: 'stall' } }, /health timed out after 100ms/);
+    });
+    await withSmokeEnvironment({ TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES: '128' }, async () => {
+      for (const bodyMode of [undefined, 'chunked'] as const) {
+        await assertSmokeRejects({ [healthPath]: { body: 'é'.repeat(65), bodyMode } }, /health response exceeded the 128-byte limit/);
       }
-      assert.ok(diagnostic.length < 1_000, 'transport diagnostics must stay bounded');
-      return true;
-    },
-  );
+    });
+    await withSmokeEnvironment({ TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC: '10' }, async () => {
+      for (const headAgeSec of [-6, 11]) {
+        const stale = basicRoutes();
+        (stale[healthPath].body as { chain: { headAgeSec: number } }).chain.headAgeSec = headAgeSec;
+        await assertSmokeRejects(stale, /head age must be between 0 and 10/);
+      }
+    });
+    const invalidHead = basicRoutes();
+    (invalidHead[healthPath].body as { chain: { headSeqno: number } }).chain.headSeqno = Number.MAX_SAFE_INTEGER + 1;
+    await assertSmokeRejects(invalidHead, /positive safe integer head sequence/);
 
-  const oldDeployedHealth = validRoutes();
-  oldDeployedHealth['/api/indexer/v1/health'].body = {
-    lastMasterSeqno: 123,
-    indexerLagSec: 0,
-    liteserverPoolStatus: 'ok',
-  };
-  await assertSmokeRejects(
-    oldDeployedHealth,
-    /health serviceId must be ti\.soramitsu\.io; received <missing>.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
-  );
+    const nativeFetch = globalThis.fetch;
+    try {
+      const cause = Object.assign(new Error('private transport detail'), { code: 'ECONNREFUSED' });
+      globalThis.fetch = async () => { throw new TypeError('private fetch detail', { cause }); };
+      await assert.rejects(() => runProductionSmoke('http://127.0.0.1', unboundOptions),
+        { message: `${healthPath} request failed (ECONNREFUSED).` });
+    } finally {
+      globalThis.fetch = nativeFetch;
+    }
+    for (const [name, value] of [
+      ['TON_INDEXER_SMOKE_TIMEOUT_MS', '0'], ['TON_INDEXER_SMOKE_MAX_RESPONSE_BYTES', '5242881'],
+      ['TON_INDEXER_SMOKE_MAX_HEALTH_LAG_SEC', '3601'],
+    ] as const) {
+      await withSmokeEnvironment({ [name]: value }, async () => {
+        await assert.rejects(() => runProductionSmoke('http://127.0.0.1:1', unboundOptions), new RegExp(name));
+      });
+    }
+    for (const [contentType, reason] of [
+      ['text/application/json', /did not return JSON/], ['application/json', /returned invalid JSON/],
+      ['application/json; charset=utf-8, text/html', /did not return JSON/],
+      ['application/json; broken', /did not return JSON/],
+    ] as const) {
+      await withServer({ [healthPath]: { body: 'private-upstream-body', contentType } }, async baseUrl => {
+        await assert.rejects(() => runProductionSmoke(baseUrl, unboundOptions), (error: Error) => {
+          assert.match(error.message, reason);
+          assert.match(error.message, /sha256=[0-9a-f]{64}/);
+          assert.doesNotMatch(error.message, /private-upstream-body/);
+          return true;
+        });
+      });
+    }
 
-  const zeroMasterSeqno = validRoutes();
-  (zeroMasterSeqno['/api/indexer/v1/health'].body as Record<string, unknown>).lastMasterSeqno = 0;
-  await assertSmokeRejects(zeroMasterSeqno, /health lastMasterSeqno must be a positive safe integer/);
+    const structuredJson = basicRoutes();
+    structuredJson[healthPath].contentType = 'application/health+json; charset="utf-8"';
+    await withServer(structuredJson, async baseUrl => runProductionSmoke(baseUrl, unboundOptions));
 
-  const missingLag = validRoutes();
-  delete (missingLag['/api/indexer/v1/health'].body as Record<string, unknown>).indexerLagSec;
-  await assertSmokeRejects(missingLag, /health indexerLagSec must be a non-negative finite number/);
+    const testnet = basicRoutes();
+    for (const path of ['/api/indexer/v1/health', '/api/indexer/v1/service-info']) {
+      const body = testnet[path].body as Record<string, unknown>;
+      body.network = 'testnet';
+      body.chainId = 'ton:testnet';
+    }
+    (testnet['/api/indexer/v1/contracts'].body as Record<string, unknown>).network = 'testnet';
+    (testnet[`/api/indexer/v1/accounts/${address(1)}/balances`].body as any).network = 'testnet';
+    await withServer(testnet, async (baseUrl) => {
+      await runProductionSmoke(baseUrl, {
+        ...unboundOptions,
+        expectedNetwork: 'testnet',
+      });
+    });
 
-  const staleLag = validRoutes();
-  (staleLag['/api/indexer/v1/health'].body as Record<string, unknown>).indexerLagSec = 301;
-  await assertSmokeRejects(staleLag, /health indexerLagSec must be at most 300; received 301/);
+    const wrongBalances = basicRoutes();
+    (wrongBalances[`/api/indexer/v1/accounts/${address(1)}/balances`].body as any).ton_raw = '1000000000';
+    await assertSmokeRejects(wrongBalances, /deep-equal/);
+    const wrongCompleteness = basicRoutes();
+    (wrongCompleteness[`/api/indexer/v1/accounts/${address(1)}/balances`].body as any).complete = false;
+    await assertSmokeRejects(wrongCompleteness, /strictly equal/);
+    const wrongError = basicRoutes();
+    wrongError['/api/indexer/v1/smoke-unknown-route'] = {status:404,body:{statusCode:404,error:'not found',code:'not_found'}};
+    await assertSmokeRejects(wrongError, /deep-equal/);
 
-  const futureSourceTimestamp = validRoutes();
-  (futureSourceTimestamp['/api/indexer/v1/health'].body as Record<string, unknown>).indexerLagSec = -31;
-  await assertSmokeRejects(
-    futureSourceTimestamp,
-    /health indexerLagSec must be a non-negative finite number; received -31/,
-  );
+    const paired = strictFixture(root, true);
+    assert.equal(paired.manifest.perpsMarkets.length, 1);
+    assert.equal(paired.manifest.spotMarkets.length, 2);
+    await withServer(paired.routes, async baseUrl => runProductionSmoke(baseUrl, paired.options), {corsOrigins: [expectedCorsOrigin]});
+    const emptyComparison = cloneRoutes(paired.routes), secondSpot = readCanonicalReleaseManifest(paired.manifestPath, 'testnet').spotMarkets[1],
+      comparisonPath = `/api/indexer/v1/markets/${encodeURIComponent(secondSpot.marketKey)}/candles`;
+    Object.assign(emptyComparison[comparisonPath].body as object, {candle_count: 0, candles: []});
+    await withServer(emptyComparison, async baseUrl => runProductionSmoke(baseUrl, paired.options), {corsOrigins: [expectedCorsOrigin]});
+    for (const [field, value] of [['history_complete', false], ['token_root', address(900)], ['asset_symbol', 'FALSE'], ['quote_symbol', 'USDC'], ['asset_decimals', 18], ['quote_decimals', 6]] as const) {
+      const corrupted = cloneRoutes(emptyComparison);
+      (corrupted[comparisonPath].body as Record<string, unknown>)[field] = value;
+      await assertSmokeRejects(corrupted, /history_complete must be true|mismatch/, paired.options, {corsOrigins: [expectedCorsOrigin]});
+    }
+    // The current release has one stable public mount. Invalid native mounts
+    // are rejected before any smoke traffic; a wrong target also fails locally.
+    for (const invalid of ['https://test.tonswap.org/api/indexer-r2', 'https://test.tonswap.org/api/indexer/'])
+      assert.throws(() => strictFixture(root, false, invalid), /services.indexer/);
+    const stable = strictFixture(root, false, 'https://test.tonswap.org/api/indexer');
+    const requests: string[] = [];
+    await withServer(stable.routes, async baseUrl => {
+      await runProductionSmoke(baseUrl, stable.options);
+      await runProductionSmoke(`${baseUrl}/api/indexer`, stable.options);
+      await runProductionSmoke(`${baseUrl}/api/indexer/`, stable.options);
+      const before = requests.length;
+      await assert.rejects(() => runProductionSmoke(`${baseUrl}/api/indexer-r2`, stable.options), /target path differs/);
+      assert.equal(requests.length, before);
+      await assert.rejects(() => runProductionSmoke(baseUrl, { ...stable.options, expectedPublicBaseUrl: 'https://test.tonswap.org/api/indexer-r2' }), /public URL differs/);
+      assert.equal(requests.length, before);
+    }, { corsOrigins: [expectedCorsOrigin], requests });
+    assert(requests.includes('OPTIONS /api/indexer/v1/runGetMethod'));
+    assert(requests.some(request => request.startsWith('GET /api/indexer/v1/markets/')));
+    assert(requests.every(request => /^(GET|OPTIONS) \/api\/indexer\/v1\//.test(request)));
+    const staleDiscovery = cloneRoutes(stable.routes);
+    (staleDiscovery['/api/indexer/v1/service-info'].body as { endpoints: { openapi: string } }).endpoints.openapi = '/api/indexer-r2/v1/openapi.json';
+    await assertSmokeRejects(staleDiscovery, /openapi endpoint/, stable.options, { corsOrigins: [expectedCorsOrigin] });
+    const staleSpec = cloneRoutes(stable.routes);
+    const stalePaths = (staleSpec['/api/indexer/v1/openapi.json'].body as { paths: Record<string, unknown> }).paths;
+    stalePaths['/api/indexer-r2/v1/accounts/{addr}/balances'] = stalePaths['/api/indexer/v1/accounts/{addr}/balances'];
+    delete stalePaths['/api/indexer/v1/accounts/{addr}/balances'];
+    await assertSmokeRejects(staleSpec, /OpenAPI is missing/, stable.options, { corsOrigins: [expectedCorsOrigin] });
 
-  const wrongHealthIdentity = validRoutes();
-  wrongHealthIdentity['/api/indexer/v1/health'].body = {
-    serviceId: 'si.soramitsu.io',
-    ecosystem: 'solana',
-    chainId: 'solana:mainnet',
-    network: 'mainnet',
-    lastMasterSeqno: 123,
-    indexerLagSec: 0,
-  };
-  await assertSmokeRejects(wrongHealthIdentity, /health serviceId must be ti\.soramitsu\.io/);
-
-  const missingServiceInfo = validRoutes();
-  delete missingServiceInfo['/api/indexer/v1/service-info'];
-  await assertSmokeRejects(missingServiceInfo, /deploy the current ton-indexer image to ti\.soramitsu\.io/);
-
-  const serviceInfoDeploying = validRoutes();
-  serviceInfoDeploying['/api/indexer/v1/service-info'] = {
-    status: 503,
-    contentType: 'text/plain; charset=utf-8',
-    body: 'deploy in progress',
-  };
-  await assertSmokeRejects(
-    serviceInfoDeploying,
-    /\/api\/indexer\/v1\/service-info returned HTTP 503\. Body preview: deploy in progress\..*deploy the current ton-indexer image to ti\.soramitsu\.io/
-  );
-
-  const secretDeployFailure = validRoutes();
-  secretDeployFailure['/api/indexer/v1/service-info'] = {
-    status: 503,
-    contentType: 'application/json',
-    body: '{"token":"body-token","password":"body-password","api_key":"body-key","authorization":"Bearer body-bearer"}',
-  };
-  await withServer(secretDeployFailure, async (baseUrl) => {
-    await assert.rejects(
-      () => runProductionSmoke(baseUrl),
-      (error: unknown) => {
-        const diagnostic = String(error);
-        assert.match(diagnostic, /<redacted>/);
-        for (const secret of ['body-token', 'body-password', 'body-key', 'body-bearer']) {
-          assert.doesNotMatch(diagnostic, new RegExp(secret));
-        }
-        return true;
-      },
+    const strict = strictFixture(root);
+    await withServer(
+      strict.routes,
+      async (baseUrl) => runProductionSmoke(baseUrl, strict.options),
+      { corsOrigins: [expectedCorsOrigin] }
     );
+    await withSmokeEnvironment(
+      {
+        TON_INDEXER_EXPECTED_NETWORK: 'testnet',
+        TON_INDEXER_EXPECTED_RELEASE_ID: releaseId,
+        TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH:
+          strict.options.expectedReleaseManifestHash,
+        TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH:
+          strict.options.expectedReleaseManifestPath,
+        TON_INDEXER_EXPECTED_CORS_ORIGIN: expectedCorsOrigin,
+      },
+      async () => {
+        await withServer(
+          strict.routes,
+          async (baseUrl) => runProductionSmoke(baseUrl),
+          { corsOrigins: [expectedCorsOrigin] }
+        );
+      }
+    );
+
+    const unboundCli = await runSmokeCli(
+      ['http://127.0.0.1:9', 'testnet'],
+      smokeCliEnvironment()
+    );
+    assert.notEqual(unboundCli.status, 0);
+    assert.match(
+      `${unboundCli.stdout}\n${unboundCli.stderr}`,
+      /Release-bound production smoke requires explicit/
+    );
+
+    const redactedCli = await runSmokeCli(
+      ['https://visible-user:secret-value@127.0.0.1/?token=private-value', 'testnet'],
+      smokeCliEnvironment()
+    );
+    const redactedOutput = `${redactedCli.stdout}\n${redactedCli.stderr}`;
+    assert.notEqual(redactedCli.status, 0);
+    assert.doesNotMatch(redactedOutput, /secret-value|private-value|token=/);
+    assert.match(redactedOutput, /https:\/\/127\.0\.0\.1\//);
+
+    const releaseCliEnv = smokeCliEnvironment({
+      TON_INDEXER_EXPECTED_NETWORK: 'testnet',
+      TON_INDEXER_EXPECTED_RELEASE_ID: releaseId,
+      TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH: strict.options.expectedReleaseManifestHash,
+      TON_INDEXER_EXPECTED_RELEASE_MANIFEST_PATH: strict.options.expectedReleaseManifestPath,
+      TON_INDEXER_EXPECTED_CORS_ORIGIN: expectedCorsOrigin,
+    });
+    await withServer(strict.routes, async baseUrl => {
+      const cli = await runSmokeCli([], { ...releaseCliEnv, TON_INDEXER_BASE_URL: baseUrl });
+      assert.equal(cli.status, 0, cli.stderr);
+      assert.match(cli.stdout, /ton production smoke ok:/);
+    }, { corsOrigins: [expectedCorsOrigin] });
+
+    const sensitiveService = cloneRoutes(strict.routes);
+    (sensitiveService['/api/indexer/v1/service-info'].body as Record<string, unknown>).publicBaseUrl =
+      'https://private-user:private-password@upstream.example/?token=private-token';
+    await withServer(sensitiveService, async baseUrl => {
+      const cli = await runSmokeCli([], { ...releaseCliEnv, TON_INDEXER_BASE_URL: baseUrl });
+      assert.notEqual(cli.status, 0);
+      assert.match(cli.stderr, /service-info publicBaseUrl must be/);
+      assert.doesNotMatch(cli.stderr, /private-user|private-password|private-token|upstream.example/);
+    }, { corsOrigins: [expectedCorsOrigin] });
+
+    await assertSmokeRejects(
+      strict.routes,
+      /TON_INDEXER_EXPECTED_NETWORK must be explicitly set/,
+      {
+        expectedReleaseId: strict.options.expectedReleaseId,
+        expectedReleaseManifestHash: strict.options.expectedReleaseManifestHash,
+        expectedReleaseManifestPath: strict.options.expectedReleaseManifestPath,
+        expectedCorsOrigin,
+      }
+    );
+    await assertSmokeRejects(
+      strict.routes,
+      /TON_INDEXER_EXPECTED_RELEASE_MANIFEST_HASH must be an explicit/,
+      { expectedNetwork: 'testnet', expectedReleaseId: releaseId }
+    );
+    await assertSmokeRejects(
+      strict.routes,
+      /release manifest manifestHash must be/,
+      { ...strict.options, expectedReleaseManifestHash: 'b'.repeat(64) }
+    );
+
+    const wrongServiceManifest = cloneRoutes(strict.routes);
+    const wrongServiceRelease = (
+      wrongServiceManifest['/api/indexer/v1/service-info'].body as {
+        release: Record<string, unknown>;
+      }
+    ).release;
+    wrongServiceRelease.manifestHash = 'b'.repeat(64);
+    await assertSmokeRejects(
+      wrongServiceManifest,
+      /service-info manifestHash must be/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin] }
+    );
+
+    const shortContracts = cloneRoutes(strict.routes);
+    const shortContractBody = shortContracts['/api/indexer/v1/contracts'].body as {
+      count: number;
+      contracts: Record<string, string>;
+    };
+    delete shortContractBody.contracts.Governance;
+    shortContractBody.count -= 1;
+    await assertSmokeRejects(
+      shortContracts,
+      /contracts payload count must match the supplied release manifest/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin] }
+    );
+
+    const retiredManifestPath = join(root, 'retired-schema.json');
+    const retired = { ...strict.manifest, schema: 'tonswap-first-release-manifest-v1' };
+    writeFileSync(retiredManifestPath, JSON.stringify({ ...retired, manifestHash: hashReleaseManifest(retired) }));
+    assert.throws(() => readCanonicalReleaseManifest(retiredManifestPath, 'testnet'), /schema must be tonswap-release-v1/);
+
+    const writable = cloneRoutes(strict.routes);
+    (writable['/api/indexer/v1/service-info'].body as Record<string, unknown>).readOnly = false;
+    await assertSmokeRejects(
+      writable,
+      /service-info readOnly must be true/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin] }
+    );
+
+    await assertSmokeRejects(
+      strict.routes,
+      /allowed CORS origin must be/,
+      strict.options
+    );
+    await assertSmokeRejects(
+      strict.routes,
+      /hostile CORS origin .* must be denied/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin, hostileCorsOrigin] }
+    );
+    await assertSmokeRejects(
+      strict.routes,
+      /allowed production preflight must permit POST/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin], preflightAllowMethods: 'GET' }
+    );
+    await assertSmokeRejects(
+      strict.routes,
+      /hostile preflight origin .* must be denied/,
+      strict.options,
+      {
+        corsOrigins: [expectedCorsOrigin],
+        preflightCorsOrigins: [expectedCorsOrigin, hostileCorsOrigin],
+      }
+    );
+
+    const staleHeader = cloneRoutes(strict.routes);
+    staleHeader['/api/indexer/v1/service-info'].releaseHeader = '0'.repeat(64);
+    await assertSmokeRejects(staleHeader, /release header must match/, strict.options, { corsOrigins: [expectedCorsOrigin] });
+    await assertSmokeRejects(strict.routes, /preflight must permit x-tonswap-release/, strict.options,
+      { corsOrigins: [expectedCorsOrigin], preflightAllowHeaders: 'content-type,accept' });
+
+    const shortHistory = cloneRoutes(strict.routes);
+    const firstMarket = readCanonicalReleaseManifest(strict.manifestPath, 'testnet').markets[0];
+    const history = shortHistory[
+      `/api/indexer/v1/markets/${encodeURIComponent(firstMarket.marketKey)}/candles`
+    ].body as { candle_count: number; candles: unknown[] };
+    history.candle_count = 1;
+    await assertSmokeRejects(
+      shortHistory,
+      /candle_count must match its array/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin] }
+    );
+
+    const malformedHistory = cloneRoutes(strict.routes);
+    const firstHistory = malformedHistory[
+      `/api/indexer/v1/markets/${encodeURIComponent(firstMarket.marketKey)}/candles`
+    ].body as { candles: Array<Record<string, unknown>> };
+    delete firstHistory.candles[0].volumeQuote;
+    await assertSmokeRejects(
+      malformedHistory,
+      /volumeQuote must be a positive finite number/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin] }
+    );
+
+    const duplicateHistoryTransactions = cloneRoutes(strict.routes);
+    const parsedMarkets = readCanonicalReleaseManifest(strict.manifestPath, 'testnet').markets;
+    const firstMarketHistory = duplicateHistoryTransactions[
+      `/api/indexer/v1/markets/${encodeURIComponent(parsedMarkets[0].marketKey)}/candles`
+    ].body as { candles: Array<{ sourceTxIds: string[] }> };
+    const secondMarketHistory = duplicateHistoryTransactions[
+      `/api/indexer/v1/markets/${encodeURIComponent(parsedMarkets[1].marketKey)}/candles`
+    ].body as { candles: Array<{ sourceTxIds: string[] }> };
+    secondMarketHistory.candles[0].sourceTxIds = [
+      firstMarketHistory.candles[0].sourceTxIds[0],
+    ];
+    await assertSmokeRejects(
+      duplicateHistoryTransactions,
+      /all release-market candle source transactions must be distinct/,
+      strict.options,
+      { corsOrigins: [expectedCorsOrigin] }
+    );
+
+    const solswapHealth = basicRoutes();
+    solswapHealth['/api/indexer/v1/health'].body = { ok: true };
+    await assertSmokeRejects(
+      solswapHealth,
+      /Production routing points at a Solswap indexer contract/
+    );
+
+    const genericHealth = basicRoutes();
+    genericHealth['/api/indexer/v1/health'].body = { status: 'ok' };
+    await assertSmokeRejects(
+      genericHealth,
+      /Production routing does not expose the TON health contract/
+    );
+
+    const nonJson = basicRoutes();
+    nonJson['/api/indexer/v1/health'] = {
+      contentType: 'text/plain; charset=utf-8',
+      body: 'ok',
+    };
+    await assertSmokeRejects(nonJson, /\/api\/indexer\/v1\/health did not return JSON/);
+
+    const missingOpenApiPath = basicRoutes();
+    const spec = missingOpenApiPath['/api/indexer/v1/openapi.json'].body as {
+      paths: Record<string, unknown>;
+    };
+    delete spec.paths['/api/indexer/v1/accounts/{addr}/balances'];
+    await assertSmokeRejects(
+      missingOpenApiPath,
+      /OpenAPI is missing .*balances/
+    );
+
+    const wrongTitle = basicRoutes();
+    wrongTitle['/api/indexer/v1/openapi.json'].body = {
+      ...openApi(),
+      info: { title: 'Solswap Indexer API', version: '1.0.0' },
+    };
+    await assertSmokeRejects(wrongTitle, /OpenAPI title must be TONSWAP Indexer API/);
+
+    assert.equal(
+      JSON.parse(readFileSync(strict.manifestPath, 'utf8')).manifestHash,
+      strict.options.expectedReleaseManifestHash
+    );
+    process.stdout.write('ton production smoke adversarial tests passed\n');
+  }).finally(() => {
+    rmSync(root, { recursive: true, force: true });
   });
-
-  const missingSchemaVersion = validRoutes();
-  delete (missingSchemaVersion['/api/indexer/v1/service-info'].body as Record<string, unknown>).schemaVersion;
-  await assertSmokeRejects(
-    missingSchemaVersion,
-    /service-info schemaVersion must be 1; received <missing>.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
-  );
-
-  const wrongIdentity = validRoutes();
-  wrongIdentity['/api/indexer/v1/service-info'].body = {
-    serviceId: 'si.soramitsu.io',
-    ecosystem: 'solana',
-    chainId: 'solana:mainnet',
-    publicBaseUrl: 'https://si.soramitsu.io',
-    readOnly: true,
-  };
-  await assertSmokeRejects(
-    wrongIdentity,
-    /service-info serviceId must be ti\.soramitsu\.io; received si\.soramitsu\.io.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
-  );
-
-  const wrongNetwork = validRoutes();
-  wrongNetwork['/api/indexer/v1/service-info'].body = {
-    ...(wrongNetwork['/api/indexer/v1/service-info'].body as Record<string, unknown>),
-    network: 'testnet',
-  };
-  await assertSmokeRejects(
-    wrongNetwork,
-    /service-info network must be mainnet; received testnet.*Production service-info must expose schemaVersion=1, serviceId=ti\.soramitsu\.io/
-  );
-
-  const nonJson = validRoutes();
-  nonJson['/api/indexer/v1/health'] = {
-    contentType: 'text/plain; charset=utf-8',
-    body: 'ok',
-  };
-  await assertSmokeRejects(nonJson, /\/api\/indexer\/v1\/health did not return JSON\..*Body preview: ok/);
-
-  const invalidOpenApiJson = validRoutes();
-  invalidOpenApiJson['/api/indexer/v1/openapi.json'] = {
-    contentType: 'application/json',
-    body: '{"openapi":',
-  };
-  await assertSmokeRejects(
-    invalidOpenApiJson,
-    /\/api\/indexer\/v1\/openapi\.json returned invalid JSON\. Body preview: \{"openapi":\..*TON OpenAPI contract/
-  );
-
-  const missingOpenApiPath = validRoutes();
-  const spec = missingOpenApiPath['/api/indexer/v1/openapi.json'].body as { paths: Record<string, unknown> };
-  delete spec.paths['/api/indexer/v1/runGetMethods'];
-  await assertSmokeRejects(
-    missingOpenApiPath,
-    /OpenAPI is missing \/api\/indexer\/v1\/runGetMethods.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
-  );
-
-  const missingTitle = validRoutes();
-  missingTitle['/api/indexer/v1/openapi.json'].body = {
-    openapi: '3.0.3',
-    paths: openApiPaths(),
-  };
-  await assertSmokeRejects(
-    missingTitle,
-    /OpenAPI title must be TONSWAP Indexer API; received <missing>.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
-  );
-
-  const wrongTitle = validRoutes();
-  wrongTitle['/api/indexer/v1/openapi.json'].body = {
-    openapi: '3.0.3',
-    info: { title: 'Solswap Indexer API' },
-    paths: openApiPaths(),
-  };
-  await assertSmokeRejects(
-    wrongTitle,
-    /OpenAPI title must be TONSWAP Indexer API; received Solswap Indexer API.*Production OpenAPI must expose title TONSWAP Indexer API.*Deploy the current ton-indexer image to ti\.soramitsu\.io/
-  );
-
-  process.stdout.write('ton production smoke adversarial tests passed\n');
 };
 
 main().catch((error) => {

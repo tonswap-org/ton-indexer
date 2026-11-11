@@ -1,0 +1,363 @@
+import assert from 'node:assert/strict';
+import {
+  Address,
+  Cell,
+  TupleItem,
+  beginCell,
+  contractAddress
+} from '@ton/core';
+import {
+  buildTonswapJettonWalletInitialData,
+  parseCanonicalJettonRootData,
+  parseCanonicalJettonWalletAddress,
+  parseCanonicalJettonWalletData
+} from '../data/jettonAbi';
+import { createJettonWalletReader } from '../data/jettonWallet';
+import { ChainReadError } from '../data/dataSource';
+import { fakeChainSource } from './support/fakeChainSource';
+import { fixtureHead } from './support/chainFixture';
+
+import { readCurrentJettonWalletStorage, writeCurrentJettonWalletStorage } from '../ledger/jettonWalletState';
+
+const owner = Address.parse(`0:${'1'.repeat(64)}`);
+const root = Address.parse(`0:${'2'.repeat(64)}`);
+const wallet = Address.parse(`0:${'3'.repeat(64)}`);
+const wrongOwner = Address.parse(`0:${'4'.repeat(64)}`);
+const wrongRoot = Address.parse(`0:${'5'.repeat(64)}`);
+const admin = Address.parse(`0:${'6'.repeat(64)}`);
+const walletCode = beginCell().storeUint(0x74, 8).endCell();
+const wrongCode = beginCell().storeUint(0x75, 8).endCell();
+const content = beginCell().storeUint(0, 8).endCell();
+const EXPECTED_INITIAL_DATA_HASH =
+  'd7e720c832bdfe441d7de7dbbe53d599cd243b4ca84f7dabd0bb6f0ccd404b2c';
+const EXPECTED_INITIAL_WALLET_ADDRESS =
+  '0:6ac6c72fe979ea516f27ad14da65077c6a5a33df956ec11a5b327043d1a24cb6';
+
+const addressItem = (address: Address): TupleItem => ({
+  type: 'slice',
+  cell: beginCell().storeAddress(address).endCell()
+});
+
+const rootStack = (): TupleItem[] => [
+  { type: 'int', value: 1_000n },
+  { type: 'int', value: -1n },
+  addressItem(admin),
+  { type: 'cell', cell: content },
+  { type: 'cell', cell: walletCode }
+];
+
+const walletAddressStack = (): TupleItem[] => [addressItem(wallet)];
+
+const walletStack = (
+  overrides: {
+    balance?: bigint;
+    owner?: Address;
+    root?: Address;
+    code?: Cell;
+  } = {}
+): TupleItem[] => [
+  { type: 'int', value: overrides.balance ?? 77n },
+  addressItem(overrides.owner ?? owner),
+  addressItem(overrides.root ?? root),
+  { type: 'cell', cell: overrides.code ?? walletCode }
+];
+
+type GetterName = 'get_jetton_data' | 'get_wallet_address' | 'get_wallet_data';
+
+// Exercise the current foreign-root reader while retaining the existing ABI
+// fixture's nullable result convention. Only production status:ok is a value.
+const readFixtureBalance = async (reader: {
+  owner: string; master: string;
+  runGetMethod: (address: string, method: GetterName, args?: TupleItem[]) => Promise<{ exitCode: number; stack: TupleItem[] } | null>;
+  readAccountCode: (address: string) => Promise<Cell | null>;
+}) => {
+  const at = fixtureHead();
+  const source = fakeChainSource({
+    head: async () => at,
+    getAccountState: async (address, options) => {
+      assert.deepEqual(options?.at, at, 'root and wallet identities use the selected head');
+      const code = address === reader.master ? walletCode : await reader.readAccountCode(address);
+      return { balance: '0', accountState: 'active', codeBoc: code?.toBoc().toString('base64'),
+        lastTxLt: '1', lastTxHash: '1'.repeat(64) };
+    },
+    runGetMethod: async (address, method, args, options) => {
+      assert.deepEqual(options?.at, at, 'canonical getter reads share the selected head');
+      const result = await reader.runGetMethod(address, method as GetterName, args);
+      if (!result) throw new ChainReadError('upstream_unavailable');
+      return result;
+    },
+  });
+  const result = await createJettonWalletReader({ source, tokens: [{ master: reader.master, masterCodeHash: walletCode.hash().toString('hex'), walletCodeHash: walletCode.hash().toString('hex') }] }).wallet(reader.master, reader.owner);
+  return result.status === 'ok' ? { wallet: result.wallet, balance: result.balanceRaw } : null;
+};
+
+const runBalanceRead = async (overrides: {
+  result?: Partial<Record<GetterName, { exitCode: number; stack: TupleItem[] } | null>>;
+  accountCode?: Cell | null;
+  calls?: string[];
+} = {}) => {
+  const calls = overrides.calls ?? [];
+  const defaults: Record<GetterName, { exitCode: number; stack: TupleItem[] }> = {
+    get_jetton_data: { exitCode: 0, stack: rootStack() },
+    get_wallet_address: { exitCode: 0, stack: walletAddressStack() },
+    get_wallet_data: { exitCode: 0, stack: walletStack() }
+  };
+  return readFixtureBalance({
+    owner: owner.toRawString(),
+    master: root.toRawString(),
+    runGetMethod: async (_address, method) => {
+      calls.push(method);
+      return Object.prototype.hasOwnProperty.call(overrides.result ?? {}, method)
+        ? overrides.result?.[method] ?? null
+        : defaults[method];
+    },
+    readAccountCode: async () =>
+      overrides.accountCode === undefined ? walletCode : overrides.accountCode
+  });
+};
+
+const legacyWalletInitialData = () =>
+  beginCell()
+    .storeCoins(0n)
+    .storeAddress(owner)
+    .storeAddress(root)
+    .storeCoins(0n)
+    .storeCoins(0n)
+    .storeAddress(null)
+    .storeUint(0, 32)
+    .storeUint(0n, 64)
+    .storeCoins(0n)
+    .endCell();
+
+const assertCanonicalInitialWalletLayout = () => {
+  const data = buildTonswapJettonWalletInitialData(owner, root);
+  const current = readCurrentJettonWalletStorage(data);
+  assert.equal(current.protectedT3Epoch, 0);
+  assert.equal(current.protectedRiskVaultEpoch, 0);
+  assert.equal(current.protectedPoolEpoch, 0);
+  assert.equal(current.protectedPoolRouter, null);
+  assert.equal(current.protectedPoolQuarantine, 0n);
+  assert.equal(current.protectedApplicationKind, 0);
+  assert.equal(current.protectedApplicationEpoch, 0);
+  assert.equal(current.protectedApplicationQuarantine, 0n);
+  const withPolicy = (policy: Cell) => beginCell().storeUint(0x4a545731, 32)
+    .storeUint(0, 32).storeUint(0, 32).storeRef(data.refs[0])
+    .storeRef(data.refs[1]).storeRef(data.refs[2]).storeRef(policy).endCell();
+  const policy = (kind: number, epoch: number, quarantine: bigint) => beginCell()
+    .storeUint(0, 32).storeAddress(null).storeCoins(0n).storeUint(kind, 8)
+    .storeUint(epoch, 32).storeCoins(quarantine);
+  for (const kind of [1, 2]) {
+    const protectedState = writeCurrentJettonWalletStorage({ ...current, balance: 10n,
+      protectedApplicationKind: kind, protectedApplicationEpoch: 1, protectedApplicationQuarantine: 7n });
+    const parsed = readCurrentJettonWalletStorage(protectedState);
+    assert.equal(parsed.protectedApplicationKind, kind);
+    assert.equal(parsed.protectedApplicationEpoch, 1);
+    assert.equal(parsed.protectedApplicationQuarantine, 7n);
+    assert.throws(() => writeCurrentJettonWalletStorage({ ...parsed, protectedT3Epoch: 1 }), /mixed/);
+    assert.throws(() => writeCurrentJettonWalletStorage({ ...parsed, protectedRiskVaultEpoch: 1 }), /mixed/);
+    assert.throws(() => writeCurrentJettonWalletStorage({ ...parsed, protectedPoolEpoch: 1 }), /mixed/);
+  }
+  for (const [kind, epoch, quarantine] of [[3, 1, 0n], [0, 1, 0n], [1, 0, 0n], [0, 0, 1n], [1, 1, 1n]] as const) {
+    assert.throws(() => readCurrentJettonWalletStorage(withPolicy(policy(kind, epoch, quarantine).endCell())), /application/);
+  }
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(
+    beginCell().storeUint(0, 32).storeAddress(null).storeCoins(0n).endCell())));
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(policy(0, 0, 0n).storeBit(0).endCell())), /Trailing/);
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(policy(0, 0, 0n).storeRef(Cell.EMPTY).endCell())), /Trailing/);
+  const noncanonicalQuarantine = beginCell().storeUint(0, 32).storeAddress(null).storeCoins(0n)
+    .storeUint(1, 8).storeUint(1, 32).storeUint(1, 4).storeUint(0, 8).endCell();
+  assert.throws(() => readCurrentJettonWalletStorage(withPolicy(noncanonicalQuarantine)), /Noncanonical/);
+  const attested = writeCurrentJettonWalletStorage({ ...current,
+    protectedT3Epoch: 7, protectedRiskVaultEpoch: 9 });
+  assert.equal(readCurrentJettonWalletStorage(attested).protectedT3Epoch, 7);
+  assert.equal(readCurrentJettonWalletStorage(attested).protectedRiskVaultEpoch, 9);
+  const obsolete = beginCell().storeUint(0x4a545731, 32).storeUint(0, 32);
+  data.refs.forEach(ref => obsolete.storeRef(ref));
+  assert.throws(() => readCurrentJettonWalletStorage(obsolete.endCell()), /Current JTW1/);
+  assert.equal(data.hash().toString('hex'), EXPECTED_INITIAL_DATA_HASH);
+  assert.equal(
+    contractAddress(0, { code: walletCode, data }).toRawString(),
+    EXPECTED_INITIAL_WALLET_ADDRESS
+  );
+
+  const storage = data.beginParse();
+  assert.equal(storage.loadUint(32), 0x4a545731);
+  assert.equal(storage.loadUint(32), 0);
+  assert.equal(storage.loadUint(32), 0);
+  assert.equal(storage.remainingBits, 0);
+  assert.equal(storage.remainingRefs, 4);
+  const identity = storage.loadRef().beginParse();
+  const accounting = storage.loadRef().beginParse();
+  const journals = storage.loadRef().beginParse();
+  const poolPolicy = storage.loadRef().beginParse();
+  assert.equal(identity.loadInt(8), owner.workChain);
+  assert.equal(identity.loadUintBig(256), BigInt(`0x${owner.hash.toString('hex')}`));
+  assert.equal(identity.loadInt(8), root.workChain);
+  assert.equal(identity.loadUintBig(256), BigInt(`0x${root.hash.toString('hex')}`));
+  assert.equal(identity.loadBoolean(), false);
+  assert.equal(identity.loadInt(8), 0);
+  assert.equal(identity.loadUintBig(256), 0n);
+  assert.equal(identity.remainingBits, 0);
+  assert.equal(identity.remainingRefs, 0);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.loadUint(32), 0);
+  assert.equal(accounting.loadUintBig(64), 0n);
+  assert.equal(accounting.loadCoins(), 0n);
+  assert.equal(accounting.remainingBits, 0);
+  assert.equal(accounting.remainingRefs, 0);
+
+  const burnJournal = journals.loadRef().beginParse();
+  assert.equal(burnJournal.loadUint(8), 0);
+  assert.equal(burnJournal.loadUintBig(64), 0n);
+  assert.equal(burnJournal.loadCoins(), 0n);
+  assert.equal(burnJournal.loadUintBig(256), 0n);
+  assert.equal(burnJournal.loadMaybeAddress(), null);
+  assert.equal(burnJournal.remainingBits, 0);
+  assert.equal(burnJournal.remainingRefs, 0);
+
+  const mintJournal = journals.loadRef().beginParse();
+  assert.equal(mintJournal.loadUint(8), 0);
+  assert.equal(mintJournal.loadUintBig(64), 0n);
+  assert.equal(mintJournal.loadUintBig(64), 0n);
+  assert.equal(mintJournal.loadCoins(), 0n);
+  assert.equal(mintJournal.loadUintBig(256), 0n);
+  assert.equal(mintJournal.remainingBits, 0);
+  assert.equal(mintJournal.remainingRefs, 0);
+  assert.equal(journals.loadBit(), false, "Initial permanent mint receipt map must be empty.");
+  assert.equal(journals.loadBit(), false, "Initial referral notification map must be empty.");
+  assert.equal(journals.remainingBits, 0);
+  assert.equal(journals.remainingRefs, 0);
+  assert.equal(poolPolicy.loadUint(32), 0);
+  assert.equal(poolPolicy.loadMaybeAddress(), null);
+  assert.equal(poolPolicy.loadCoins(), 0n);
+  assert.equal(poolPolicy.loadUint(8), 0);
+  assert.equal(poolPolicy.loadUint(32), 0);
+  assert.equal(poolPolicy.loadCoins(), 0n);
+  assert.equal(poolPolicy.remainingBits, 0);
+  assert.equal(poolPolicy.remainingRefs, 0);
+
+  const legacyData = legacyWalletInitialData();
+  assert.notEqual(legacyData.hash().toString('hex'), EXPECTED_INITIAL_DATA_HASH);
+  assert.notEqual(
+    contractAddress(0, { code: walletCode, data: legacyData }).toRawString(),
+    EXPECTED_INITIAL_WALLET_ADDRESS
+  );
+};
+
+const main = async () => {
+  assertCanonicalInitialWalletLayout();
+
+  const canonical = await runBalanceRead();
+  assert.ok(canonical);
+  assert.equal(canonical.balance, '77');
+  assert.equal(Address.parse(canonical.wallet).toRawString(), wallet.toRawString());
+
+  const legacyAddressCalls: string[] = [];
+  const legacyAddressOnlyResults: Record<string, { exitCode: number; stack: TupleItem[] }> = {
+    get_jetton_data: { exitCode: 0, stack: rootStack() },
+    wallet_address: { exitCode: 0, stack: walletAddressStack() },
+    wallet_data: { exitCode: 0, stack: walletStack() }
+  };
+  const legacyAddressOnly = await readFixtureBalance({
+    owner: owner.toRawString(),
+    master: root.toRawString(),
+    runGetMethod: async (_address, method) => {
+      legacyAddressCalls.push(method);
+      return legacyAddressOnlyResults[method] ?? null;
+    },
+    readAccountCode: async () => walletCode
+  });
+  assert.equal(legacyAddressOnly, null);
+  assert.deepEqual(legacyAddressCalls, ['get_jetton_data', 'get_wallet_address']);
+  assert.ok(legacyAddressOnlyResults.wallet_address);
+  assert.ok(legacyAddressOnlyResults.wallet_data);
+
+  const legacyWalletCalls: string[] = [];
+  const legacyWalletOnlyResults: Record<string, { exitCode: number; stack: TupleItem[] }> = {
+    get_jetton_data: { exitCode: 0, stack: rootStack() },
+    get_wallet_address: { exitCode: 0, stack: walletAddressStack() },
+    wallet_data: { exitCode: 0, stack: walletStack() }
+  };
+  const legacyWalletOnly = await readFixtureBalance({
+    owner: owner.toRawString(),
+    master: root.toRawString(),
+    runGetMethod: async (_address, method) => {
+      legacyWalletCalls.push(method);
+      return legacyWalletOnlyResults[method] ?? null;
+    },
+    readAccountCode: async () => walletCode
+  });
+  assert.equal(legacyWalletOnly, null);
+  assert.deepEqual(legacyWalletCalls, [
+    'get_jetton_data',
+    'get_wallet_address',
+    'get_wallet_data'
+  ]);
+  assert.ok(legacyWalletOnlyResults.wallet_data);
+
+  for (const invalidRoot of [
+    rootStack().slice(0, 4),
+    [...rootStack(), { type: 'int', value: 0n } as TupleItem],
+    [{ type: 'int', value: -1n } as TupleItem, ...rootStack().slice(1)],
+    [rootStack()[0], { type: 'int', value: 1n } as TupleItem, ...rootStack().slice(2)]
+  ]) {
+    assert.equal(parseCanonicalJettonRootData(invalidRoot), null);
+    assert.equal(
+      await runBalanceRead({ result: { get_jetton_data: { exitCode: 0, stack: invalidRoot } } }),
+      null
+    );
+  }
+
+  for (const invalidAddress of [
+    [] as TupleItem[],
+    [...walletAddressStack(), addressItem(owner)]
+  ]) {
+    assert.equal(parseCanonicalJettonWalletAddress(invalidAddress), null);
+    assert.equal(
+      await runBalanceRead({ result: { get_wallet_address: { exitCode: 0, stack: invalidAddress } } }),
+      null
+    );
+  }
+
+  for (const invalidWallet of [
+    walletStack().slice(0, 3),
+    [...walletStack(), { type: 'int', value: 0n } as TupleItem]
+  ]) {
+    assert.equal(
+      parseCanonicalJettonWalletData(invalidWallet, { owner, root, walletCode }),
+      null
+    );
+    assert.equal(
+      await runBalanceRead({ result: { get_wallet_data: { exitCode: 0, stack: invalidWallet } } }),
+      null
+    );
+  }
+
+  for (const invalidWallet of [
+    walletStack({ owner: wrongOwner }),
+    walletStack({ root: wrongRoot }),
+    walletStack({ code: wrongCode }),
+    walletStack({ balance: -1n })
+  ]) {
+    assert.equal(
+      parseCanonicalJettonWalletData(invalidWallet, { owner, root, walletCode }),
+      null
+    );
+    assert.equal(
+      await runBalanceRead({ result: { get_wallet_data: { exitCode: 0, stack: invalidWallet } } }),
+      null
+    );
+  }
+
+  assert.equal(await runBalanceRead({ accountCode: wrongCode }), null);
+  assert.equal(await runBalanceRead({ accountCode: null }), null);
+
+  console.log('jetton canonical ABI adversarial tests passed');
+};
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

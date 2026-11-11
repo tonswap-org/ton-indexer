@@ -1,0 +1,1957 @@
+import { installFixtureIdentities } from './support/ledgerGraphFixture';
+import { fixtureChainSource, type FixtureChainSource } from './support/chainFixture';
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { Address, beginCell, Cell, Dictionary } from "@ton/core";
+import {
+  projectOwnerLedger,
+  type LedgerChain,
+  type ProjectionInput,
+} from "../ledger/project";
+import type {
+  RawMessage,
+  RawTransaction,
+} from '../data/dataSource';
+import { PGlite } from "@electric-sql/pglite";
+import { PostgresLedgerStore, type LedgerSqlPool } from "../ledger/store";
+import { LedgerService } from "../ledger/service";
+import { createLogger } from "../utils/logger";
+import { loadOpcodes } from "../utils/opcodes";
+import { perpsWalletAddress } from "../ledger/perpsWire";
+import {
+  TRANSFER,
+  INTERNAL,
+  SETTLEMENT_INTERNAL,
+  NOTIFY,
+} from "../ledger/wire";
+import {
+  optionSettlementKey,
+  optionPositionClaimIdentity,
+  optionIngressClaimIdentity,
+  optionIngressLogicalIdentity,
+  OPTION_EXERCISE,
+  OPTION_SHOUT_EXERCISE,
+  OPTION_SPREAD_EXERCISE,
+  OPTION_SHOUT_PAYOUT,
+  OPTION_SPREAD_PAYOUT,
+  OPTION_VAULT_PAYOUT,
+  OPTION_CLAIM_RECEIPT,
+} from "../ledger/optionLifecycleWire";
+import {
+  readOptionFactoryConfig,
+  readOptionProductState,
+  readOptionVaultState,
+} from "../ledger/optionLifecycleState";
+import { validateOptionsCodeHashes } from "../ledger/bindings";
+
+const A = (s: string) => Address.parse(s),
+  addr = (n: number) => `0:${n.toString(16).padStart(64, "0")}`;
+const owner = addr(701),
+  factory = addr(702),
+  vault = addr(703),
+  series = addr(704),
+  root = addr(705),
+  other = addr(706);
+const factoryCode = beginCell().storeUint(701, 32).endCell(),
+  vaultCode = beginCell().storeUint(702, 32).endCell(),
+  shoutCode = beginCell().storeUint(703, 32).endCell(),
+  spreadCode = beginCell().storeUint(704, 32).endCell(),
+  walletCode = beginCell().storeUint(705, 32).endCell();
+const q = {
+  factoryCodeHash: factoryCode.hash().toString("hex"),
+  vaultCodeHash: vaultCode.hash().toString("hex"),
+  shoutCodeHash: shoutCode.hash().toString("hex"),
+  outperformanceCodeHash: spreadCode.hash().toString("hex"),
+  walletCodeHash: walletCode.hash().toString("hex"),
+};
+const wallet = (o: string) => perpsWalletAddress(walletCode, root, o),
+  ownerWallet = wallet(owner),
+  factoryWallet = wallet(factory),
+  vaultWallet = wallet(vault);
+const notional = 2n ** 68n + 31n,
+  collateral = 2n ** 74n + 17n,
+  payout = 2n ** 70n + 19n,
+  premium = 1200n;
+const zero = "0".repeat(64),
+  boc = (c: Cell) => c.toBoc().toString("base64");
+const inline = {
+  serialize: (c: Cell, b: any) => b.storeSlice(c.beginParse()),
+  parse: (s: any) => s.asCell(),
+};
+type Position = {
+  owner: string;
+  premium: bigint;
+  collateral: bigint;
+  ready: boolean;
+  settled: boolean;
+  payout: bigint;
+  excess: bigint;
+  flags: bigint;
+  custodyWire: bigint;
+  refundWire: bigint;
+  walletFunding: bigint;
+  buyFunding: bigint;
+  referralOperationId: bigint;
+};
+const position = (overrides: Partial<Position> = {}): Position => ({
+  owner,
+  premium,
+  collateral,
+  ready: false,
+  settled: false,
+  payout: 0n,
+  excess: 0n,
+  flags: 525n,
+  custodyWire: 56n,
+  refundWire: 0n,
+  walletFunding: 0n,
+  buyFunding: 0n,
+  referralOperationId: 0n,
+  ...overrides,
+});
+type Claim = {
+  id: bigint;
+  identity: string;
+  kind: number;
+  amount: bigint;
+  wire: bigint;
+  finalWire: bigint;
+  status: number;
+  owner: string;
+  recipient: string;
+};
+export type FactorySeriesFixture = {
+  seriesId: bigint;
+  templateId: number;
+  kind: number;
+  expiry: bigint;
+  maxNotional: bigint;
+  premiumBps: number;
+  collateralMultiplierBps: number;
+  strikeBps: number;
+  openNotional: bigint;
+  collateralLocked: bigint;
+  status: number;
+  expiryRegistered: boolean;
+  settlementTimestamp: bigint;
+  nextTokenId: bigint;
+  correlationScaleBps: number;
+  correlationBps: number;
+  correlationDispersionBps: number;
+  correlationTimestamp: bigint;
+  correlationConfig: Cell;
+  optionAddress: string | null;
+  underlyingPool: string | null;
+  quotePool: string | null;
+  activationWireId: bigint;
+  activationRequestHash: string;
+  configHash: string;
+};
+const factorySeries = (
+  overrides: Partial<FactorySeriesFixture> = {},
+): FactorySeriesFixture => ({
+  seriesId: 7n,
+  templateId: 1,
+  kind: 1,
+  expiry: 1900000000n,
+  maxNotional: collateral * 10n,
+  premiumBps: 100,
+  collateralMultiplierBps: 10000,
+  strikeBps: 10000,
+  openNotional: notional,
+  collateralLocked: collateral,
+  status: 0,
+  expiryRegistered: true,
+  settlementTimestamp: 0n,
+  nextTokenId: 4n,
+  correlationScaleBps: 10000,
+  correlationBps: 0,
+  correlationDispersionBps: 0,
+  correlationTimestamp: 0n,
+  correlationConfig: beginCell()
+    .storeUint(0, 32)
+    .storeUint(10000, 32)
+    .storeUint(10000, 32)
+    .storeUint(10000, 32)
+    .storeUint(0, 32)
+    .endCell(),
+  optionAddress: series,
+  underlyingPool: other,
+  quotePool: other,
+  activationWireId: 0n,
+  activationRequestHash: zero,
+  configHash: zero,
+  ...overrides,
+});
+export type FactoryStateFixture = {
+  ingressReceipts?: Array<{logical: string; accepted: boolean; buyKey: bigint; acceptedAmount: bigint; refunds: bigint[]}>;
+  ingressClaimAttempts?: Array<[bigint, bigint]>;
+  physicalTombstones?: string[];
+  series?: FactorySeriesFixture[];
+  seriesBuyIndex?: Array<[bigint, bigint]>;
+  nextBuyWireId?: bigint;
+};
+function factoryData(
+  p: Position | null,
+  claims: Claim[] = [],
+  active = 0n,
+  tombstone?: string,
+  state: FactoryStateFixture = {},
+) {
+  const seriesEntries = Dictionary.empty(Dictionary.Keys.BigUint(64), inline),
+    buyIndex = Dictionary.empty(
+      Dictionary.Keys.BigUint(64),
+      Dictionary.Values.BigUint(128),
+    );
+  const currentSeries = state.series ?? (p ? [factorySeries({ openNotional: p.settled ? 0n : notional, collateralLocked: p.settled ? 0n : collateral })] : []);
+  for (const s of currentSeries)
+    seriesEntries.set(
+      s.seriesId,
+      beginCell()
+        .storeUint(s.templateId, 32)
+        .storeUint(s.kind, 16)
+        .storeInt(s.expiry, 64)
+        .storeCoins(s.maxNotional)
+        .storeUint(s.premiumBps, 32)
+        .storeUint(s.collateralMultiplierBps, 32)
+        .storeUint(s.strikeBps, 32)
+        .storeCoins(s.openNotional)
+        .storeCoins(s.collateralLocked)
+        .storeUint(s.status, 8)
+        .storeBit(s.expiryRegistered)
+        .storeInt(s.settlementTimestamp, 64)
+        .storeUint(s.nextTokenId, 64)
+        .storeUint(s.correlationScaleBps, 32)
+        .storeInt(s.correlationBps, 32)
+        .storeUint(s.correlationDispersionBps, 32)
+        .storeInt(s.correlationTimestamp, 64)
+        .storeRef(s.correlationConfig)
+        .storeRef(
+          beginCell()
+            .storeAddress(s.optionAddress ? A(s.optionAddress) : null)
+            .storeAddress(s.underlyingPool ? A(s.underlyingPool) : null)
+            .storeAddress(s.quotePool ? A(s.quotePool) : null),
+        )
+        .storeRef(
+          beginCell()
+            .storeUint(s.activationWireId, 64)
+            .storeUint(BigInt("0x" + s.activationRequestHash), 256)
+            .storeUint(BigInt("0x" + s.configHash), 256),
+        )
+        .storeRef(beginCell().storeAddress(A(other)).storeUint(1, 64).storeUint(3, 8)
+          .storeCoins(s.maxNotional).storeCoins(s.maxNotional).storeUint(1, 64).storeUint(1, 64)
+          .storeRef(beginCell().storeBit(true).storeUint(1, 64).storeCoins(s.kind === 1 ? 11_830_000_000n : 18_930_000_000n))
+          .storeRef(beginCell().storeCoins(0)))
+        .endCell(),
+    );
+  for (const [wire, key] of state.seriesBuyIndex ?? []) buyIndex.set(wire, key);
+  const emptyDict = beginCell().storeDict(null).endCell(),
+    seriesAux = beginCell()
+      .storeRef(emptyDict)
+      .storeRef(emptyDict)
+      .storeRef(beginCell().storeDict(buyIndex)),
+    oracleBundle = beginCell()
+      .storeRef(emptyDict)
+      .storeRef(
+        beginCell()
+          .storeUint(7000, 16)
+          .storeUint(6000, 16)
+          .storeUint(8500, 16)
+          .storeUint(1000, 16)
+          .storeBit(false)
+          .storeUint(0, 32),
+      )
+      .storeRef(beginCell().storeAddress(null).storeUint(0, 32))
+      .storeRef(seriesAux),
+    maps = beginCell()
+      .storeRef(emptyDict)
+      .storeRef(emptyDict)
+      .storeRef(beginCell().storeDict(seriesEntries));
+  const positions = Dictionary.empty(Dictionary.Keys.BigUint(128), inline);
+  if (p)
+    positions.set(
+      (7n << 64n) | 3n,
+      beginCell()
+        .storeAddress(A(p.owner))
+        .storeAddress(A(factoryWallet))
+        .storeCoins(notional)
+        .storeCoins(p.premium)
+        .storeCoins(p.collateral)
+        .storeCoins(p.payout)
+        .storeBit(p.ready)
+        .storeBit(p.settled)
+        .storeUint(p.flags, 16)
+        .storeRef(
+          beginCell()
+            .storeAddress(A(owner))
+            .storeUint(55, 64)
+            .storeUint(p.custodyWire, 64)
+            .storeUint(p.refundWire, 64)
+            .storeCoins(20)
+            .storeCoins(p.excess)
+            .storeCoins(p.walletFunding)
+            .storeCoins(p.buyFunding)
+            .storeUint(p.referralOperationId, 64),
+        )
+        .endCell(),
+    );
+  const cd = Dictionary.empty(
+      Dictionary.Keys.BigUint(64),
+      Dictionary.Values.Cell(),
+    ),
+    ci = Dictionary.empty(
+      Dictionary.Keys.BigUint(256),
+      Dictionary.Values.BigUint(64),
+    );
+  for (const c of claims) {
+    cd.set(
+      c.id,
+      beginCell()
+        .storeUint(c.id, 64)
+        .storeUint(BigInt("0x" + c.identity), 256)
+        .storeUint(c.kind, 8)
+        .storeUint(0, 64)
+        .storeCoins(c.amount)
+        .storeUint(c.wire, 64)
+        .storeUint(c.finalWire, 64)
+        .storeUint(c.status, 8)
+        .storeCoins(100)
+        .storeRef(
+          beginCell().storeAddress(A(c.owner)).storeAddress(A(c.recipient)),
+        )
+        .endCell(),
+    );
+    ci.set(BigInt("0x" + c.identity), c.id);
+  }
+  if (tombstone) ci.set(BigInt("0x" + tombstone), 0n);
+  for (const identity of state.physicalTombstones ?? []) ci.set(BigInt("0x" + identity), 0n);
+  const ingressReceipts = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell()),
+    ingressClaimAttempts = Dictionary.empty(Dictionary.Keys.BigUint(64), Dictionary.Values.BigUint(256));
+  for (const receipt of state.ingressReceipts ?? []) {
+    const logical = BigInt("0x" + receipt.logical), refunds = Dictionary.empty(Dictionary.Keys.BigUint(64), Dictionary.Values.Bool());
+    for (const id of receipt.refunds) { refunds.set(id, true); ingressClaimAttempts.set(id, logical); }
+    ingressReceipts.set(logical, beginCell().storeBit(receipt.accepted)
+      .storeUint(receipt.buyKey, 128).storeCoins(receipt.acceptedAmount).storeDict(refunds).endCell());
+  }
+  if (state.ingressClaimAttempts) {
+    for (const [id] of ingressClaimAttempts) ingressClaimAttempts.delete(id);
+    for (const [id, logical] of state.ingressClaimAttempts) ingressClaimAttempts.set(id, logical);
+  }
+  const config = beginCell()
+    .storeAddress(A(other))
+    .storeAddress(A(vault))
+    .storeRef(beginCell().storeAddress(A(other)).storeAddress(A(other)))
+    .storeRef(beginCell().storeRef(shoutCode).storeRef(spreadCode))
+    .storeRef(beginCell().storeAddress(A(root)).storeRef(walletCode)
+      .storeBit(true).storeAddress(null).storeCoins(0n))
+    .storeRef(
+      beginCell()
+        .storeAddress(A(other))
+        .storeAddress(A(root))
+        .storeRef(walletCode)
+        .storeRef(
+          beginCell()
+            .storeRef(beginCell().storeDict(cd))
+            .storeRef(beginCell().storeDict(ci)),
+        )
+        .storeRef(Cell.EMPTY)
+        .storeRef(beginCell().storeCoins(currentSeries.reduce((sum, entry) => sum + entry.maxNotional, 0n))
+          .storeCoins(currentSeries.reduce((sum, entry) => sum + entry.collateralLocked, 0n)).storeDict(null)
+          .storeDict(ingressReceipts).storeDict(ingressClaimAttempts))
+        .storeUint(20, 16)
+        .storeUint(0, 8)
+        .storeUint(state.nextBuyWireId ?? 91n, 64)
+        .storeUint(active, 128)
+        .storeCoins(0)
+        .storeUint(0, 64),
+    );
+  return beginCell()
+    .storeRef(
+      beginCell()
+        .storeRef(Cell.EMPTY)
+        .storeRef(config)
+        .storeRef(Cell.EMPTY)
+        .storeRef(oracleBundle),
+    )
+    .storeRef(maps)
+    .storeRef(beginCell().storeDict(positions))
+    .endCell();
+}
+
+export function acceptedIngressState(notification: RawMessage): FactoryStateFixture {
+  const body = Cell.fromBase64(notification.body!), slice = body.beginParse();
+  slice.loadUint(32);
+  const query = slice.loadUintBig(64).toString(), amount = slice.loadCoins().toString(), owner = slice.loadAddress().toRawString();
+  slice.loadAddress(); slice.loadCoins();
+  const forward = slice.loadRef();
+  return {
+    physicalTombstones: [optionIngressClaimIdentity(factoryWallet, notification.createdLt!, body.hash().toString("hex"))],
+    ingressReceipts: [{logical: optionIngressLogicalIdentity(owner, query, amount, forward.hash().toString("hex")),
+      accepted: true, buyKey: (7n << 64n) | 3n, acceptedAmount: BigInt(amount), refunds: []}],
+  };
+}
+
+function productData(
+  kind: 1 | 2,
+  after: boolean,
+  amount = payout,
+  ownerOverride = owner,
+  stage: "active" | "reserved" | "absent" = "active",
+) {
+  const config = beginCell()
+    .storeRef(beginCell().storeAddress(A(factory)).storeAddress(A(other)))
+    .storeRef(beginCell().storeAddress(A(other)).storeAddress(A(vault)));
+  if (kind === 1)
+    config
+      .storeAddress(A(other))
+      .storeInt(1900000000, 64)
+      .storeInt(1, 64)
+      .storeInt(1, 64)
+      .storeUint(1, 32)
+      .storeUint(2, 32)
+      .storeRef(beginCell().storeCoins(notional * 10n))
+      .storeInt(1, 64)
+      .storeInt(1, 64)
+      .storeRef(
+        beginCell()
+          .storeUint(10000, 32)
+          .storeUint(10000, 32)
+          .storeInt(1000, 128)
+          .storeInt(1000, 128)
+          .storeUint(0, 8),
+      );
+  else
+    config
+      .storeRef(beginCell().storeAddress(A(other)).storeAddress(A(other)))
+      .storeInt(1900000000, 64)
+      .storeUint(10000, 32)
+      .storeUint(1, 32)
+      .storeUint(2, 32)
+      .storeCoins(notional * 10n)
+      .storeInt(1, 64)
+      .storeInt(1, 64)
+      .storeUint(0, 8);
+  const positions = Dictionary.empty(Dictionary.Keys.BigUint(64), inline);
+  if (stage !== "absent") {
+    const p = beginCell()
+      .storeAddress(A(ownerOverride))
+      .storeUint(3, 64)
+      .storeCoins(notional)
+      .storeCoins(premium);
+    if (kind === 1)
+      p.storeCoins(0)
+        .storeInt(0, 64)
+        .storeBit(after)
+        .storeBit(after)
+        .storeCoins(after ? 0n : collateral);
+    else
+      p.storeCoins(after ? 0n : collateral)
+        .storeCoins(after ? amount : 0n)
+        .storeBit(stage === "active" && after)
+        .storeBit(stage === "active" && after);
+    p.storeBit(stage === "active").storeUint(55, 64);
+    if (kind === 1) p.storeRef(after ? beginCell().storeCoins(30000000).storeRef(beginCell()
+      .storeUint(OPTION_SHOUT_PAYOUT, 32).storeUint(3, 64).storeAddress(A(ownerOverride)).storeCoins(amount)
+      .storeCoins(0).storeAddress(A(ownerOverride))).endCell() : Cell.EMPTY);
+    positions.set(3n, p.endCell());
+  }
+  const runtime = beginCell()
+    .storeInt(0, 64)
+    .storeBit(false)
+    .storeCoins(after ? 0 : notional)
+    .storeUint(7, 64)
+    .storeUint(1, 64)
+    .storeUint(0, 256)
+    .storeUint(0, 256)
+    .storeRef(beginCell().storeUint(1, 64).storeUint(0, 64).storeUint(0, 64).storeAddress(null)
+      .storeUint(0, 256).storeInt(0, 64).storeInt(0, 64).storeUint(0, 8).storeUint(0, 8)
+      .storeRef(Cell.EMPTY).storeRef(Cell.EMPTY)
+      .storeRef(beginCell().storeInt(0, 128).storeInt(0, 128).storeInt(0, 128).storeInt(0, 128).storeInt(0, 64).storeInt(0, 64))
+      .storeRef(Cell.EMPTY));
+  return beginCell()
+    .storeUint(kind === 1 ? 0x5348 : 0x4f50, 16)
+    .storeRef(Cell.EMPTY)
+    .storeRef(config)
+    .storeRef(beginCell().storeDict(positions))
+    .storeRef(beginCell().storeRef(runtime).storeRef(Cell.EMPTY))
+    .endCell();
+}
+type Entry = {
+  kind: number;
+  requestId: bigint;
+  status: number;
+  wire: bigint;
+  amount: bigint;
+  recipient: string;
+  requestHash: string;
+  risk: bigint;
+  accounting: number;
+  premium: bigint;
+};
+const entry = (overrides: Partial<Entry> = {}): Entry => ({
+  kind: 1,
+  requestId: 3n,
+  status: 2,
+  wire: 91n,
+  amount: payout,
+  recipient: owner,
+  requestHash: zero,
+  risk: 0n,
+  accounting: 1,
+  premium: 0n,
+  ...overrides,
+});
+function vaultData(
+  e: Entry | null,
+  final = false,
+  overrides: {
+    depositReceipt?: bigint;
+    writerReserve?: Cell;
+    tracked?: bigint;
+    bucketLocked?: bigint;
+    bucketPremium?: bigint;
+    totalLocked?: bigint;
+    totalPremium?: bigint;
+  } = {},
+) {
+  const dict = Dictionary.empty(
+      Dictionary.Keys.BigUint(256),
+      Dictionary.Values.Cell(),
+    ),
+    key = optionSettlementKey(
+      e?.kind ?? 1,
+      "7",
+      (e?.requestId ?? 3n).toString(),
+    );
+  if (e)
+    dict.set(
+      BigInt("0x" + key),
+      beginCell()
+        .storeUint(e.kind, 8)
+        .storeUint(e.requestId, 64)
+        .storeUint(7, 64)
+        .storeUint(e.status, 8)
+        .storeCoins(e.amount)
+        .storeUint(e.wire, 64)
+        .storeInt(1700000000, 64)
+        .storeCoins(e.status === 3 || e.status === 4 ? 0 : 10)
+        .storeCoins(e.kind === 3 ? 0 : e.amount)
+        .storeCoins(e.premium)
+        .storeUint(e.accounting, 8)
+        .storeUint(e.risk, 64)
+        .storeUint(e.risk ? 4 : 0, 8)
+        .storeInt(1700000000, 64)
+        .storeRef(
+          beginCell()
+            .storeAddress(A(e.recipient))
+            .storeAddress(A(wallet(e.recipient))),
+        )
+        .storeRef(
+          beginCell()
+            .storeUint(BigInt("0x" + e.requestHash), 256)
+            .storeUint(0, 256)
+            .storeCoins(e.risk ? e.amount : 0)
+            .storeRef(Cell.EMPTY),
+        )
+        .endCell(),
+    );
+  const config = beginCell()
+    .storeRef(beginCell().storeAddress(A(factory)))
+    .storeRef(beginCell().storeAddress(A(other)))
+    .storeRef(
+      beginCell()
+        .storeAddress(A(other))
+        .storeAddress(null)
+        .storeUint(0, 16)
+        .storeUint(0, 8),
+    )
+    .storeRef(
+      beginCell()
+        .storeAddress(A(vaultWallet))
+        .storeAddress(A(vaultWallet))
+        .storeAddress(A(root))
+        .storeRef(walletCode),
+    );
+  const receipts = Dictionary.empty(
+    Dictionary.Keys.BigUint(128),
+    Dictionary.Values.BigUint(256),
+  );
+  if (overrides.depositReceipt !== undefined)
+    receipts.set((7n << 64n) | 3n, overrides.depositReceipt);
+  const buckets = Dictionary.empty(
+    Dictionary.Keys.BigUint(64),
+    Dictionary.Values.Cell(),
+  );
+  if (overrides.bucketLocked !== undefined)
+    buckets.set(
+      7n,
+      beginCell()
+        .storeCoins(overrides.bucketLocked)
+        .storeCoins(overrides.bucketPremium ?? 0n)
+        .storeCoins(0)
+        .storeCoins(0)
+        .storeUint(1, 64)
+        .storeUint(0, 8)
+        .storeInt(0, 64)
+        .storeRef(
+          beginCell()
+            .storeUint(0, 256)
+            .storeCoins(0)
+            .storeCoins(0)
+            .storeCoins(0),
+        )
+        .endCell(),
+    );
+  const writers = Dictionary.empty(Dictionary.Keys.BigUint(64), inline);
+  if (overrides.writerReserve) writers.set(7n, overrides.writerReserve);
+  const journal = beginCell()
+    .storeDict(dict)
+    .storeDict(null)
+    .storeDict(receipts)
+    .storeUint(0, 256)
+    .storeUint(e?.status === 3 ? BigInt("0x" + key) : 0n, 256)
+    .storeUint(0, 256)
+    .storeUint(92, 64)
+    .storeUint(1, 64)
+    .storeUint(1, 64);
+  return beginCell()
+    .storeRef(Cell.EMPTY)
+    .storeRef(config)
+    .storeRef(beginCell().storeDict(buckets).storeDict(writers).storeCoins(0))
+    .storeRef(journal)
+    .storeCoins(
+      (overrides.tracked ?? collateral * 2n) - (final ? e!.amount : 0n),
+    )
+    .storeCoins(final ? 0 : (e?.amount ?? 0n))
+    .storeCoins(overrides.totalLocked ?? collateral)
+    .storeCoins(overrides.totalPremium ?? premium)
+    .endCell();
+}
+function fixture() {
+  let nextLt = 1;
+  const chains = new Map<string, LedgerChain>(),
+    states = new Map<string, { code: Cell; data: Cell }>();
+  const input: ProjectionInput = {
+    network: "testnet",
+    owner,
+    chains,
+    wallets: new Map(),
+    pools: new Map(),
+    opcodes: loadOpcodes(),
+    optionFactories: new Map([
+      [
+        factory,
+        {
+          address: factory,
+          collateralRoot: root,
+          codeHash: q.factoryCodeHash,
+          qualification: q,
+          vault,
+          vaultWallet,
+          factoryWallet,
+          walletCode,
+          series: new Map([["7", { address: series, kind: 1 }]]),
+        },
+      ],
+    ]),
+    stateAt: async (account, lt, hash) => {
+      const s = states.get(`${account}:${lt}`);
+      return s && hash === txHash(Number(lt))
+        ? {
+            seqno: Number(lt),
+            state: {
+              accountState: "active",
+              balance: "0",
+              lastTxLt: lt,
+              lastTxHash: hash,
+              codeBoc: boc(s.code),
+              dataBoc: boc(s.data),
+            },
+          }
+        : null;
+    },
+  };
+  const txHash = (lt: number) =>
+    createHash("sha256").update(String(lt)).digest("base64");
+  const addAccount = (account: string) => {
+    if (!chains.has(account))
+      chains.set(account, {
+        account,
+        role:
+          account === owner
+            ? "owner"
+            : account === ownerWallet
+              ? "owned_jetton_wallet"
+              : "counterparty",
+        generation: "fixture",
+        historyComplete: true,
+        transactions: [],
+      });
+  };
+  for (const o of [owner, other, factory, vault]) {
+    addAccount(o);
+    addAccount(wallet(o));
+    input.wallets.set(wallet(o), {
+      kind: "jetton",
+      id: `testnet:jetton:${root}`,
+      master: root,
+      owner: o,
+      wallet: wallet(o),
+      decimals: 9,
+    });
+  }
+  addAccount(series);
+  const msg = (
+    source: string,
+    destination: string,
+    body: Cell,
+  ): RawMessage => ({
+    source,
+    destination,
+    body: boc(body),
+    createdLt: String(nextLt++),
+    value: "100",
+    forwardFeeRaw: "3",
+    extraFlagsRaw: "0",
+    bounced: false,
+  });
+  const tx = (
+    account: string,
+    incoming?: RawMessage,
+    outgoing: RawMessage[] = [],
+    state?: { code: Cell; data: Cell },
+  ) => {
+    addAccount(account);
+    const list = chains.get(account)!.transactions,
+      previous = list.at(-1),
+      lt = nextLt++;
+    const raw: RawTransaction = {
+      lt: String(lt),
+      hash: txHash(lt),
+      prevTransactionLt: previous?.lt ?? "0",
+      prevTransactionHash:
+        previous?.hash ?? Buffer.alloc(32).toString("base64"),
+      utime: 1700000000 + lt,
+      success: true,
+      status: "success",
+      totalFeesRaw: "7",
+      inMessage: incoming,
+      outMessages: outgoing,
+    };
+    list.push(raw);
+    if (state) states.set(`${account}:${lt}`, state);
+    return raw;
+  };
+  return { input, states, msg, tx };
+}
+function cash(
+  f: ReturnType<typeof fixture>,
+  controller: string,
+  start: RawTransaction,
+  recipient: string,
+  amount: bigint,
+  wire: bigint,
+  before: Cell,
+  after: Cell,
+  finalReceipt?: Cell,
+) {
+  const source = wallet(controller),
+    destination = wallet(recipient),
+    code = controller === vault ? vaultCode : factoryCode;
+  const request = f.msg(
+    controller,
+    source,
+    beginCell()
+      .storeUint(TRANSFER, 32)
+      .storeUint(wire, 64)
+      .storeCoins(amount)
+      .storeAddress(A(recipient))
+      .storeAddress(A(controller))
+      .storeRef(beginCell().storeUint(0x4a535454, 32))
+      .storeCoins(1)
+      .storeRef(Cell.EMPTY)
+      .endCell(),
+  );
+  start.outMessages.push(request);
+  const transfer = f.msg(
+    source,
+    destination,
+    beginCell()
+      .storeUint(SETTLEMENT_INTERNAL, 32)
+      .storeUint(wire, 64)
+      .storeCoins(amount)
+      .storeAddress(A(controller))
+      .storeAddress(A(source))
+      .storeCoins(1)
+      .storeRef(Cell.EMPTY)
+      .endCell(),
+  );
+  const control = (src: string, dest: string, op: number) =>
+    f.msg(
+      src,
+      dest,
+      beginCell()
+        .storeUint(op, 32)
+        .storeUint(wire, 64)
+        .storeCoins(amount)
+        .storeAddress(A(destination))
+        .endCell(),
+    );
+  const ack = control(destination, source, 0x4a534143),
+    success = control(source, controller, 0x4a535543),
+    finalize = control(controller, source, 0x4a53464e),
+    finalized = control(source, controller, 0x4a53464b);
+  const sourceTx = f.tx(source, request, [transfer]),
+    creditTx = f.tx(destination, transfer, [ack]);
+  f.tx(source, ack, [success]);
+  f.tx(controller, success, [finalize], { code, data: before });
+  f.tx(source, finalize, [finalized]);
+  const receipt = finalReceipt && f.msg(controller, recipient, finalReceipt),
+    terminal = f.tx(controller, finalized, receipt ? [receipt] : [], {
+      code,
+      data: after,
+    });
+  if (receipt) f.tx(recipient, receipt);
+  return { sourceTx, creditTx, terminal, transfer, finalized };
+}
+function exercise(
+  kind: 1 | 2 = 1,
+  amount = payout,
+  paid = true,
+  recipient = owner,
+) {
+  const f = fixture();
+  f.input.optionFactories!.get(factory)!.series.get("7")!.kind = kind;
+  const before = position(),
+    after = position({ collateral: 0n, settled: true, payout: amount });
+  f.tx(factory, undefined, [], {
+    code: factoryCode,
+    data: factoryData(before),
+  });
+  f.tx(series, undefined, [], {
+    code: kind === 1 ? shoutCode : spreadCode,
+    data: productData(kind, false, amount),
+  });
+  f.tx(vault, undefined, [], { code: vaultCode, data: vaultData(null) });
+  const original = f.msg(owner, factory, beginCell().storeUint(OPTION_EXERCISE, 32)
+    .storeUint(7, 64).storeUint(3, 64).endCell());
+  const productBody = beginCell().storeUint(kind === 1 ? OPTION_SHOUT_EXERCISE : OPTION_SPREAD_EXERCISE, 32).storeUint(3, 64);
+  if (kind === 1) productBody.storeCoins(0).storeAddress(A(owner)).storeCoins(0).storeAddress(A(owner));
+  const request = f.msg(factory, series, productBody.endCell());
+  f.tx(owner, undefined, [original]);
+  const start = f.tx(factory, original, [request], {
+    code: factoryCode,
+    data: factoryData(position({ ready: true })),
+  });
+  const spyt = f.msg(factory, vault, beginCell().storeUint(OPTION_VAULT_PAYOUT, 32).storeUint(3, 64)
+    .storeUint(7, 64).storeAddress(A(recipient)).storeCoins(amount).storeCoins(0).storeAddress(A(owner)).endCell());
+  const callbackBody = kind === 1
+    ? beginCell().storeUint(OPTION_SHOUT_PAYOUT, 32).storeUint(3, 64).storeAddress(A(recipient)).storeCoins(amount).storeCoins(0).storeAddress(A(owner))
+    : beginCell().storeUint(OPTION_SPREAD_PAYOUT, 32).storeUint(7, 64).storeUint(3, 64).storeCoins(amount);
+  const callback = f.msg(series, factory, callbackBody.endCell());
+  f.tx(series, request, [callback], { code: kind === 1 ? shoutCode : spreadCode, data: productData(kind, true, amount) });
+  f.tx(factory, callback, amount ? [spyt] : [], { code: factoryCode, data: factoryData(after) });
+  const e = entry({
+    amount,
+    recipient,
+    requestHash: Cell.fromBase64(spyt.body!).hash().toString("hex"),
+    status: amount === 0n ? 4 : paid ? 2 : 1,
+  });
+  const dispatch = f.tx(vault, spyt, [], {
+    code: vaultCode,
+    data: vaultData(e),
+  });
+  const payment =
+    amount > 0n && paid
+      ? cash(
+          f,
+          vault,
+          dispatch,
+          recipient,
+          amount,
+          e.wire,
+          vaultData({ ...e, status: 3 }),
+          vaultData({ ...e, status: 4 }, true),
+        )
+      : undefined;
+  return { ...f, original, start, spyt, entry: e, dispatch, payment };
+}
+function refund(kind: 1 | 3 = 3, paid = true, count = 1, accepted = false) {
+  const f = fixture(),
+    amount = payout,
+    wire = 91n,
+    query = 9007199254741017n,
+    payload = beginCell().storeUint(0x46425559, 32).endCell();
+  const logical = optionIngressLogicalIdentity(owner, query.toString(), amount.toString(), payload.hash().toString("hex")),
+    p = kind === 3 ? position({ excess: amount }) : null,
+    physicalTombstones: string[] = [],
+    receiptState = (pending: bigint[] = []): FactoryStateFixture => kind === 1 ? {
+      physicalTombstones: [...physicalTombstones], ingressReceipts: [{logical, accepted, buyKey: 0n,
+        acceptedAmount: accepted ? amount : 0n, refunds: pending}],
+    } : {};
+  f.tx(factory, undefined, [], { code: factoryCode, data: factoryData(p, [], 0n, undefined, accepted ? receiptState() : {}) });
+  const append = (index: number) => {
+  const claimId = 88n + BigInt(index), currentWire = wire + BigInt(index);
+  let incoming: RawMessage;
+  if (kind === 1) {
+    const transfer = f.msg(
+      owner,
+      ownerWallet,
+      beginCell()
+        .storeUint(TRANSFER, 32)
+        .storeUint(query, 64)
+        .storeCoins(amount)
+        .storeAddress(A(factory))
+        .storeAddress(A(owner))
+        .storeRef(Cell.EMPTY)
+        .storeCoins(1)
+        .storeRef(payload)
+        .endCell(),
+    );
+    const internal = f.msg(
+      ownerWallet,
+      factoryWallet,
+      beginCell()
+        .storeUint(INTERNAL, 32)
+        .storeUint(query, 64)
+        .storeCoins(amount)
+        .storeAddress(A(owner))
+        .storeAddress(A(owner))
+        .storeCoins(1)
+        .storeRef(payload)
+        .endCell(),
+    );
+    incoming = f.msg(
+      factoryWallet,
+      factory,
+      beginCell()
+        .storeUint(NOTIFY, 32)
+        .storeUint(query, 64)
+        .storeCoins(amount)
+        .storeAddress(A(owner))
+        .storeAddress(A(ownerWallet))
+        .storeCoins(1)
+        .storeRef(payload)
+        .endCell(),
+    );
+    f.tx(owner, undefined, [transfer]);
+    f.tx(ownerWallet, transfer, [internal]);
+    f.tx(factoryWallet, internal, [incoming]);
+  } else {
+    incoming = f.msg(
+      other,
+      factory,
+      beginCell().storeUint(0x4f435259, 32).storeUint(claimId, 64).endCell(),
+    );
+    f.tx(other, undefined, [incoming]);
+  }
+  const identity = kind === 1
+    ? optionIngressClaimIdentity(factoryWallet, incoming.createdLt!, Cell.fromBase64(incoming.body!).hash().toString("hex"))
+    : optionPositionClaimIdentity(3, "7", "3", owner, owner, amount.toString());
+  const claim: Claim = {id: claimId, identity, kind, amount, wire: currentWire, finalWire: 0n, status: 2, owner, recipient: owner};
+  const pendingState = receiptState([claimId]);
+  const receiptBody = beginCell()
+    .storeUint(OPTION_CLAIM_RECEIPT, 32)
+    .storeUint(claim.id, 64)
+    .storeUint(kind, 8)
+    .storeUint(currentWire, 64)
+    .storeCoins(amount)
+    .storeUint(BigInt("0x" + identity), 256)
+    .endCell();
+  const early = f.msg(factory, owner, receiptBody),
+    dispatch = f.tx(factory, incoming, [early], {
+      code: factoryCode,
+      data: factoryData(p, [claim], claim.id, undefined, pendingState),
+    });
+  f.tx(owner, early);
+  physicalTombstones.push(identity);
+  const terminalState = receiptState();
+  const payment = paid
+    ? cash(
+        f,
+        factory,
+        dispatch,
+        owner,
+        amount,
+        currentWire,
+        factoryData(p, [{ ...claim, status: 3, finalWire: currentWire }], claim.id, undefined, pendingState),
+        factoryData(p, [], 0n, identity, terminalState),
+        receiptBody,
+      )
+    : undefined;
+  return { claim, p, incoming, dispatch, payment, pendingState, terminalState };
+  };
+  const refunds = Array.from({length: count}, (_, index) => append(index));
+  return { ...f, ...refunds.at(-1)!, refunds, logical, payload };
+}
+async function testPhysicalIngressRefunds() {
+  const logical = "13".repeat(32), buyKey = (7n << 64n) | 3n, acceptedAmount = 37n;
+  const currentReceipt = beginCell().storeBit(true).storeUint(buyKey, 128)
+    .storeCoins(acceptedAmount).storeDict(null).endCell();
+  const current = factoryData(null, [], 0n, undefined, { ingressReceipts: [
+    { logical, accepted: true, buyKey, acceptedAmount, refunds: [] },
+  ] });
+  const parsed = readOptionFactoryConfig(boc(current)).ingressReceipts.get(logical)!;
+  assert.equal(parsed.accepted, true);
+  assert.equal(parsed.buyKey, buyKey);
+  assert.equal(parsed.acceptedAmountRaw, "37");
+  assert.equal(parsed.refunds.size, 0);
+  const replaceReceipt = (cell: Cell, replacement: Cell): Cell => cell.equals(currentReceipt) ? replacement
+    : beginCell().storeBits(cell.bits).store(cellBuilder => {
+      for (const ref of cell.refs) cellBuilder.storeRef(replaceReceipt(ref, replacement));
+    }).endCell();
+  const invalidReceipts = [
+    beginCell().storeBit(true).storeDict(null).endCell(),
+    beginCell().storeBit(false).storeUint(buyKey, 128).storeCoins(0).storeDict(null).endCell(),
+    beginCell().storeBit(false).storeUint(0, 128).storeCoins(acceptedAmount).storeDict(null).endCell(),
+    beginCell().storeBit(true).storeUint(buyKey, 128).storeCoins(0).storeDict(null).endCell(),
+    beginCell().storeBit(true).storeUint(3, 128).storeCoins(acceptedAmount).storeDict(null).endCell(),
+    beginCell().storeSlice(currentReceipt.beginParse()).storeBit(true).endCell(),
+  ];
+  for (const receipt of invalidReceipts) assert.throws(() =>
+    readOptionFactoryConfig(boc(replaceReceipt(current, receipt))),
+    "obsolete, malformed or inconsistent ingress receipt cannot qualify current state");
+  for (const accepted of [false, true]) {
+    const f = refund(1, true, 2, accepted), events = (await projectOwnerLedger(f.input)).events,
+      returns = events.filter((e) => e.kind === "option_refund");
+    assert.equal(returns.length, 2, "same logical query paid twice has two independent physical refunds");
+    assert.equal(new Set(returns.map((e) => e.settlement?.optionLifecycle?.refund?.identityHash)).size, 2);
+    assert.equal(new Set(returns.map((e) => e.settlement?.optionLifecycle?.refund?.logicalIdentityHash)).size, 1);
+    for (const [index, payment] of f.refunds.entries()) {
+      const event = returns.find((e) => e.settlement?.optionLifecycle?.refund?.identityHash === payment.claim.identity)!;
+      assert.equal(event.settlement?.optionLifecycle?.refund?.notificationCreatedLt, payment.incoming.createdLt);
+      assert.equal(event.settlement?.optionLifecycle?.refund?.notificationBodyHash, Cell.fromBase64(payment.incoming.body!).hash().toString("hex"));
+      assert.equal(event.settlement?.optionLifecycle?.refund?.sourceWallet, factoryWallet);
+      assert.equal(event.settlement?.status, "confirmed", `physical payment ${index}`);
+      assert.equal(event.movements.filter((m) => m.purpose === "option_refund").length, 1);
+    }
+    const state = readOptionFactoryConfig(boc(f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data));
+    assert.equal(state.ingressReceipts.get(f.logical)?.accepted, accepted);
+    assert.equal(state.ingressReceipts.get(f.logical)?.buyKey, 0n);
+    assert.equal(state.ingressReceipts.get(f.logical)?.acceptedAmountRaw, accepted ? payout.toString() : "0");
+    assert.equal(state.ingressReceipts.get(f.logical)?.refunds.size, 0);
+    assert.equal(state.ingressClaimAttempts.size, 0);
+    for (const r of f.refunds) assert.equal(state.claimIndex.get(BigInt("0x" + r.claim.identity)), 0n);
+  }
+  const cases: Array<[string, (f: ReturnType<typeof refund>) => void]> = [
+    ["missing notification created_lt", (f) => { f.incoming.createdLt = undefined; }],
+    ["changed physical created_lt", (f) => { f.incoming.createdLt = (BigInt(f.incoming.createdLt!) + 1n).toString(); }],
+    ["noncanonical source wallet", (f) => { f.incoming.source = ownerWallet; }],
+    ["changed full body", (f) => { f.incoming.body = boc(beginCell().storeSlice(Cell.fromBase64(f.incoming.body!).beginParse()).storeBit(true).endCell()); }],
+    ["claim logical mapping absent", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id); }],
+    ["claim logical mapping forged", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id, undefined, {...f.pendingState, ingressClaimAttempts: [[f.claim.id, 1n]]}); }],
+    ["accepted flag falsely changed by refund", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id, undefined, {...f.pendingState, ingressReceipts: [{logical: f.logical, accepted: true, buyKey: 0n, acceptedAmount: payout, refunds: [f.claim.id]}]}); }],
+    ["terminal logical receipt omitted", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity); }],
+    ["terminal pending claim retained", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity, f.pendingState); }],
+    ["terminal accepted flag mutated", (f) => { f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(f.p, [], 0n, f.claim.identity, {...f.terminalState, ingressReceipts: [{logical: f.logical, accepted: true, buyKey: 0n, acceptedAmount: payout, refunds: []}]}); }],
+    ["business hash substituted for physical identity", (f) => { f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [{...f.claim, identity: f.logical}], f.claim.id, undefined, f.pendingState); }],
+  ];
+  for (const [label, mutate] of cases) {
+    const f = refund(1); mutate(f);
+    const events = (await projectOwnerLedger(f.input)).events;
+    assert(!events.some((e) => e.kind === "option_refund"), label);
+    assert(!events.flatMap((e) => e.movements).some((m) => m.purpose === "option_refund"), label);
+  }
+  for (const field of ["buyKey", "acceptedAmount"] as const) {
+    const f = refund(1, true, 1, true), receipt = f.pendingState.ingressReceipts![0];
+    const changed = { ...receipt, [field]: field === "buyKey" ? buyKey : payout + 1n };
+    f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(f.p, [f.claim], f.claim.id,
+      undefined, { ...f.pendingState, ingressReceipts: [changed] });
+    const events = (await projectOwnerLedger(f.input)).events;
+    assert(!events.some(event => event.kind === "option_refund"),
+      `ingress refund cannot change an existing accepted ${field}`);
+  }
+  console.log(`4 same-query physical refunds, ${invalidReceipts.length} strict current receipt shapes and ${cases.length + 2} physical/journal forgery cases passed`);
+}
+const exerciseEvent = async (f: ReturnType<typeof exercise>) =>
+  (await projectOwnerLedger(f.input)).events.find(
+    (e) => e.kind === "option_exercise",
+  )!;
+async function durableLifecycle() {
+  const f = exercise(),
+    db = new PGlite();
+  const pool: LedgerSqlPool = {
+    query: async (sql, params) =>
+      !params && sql.includes(";")
+        ? { rows: (await db.exec(sql)).at(-1)?.rows ?? [] }
+        : db.query(sql, params),
+    connect: async () => pool,
+    end: () => db.close(),
+  };
+  const store = new PostgresLedgerStore(pool);
+  let paid = false,
+    wrongVaultCode = false;
+  const history = (account: string) =>
+    (f.input.chains.get(account)?.transactions ?? []).filter(
+      (t) => paid || BigInt(t.lt) <= BigInt(f.dispatch.lt),
+    );
+  const code = (account: string) =>
+    account === factory
+      ? factoryCode
+      : account === vault
+        ? wrongVaultCode
+          ? Cell.EMPTY
+          : vaultCode
+        : account === series
+          ? shoutCode
+          : walletCode;
+  const stateAtSeq = (account: string, seqno = 1000) => {
+    const transactions = history(account).filter(
+        (t) => BigInt(t.lt) <= BigInt(seqno),
+      ),
+      latest = transactions.at(-1);
+    const data = transactions
+      .slice()
+      .reverse()
+      .map((t) => f.states.get(`${account}:${t.lt}`)?.data)
+      .find(Boolean);
+    return {
+      accountState: (latest ? "active" : "uninitialized") as "active" | "uninitialized",
+      balance: "0",
+      lastTxLt: latest?.lt,
+      lastTxHash: latest?.hash,
+      codeBoc: boc(code(account)),
+      dataBoc: data && boc(data),
+    };
+  };
+  const int = (value: number) => ({
+      type: "int" as const,
+      value: BigInt(value),
+    }),
+    cell = (address: string) => ({
+      type: "slice" as const,
+      cell: beginCell().storeAddress(A(address)).endCell(),
+    });
+  const source: FixtureChainSource = fixtureChainSource({ physicalCurrentReads: true,
+    network: "testnet",
+    head: async () => ({ seqno: 1000 }),
+    getAccountState: async (account) => stateAtSeq(account),
+    getAccountStateAtSeqno: async (account, seqno) =>
+      stateAtSeq(account, seqno),
+    getTransactions: async (account, limit, lt) =>
+      history(account)
+        .filter((t) => BigInt(t.lt) <= BigInt(lt!))
+        .slice()
+        .reverse()
+        .slice(0, limit),
+    walletBalance: async (party, master) =>
+      master === root && [owner, other, factory, vault].includes(party)
+        ? { wallet: wallet(party), balance: "0" }
+        : null,
+    jettonMetadata: async () => ({ decimals: 9 }),
+    close: async () => {},
+    runGetMethod: async (account, method) => {
+      const asset = f.input.wallets.get(account);
+      if (method === "get_wallet_data" && asset)
+        return {
+          exitCode: 0,
+          stack: [
+            int(0),
+            cell(asset.owner!),
+            cell(root),
+            { type: "cell", cell: walletCode },
+          ],
+        };
+      if (account === factory && method === "factory_config") {
+        const stack: any[] = Array.from({ length: 13 }, () => int(0));
+        stack[1] = cell(vault);
+        stack[4] = { type: "cell", cell: shoutCode };
+        stack[5] = { type: "cell", cell: spreadCode };
+        stack[6] = cell(root);
+        stack[7] = { type: "cell", cell: walletCode };
+        return { exitCode: 0, stack };
+      }
+      if (account === factory && method === "series_info") {
+        const stack: any[] = Array.from({ length: 18 }, () => int(0));
+        stack[0] = int(-1);
+        stack[2] = int(1);
+        stack[3] = cell(series);
+        return { exitCode: 0, stack };
+      }
+      if (method === "position_info")
+        throw Error("Latest positions cannot establish lifecycle evidence");
+      return null;
+    },
+  });
+  const service = new LedgerService(
+    "testnet",
+    store,
+    source,
+    loadOpcodes(),
+    createLogger("silent"),
+    2,
+    {
+      jettonRoots: [root],
+      t3Root: root,
+      optionFactory: factory,
+      optionVault: vault,
+      optionCodeHashes: q,
+    },
+  );
+  try {
+    await store.initialize();
+    installFixtureIdentities(service, source, f.input.wallets);
+    await service.runOwnerCycle(owner);
+    const pending = await store.page("testnet", owner);
+    assert.equal(
+      pending.coverage.historyComplete,
+      true,
+      JSON.stringify(pending.coverage),
+    );
+    assert.equal(
+      pending.events.find((e) => e.kind === "option_exercise")?.settlement
+        ?.optionLifecycle?.payout.status,
+      "pending",
+      JSON.stringify(pending),
+    );
+    paid = true;
+    await service.runOwnerCycle(owner);
+    const completed = await store.page("testnet", owner),
+      event = completed.events.find((e) => e.kind === "option_exercise");
+    assert.equal(
+      completed.coverage.historyComplete,
+      true,
+      JSON.stringify(completed.coverage),
+    );
+    assert.equal(
+      event?.settlement?.optionLifecycle?.payout.status,
+      "completed",
+      JSON.stringify(completed),
+    );
+    assert.notEqual(
+      completed.coverage.generation,
+      pending.coverage.generation,
+      "vault dependency changes a quiet holder projection",
+    );
+    assert(
+      completed.coverage.relatedAccounts?.some(
+        (a) => a.account === series && a.historyComplete,
+      ),
+    );
+    assert(
+      completed.coverage.relatedAccounts?.some(
+        (a) => a.account === vaultWallet && a.historyComplete,
+      ),
+    );
+    const count = async () =>
+      (
+        await pool.query(
+          "SELECT (SELECT count(*) FROM ledger_runs)::text AS runs,(SELECT count(*) FROM ledger_membership)::text AS members,(SELECT count(*) FROM ledger_projection_events)::text AS events",
+        )
+      ).rows;
+    const before = await count();
+    await service.runOwnerCycle(owner);
+    assert.deepEqual(
+      await count(),
+      before,
+      "unchanged complete dependencies reuse one immutable projection",
+    );
+    assert.deepEqual(
+      (await store.page("testnet", owner)).events,
+      completed.events,
+    );
+    await pool.query("DELETE FROM ledger_account_states");
+    await service.runOwnerCycle(owner);
+    assert.deepEqual(
+      (await store.page("testnet", owner)).events,
+      completed.events,
+      "cold archive reconstruction preserves already exercised/deleted position",
+    );
+    wrongVaultCode = true;
+    await pool.query("UPDATE ledger_owner_checks SET unresolved=true WHERE account=$1", [owner]);
+    await service.runOwnerCycle(owner);
+    const unsupported = await store.page("testnet", owner);
+    assert.equal(unsupported.coverage.generation, completed.coverage.generation);
+    assert(unsupported.coverage.refreshPending!.length > 0);
+    assert.deepEqual(unsupported.events, completed.events, "a current binding failure preserves exact historical payout evidence");
+
+  } finally {
+    await service.stop();
+    await pool.end();
+  }
+}
+export function testFactoryState() {
+  const empty = readOptionFactoryConfig(boc(factoryData(null)));
+  assert.equal(empty.series.size, 0);
+  assert.equal(empty.seriesBuyIndex.size, 0);
+  assert.equal(empty.positions.size, 0);
+  assert.equal(empty.walletProtected, true);
+  assert.equal(empty.walletProtectionSponsor, null);
+  assert.equal(empty.walletQuarantinedRaw, "0");
+  const seriesId = (1n << 62n) + 7n,
+    tokenId = (1n << 53n) + 3n,
+    wire = (1n << 63n) + 13n,
+    key = (seriesId << 64n) | tokenId,
+    value = factorySeries({
+      seriesId,
+      kind: 2,
+      templateId: 4294967295,
+      expiry: (1n << 53n) + 11n,
+      maxNotional: (1n << 116n) + 23n,
+      premiumBps: 101,
+      collateralMultiplierBps: 12345,
+      strikeBps: 9876,
+      openNotional: (1n << 113n) + 31n,
+      collateralLocked: (1n << 115n) + 17n,
+      status: 4,
+      settlementTimestamp: -((1n << 53n) + 19n),
+      nextTokenId: tokenId,
+      correlationScaleBps: 10007,
+      correlationBps: -2345,
+      correlationDispersionBps: 51,
+      correlationTimestamp: -((1n << 54n) + 29n),
+      optionAddress: other,
+      underlyingPool: owner,
+      quotePool: vault,
+      activationWireId: wire + 1n,
+      activationRequestHash: "1".repeat(64),
+      configHash: "2".repeat(64),
+    }),
+    source = factoryData(position(), [], 0n, undefined, {
+      series: [factorySeries(), value],
+      seriesBuyIndex: [[55n, (7n << 64n) | 3n], [wire, key]],
+    }),
+    read = readOptionFactoryConfig(boc(source)),
+    parsed = read.series.get(seriesId.toString())!;
+  assert.equal(read.positions.size, 1, "existing position state remains readable");
+  assert.equal(read.series.size, 2);
+  assert.equal(read.series.get("7")!.kind, 1);
+  assert.equal(read.series.get("7")!.optionAddress, series);
+  assert.equal(read.seriesBuyIndex.get(55n), (7n << 64n) | 3n);
+  assert.equal(read.seriesBuyIndex.get(wire), key);
+  assert.equal(read.seriesBuyIndex.get(wire + 1n), undefined);
+  const { stateHash, writer, ...fields } = parsed;
+  assert.equal(writer.creator, other);
+  assert.equal(writer.fundingStatus, 3);
+  assert.equal(writer.requiredReserveRaw, value.maxNotional.toString());
+  assert.deepEqual(fields, {
+    templateId: 4294967295,
+    kind: 2,
+    expiry: ((1n << 53n) + 11n).toString(),
+    maxNotionalRaw: ((1n << 116n) + 23n).toString(),
+    premiumBps: 101,
+    collateralMultiplierBps: 12345,
+    strikeBps: 9876,
+    openNotionalRaw: ((1n << 113n) + 31n).toString(),
+    collateralLockedRaw: ((1n << 115n) + 17n).toString(),
+    status: 4,
+    expiryRegistered: true,
+    settlementTimestamp: (-((1n << 53n) + 19n)).toString(),
+    nextTokenId: tokenId.toString(),
+    correlationScaleBps: 10007,
+    correlationBps: -2345,
+    correlationDispersionBps: 51,
+    correlationTimestamp: (-((1n << 54n) + 29n)).toString(),
+    correlationConfigHash: value.correlationConfig.hash().toString("hex"),
+    optionAddress: other,
+    underlyingPool: owner,
+    quotePool: vault,
+    activationWireId: (wire + 1n).toString(),
+    activationRequestHash: "1".repeat(64),
+    configHash: "2".repeat(64),
+  });
+  const rawSeries = source.refs[1]!.refs[2]!.beginParse().loadDict(
+    Dictionary.Keys.BigUint(64), inline,
+  );
+  assert.equal(stateHash, rawSeries.get(seriesId)!.hash().toString("hex"));
+  const nullable = readOptionFactoryConfig(boc(factoryData(null, [], 0n, undefined, {
+    series: [factorySeries({
+      kind: 65535, optionAddress: null, underlyingPool: null, quotePool: null,
+      openNotional: 0n, collateralLocked: 0n,
+    })],
+  }))).series.get("7")!;
+  assert.equal(nullable.kind, 65535, "parser preserves unsupported kind for qualification to reject");
+  assert.equal(nullable.optionAddress, null, "no deployed address is fabricated");
+  assert.equal(nullable.underlyingPool, null);
+  assert.equal(nullable.quotePool, null);
+  assert.equal(nullable.openNotionalRaw, "0");
+  assert.equal(nullable.collateralLockedRaw, "0");
+
+  // Preserve unrelated capacity and buy wires across allocation and exact unwind.
+  const capacityState = (allocated: boolean) => readOptionFactoryConfig(boc(factoryData(
+    null, [], 0n, undefined, {
+      series: [factorySeries({
+        openNotional: 111n + (allocated ? notional : 0n),
+        collateralLocked: 222n + (allocated ? collateral : 0n),
+        nextTokenId: allocated ? 4n : 3n,
+      }), value],
+      seriesBuyIndex: allocated ? [[wire, key], [55n, (7n << 64n) | 3n]] : [[wire, key]],
+    },
+  ))),
+    before = capacityState(false),
+    allocated = capacityState(true),
+    unwound = readOptionFactoryConfig(boc(factoryData(null, [], 0n, undefined, {
+      series: [factorySeries({openNotional: 111n, collateralLocked: 222n, nextTokenId: 4n}), value],
+      seriesBuyIndex: [[wire, key]],
+    })));
+  for (const field of ["openNotionalRaw", "collateralLockedRaw"] as const) {
+    const principal = field === "openNotionalRaw" ? notional : collateral;
+    assert.equal(BigInt(allocated.series.get("7")![field]) - BigInt(before.series.get("7")![field]), principal);
+    assert.equal(BigInt(allocated.series.get("7")![field]) - BigInt(unwound.series.get("7")![field]), principal);
+  }
+  assert.equal(allocated.seriesBuyIndex.get(55n), (7n << 64n) | 3n);
+  assert.equal(unwound.seriesBuyIndex.get(55n), undefined);
+  assert.equal(unwound.seriesBuyIndex.get(wire), key);
+  assert.deepEqual(before.series.get(seriesId.toString()), unwound.series.get(seriesId.toString()));
+  assert.equal(unwound.series.get("7")!.nextTokenId, "4", "unwind does not recycle a token ID");
+  assert.notEqual(before.series.get("7")!.stateHash, allocated.series.get("7")!.stateHash);
+  assert.notEqual(allocated.series.get("7")!.stateHash, unwound.series.get("7")!.stateHash);
+
+  const replace = (cell: Cell, path: number[], mutate: (c: Cell) => Cell): Cell => {
+    if (!path.length) return mutate(cell);
+    const [index, ...rest] = path,
+      builder = beginCell().storeBits(cell.bits);
+    cell.refs.forEach((ref, i) => builder.storeRef(i === index ? replace(ref, rest, mutate) : ref));
+    return builder.endCell();
+  };
+  const appendBit = (cell: Cell) => beginCell().storeSlice(cell.beginParse()).storeBit(true).endCell();
+  const appendRef = (cell: Cell) => beginCell().storeSlice(cell.beginParse()).storeRef(Cell.EMPTY).endCell();
+  const negatives: Array<[string, Cell]> = [];
+  for (const collateral of [
+    beginCell().storeAddress(A(root)).storeRef(walletCode).endCell(),
+    beginCell().storeAddress(A(root)).storeRef(walletCode).storeBit(false).storeAddress(null).storeCoins(1n).endCell(),
+    beginCell().storeAddress(null).storeRef(walletCode).storeBit(true).storeAddress(null).storeCoins(0n).endCell(),
+  ]) negatives.push(["missing or invalid wallet protection", replace(source, [0, 1, 2], () => collateral)]);
+  negatives.push(["trailing wallet protection bits", replace(source, [0, 1, 2], appendBit)]);
+  negatives.push(["trailing wallet protection ref", replace(source, [0, 1, 2], appendRef)]);
+  for (const [label, path] of [
+    ["map bundle", [1]],
+    ["series dictionary", [1, 2]],
+    ["oracle bundle", [0, 3]],
+    ["series auxiliary", [0, 3, 3]],
+    ["buy index dictionary", [0, 3, 3, 2]],
+  ] as Array<[string, number[]]>) {
+    negatives.push([`missing ${label}`, replace(source, path, () => Cell.EMPTY)]);
+    negatives.push([`trailing ${label} bits`, replace(source, path, appendBit)]);
+  }
+  for (const [label, path] of [
+    ["map bundle", [1]],
+    ["series dictionary", [1, 2]],
+    ["series auxiliary", [0, 3, 3]],
+    ["buy index dictionary", [0, 3, 3, 2]],
+  ] as Array<[string, number[]]>)
+    negatives.push([`trailing ${label} reference`, replace(source, path, appendRef)]);
+  for (const mapCount of [0, 1]) negatives.push([`missing mandatory ingress map ${mapCount}`, replace(source, [0, 1, 3, 3], (c) => {
+    const old = c.beginParse(), funded = old.loadCoins(), committed = old.loadCoins(),
+      ownerIndex = old.loadDict(Dictionary.Keys.Address(), Dictionary.Values.Cell()),
+      result = beginCell().storeCoins(funded).storeCoins(committed).storeDict(ownerIndex);
+    if (mapCount) result.storeDict(null);
+    return result.endCell();
+  })]);
+  const alterSeries = (mutate: (c: Cell) => Cell) => replace(source, [1, 2], (cell) => {
+    const entries = cell.beginParse().loadDict(Dictionary.Keys.BigUint(64), inline);
+    entries.set(seriesId, mutate(entries.get(seriesId)!));
+    return beginCell().storeDict(entries).endCell();
+  });
+  negatives.push(["trailing persisted series bits", alterSeries(appendBit)]);
+  assert.throws(() => alterSeries(appendRef), "canonical series consumes all four references");
+  for (const [label, ref] of [["correlation", 0], ["addresses", 1], ["activation", 2], ["writer", 3]] as const) {
+    negatives.push([`missing ${label} fields`, alterSeries((c) => replace(c, [ref], () => Cell.EMPTY))]);
+    negatives.push([`trailing ${label} bits`, alterSeries((c) => replace(c, [ref], appendBit))]);
+    negatives.push([`trailing ${label} reference`, alterSeries((c) => replace(c, [ref], appendRef))]);
+  }
+  negatives.push(["missing writer native escrow", alterSeries(c => replace(c, [3], writer =>
+    beginCell().storeBits(writer.bits).storeRef(writer.refs[1]).endCell()))]);
+  for (const invalid of [
+    beginCell().storeBit(false).storeUint(1, 64).storeCoins(0).endCell(),
+    beginCell().storeBit(true).storeUint(0, 64).storeCoins(1).endCell(),
+    beginCell().storeBit(true).storeUint(1, 64).storeCoins(0).endCell(),
+  ]) negatives.push(["invalid writer native escrow", alterSeries(c => replace(c, [3, 0], () => invalid))]);
+  for (const invalid of [
+    beginCell().storeAddress(A(other)).endCell(),
+    beginCell().storeAddress(A(other)).storeAddress(A(other)).storeAddress(null).storeUint(0, 8).endCell(),
+    beginCell().storeAddress(A(other)).storeAddress(A(other)).storeAddress(null).storeUint(1, 8).endCell(),
+    beginCell().storeAddress(A(other)).storeAddress(A(other)).storeAddress(A(owner)).storeUint(3, 8).endCell(),
+  ]) negatives.push(["missing current guard or obsolete canary fields", replace(source, [0, 1, 0], () => invalid)]);
+  for (const bits of [127, 129]) {
+    const wrongWidth = Dictionary.empty(Dictionary.Keys.BigUint(64), inline);
+    wrongWidth.set(wire, beginCell().storeUint(key, bits).endCell());
+    negatives.push([`buy index value width ${bits}`, replace(source, [0, 3, 3, 2], () => beginCell().storeDict(wrongWidth).endCell())]);
+  }
+  const referencedSeries = Dictionary.empty(Dictionary.Keys.BigUint(64), Dictionary.Values.Cell());
+  referencedSeries.set(seriesId, rawSeries.get(seriesId)!);
+  negatives.push(["noncanonical referenced series values", replace(source, [1, 2], () => beginCell().storeDict(referencedSeries).endCell())]);
+  const prune = (cell: Cell) => beginCell()
+    .storeUint(1, 8)
+    .storeUint(1, 8)
+    .storeBuffer(cell.hash())
+    .storeUint(cell.depth(), 16)
+    .endCell({ exotic: true });
+  for (const [label, path] of [
+    ["series", [1, 2]],
+    ["buy index", [0, 3, 3, 2]],
+  ] as Array<[string, number[]]>) {
+    negatives.push([`pruned ${label} root`, replace(source, [...path, 0], prune)]);
+    negatives.push([`pruned ${label} branch`, replace(source, [...path, 0, 0], prune)]);
+  }
+  const factoryPositions = source.refs[2]!.beginParse().loadDict(Dictionary.Keys.BigUint(128), inline);
+  factoryPositions.set((7n << 64n) | 4n, factoryPositions.get((7n << 64n) | 3n)!);
+  const withFactoryPositions = replace(source, [2], () => beginCell().storeDict(factoryPositions).endCell());
+  negatives.push(["pruned factory position root cannot prove absence", replace(withFactoryPositions, [2, 0], prune)]);
+  negatives.push(["pruned factory position branch cannot prove absence", replace(withFactoryPositions, [2, 0, 0], prune)]);
+  for (const [label, corrupt] of negatives)
+    assert.throws(() => readOptionFactoryConfig(boc(corrupt)), label);
+  for (const kind of [1, 2] as const) {
+    assert.equal(readOptionProductState(boc(productData(kind, false, 0n, owner, "absent")), kind, "3").position, null);
+    const data = productData(kind, false),
+      positions = data.refs[2]!.beginParse().loadDict(Dictionary.Keys.BigUint(64), inline);
+    positions.set(4n, positions.get(3n)!);
+    const withPositions = replace(data, [2], () => beginCell().storeDict(positions).endCell());
+    for (const path of [[2, 0], [2, 0, 0]])
+      for (const target of ["3", "999"])
+        assert.throws(() => readOptionProductState(boc(replace(withPositions, path, prune)), kind, target),
+          `kind ${kind} pruned product positions cannot prove present/absent target ${target}`);
+  }
+  console.log(`factory current-state parsing, exact capacity allocation/unwind, ${negatives.length} factory corruption and 8 product-pruning cases passed`);
+}
+async function main() {
+  const writerReserve = (pendingQueryId?: bigint) => {
+    const builder = beginCell().storeAddress(A(owner)).storeUint(71, 64)
+      .storeCoins(150).storeCoins(145).storeCoins(5).storeInt(1700000000, 64).storeCoins(0);
+    if (pendingQueryId !== undefined) builder.storeUint(pendingQueryId, 64);
+    return builder.endCell();
+  };
+  for (const pending of [0n, 77n]) {
+    const restored = readOptionVaultState(boc(vaultData(null, false, { writerReserve: writerReserve(pending) })));
+    assert.equal(restored.writers.get('7')?.pendingClaimQueryId, pending.toString());
+  }
+  assert.throws(() => readOptionVaultState(boc(vaultData(null, false, { writerReserve: writerReserve() }))),
+    'obsolete writer reserve without the mandatory pending claim identity is rejected');
+  assert.throws(() => readOptionVaultState(boc(vaultData(null, false, {
+    writerReserve: beginCell().storeSlice(writerReserve(77n).beginParse()).storeBit(true).endCell(),
+  }))), 'extra writer reserve fields are rejected');
+
+  testFactoryState();
+  const actualBoc = readFileSync(path.join(__dirname, "fixtures/options-factory-rejected-ingress.boc"));
+  const provenance = JSON.parse(readFileSync(path.join(__dirname,
+    "fixtures/options-factory-rejected-ingress.provenance.json"), "utf8"));
+  assert.equal(createHash("sha256").update(actualBoc).digest("hex"), provenance.bocSha256);
+  const actual = readOptionFactoryConfig(actualBoc.toString("base64"));
+  assert.equal(actual.series.size, 1);
+  assert.equal(actual.series.get("1")?.expiryRegistered, true);
+  assert.equal(actual.series.get("1")?.writer.nativeEscrow.admitted, true);
+  assert.equal(actual.series.get("1")?.writer.nativeEscrow.requiredReserveRaw, "11830000000");
+  assert.equal(actual.ingressReceipts.size, 2);
+  const actualReceipts = [...actual.ingressReceipts.values()];
+  assert.equal(actualReceipts.filter(receipt => !receipt.accepted && receipt.buyKey === 0n &&
+    receipt.acceptedAmountRaw === "0" && receipt.refunds.size === 0).length, 1);
+  assert.equal(actualReceipts.filter(receipt => receipt.accepted && receipt.buyKey === 0n &&
+    receipt.acceptedAmountRaw === "112500000000" && receipt.refunds.size === 0).length, 1);
+  console.log("actual VM15/gas400 Factory rejected-ingress state and mandatory current fields passed");
+  for (const kind of [1, 2] as const) {
+    const f = exercise(kind),
+      events = (await projectOwnerLedger(f.input)).events,
+      event = events.find((e) => e.kind === "option_exercise");
+    assert.equal(
+      event?.settlement?.status,
+      "confirmed",
+      JSON.stringify(events),
+    );
+    assert.equal(event.settlement.optionLifecycle?.payout.status, "completed");
+    assert.equal(
+      event.settlement.optionLifecycle?.payout.amountRaw,
+      payout.toString(),
+    );
+    assert.equal(
+      event.movements.filter((m) => m.purpose === "option_payout").length,
+      1,
+    );
+    assert.equal(
+      event.movements.find((m) => m.purpose === "option_payout")?.amountRaw,
+      payout.toString(),
+    );
+    assert.equal(
+      event.movements.find((m) => m.purpose === "option_right_retired")
+        ?.amountRaw,
+      "1",
+    );
+    assert.equal(
+      event.movements.find((m) => m.purpose === "option_payout")?.evidence.kind,
+      "option_payout",
+    );
+    assert.equal(
+      event.settlement.optionLifecycle?.collateralLiabilityReleasedRaw,
+      (collateral - payout).toString(),
+    );
+    assert.equal(
+      event.settlement.optionLifecycle?.premiumAccountingReleasedRaw,
+      "0",
+    );
+    assert.equal(
+      event.movements.filter((m) => m.asset.kind === "jetton").length,
+      1,
+      "liability and premium changes do not create extra token transfers",
+    );
+    assert.equal(
+      event.movements
+        .filter((m) => m.evidence.kind === "transaction_fee")
+        .reduce((s, m) => s + BigInt(m.amountRaw), 0n)
+        .toString(),
+      event.totalFeesRaw,
+    );
+    assert(
+      event.settlement.optionLifecycle?.localNetworkFees.some(
+        (fee) => !fee.includedInOwnerFeeMovements,
+      ),
+      "counterparty costs are evidence, not another owner debit",
+    );
+    assert.equal(
+      event.settlement.queryId,
+      undefined,
+      "exercise has no user query ID",
+    );
+    assert.equal(
+      event.settlement.optionLifecycle?.requestEvidence?.stateBeforeHash,
+      event.settlement.optionLifecycle?.beforePosition?.dataHash,
+    );
+    assert.equal(
+      event.settlement.optionLifecycle?.productEvidence?.stateBeforeHash,
+      event.settlement.optionLifecycle?.productBefore?.dataHash,
+    );
+    assert.deepEqual(event.issues, []);
+  }
+  const zeroPayout = await exerciseEvent(exercise(1, 0n));
+  assert.equal(zeroPayout.settlement?.status, "confirmed");
+  assert.equal(zeroPayout.settlement?.optionLifecycle?.payout.status, "none");
+  assert(
+    !zeroPayout.movements.some((m) => m.asset.kind === "jetton"),
+    "zero payout retires only a right; ReleaseCollateral is not cash",
+  );
+  const computed = exercise();
+  computed.original.body = boc(beginCell().storeUint(OPTION_EXERCISE, 32).storeUint(7, 64).storeUint(3, 64)
+    .storeAddress(A(owner)).storeCoins(1).storeCoins(500).endCell());
+  const computedEvents = (await projectOwnerLedger(computed.input)).events;
+  assert(!computedEvents.some(event => event.settlement?.optionLifecycle?.outcome === "exercised"), "obsolete caller-selected payout body is unsupported");
+  const ready = await exerciseEvent(exercise(1, payout, false));
+  assert.equal(
+    ready.settlement?.status,
+    "confirmed",
+    "completed right retirement is independent from queued cash",
+  );
+  assert.equal(ready.settlement?.optionLifecycle?.payout.status, "pending");
+  assert(ready.issues.includes("option_payout_settlement_pending"));
+  assert(!ready.movements.some((m) => m.purpose === "option_payout"));
+  const recipient = exercise(1, payout, true, other);
+  const holderEvent = await exerciseEvent(recipient);
+  assert.equal(holderEvent.settlement?.status, "incomplete", "a callback cannot redirect a holder payout");
+  for (const mutate of [
+    (f: ReturnType<typeof exercise>) => {
+      f.input.stateAt = async () => null;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.input.optionFactories!.get(factory)!.qualification = undefined;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.input.chains.get(series)!.historyComplete = false;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.states.get(`${factory}:${f.start.prevTransactionLt}`)!.data =
+        factoryData(position({ owner: other }));
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.states.get(`${factory}:${f.start.prevTransactionLt}`)!.code =
+        Cell.EMPTY;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      const t = f.input.chains.get(series)!.transactions.at(-1)!;
+      f.states.get(`${series}:${t.prevTransactionLt}`)!.data = productData(
+        1,
+        false,
+        payout,
+        other,
+      );
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.input.chains.get(series)!.transactions.at(-1)!.success = false;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.input.chains.get(factory)!.transactions.at(-1)!.inMessage!.createdLt =
+        undefined;
+    },
+  ]) {
+    const f = exercise();
+    mutate(f);
+    const e = await exerciseEvent(f);
+    assert.notEqual(e?.settlement?.status, "confirmed");
+    assert(!e?.movements.some((m) => m.purpose === "option_right_retired"));
+  }
+  for (const mutate of [
+    (f: ReturnType<typeof exercise>) => {
+      f.payment!.terminal.success = false;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.payment!.finalized.createdLt = undefined;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.payment!.finalized.body = boc(
+        beginCell()
+          .storeUint(0x4a53464b, 32)
+          .storeUint(92, 64)
+          .storeCoins(payout)
+          .storeAddress(A(ownerWallet))
+          .endCell(),
+      );
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.payment!.finalized.bounced = true;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.input.chains.get(vaultWallet)!.historyComplete = false;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.input.wallets.get(ownerWallet)!.master = other;
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.states.get(`${vault}:${f.payment!.terminal.lt}`)!.data = vaultData(
+        { ...f.entry, status: 4, amount: payout + 1n },
+        true,
+      );
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.states.get(`${vault}:${f.payment!.terminal.lt}`)!.data = vaultData(
+        { ...f.entry, status: 4, requestHash: "11".repeat(32) },
+        true,
+      );
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.states.get(`${vault}:${f.payment!.terminal.lt}`)!.data = vaultData(
+        { ...f.entry, status: 4, recipient: other },
+        true,
+      );
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.states.get(`${vault}:${f.payment!.terminal.lt}`)!.data = vaultData(
+        { ...f.entry, status: 4, wire: 92n },
+        true,
+      );
+    },
+    (f: ReturnType<typeof exercise>) => {
+      f.states.get(`${vault}:${f.payment!.terminal.lt}`)!.data = vaultData(
+        { ...f.entry, status: 4 },
+        false,
+      );
+    },
+  ]) {
+    const f = exercise();
+    mutate(f);
+    const events = (await projectOwnerLedger(f.input)).events;
+    assert(
+      !events.some(
+        (e) => e.settlement?.optionLifecycle?.payout.status === "completed",
+      ),
+    );
+    assert(
+      !events
+        .flatMap((e) => e.movements)
+        .some((m) => m.purpose === "option_payout"),
+    );
+  }
+  const risk = exercise();
+  risk.states.get(`${vault}:${risk.payment!.terminal.lt}`)!.data = vaultData(
+    { ...risk.entry, status: 4, risk: 99n },
+    true,
+  );
+  const riskEvent = await exerciseEvent(risk);
+  assert.equal(
+    riskEvent.settlement?.optionLifecycle?.payout.status,
+    "completed",
+  );
+  assert.equal(
+    riskEvent.settlement?.optionLifecycle?.protocolAccounting.status,
+    "unverified",
+    "risk FINAL metadata is not authenticated reimbursement cash",
+  );
+  for (const kind of [1, 3] as const) {
+    const f = refund(kind),
+      events = (await projectOwnerLedger(f.input)).events,
+      event = events.find((e) => e.kind === "option_refund");
+    assert.equal(
+      event?.settlement?.status,
+      "confirmed",
+      JSON.stringify(events),
+    );
+    assert.equal(
+      event.settlement.optionLifecycle?.refund?.kind,
+      kind === 1 ? "ingress" : "excess",
+    );
+    assert.equal(
+      event.settlement.optionLifecycle?.payout.amountRaw,
+      payout.toString(),
+    );
+    assert.equal(
+      event.movements.find((m) => m.purpose === "option_refund")?.evidence.kind,
+      "option_refund",
+    );
+    assert.equal(
+      event.movements.filter((m) => m.purpose === "option_refund").length,
+      1,
+    );
+    const net = event.movements
+      .filter((m) => m.asset.kind === "jetton")
+      .reduce(
+        (s, m) => s + (m.direction === "in" ? 1n : -1n) * BigInt(m.amountRaw),
+        0n,
+      );
+    assert.equal(
+      net,
+      kind === 1 ? 0n : payout,
+      "full ingress return and excess conserve exact owned tokens",
+    );
+    assert.equal(
+      event.settlement.queryId,
+      kind === 1 ? "9007199254741017" : undefined,
+    );
+    const pending = (await projectOwnerLedger(refund(kind, false).input)).events;
+    assert(
+      !pending.some((e) => e.kind === "option_refund"),
+      "the early queued OCRC receipt cannot confirm payment",
+    );
+  }
+  for (const mutate of [
+    (f: ReturnType<typeof refund>) => {
+      f.input.stateAt = async () => null;
+    },
+    (f: ReturnType<typeof refund>) => {
+      f.input.chains.get(factoryWallet)!.historyComplete = false;
+    },
+    (f: ReturnType<typeof refund>) => {
+      f.payment!.terminal.success = false;
+    },
+    (f: ReturnType<typeof refund>) => {
+      f.payment!.terminal.outMessages = [];
+    },
+    (f: ReturnType<typeof refund>) => {
+      f.states.get(`${factory}:${f.payment!.terminal.lt}`)!.data = factoryData(
+        f.p,
+      );
+    },
+    (f: ReturnType<typeof refund>) => {
+      f.states.get(
+        `${factory}:${f.payment!.terminal.prevTransactionLt}`,
+      )!.data = factoryData(
+        f.p,
+        [{ ...f.claim, status: 3, finalWire: 92n }],
+        f.claim.id,
+      );
+    },
+    (f: ReturnType<typeof refund>) => {
+      f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(
+        f.p,
+        [{ ...f.claim, owner: other }],
+        f.claim.id,
+      );
+    },
+    (f: ReturnType<typeof refund>) => {
+      f.states.get(`${factory}:${f.dispatch.lt}`)!.data = factoryData(
+        f.p,
+        [{ ...f.claim, amount: payout + 1n }],
+        f.claim.id,
+      );
+    },
+  ]) {
+    const f = refund();
+    mutate(f);
+    const events = (await projectOwnerLedger(f.input)).events;
+    assert(!events.some((e) => e.kind === "option_refund"));
+    assert(
+      !events
+        .flatMap((e) => e.movements)
+        .some((m) => m.purpose === "option_refund"),
+    );
+    assert(
+      events.some((e) =>
+        e.issues.includes("option_identity_or_cash_settlement_unverified"),
+      ),
+      "known protocol cash stays unresolved when its terminal evidence is absent",
+    );
+  }
+  assert.deepEqual(validateOptionsCodeHashes(q), q);
+  for (const bad of [
+    undefined,
+    null,
+    "  ",
+    JSON.stringify(q),
+    {},
+    { ...q, extra: "x" },
+    { ...q, walletCodeHash: "ABC".repeat(21) + "A" },
+    { ...q, factoryCodeHash: undefined },
+  ])
+    assert.throws(() => validateOptionsCodeHashes(bad));
+  const replay = exercise(),
+    originalEvents = (await projectOwnerLedger(replay.input)).events;
+  const again = replay.msg(
+    owner,
+    factory,
+    Cell.fromBase64(replay.original.body!),
+  );
+  replay.tx(owner, undefined, [again]);
+  replay.tx(factory, again, [], {
+    code: factoryCode,
+    data: factoryData(
+      position({ premium, collateral: 0n, settled: true, payout }),
+    ),
+  });
+  const replayed = (await projectOwnerLedger(replay.input)).events;
+  assert.equal(
+    replayed
+      .flatMap((e) => e.movements)
+      .filter((m) => m.purpose === "option_right_retired").length,
+    1,
+    "replayed exercise cannot retire another right",
+  );
+  assert.deepEqual(
+    replayed
+      .flatMap((e) => e.movements)
+      .filter((m) => m.purpose === "option_payout"),
+    originalEvents
+      .flatMap((e) => e.movements)
+      .filter((m) => m.purpose === "option_payout"),
+    "replayed request does not attribute the prior payout again",
+  );
+  await testPhysicalIngressRefunds();
+  await durableLifecycle();
+  console.log(
+    "option lifecycle historical right retirement and actual payout tests passed",
+  );
+}
+export {
+  A,
+  owner,
+  other,
+  factory,
+  vault,
+  root,
+  series,
+  wallet,
+  ownerWallet,
+  factoryWallet,
+  vaultWallet,
+  factoryCode,
+  vaultCode,
+  shoutCode,
+  spreadCode,
+  walletCode,
+  notional,
+  premium,
+  collateral,
+  payout,
+  q,
+  boc,
+  position,
+  factorySeries,
+  factoryData,
+  productData,
+  entry,
+  vaultData,
+  fixture,
+  cash,
+  exercise,
+  refund,
+};
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

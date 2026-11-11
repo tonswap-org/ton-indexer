@@ -1,60 +1,53 @@
 import { createHash } from 'node:crypto';
-import { Dictionary } from '@ton/core';
-import { JettonMetadata } from '../models';
+import { Cell, Dictionary } from '@ton/core';
+import type { JettonMetadata } from '../models';
 
-const KEY_FIELDS = ['name', 'description', 'image', 'symbol', 'decimals', 'uri'] as const;
-
-const keyHash = (key: string) => createHash('sha256').update(key).digest();
-
-const readSnakeString = (cell: { beginParse: () => any }): string => {
-  return cell.beginParse().loadStringTail();
-};
-
-export const parseJettonMetadata = (content: { beginParse: () => any }): JettonMetadata => {
-  const slice = content.beginParse();
-  if (slice.remainingBits < 8) return {};
-
-  const tag = slice.loadUint(8);
-  if (tag === 0x01) {
-    const uri = slice.loadStringTail();
-    return { uri };
-  }
-
-  if (tag === 0x00) {
-    const dict = slice.loadDict(Dictionary.Keys.Buffer(32), Dictionary.Values.Cell());
-    const meta: JettonMetadata = {};
-
-    for (const field of KEY_FIELDS) {
-      const key = keyHash(field);
-      const valueCell = dict.get(key);
-      if (!valueCell) continue;
-      const value = readSnakeString(valueCell);
-      if (field === 'decimals') {
-        const parsed = Number(value);
-        if (Number.isFinite(parsed)) {
-          meta.decimals = parsed;
-        }
-      } else if (field === 'symbol') {
-        meta.symbol = value;
-      } else if (field === 'name') {
-        meta.name = value;
-      } else if (field === 'description') {
-        meta.description = value;
-      } else if (field === 'image') {
-        meta.image = value;
-      } else if (field === 'uri') {
-        meta.uri = value;
-      }
+const FIELDS = ['name', 'description', 'image', 'symbol', 'decimals', 'uri'] as const;
+/** Display metadata is optional, untrusted text, never accounting precision. */
+export function metadataText(value: unknown): string | undefined {
+  return typeof value === 'string' && !value.includes('\0') && value.length <= 8192 ? value : undefined;
+}
+function snake(cell: Cell, prefix: boolean): string | undefined {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for (let depth = 0; depth < 64; depth++) {
+    const s = cell.beginParse();
+    if (prefix) {
+      if (s.remainingBits < 8 || s.loadUint(8) !== 0) return undefined;
+      prefix = false;
     }
-
-    return meta;
+    if (s.remainingBits % 8 || s.remainingRefs > 1) return undefined;
+    size += s.remainingBits / 8;
+    if (size > 8192) return undefined;
+    chunks.push(s.loadBuffer(s.remainingBits / 8));
+    if (!s.remainingRefs) return metadataText(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+    cell = s.loadRef();
   }
-
-  // Unknown format: attempt to read as string tail.
+  return undefined;
+}
+export function parseJettonMetadata(content: { beginParse: () => any }): JettonMetadata {
   try {
-    const uri = slice.loadStringTail();
-    return { uri };
-  } catch {
-    return {};
-  }
-};
+    const s = content.beginParse();
+    if (s.remainingBits < 8) return {};
+    const tag = s.loadUint(8);
+    if (tag === 1) {
+      const uri = snake(s.asCell(), false);
+      return uri === undefined ? {} : { uri };
+    }
+    if (tag !== 0) return {};
+    const dict = s.loadDict(Dictionary.Keys.Buffer(32), Dictionary.Values.Cell());
+    if (s.remainingBits || s.remainingRefs) return {};
+    const result: JettonMetadata = {};
+    for (const field of FIELDS) {
+      const valueCell = dict.get(createHash('sha256').update(field).digest());
+      if (!valueCell) continue;
+      let value: string | undefined;
+      try { value = snake(valueCell, true); } catch { continue; }
+      if (value === undefined) continue;
+      if (field === 'decimals') {
+        if (/^(0|[1-9][0-9]{0,2})$/.test(value) && Number(value) <= 255) result.decimals = Number(value);
+      } else result[field] = value;
+    }
+    return result;
+  } catch { return {}; }
+}

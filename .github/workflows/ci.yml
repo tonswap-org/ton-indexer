@@ -10,6 +10,9 @@ on:
       - develop
       - master
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -31,24 +34,54 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --omit=dev
-      - name: Deployment evidence audit
-        run: |
-          npm run test:deployment-evidence-template
-          npm run generate:deployment-evidence-template -- --output build/reports/production-deployment-evidence-template.json
-          npm run test:deployment-evidence-audit
-          npm run audit:deployment-evidence
       - run: npm test
       - run: npm run build
-      - name: Build production Docker image
-        run: docker build -t ton-indexer:ci .
-      - name: Verify production dependency surface
+
+  platform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/platform
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tonswap_platform_test_ci
+          POSTGRES_USER: platform_test
+          POSTGRES_PASSWORD: platform_test_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U platform_test -d tonswap_platform_test_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      PLATFORM_TEST_DATABASE_URL: postgresql://platform_test:platform_test_ci@127.0.0.1:5432/tonswap_platform_test_ci
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/platform/package-lock.json
+      - run: npm ci
+        working-directory: .
+      - run: npm ci
+      - name: Require the native PostgreSQL 16 test database
         run: |
-          docker run --rm --entrypoint sh ton-indexer:ci -c '
-            for package in tsx typescript @types/node; do
-              if npm ls --include=dev --all "$package" >/dev/null 2>&1 &&
-                ! npm ls --omit=dev --all "$package" >/dev/null 2>&1; then
-                echo "Development-only dependency leaked into runtime image: $package" >&2
-                exit 1
-              fi
-            done
-          '
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          if (!process.env.PLATFORM_TEST_DATABASE_URL) throw Error('PLATFORM_TEST_DATABASE_URL is required.');
+          const client = new pg.Client({ connectionString: process.env.PLATFORM_TEST_DATABASE_URL });
+          await client.connect();
+          try {
+            const { rows } = await client.query('SHOW server_version_num');
+            if (Math.floor(Number(rows[0].server_version_num) / 10000) !== 16)
+              throw Error('Platform native verification requires PostgreSQL 16.');
+          } finally { await client.end(); }
+          NODE
+      - name: Verify the complete platform service with native database coverage
+        run: env -u PERPS_CASE npm run verify

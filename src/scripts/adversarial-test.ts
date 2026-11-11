@@ -1,17 +1,27 @@
+import { fixtureChainSource, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
+import { runGetterFreshnessTests } from './getter-freshness-cases';
+import { runTransactionEvidenceTests } from './transaction-evidence-test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { get as httpGet } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { beginCell } from '@ton/core';
 import fastify from 'fastify';
 import { loadConfig } from '../config';
 import { registerRoutes } from '../api/routes';
+import { runtimeMetadataFixture } from './fixtures/runtimeManifest';
+import { ChainReadError } from '../data/dataSource';
+import { fakeChainSource } from './support/fakeChainSource';
 import { setCorsHeaders } from '../api/cors';
 import { RateLimiter } from '../api/rateLimit';
 import { MemoryStore } from '../store/memoryStore';
 import { loadSnapshotFile } from '../snapshot';
 import { IndexedTx } from '../models';
 import { BlockFollower } from '../workers/blockFollower';
-import { TonDataSource, RawTransaction } from '../data/dataSource';
+import { BackfillWorker } from '../workers/backfillWorker';
+import {RawTransaction,
+  transactionPageReachesHistoryStart} from '../data/dataSource';
 import { createLogger } from '../utils/logger';
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
@@ -34,13 +44,15 @@ const registerTestRoutes = (
   rateLimiter?: RateLimiter,
   registry?: Record<string, string>
 ) => {
-  registerRoutes(app, config, service, metrics, snapshots, debug, rateLimiter, registry);
+  registerRoutes(app, config, service, metrics, snapshots, debug, rateLimiter, registry, runtimeMetadataFixture(config.network));
 };
 
 const makeIndexedTx = (lt: number, hash = `h${lt}`): IndexedTx => ({
   address: validAddress,
   lt: String(lt),
   hash,
+  prevTransactionLt: String(Math.max(0, lt - 1)),
+  prevTransactionHash: linkedHistoryHash(Math.max(0, lt - 1)),
   utime: lt,
   success: true,
   inMessage: undefined,
@@ -69,9 +81,32 @@ const makeRawTx = (lt: number, hash = `h${lt}`): RawTransaction => ({
   outMessages: [],
 });
 
-const makeSource = (overrides: Partial<TonDataSource> = {}): TonDataSource => ({
+const linkedHistoryHash = (lt: number) =>
+  Buffer.from(BigInt(lt).toString(16).padStart(64, '0'), 'hex').toString('base64');
+
+const makeLinkedRawTx = (lt: number): RawTransaction => ({
+  ...makeRawTx(lt, linkedHistoryHash(lt)),
+  prevTransactionLt: String(lt - 1),
+  prevTransactionHash: linkedHistoryHash(lt - 1),
+});
+
+const makeLinkedRawRange = (newestLt: number, oldestLt: number) =>
+  Array.from(
+    { length: newestLt - oldestLt + 1 },
+    (_, index) => makeLinkedRawTx(newestLt - index)
+  );
+
+const testHistoryStartProofRejectsOutOfRangeLt = () => {
+  const malformed = {
+    ...makeLinkedRawTx(1),
+    lt: '18446744073709551616',
+  };
+  assert.equal(transactionPageReachesHistoryStart([malformed]), false);
+};
+
+const makeSource = (overrides: ChainFixtureOptions = {}): FixtureChainSource => (fixtureChainSource({
   network: 'testnet',
-  async getMasterchainInfo() {
+  async head() {
     return { seqno: 1 };
   },
   async getAccountState() {
@@ -83,17 +118,17 @@ const makeSource = (overrides: Partial<TonDataSource> = {}): TonDataSource => ({
   async runGetMethod() {
     return null;
   },
-  async getJettonBalance() {
+  async walletBalance() {
     return null;
   },
-  async getJettonMetadata() {
+  async jettonMetadata() {
     return null;
   },
   async close() {
     return;
   },
   ...overrides,
-});
+}));
 
 const testRateLimitIgnoresUntrustedForwardedFor = async () => {
   const config = {
@@ -110,13 +145,14 @@ const testRateLimitIgnoresUntrustedForwardedFor = async () => {
       default: { windowMs: 60_000, max: 1 },
     },
   };
-  const app = fastify({ logger: false, trustProxy: false });
+  const app = fastify({ logger: false });
   const service = {
-    getHealth() {
-      return { lastMasterSeqno: 1 };
+
+      getHealth() {
+      return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
   };
-  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
+  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network));
   await app.ready();
 
   const first = await app.inject({
@@ -135,10 +171,10 @@ const testRateLimitIgnoresUntrustedForwardedFor = async () => {
   await app.close();
 };
 
-const testRateLimitUsesForwardedForOnlyWithTrustedProxy = async () => {
+const testRateLimitUsesAuthenticatedEdgeOnly = async () => {
   const config = {
     ...loadConfig(),
-    trustProxy: true,
+    edgeKey: 'adversarial-edge-key',
     rateLimitEnabled: true,
     rateLimitWindowMs: 60_000,
     rateLimitMax: 1,
@@ -151,26 +187,27 @@ const testRateLimitUsesForwardedForOnlyWithTrustedProxy = async () => {
       default: { windowMs: 60_000, max: 1 },
     },
   };
-  const app = fastify({ logger: false, trustProxy: true });
+  const app = fastify({ logger: false });
   const service = {
-    getHealth() {
-      return { lastMasterSeqno: 1 };
+
+      getHealth() {
+      return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
   };
-  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
+  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network));
   await app.ready();
 
   const first = await app.inject({
     method: 'GET',
     url: '/api/indexer/v1/health',
-    headers: { 'x-forwarded-for': '203.0.113.20' },
+    headers: { 'x-tonswap-client-ip': '203.0.113.20', 'x-tonswap-edge-key': config.edgeKey },
   });
   assert.equal(first.statusCode, 200);
 
   const second = await app.inject({
     method: 'GET',
     url: '/api/indexer/v1/health',
-    headers: { 'x-forwarded-for': '203.0.113.21' },
+    headers: { 'x-tonswap-client-ip': '203.0.113.21', 'x-tonswap-edge-key': config.edgeKey },
   });
   assert.equal(second.statusCode, 200);
   await app.close();
@@ -192,8 +229,9 @@ const testRateLimitBucketsAreIsolated = async () => {
     },
   };
   const service = {
-    getHealth() {
-      return { lastMasterSeqno: 1 };
+
+      getHealth() {
+      return { chain: { peersConfigured: 1, peersReady: 1, headSeqno: 1, headAgeSec: 0 }, ledger: 'disabled', disk: 'ok' };
     },
     async getTransactions() {
       return {
@@ -208,8 +246,8 @@ const testRateLimitBucketsAreIsolated = async () => {
       };
     },
   };
-  const app = fastify({ logger: false, trustProxy: false });
-  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config));
+  const app = fastify({ logger: false });
+  registerRoutes(app, config, service as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network));
   await app.ready();
 
   assert.equal((await app.inject({ method: 'GET', url: '/api/indexer/v1/health' })).statusCode, 200);
@@ -254,144 +292,7 @@ const testRateLimiterResetsExpiredWindowsAndDisabledLimiterAllowsAll = () => {
   }
 };
 
-const testJsonRpcGetTransactionsFillsLimitAcrossPages = async () => {
-  const config = testConfig({ pageSize: 10 });
-  const pages = new Map<number, IndexedTx[]>();
-  pages.set(1, Array.from({ length: 10 }, (_value, index) => makeIndexedTx(20 - index)));
-  pages.set(2, Array.from({ length: 10 }, (_value, index) => makeIndexedTx(10 - index)));
-  const requestedPages: number[] = [];
-  const service = {
-    async getTransactions(_address: string, page: number) {
-      requestedPages.push(page);
-      return {
-        page,
-        page_size: 10,
-        total_txs: 20,
-        total_pages: 2,
-        total_pages_min: 2,
-        history_complete: true,
-        txs: pages.get(page) ?? [],
-        network: 'testnet',
-      };
-    },
-    async getTransactionsByCursor() {
-      throw new Error('cursor path should not be used');
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
 
-  const response = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 99,
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 15 },
-    },
-  });
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.equal(body.id, 99);
-  assert.equal(body.ok, true);
-  assert.equal(body.result.length, 15);
-  assert.deepEqual(requestedPages, [1, 2]);
-  assert.equal(body.result[0].transaction_id.lt, '20');
-  assert.equal(body.result[14].transaction_id.lt, '6');
-  await app.close();
-};
-
-const testJsonRpcGetTransactionsCapsLimitAndDedupesPages = async () => {
-  const config = testConfig({ pageSize: 10 });
-  const requestedPages: number[] = [];
-  const service = {
-    async getTransactions(_address: string, page: number) {
-      requestedPages.push(page);
-      const start = 1_000 - (page - 1) * 10;
-      return {
-        page,
-        page_size: 10,
-        total_txs: 100,
-        total_pages: null,
-        total_pages_min: 10,
-        history_complete: false,
-        txs: Array.from({ length: 10 }, (_value, index) => makeIndexedTx(start - index)),
-        network: 'testnet',
-      };
-    },
-    async getTransactionsByCursor() {
-      throw new Error('cursor path should not be used');
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
-
-  const capped = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 'cap',
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 999 },
-    },
-  });
-  assert.equal(capped.statusCode, 200);
-  assert.equal(capped.json().ok, true);
-  assert.equal(capped.json().result.length, 50);
-  assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
-  await app.close();
-
-  const dedupeCalls: number[] = [];
-  const dedupeService = {
-    async getTransactions(_address: string, page: number) {
-      dedupeCalls.push(page);
-      const pages = new Map<number, IndexedTx[]>([
-        [1, [makeIndexedTx(60), makeIndexedTx(59), makeIndexedTx(59)]],
-        [2, [makeIndexedTx(59), makeIndexedTx(58), makeIndexedTx(57)]],
-        [3, []],
-      ]);
-      return {
-        page,
-        page_size: 3,
-        total_txs: 5,
-        total_pages: null,
-        total_pages_min: 2,
-        history_complete: false,
-        txs: pages.get(page) ?? [],
-        network: 'testnet',
-      };
-    },
-    async getTransactionsByCursor() {
-      throw new Error('cursor path should not be used');
-    },
-  };
-  const dedupeApp = fastify({ logger: false });
-  registerTestRoutes(dedupeApp, { ...config, pageSize: 3 }, dedupeService as any);
-  await dedupeApp.ready();
-
-  const deduped = await dedupeApp.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 'dedupe',
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 10 },
-    },
-  });
-  assert.equal(deduped.statusCode, 200);
-  assert.equal(deduped.json().ok, true);
-  assert.deepEqual(
-    deduped.json().result.map((entry: { transaction_id: { lt: string } }) => entry.transaction_id.lt),
-    ['60', '59', '58', '57']
-  );
-  assert.deepEqual(dedupeCalls, [1, 2, 3]);
-  await dedupeApp.close();
-};
 
 const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
   let calls = 0;
@@ -406,7 +307,7 @@ const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const mismatch = await app.inject({
@@ -421,7 +322,7 @@ const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
     url: `/api/indexer/v1/accounts/${validAddress}/txs?cursor_lt=bad&cursor_hash=${encodeURIComponent(validHash)}`,
   });
   assert.equal(invalid.statusCode, 400);
-  assert.equal(invalid.json().code, 'FST_ERR_VALIDATION');
+  assert.equal(invalid.json().code, 'bad_request');
 
   const invalidHash = await app.inject({
     method: 'GET',
@@ -429,21 +330,20 @@ const testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall = async () => {
   });
   assert.equal(invalidHash.statusCode, 400);
   assert.equal(invalidHash.json().code, 'invalid_cursor');
+
+  const invalidHashWithIgnoredGarbage = await app.inject({
+    method: 'GET',
+    url: `/api/indexer/v1/accounts/${validAddress}/txs?cursor_lt=1&cursor_hash=${encodeURIComponent(`${validHash}!`)}`,
+  });
+  assert.equal(invalidHashWithIgnoredGarbage.statusCode, 400);
+  assert.equal(invalidHashWithIgnoredGarbage.json().code, 'invalid_cursor');
   assert.equal(calls, 0);
   await app.close();
 };
 
-const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async () => {
+const testRestAddressRoutesRejectInvalidPathsBeforeServiceCall = async () => {
   let calls = 0;
   const service = {
-    async getBalance() {
-      calls += 1;
-      return {};
-    },
-    async getBalances() {
-      calls += 1;
-      return {};
-    },
     async getTransactions() {
       calls += 1;
       return {};
@@ -452,21 +352,12 @@ const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async
       calls += 1;
       return {};
     },
-    async getJettonTransferPayload() {
-      calls += 1;
-      return {};
-    },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
-  const invalidBalance = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/accounts/not-an-address/balance',
-  });
-  assert.equal(invalidBalance.statusCode, 400);
-  assert.equal(invalidBalance.json().code, 'invalid_address');
+
 
   const invalidBalances = await app.inject({
     method: 'GET',
@@ -475,12 +366,7 @@ const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async
   assert.equal(invalidBalances.statusCode, 400);
   assert.equal(invalidBalances.json().code, 'invalid_address');
 
-  const invalidAssets = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/accounts/not-an-address/assets',
-  });
-  assert.equal(invalidAssets.statusCode, 400);
-  assert.equal(invalidAssets.json().code, 'invalid_address');
+
 
   const invalidTxs = await app.inject({
     method: 'GET',
@@ -496,44 +382,101 @@ const testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall = async
   assert.equal(invalidState.statusCode, 400);
   assert.equal(invalidState.json().code, 'invalid_address');
 
-  const invalidJetton = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/jettons/not-an-address/transfer/${validAddress}/payload`,
-  });
-  assert.equal(invalidJetton.statusCode, 400);
-  assert.equal(invalidJetton.json().code, 'invalid_address');
 
-  const invalidOwner = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/jettons/${validAddress}/transfer/not-an-address/payload`,
-  });
-  assert.equal(invalidOwner.statusCode, 400);
-  assert.equal(invalidOwner.json().code, 'invalid_address');
+
+
+
   assert.equal(calls, 0);
   await app.close();
 };
 
 const testStreamRejectsMissingOrInvalidAddresses = async () => {
   let subscribed = false;
-  const service = {
-    subscribeBalanceChanges() {
+  const streams = {
+    subscribe() {
       subscribed = true;
       return () => undefined;
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, {} as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network), {streams});
   await app.ready();
 
   const missing = await app.inject({ method: 'GET', url: '/api/indexer/v1/stream/balances' });
   assert.equal(missing.statusCode, 400);
   assert.equal(missing.json().code, 'invalid_address');
 
-  const invalid = await app.inject({ method: 'GET', url: '/api/indexer/v1/stream?addresses=bad,also-bad' });
+  const invalid = await app.inject({ method: 'GET', url: '/api/indexer/v1/stream/balances?addresses=bad,also-bad' });
   assert.equal(invalid.statusCode, 400);
   assert.equal(invalid.json().code, 'invalid_address');
+
+  for (const url of [
+    '/api/indexer/v1/stream/balances?addresses=bad&addresses=also-bad',
+    '/api/indexer/v1/stream/balances?address=bad&address=also-bad',
+  ]) {
+    const duplicate = await app.inject({ method: 'GET', url });
+    assert.equal(duplicate.statusCode, 400);
+    assert.equal(duplicate.json().code, 'invalid_address');
+  }
   assert.equal(subscribed, false);
   await app.close();
+};
+
+const testStreamPreservesCorsAndRateLimitHeadersAfterHijack = async () => {
+  const config = testConfig({
+    corsAllowOrigin: '*',
+    corsAllowOrigins: ['https://app.example'],
+    rateLimitEnabled: true,
+    rateLimitWindowMs: 60_000,
+    rateLimitMax: 5,
+    rateLimitBuckets: {
+      accounts: { windowMs: 60_000, max: 5 },
+      stream: { windowMs: 60_000, max: 5 },
+      snapshot: { windowMs: 60_000, max: 5 },
+      rpc: { windowMs: 60_000, max: 5 },
+      docs: { windowMs: 60_000, max: 5 },
+      default: { windowMs: 60_000, max: 5 },
+    },
+  });
+  const app = fastify({ logger: false });
+  app.addHook('onRequest', async (request, reply) => {
+    setCorsHeaders(request as any, reply, config);
+  });
+  registerRoutes(app, config, {} as any, undefined, undefined, undefined, new RateLimiter(config), undefined, runtimeMetadataFixture((config).network), { streams: { subscribe() { return () => undefined; } } });
+
+  try {
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    assert.ok(address && typeof address !== 'string');
+    await new Promise<void>((resolve, reject) => {
+      const clientRequest = httpGet(
+        {
+          host: '127.0.0.1',
+          port: address.port,
+          path: `/api/indexer/v1/stream/balances?address=${encodeURIComponent(validAddress)}`,
+          headers: { origin: 'https://app.example' },
+        },
+        (response) => {
+          try {
+            assert.equal(response.statusCode, 200);
+            assert.equal(response.headers['access-control-allow-origin'], 'https://app.example');
+            assert.equal(response.headers['access-control-allow-credentials'], 'true');
+            assert.equal(response.headers.vary, 'origin');
+            assert.equal(response.headers['x-ratelimit-bucket'], 'stream');
+            assert.equal(response.headers['x-ratelimit-limit'], '5');
+            response.destroy();
+            resolve();
+          } catch (error) {
+            response.destroy();
+            reject(error);
+          }
+        }
+      );
+      clientRequest.on('error', reject);
+    });
+  } finally {
+    await app.close();
+  }
 };
 
 const testJsonRpcRejectsMalformedTransactionCursors = async () => {
@@ -552,7 +495,7 @@ const testJsonRpcRejectsMalformedTransactionCursors = async () => {
       params: { address: validAddress, lt: '1' },
     },
   });
-  assert.equal(missingHash.statusCode, 200);
+  assert.equal(missingHash.statusCode, 400);
   assert.equal(missingHash.json().ok, false);
   assert.equal(missingHash.json().code, 400);
 
@@ -566,7 +509,7 @@ const testJsonRpcRejectsMalformedTransactionCursors = async () => {
       params: { address: validAddress, lt: '1', hash: 'not-a-hash' },
     },
   });
-  assert.equal(invalidHash.statusCode, 200);
+  assert.equal(invalidHash.statusCode, 400);
   assert.equal(invalidHash.json().ok, false);
   assert.equal(invalidHash.json().code, 400);
   await app.close();
@@ -594,7 +537,7 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
     url: '/jsonRPC',
     payload: { id: 'missing', jsonrpc: '2.0', params: {} },
   });
-  assert.equal(missingMethod.statusCode, 200);
+  assert.equal(missingMethod.statusCode, 400);
   assert.equal(missingMethod.json().ok, false);
   assert.equal(missingMethod.json().code, 400);
   assert.equal(missingMethod.json().error, 'missing method');
@@ -609,7 +552,7 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
       params: { address: 'not-an-address', limit: 5 },
     },
   });
-  assert.equal(invalidAddress.statusCode, 200);
+  assert.equal(invalidAddress.statusCode, 400);
   assert.equal(invalidAddress.json().ok, false);
   assert.equal(invalidAddress.json().code, 400);
 
@@ -623,7 +566,7 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
       params: [],
     },
   });
-  assert.equal(nonObjectParams.statusCode, 200);
+  assert.equal(nonObjectParams.statusCode, 400);
   assert.equal(nonObjectParams.json().ok, false);
   assert.equal(nonObjectParams.json().code, 400);
   assert.equal(calls, 0);
@@ -633,10 +576,6 @@ const testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCa
 const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async () => {
   let calls = 0;
   const service = {
-    async getBalances() {
-      calls += 1;
-      return { ton_raw: '0' };
-    },
     async getState() {
       calls += 1;
       return {};
@@ -656,7 +595,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
     url: '/jsonRPC',
     payload: { id: 'balance', jsonrpc: '2.0', method: 'getAddressBalance', params: { address: 'bad' } },
   });
-  assert.equal(invalidBalance.statusCode, 200);
+  assert.equal(invalidBalance.statusCode, 400);
   assert.equal(invalidBalance.json().ok, false);
   assert.equal(invalidBalance.json().code, 400);
 
@@ -665,7 +604,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
     url: '/jsonRPC',
     payload: { id: 'info', jsonrpc: '2.0', method: 'getAddressInformation', params: { address: 'bad' } },
   });
-  assert.equal(invalidInformation.statusCode, 200);
+  assert.equal(invalidInformation.statusCode, 400);
   assert.equal(invalidInformation.json().ok, false);
   assert.equal(invalidInformation.json().code, 400);
 
@@ -679,7 +618,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
       params: { address: 'bad', method: 'seqno' },
     },
   });
-  assert.equal(invalidGetterAddress.statusCode, 200);
+  assert.equal(invalidGetterAddress.statusCode, 400);
   assert.equal(invalidGetterAddress.json().ok, false);
   assert.equal(invalidGetterAddress.json().code, 400);
 
@@ -693,7 +632,7 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
       params: { address: validAddress, method: 'bad-method!' },
     },
   });
-  assert.equal(invalidGetterName.statusCode, 200);
+  assert.equal(invalidGetterName.statusCode, 400);
   assert.equal(invalidGetterName.json().ok, false);
   assert.equal(invalidGetterName.json().code, 400);
 
@@ -707,72 +646,76 @@ const testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall = async
       params: { address: validAddress, method: 'seqno', stack: [['int', 'not-an-int']] },
     },
   });
-  assert.equal(invalidStack.statusCode, 200);
+  assert.equal(invalidStack.statusCode, 400);
   assert.equal(invalidStack.json().ok, false);
   assert.equal(invalidStack.json().code, 400);
   assert.equal(calls, 0);
   await app.close();
 };
 
-const testJsonRpcAddressInformationNormalizesMissingStateFields = async () => {
-  let stateCalls = 0;
-  let balanceCalls = 0;
+const testGetterRoutesRejectMalformedJsonShapesBeforeServiceCall = async () => {
+  let calls = 0;
   const service = {
-    async getState(address: string) {
-      stateCalls += 1;
-      assert.equal(address, validAddress);
-      return {
-        account_state: 'unexpected',
-        code_boc: 123,
-        data_boc: null,
-        last_tx_lt: ' ',
-        last_tx_hash: '',
-        last_confirmed_seqno: -10,
-        last_seen_utime: Number.NaN,
-      };
-    },
-    async getBalances(address: string) {
-      balanceCalls += 1;
-      assert.equal(address, validAddress);
-      return { ton_raw: '123' };
+    async runGetMethod() {
+      calls += 1;
+      return { stack: [], exit_code: 0, gas_used: 0 };
     },
   };
-  const config = testConfig();
   const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
+  registerTestRoutes(app, testConfig(), service as any);
   await app.ready();
 
-  const response = await app.inject({
+  const invalidRpcMethod = await app.inject({
     method: 'POST',
     url: '/jsonRPC',
-    payload: {
-      id: 'info-normalize',
-      jsonrpc: '2.0',
-      method: 'getAddressInformation',
-      params: { address: validAddress },
-    },
+    payload: { id: 'invalid-method-shape', jsonrpc: '2.0', method: 7, params: {} },
   });
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.result.state, 'uninitialized');
-  assert.equal(body.result.balance, '123');
-  assert.equal(body.result.code, '');
-  assert.equal(body.result.data, '');
-  assert.equal(body.result.last_transaction_id.lt, '0');
-  assert.equal(body.result.last_transaction_id.hash, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
-  assert.equal(body.result.block_id.seqno, 0);
-  assert.equal(typeof body.result.sync_utime, 'number');
-  assert.equal(stateCalls, 1);
-  assert.equal(balanceCalls, 1);
+  assert.equal(invalidRpcMethod.statusCode, 400);
+  assert.equal(invalidRpcMethod.json().ok, false);
+  assert.equal(invalidRpcMethod.json().code, 400);
+
+  const invalidAddressShape = await app.inject({
+    method: 'POST',
+    url: '/api/indexer/v1/runGetMethod',
+    payload: { address: 7, method: 'seqno' },
+  });
+  assert.equal(invalidAddressShape.statusCode, 400);
+  assert.equal(invalidAddressShape.json().code, 'invalid_address');
+
+  const invalidMethodShape = await app.inject({
+    method: 'POST',
+    url: '/api/indexer/v1/runGetMethod',
+    payload: { address: validAddress, method: 7 },
+  });
+  assert.equal(invalidMethodShape.statusCode, 400);
+  assert.equal(invalidMethodShape.json().code, 'invalid_method');
+
+  for (const value of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const invalidInteger = await app.inject({
+      method: 'POST',
+      url: '/api/indexer/v1/runGetMethod',
+      payload: { address: validAddress, method: 'seqno', stack: [['num', value]] },
+    });
+    assert.equal(invalidInteger.statusCode, 400);
+    assert.equal(invalidInteger.json().code, 'invalid_stack');
+  }
+
+  assert.equal(calls, 0);
   await app.close();
+};
+
+const testJsonRpcAddressInformationRejectsUnavailableAnchor = async () => {
+  let calls = 0;
+  const app = fastify();
+  registerTestRoutes(app, testConfig(), { async getAccountAnchor() { calls++; throw new ChainReadError('upstream_unavailable'); } });
+  const response = await app.inject({method:'POST',url:'/jsonRPC',payload:{id:'missing-anchor',jsonrpc:'2.0',method:'getAddressInformation',params:{address:validAddress}}});
+  assert.equal(response.statusCode,503); assert.equal(response.json().ok,false); assert.equal(response.json().result,undefined);
+  assert.equal(response.headers['retry-after'],'2'); assert.equal(calls,1); await app.close();
 };
 
 const testJsonRpcRejectsUnsupportedAndDisabledWriteMethods = async () => {
   const config = testConfig({
     enableWriteRpc: false,
-    rpcProxyEndpoint: 'https://example.invalid/jsonRPC',
-    rpcProxyEndpoints: ['https://example.invalid/jsonRPC'],
   });
   const app = fastify({ logger: false });
   registerTestRoutes(app, config, {} as any);
@@ -783,36 +726,35 @@ const testJsonRpcRejectsUnsupportedAndDisabledWriteMethods = async () => {
     url: '/jsonRPC',
     payload: { id: 'write', jsonrpc: '2.0', method: 'sendBoc', params: { boc: 'bad' } },
   });
-  assert.equal(disabledWrite.statusCode, 200);
+  assert.equal(disabledWrite.statusCode, 404);
   assert.equal(disabledWrite.json().ok, false);
-  assert.equal(disabledWrite.json().code, 403);
-  assert.match(disabledWrite.json().error, /method disabled/);
+  assert.equal(disabledWrite.json().code, 404);
+  assert.match(disabledWrite.json().error, /unsupported method/);
 
   const unsupported = await app.inject({
     method: 'POST',
     url: '/jsonRPC',
     payload: { id: 'unknown', jsonrpc: '2.0', method: 'unknownMethod', params: {} },
   });
-  assert.equal(unsupported.statusCode, 200);
+  assert.equal(unsupported.statusCode, 404);
   assert.equal(unsupported.json().ok, false);
   assert.equal(unsupported.json().code, 404);
   await app.close();
 };
 
-const testJsonRpcProxySurfacesInvalidUpstreamJson = async () => {
+
+const testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints = async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   (globalThis as any).fetch = async () => {
     calls += 1;
-    return new Response('not-json', { status: 200 });
+    throw new Error('localnet must not call a public endpoint');
   };
   const app = fastify({ logger: false });
   try {
     const config = testConfig({
-      rpcProxyEndpoint: 'https://example.invalid/jsonRPC',
-      rpcProxyEndpoints: ['https://example.invalid/jsonRPC'],
-      rpcProxyRetryAttempts: 1,
-      rpcProxyRetryDelayMs: 0,
+      network: 'localnet',
+      enableWriteRpc: true,
     });
     registerTestRoutes(app, config, {} as any);
     await app.ready();
@@ -820,13 +762,12 @@ const testJsonRpcProxySurfacesInvalidUpstreamJson = async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/jsonRPC',
-      payload: { id: 'proxy-json', jsonrpc: '2.0', method: 'getMasterchainInfo', params: {} },
+      payload: { id: 'local-no-discovery', jsonrpc: '2.0', method: 'getMasterchainInfo', params: {} },
     });
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 503);
     assert.equal(response.json().ok, false);
-    assert.equal(response.json().code, 502);
-    assert.match(response.json().error, /Invalid upstream RPC JSON/);
-    assert.equal(calls, 1);
+    assert.equal(response.json().code, 503);
+    assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;
     await app.close();
@@ -846,13 +787,26 @@ const testRunGetMethodRejectsMalformedStackBeforeServiceCall = async () => {
   registerTestRoutes(app, config, service as any);
   await app.ready();
 
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethod',
-    payload: { address: validAddress, method: 'seqno', stack: [['cell', 'not-valid-base64!']] },
-  });
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.json().code, 'invalid_stack');
+  const validBocWithGarbage = `${beginCell().endCell().toBoc().toString('base64')}!!!!`;
+  for (const [url, payload] of [
+    [
+      '/api/indexer/v1/runGetMethod',
+      { address: validAddress, method: 'seqno', stack: [['cell', validBocWithGarbage]] },
+    ],
+    [
+      '/jsonRPC',
+      {
+        id: 'invalid-cell-base64',
+        jsonrpc: '2.0',
+        method: 'runGetMethod',
+        params: { address: validAddress, method: 'seqno', stack: [['cell', validBocWithGarbage]] },
+      },
+    ],
+  ] as const) {
+    const response = await app.inject({ method: 'POST', url, payload });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().code, url === '/jsonRPC' ? 400 : 'invalid_stack');
+  }
   assert.equal(calls, 0);
   await app.close();
 };
@@ -885,106 +839,9 @@ const testRunGetMethodRejectsOversizedStackBeforeServiceCall = async () => {
   await app.close();
 };
 
-const testJsonRpcCursorPaginationStopsOnDuplicateCursor = async () => {
-  const config = testConfig({ pageSize: 10 });
-  let cursorCalls = 0;
-  const service = {
-    async getTransactions() {
-      throw new Error('page path should not be used');
-    },
-    async getTransactionsByCursor(_address: string, lt: string, hash: string) {
-      cursorCalls += 1;
-      return {
-        page: 1,
-        page_size: 1,
-        total_txs: 1,
-        total_pages: null,
-        total_pages_min: 1,
-        history_complete: false,
-        txs: [makeIndexedTx(Number(lt), hash)],
-        network: 'testnet',
-      };
-    },
-  };
-  const app = fastify({ logger: false });
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
 
-  const response = await app.inject({
-    method: 'POST',
-    url: '/jsonRPC',
-    payload: {
-      id: 3,
-      jsonrpc: '2.0',
-      method: 'getTransactions',
-      params: { address: validAddress, limit: 3, lt: '100', hash: validHash },
-    },
-  });
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.result.length, 1);
-  assert.equal(cursorCalls, 1);
-  await app.close();
-};
 
-const testDefiSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
-  let calls = 0;
-  const service = {
-    async getDefiSnapshot() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
 
-  const missingContracts = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: {},
-  });
-  assert.equal(missingContracts.statusCode, 400);
-  assert.equal(missingContracts.json().code, 'FST_ERR_VALIDATION');
-
-  const invalidOwner = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: { owner: 'bad-owner', contracts: {} },
-  });
-  assert.equal(invalidOwner.statusCode, 400);
-  assert.equal(invalidOwner.json().code, 'invalid_address');
-
-  const invalidContract = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: { contracts: { feeRouter: 'bad-contract' } },
-  });
-  assert.equal(invalidContract.statusCode, 400);
-  assert.equal(invalidContract.json().code, 'invalid_address');
-
-  const tooManyModules = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: {
-      contracts: {},
-      modules: Array.from({ length: 65 }, (_value, index) => ({ key: `m${index}`, address: validAddress })),
-    },
-  });
-  assert.equal(tooManyModules.statusCode, 400);
-  assert.equal(tooManyModules.json().code, 'bad_request');
-
-  const invalidModule = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/defi/snapshot',
-    payload: { contracts: {}, modules: [{ key: 'bad', address: 'bad-address' }] },
-  });
-  assert.equal(invalidModule.statusCode, 400);
-  assert.equal(invalidModule.json().code, 'invalid_address');
-  assert.equal(calls, 0);
-  await app.close();
-};
 
 const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
   let calls = 0;
@@ -995,7 +852,7 @@ const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
     },
   };
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const missingTokens = await app.inject({
@@ -1034,50 +891,10 @@ const testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall = async () => {
 };
 
 const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () => {
-  let calls = 0;
-  const service = {
-    async getPerpsSnapshot() {
-      calls += 1;
-      return {};
-    },
-    async getVolIndexSnapshot() {
-      calls += 1;
-      return {};
-    },
-    async getGovernanceSnapshot() {
-      calls += 1;
-      return {};
-    },
-    async getFarmSnapshot() {
-      calls += 1;
-      return {};
-    },
-    async getOptionsSnapshot() {
-      calls += 1;
-      return {};
-    },
-    async getCoverSnapshot() {
-      calls += 1;
-      return {};
-    },
-  };
+  const service = {};
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
-
-  const invalidPerpsEngine = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/perps/not-an-address/snapshot',
-  });
-  assert.equal(invalidPerpsEngine.statusCode, 400);
-  assert.equal(invalidPerpsEngine.json().code, 'invalid_address');
-
-  const invalidVolIndexPool = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/vol-index/${validAddress}/snapshot?pool=not-an-address`,
-  });
-  assert.equal(invalidVolIndexPool.statusCode, 400);
-  assert.equal(invalidVolIndexPool.json().code, 'invalid_address');
 
   const invalidGovernanceOwner = await app.inject({
     method: 'GET',
@@ -1086,72 +903,23 @@ const testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall = async () =>
   assert.equal(invalidGovernanceOwner.statusCode, 400);
   assert.equal(invalidGovernanceOwner.json().code, 'invalid_address');
 
-  const invalidFarmFactory = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/farms/not-an-address/snapshot',
-  });
-  assert.equal(invalidFarmFactory.statusCode, 400);
-  assert.equal(invalidFarmFactory.json().code, 'invalid_address');
-
-  const invalidOptionsFactory = await app.inject({
-    method: 'GET',
-    url: '/api/indexer/v1/options/not-an-address/snapshot',
-  });
-  assert.equal(invalidOptionsFactory.statusCode, 400);
-  assert.equal(invalidOptionsFactory.json().code, 'invalid_address');
-
-  const invalidCoverOwner = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/cover/${validAddress}/snapshot?owner=not-an-address`,
-  });
-  assert.equal(invalidCoverOwner.statusCode, 400);
-  assert.equal(invalidCoverOwner.json().code, 'invalid_address');
-  assert.equal(calls, 0);
+  for (const url of [
+    `/api/indexer/v1/vol-index/${validAddress}/snapshot`,
+    `/api/indexer/v1/vol-index/${validAddress}/snapshot?pool=not-an-address`,
+    `/api/indexer/v1/pools/${validAddress}/farms`,
+    '/api/indexer/v1/pools/not-an-address/farms',
+    `/api/indexer/v1/cover/${validAddress}/snapshot`,
+    `/api/indexer/v1/cover/${validAddress}/snapshot?owner=not-an-address`,
+  ]) {
+    const retired = await app.inject({ method: 'GET', url });
+    assert.equal(retired.statusCode, 404, url);
+    assert.deepEqual(retired.json(), { error: 'The requested resource was not found.', code: 'not_found' });
+  }
   await app.close();
 };
 
-const testAdministrativeAuthorization = async () => {
-  for (const adminToken of [undefined, 'a'.repeat(32)]) {
-    const app = fastify({ logger: false });
-    let calls = 0;
-    const snapshots = {
-      save() { calls++; return { entries: 0 }; },
-      load() { calls++; return { entries: 0 }; },
-    };
-    const debug = { getStatus() { calls++; return {}; } };
-    registerTestRoutes(app, testConfig({ adminToken }), {} as any, undefined, snapshots, debug);
-    await app.ready();
-    for (const [method, url] of [
-      ['POST', '/api/indexer/v1/snapshot/save'],
-      ['POST', '/api/indexer/v1/snapshot/load'],
-      ['GET', '/api/indexer/v1/debug'],
-    ] as const) {
-      for (const authorization of [undefined, 'Bearer wrong', `Bearer ${'b'.repeat(32)}`]) {
-        const response = await app.inject({ method, url, headers: {
-          ...(authorization ? { authorization } : {}),
-          'x-forwarded-for': '127.0.0.1',
-        } });
-        assert.equal(response.statusCode, adminToken ? 401 : 404);
-      }
-    }
-    assert.equal(calls, 0, 'unauthorized requests must not touch snapshot or debug state');
-    if (adminToken) {
-      for (const [method, url] of [
-        ['POST', '/api/indexer/v1/snapshot/save'],
-        ['POST', '/api/indexer/v1/snapshot/load'],
-        ['GET', '/api/indexer/v1/debug'],
-      ] as const) {
-        const response: { statusCode: number } = await app.inject({ method, url, headers: { authorization: `Bearer ${adminToken}` } });
-        assert.equal(response.statusCode, 200);
-      }
-      assert.equal(calls, 3);
-    }
-    await app.close();
-  }
-};
-
 const testSnapshotEndpointsSurfaceLoadErrors = async () => {
-  const config = testConfig({ adminToken: 'a'.repeat(32) });
+  const config = testConfig({ adminToken: 'snapshot-secret' });
   const app = fastify({ logger: false });
   const snapshots = {
     load() {
@@ -1167,106 +935,87 @@ const testSnapshotEndpointsSurfaceLoadErrors = async () => {
   const response = await app.inject({
     method: 'POST',
     url: '/api/indexer/v1/snapshot/load',
-    headers: { authorization: `Bearer ${config.adminToken}` },
+    headers: { 'x-indexer-admin-token': 'snapshot-secret' },
   });
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.json().code, 'bad_request');
+  assert.equal(response.statusCode, 500);
+  assert.equal(response.json().code, 'internal_error');
   assert.equal(response.json().error, 'snapshot load failed');
   await app.close();
 };
 
-const testJsonRpcBatchGetMethodRejectsOversizedAndMalformedCalls = async () => {
-  const app = fastify({ logger: false });
-  const service = {
-    async runGetMethod() {
-      throw new Error('invalid calls should not execute');
+const testMutableOperationalRoutesRequireAdminToken = async () => {
+  let saves = 0;
+  let debugReads = 0;
+  const snapshots = {
+    save() {
+      saves += 1;
+      return { path: '/tmp/snapshot.json', entries: 0 };
+    },
+    load() {
+      throw new Error('should not be called');
     },
   };
-  const config = testConfig();
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
-
-  const oversized = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: { calls: Array.from({ length: 65 }, () => ({ address: validAddress, method: 'seqno' })) },
-  });
-  assert.equal(oversized.statusCode, 400);
-  assert.equal(oversized.json().code, 'bad_request');
-
-  const malformed = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: {
-      calls: [
-        { address: 'bad-address', method: 'seqno' },
-        { address: validAddress, method: 'bad-method!' },
-        { address: validAddress, method: 'seqno', stack: [['unsupported', 'x']] },
-      ],
+  const debug = {
+    getStatus() {
+      debugReads += 1;
+      return { ok: true };
     },
-  });
-  assert.equal(malformed.statusCode, 200);
-  assert.deepEqual(
-    malformed.json().results.map((entry: { code: string }) => entry.code),
-    ['invalid_address', 'invalid_method', 'invalid_stack']
+  };
+
+  const disabledApp = fastify({ logger: false });
+  registerTestRoutes(
+    disabledApp,
+    testConfig({ adminToken: undefined }),
+    {} as any,
+    undefined,
+    snapshots as any,
+    debug as any
   );
+  await disabledApp.ready();
+  const disabledSnapshot = await disabledApp.inject({ method: 'POST', url: '/api/indexer/v1/snapshot/save' });
+  assert.equal(disabledSnapshot.statusCode, 400);
+  assert.equal(disabledSnapshot.json().code, 'snapshot_disabled');
+  const disabledDebug = await disabledApp.inject({ method: 'GET', url: '/api/indexer/v1/debug' });
+  assert.equal(disabledDebug.statusCode, 400);
+  assert.equal(disabledDebug.json().code, 'debug_disabled');
+  await disabledApp.close();
+
+  const app = fastify({ logger: false });
+  registerTestRoutes(app, testConfig({ adminToken: 'admin-secret' }), {} as any, undefined, snapshots as any, debug as any);
+  await app.ready();
+  const missing = await app.inject({ method: 'POST', url: '/api/indexer/v1/snapshot/save' });
+  assert.equal(missing.statusCode, 401);
+  assert.equal(missing.json().code, 'unauthorized');
+  const wrong = await app.inject({
+    method: 'GET',
+    url: '/api/indexer/v1/debug',
+    headers: { authorization: 'Bearer wrong-secret' },
+  });
+  assert.equal(wrong.statusCode, 401);
+  assert.equal(wrong.json().code, 'unauthorized');
+  const saved = await app.inject({
+    method: 'POST',
+    url: '/api/indexer/v1/snapshot/save',
+    headers: { 'x-indexer-admin-token': 'admin-secret' },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.equal(saved.json().ok, true);
+  const debugResponse = await app.inject({
+    method: 'GET',
+    url: '/api/indexer/v1/debug',
+    headers: { authorization: 'Bearer admin-secret' },
+  });
+  assert.equal(debugResponse.statusCode, 200);
+  assert.equal(debugResponse.json().ok, true);
+  assert.equal(saves, 1);
+  assert.equal(debugReads, 1);
   await app.close();
 };
 
-const testJsonRpcBatchGetMethodRejectsMissingCallsAndIsolatesFailures = async () => {
-  let serviceCalls = 0;
-  const app = fastify({ logger: false });
-  const service = {
-    async runGetMethod(address: string, method: string) {
-      serviceCalls += 1;
-      assert.equal(address, validAddress);
-      assert.equal(method, 'seqno');
-      return { stack: [['num', '7']], exit_code: 0, gas_used: 12 };
-    },
-  };
-  const config = testConfig();
-  registerTestRoutes(app, config, service as any);
-  await app.ready();
 
-  const missing = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: {},
-  });
-  assert.equal(missing.statusCode, 400);
-  assert.equal(missing.json().code, 'bad_request');
-
-  const nonArray = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: { calls: null },
-  });
-  assert.equal(nonArray.statusCode, 400);
-  assert.equal(nonArray.json().code, 'bad_request');
-
-  const mixed = await app.inject({
-    method: 'POST',
-    url: '/api/indexer/v1/runGetMethods',
-    payload: {
-      calls: [
-        { address: validAddress, method: 'seqno' },
-        { address: validAddress, method: 'bad-method!' },
-        { address: 'bad-address', method: 'seqno' },
-      ],
-    },
-  });
-  assert.equal(mixed.statusCode, 200);
-  assert.deepEqual(
-    mixed.json().results.map((entry: { ok: boolean; code?: string }) => (entry.ok ? 'ok' : entry.code)),
-    ['ok', 'invalid_method', 'invalid_address']
-  );
-  assert.equal(mixed.json().results[0].gas_used, 12);
-  assert.equal(serviceCalls, 1);
-  await app.close();
-};
 
 const testDebugEndpointReturnsDisabledWithoutService = async () => {
-  const config = testConfig({ adminToken: 'a'.repeat(32) });
+  const config = testConfig();
   const app = fastify({ logger: false });
   registerTestRoutes(app, config, {} as any);
   await app.ready();
@@ -1274,30 +1023,29 @@ const testDebugEndpointReturnsDisabledWithoutService = async () => {
   const response = await app.inject({
     method: 'GET',
     url: '/api/indexer/v1/debug',
-    headers: { authorization: `Bearer ${config.adminToken}` },
   });
   assert.equal(response.statusCode, 400);
   assert.equal(response.json().code, 'debug_disabled');
   await app.close();
 };
 
-const testAdministrativeRoutesAreDisabledAndPublicReadsStayOpen = async () => {
+const testOperationalRoutesRequireAdminAndPublicReadsStayOpen = async () => {
   const app = fastify({ logger: false });
   const service = {
     async runGetMethod() {
       return { stack: [['num', '7']], exit_code: 0, gas_used: 12 };
     },
   };
-  registerRoutes(app, { ...loadConfig(), adminToken: undefined }, service as any);
+  registerRoutes(app, { ...loadConfig() }, service as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const metrics = await app.inject({ method: 'GET', url: '/api/indexer/v1/metrics' });
-  assert.equal(metrics.statusCode, 200);
+  assert.equal(metrics.statusCode, 400);
   assert.equal(metrics.json().code, 'metrics_disabled');
 
   const snapshot = await app.inject({ method: 'POST', url: '/api/indexer/v1/snapshot/load' });
-  assert.equal(snapshot.statusCode, 404);
-  assert.equal(snapshot.json().code, 'admin_disabled');
+  assert.equal(snapshot.statusCode, 400);
+  assert.equal(snapshot.json().code, 'snapshot_disabled');
 
   const getter = await app.inject({
     method: 'POST',
@@ -1318,37 +1066,14 @@ const testAdministrativeRoutesAreDisabledAndPublicReadsStayOpen = async () => {
 };
 
 const testWriteRpcRelayIsPublicWhenExplicitlyEnabled = async () => {
-  const originalFetch = globalThis.fetch;
   let calls = 0;
-  (globalThis as any).fetch = async () => {
-    calls += 1;
-    return new Response(JSON.stringify({ ok: true, result: 'hash' }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  };
-  const app = fastify({ logger: false });
-  try {
-    const config = testConfig({
-      enableWriteRpc: true,
-      rpcProxyEndpoint: 'https://example.invalid/jsonRPC',
-      rpcProxyEndpoints: ['https://example.invalid/jsonRPC'],
-    });
-    registerTestRoutes(app, config, {} as any);
-    await app.ready();
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/jsonRPC',
-      payload: { id: 'write', jsonrpc: '2.0', method: 'sendBoc', params: { boc: 'te6ccgEBAQEAAgAAAA==' } },
-    });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().ok, true);
-    assert.equal(calls, 1);
-  } finally {
-    globalThis.fetch = originalFetch;
-    await app.close();
-  }
+  const boc = beginCell().endCell().toBoc();
+  const source = fakeChainSource({ async sendMessage(message) { calls++; assert.deepEqual(message,boc); } });
+  const app = fastify();
+  registerRoutes(app, testConfig({enableWriteRpc:true}), {} as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture((testConfig({enableWriteRpc:true})).network), {source});
+  const response = await app.inject({method:'POST',url:'/jsonRPC',payload:{id:'write',jsonrpc:'2.0',method:'sendBoc',params:{boc:boc.toString('base64')}}});
+  assert.equal(response.statusCode,200); assert.equal(response.json().ok,true); assert.equal(calls,1);
+  await app.close();
 };
 
 const testCorsExactOriginAllowlistAndWildcardFallback = () => {
@@ -1384,7 +1109,7 @@ const testCorsExactOriginAllowlistAndWildcardFallback = () => {
 
 const testDocsRouteSetsNonceCspAndSecurityHeaders = async () => {
   const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, {} as any);
+  registerRoutes(app, { ...loadConfig() }, {} as any, undefined, undefined, undefined, undefined, undefined, runtimeMetadataFixture(({ ...loadConfig() }).network));
   await app.ready();
 
   const response = await app.inject({ method: 'GET', url: '/api/indexer/v1/docs' });
@@ -1399,73 +1124,82 @@ const testDocsRouteSetsNonceCspAndSecurityHeaders = async () => {
   await app.close();
 };
 
-const testDangerousEnvValuesFailClosed = () => {
-  const original = {
-    port: process.env.PORT,
-    pageSize: process.env.PAGE_SIZE,
-    interval: process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS,
-    retry: process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS,
-    rateLimit: process.env.RATE_LIMIT_MAX,
-  };
-  const keys = [
-    'PORT',
-    'PAGE_SIZE',
-    'SNAPSHOT_AUTOSAVE_INTERVAL_MS',
-    'INDEXER_RPC_PROXY_RETRY_ATTEMPTS',
-    'RATE_LIMIT_MAX',
-  ];
+const testInvalidConfigIsRejected = () => {
+  for (const [key, invalid] of Object.entries({
+    PORT: ['', '99999', '0x2253', '8e3', '08787', '1.5'],
+    PAGE_SIZE: ['-20'], SNAPSHOT_AUTOSAVE_INTERVAL_MS: ['0'], RATE_LIMIT_MAX: ['-1'],
+    HEALTH_CACHE_TTL_MS: ['5001'], RATE_LIMIT_MAX_KEYS: ['1000001'],
+    RATE_LIMIT_ENABLED: ['sometimes'], CORS_ENABLED: [''],
+  })) {
+    const original = process.env[key];
+    try {
+      for (const value of invalid) {
+        process.env[key] = value;
+        assert.throws(loadConfig, new RegExp(key));
+      }
+    } finally {
+      if (original === undefined) delete process.env[key];
+      else process.env[key] = original;
+    }
+  }
+  const previous = process.env;
   try {
-    for (const [key, value] of [
-      ['PORT', '99999'],
-      ['PAGE_SIZE', '-20'],
-      ['SNAPSHOT_AUTOSAVE_INTERVAL_MS', '0'],
-      ['INDEXER_RPC_PROXY_RETRY_ATTEMPTS', '0'],
-      ['RATE_LIMIT_MAX', '-1'],
-    ]) {
-      keys.forEach((candidate) => delete process.env[candidate]);
-      process.env[key] = value;
-      assert.throws(() => loadConfig(), new RegExp(`${key} must be an integer`));
+    process.env = { ...previous, INDEXER_MODE: 'production', TON_NETWORK: 'testnet' };
+    for (const value of ['false', '0', 'no']) {
+      process.env.RATE_LIMIT_ENABLED = value;
+      assert.throws(loadConfig, /RATE_LIMIT_ENABLED/);
+    }
+    process.env.RATE_LIMIT_ENABLED = 'true';
+    process.env.PORT = '0';
+    assert.throws(loadConfig, /PORT/);
+  } finally {
+    process.env = previous;
+  }
+};
+
+const testInitialHistoryTimeoutEnvIsStrictAndBounded = () => {
+  const original = process.env.INITIAL_HISTORY_TIMEOUT_MS;
+  try {
+    delete process.env.INITIAL_HISTORY_TIMEOUT_MS;
+    assert.equal(loadConfig().initialHistoryTimeoutMs, 10_000);
+
+    process.env.INITIAL_HISTORY_TIMEOUT_MS = '17';
+    assert.equal(loadConfig().initialHistoryTimeoutMs, 17);
+
+    for (const invalid of ['0', ' 17', '17 ', '+17', '1.5', '120001']) {
+      process.env.INITIAL_HISTORY_TIMEOUT_MS = invalid;
+      assert.throws(() => loadConfig(), /INITIAL_HISTORY_TIMEOUT_MS must be a canonical integer/);
     }
   } finally {
-    if (original.port === undefined) delete process.env.PORT;
-    else process.env.PORT = original.port;
-    if (original.pageSize === undefined) delete process.env.PAGE_SIZE;
-    else process.env.PAGE_SIZE = original.pageSize;
-    if (original.interval === undefined) delete process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS;
-    else process.env.SNAPSHOT_AUTOSAVE_INTERVAL_MS = original.interval;
-    if (original.retry === undefined) delete process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS;
-    else process.env.INDEXER_RPC_PROXY_RETRY_ATTEMPTS = original.retry;
-    if (original.rateLimit === undefined) delete process.env.RATE_LIMIT_MAX;
-    else process.env.RATE_LIMIT_MAX = original.rateLimit;
+    if (original === undefined) delete process.env.INITIAL_HISTORY_TIMEOUT_MS;
+    else process.env.INITIAL_HISTORY_TIMEOUT_MS = original;
   }
 };
 
 const testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides = () => {
   const original = {
+    mode: process.env.INDEXER_MODE,
     buckets: process.env.RATE_LIMIT_BUCKETS_JSON,
     window: process.env.RATE_LIMIT_WINDOW_MS,
     max: process.env.RATE_LIMIT_MAX,
   };
   try {
+    delete process.env.INDEXER_MODE;
     process.env.RATE_LIMIT_WINDOW_MS = '1000';
     process.env.RATE_LIMIT_MAX = '5';
     process.env.RATE_LIMIT_BUCKETS_JSON = JSON.stringify({ docs: { windowMs: 1234, max: 2 } });
     const merged = loadConfig();
-    assert.equal(merged.rateLimitBuckets.accounts.windowMs, 1000);
-    assert.equal(merged.rateLimitBuckets.accounts.max, 5);
-    assert.equal(merged.rateLimitBuckets.docs.windowMs, 1234);
-    assert.equal(merged.rateLimitBuckets.docs.max, 2);
+    assert.deepEqual(merged.rateLimitBuckets.accounts, { windowMs: 1000, max: 5 });
+    assert.deepEqual(merged.rateLimitBuckets.docs, { windowMs: 1234, max: 2 });
 
-    for (const [value, expected] of [
-      [JSON.stringify({ accounts: { windowMs: -1, max: 1 } }), /accounts\.windowMs must be a positive integer/],
-      [JSON.stringify({ docs: { windowMs: 1234.8, max: 2 } }), /docs\.windowMs must be a positive integer/],
-      [JSON.stringify({ unknown: { windowMs: 1, max: 1 } }), /contains unsupported bucket/],
-      ['{not-json', /must be valid JSON/],
-    ] as Array<[string, RegExp]>) {
+    for (const value of ['', '{not-json', 'null', '[]', '{"unknown":{}}', '{"docs":null}',
+      '{"docs":{"other":1}}', '{"docs":{"windowMs":"1000"}}', '{"docs":{"max":0}}', '{"docs":{"max":2.9}}']) {
       process.env.RATE_LIMIT_BUCKETS_JSON = value;
-      assert.throws(() => loadConfig(), expected);
+      assert.throws(loadConfig, /RATE_LIMIT_BUCKETS_JSON/);
     }
   } finally {
+    if (original.mode === undefined) delete process.env.INDEXER_MODE;
+    else process.env.INDEXER_MODE = original.mode;
     if (original.buckets === undefined) delete process.env.RATE_LIMIT_BUCKETS_JSON;
     else process.env.RATE_LIMIT_BUCKETS_JSON = original.buckets;
     if (original.window === undefined) delete process.env.RATE_LIMIT_WINDOW_MS;
@@ -1521,7 +1255,7 @@ const testClassifierIgnoresMalformedBodies = () => {
         },
       ],
     },
-    loadOpcodes(undefined)
+    loadOpcodes()
   );
   assert.equal(indexed.kind, 'swap');
   assert.equal(indexed.ui.kind, 'swap');
@@ -1560,7 +1294,11 @@ const testMemoryStoreImportNormalizesStatsAndSortOrder = () => {
     entries: [
       {
         address: validAddress,
-        txs: [makeIndexedTx(1), makeIndexedTx(3), makeIndexedTx(2)],
+        txs: [
+          makeIndexedTx(1, linkedHistoryHash(1)),
+          makeIndexedTx(3, linkedHistoryHash(3)),
+          makeIndexedTx(2, linkedHistoryHash(2)),
+        ],
         stats: {
           txCount: 999,
           historyComplete: true,
@@ -1603,123 +1341,37 @@ const testMemoryStoreMaxAddressEvictionAdjustsTotal = () => {
   assert.equal(store.getTotalTxs(), 3);
 };
 
-const testAccountSwapQueryRejectsInvalidTimeWindow = async () => {
-  let calls = 0;
-  const service = {
-    async getSwapExecutions() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
-
-  const invalidNumber = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/accounts/${validAddress}/swaps?from_utime=0`,
-  });
-  assert.equal(invalidNumber.statusCode, 400);
-  assert.equal(invalidNumber.json().code, 'FST_ERR_VALIDATION');
-
-  const inverted = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/accounts/${validAddress}/swaps?from_utime=20&to_utime=10`,
-  });
-  assert.equal(inverted.statusCode, 400);
-  assert.equal(inverted.json().code, 'bad_request');
-  assert.equal(calls, 0);
-  await app.close();
-};
-
-const testSccpProofRejectsPartialTrustedCheckpoint = async () => {
-  let calls = 0;
-  const service = {
-    async getTonSccpBurnProofMaterial() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
-
-  const response = await app.inject({
-    method: 'GET',
-    url:
-      `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=${validAddress}` +
-      `&message_id=0x${'a'.repeat(64)}&trusted_checkpoint_seqno=123`,
-  });
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.json().code, 'bad_request');
-  assert.equal(calls, 0);
-  await app.close();
-};
-
-const testSccpProofRejectsMalformedRequiredFieldsBeforeServiceCall = async () => {
-  let calls = 0;
-  const service = {
-    async getTonSccpBurnProofMaterial() {
-      calls += 1;
-      return {};
-    },
-  };
-  const app = fastify({ logger: false });
-  registerRoutes(app, { ...loadConfig() }, service as any);
-  await app.ready();
-
-  const invalidJetton = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=bad&message_id=0x${'a'.repeat(64)}`,
-  });
-  assert.equal(invalidJetton.statusCode, 400);
-  assert.equal(invalidJetton.json().code, 'invalid_address');
-
-  const invalidMessageId = await app.inject({
-    method: 'GET',
-    url: `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=${validAddress}&message_id=0xabc`,
-  });
-  assert.equal(invalidMessageId.statusCode, 400);
-  assert.equal(invalidMessageId.json().code, 'FST_ERR_VALIDATION');
-
-  const invalidTarget = await app.inject({
-    method: 'GET',
-    url:
-      `/api/indexer/v1/sccp/ton/burn-proof-material?jetton_master=${validAddress}` +
-      `&message_id=0x${'a'.repeat(64)}&target_seqno=0`,
-  });
-  assert.equal(invalidTarget.statusCode, 400);
-  assert.equal(invalidTarget.json().code, 'FST_ERR_VALIDATION');
-  assert.equal(calls, 0);
-  await app.close();
-};
 
 const testBlockFollowerCatchesUpAcrossMultipleBatches = async () => {
   const config = {
     ...loadConfig(),
     pageSize: 2,
     backfillPageBatch: 2,
-    backfillMaxPagesPerAddress: 4,
+    backfillMaxPagesPerAddress: 6,
     maxPagesPerAddress: 20,
     globalMaxPages: 100,
   };
   const store = new MemoryStore(config);
-  store.addTransactions(validAddress, [makeIndexedTx(90, 'old')]);
+  store.addTransactions(validAddress, [{
+    ...makeIndexedTx(90, linkedHistoryHash(90)),
+    prevTransactionLt: '0',
+    prevTransactionHash: linkedHistoryHash(0),
+  }]);
   store.markHistoryComplete(validAddress);
 
   const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
   const source = makeSource({
     async getAccountState() {
-      return { balance: '1', lastTxLt: '100', lastTxHash: 'h100' };
+      return { balance: '1', lastTxLt: '100', lastTxHash: linkedHistoryHash(100) };
     },
     async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
       calls.push({ lt, hash, limit });
-      if (lt === '100') return [makeRawTx(100), makeRawTx(99), makeRawTx(98), makeRawTx(97)];
-      if (lt === '97') return [makeRawTx(96), makeRawTx(95), makeRawTx(90, 'old')];
+      if (lt === '100') return makeLinkedRawRange(100, 97);
+      if (lt === '97') return makeLinkedRawRange(97, 90);
       return [];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -1729,6 +1381,553 @@ const testBlockFollowerCatchesUpAcrossMultipleBatches = async () => {
   assert.equal(entry?.txs[0]?.lt, '100');
   assert.equal(entry?.stats.historyComplete, true);
   assert.equal(entry?.stats.lastUpdateSeqno, 123);
+};
+
+const testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [{
+    ...makeIndexedTx(100, linkedHistoryHash(100)),
+    prevTransactionLt: '0',
+    prevTransactionHash: linkedHistoryHash(0),
+  }]);
+  store.markHistoryComplete(validAddress);
+
+  const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '158', lastTxHash: linkedHistoryHash(158) };
+    },
+    async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
+      calls.push({ lt, hash, limit });
+      if (lt === '158') {
+        return makeLinkedRawRange(158, 141);
+      }
+      if (lt === '141') {
+        return makeLinkedRawRange(141, 100);
+      }
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
+  const follower = new BlockFollower(config, store, source, loadOpcodes(), createLogger('fatal'), service);
+
+  await (follower as any).refreshAddress(validAddress, 124);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((call) => call.limit), [50, 50]);
+  assert.deepEqual(calls.map((call) => call.lt), ['158', '141']);
+  assert.equal(entry?.txs.length, 59);
+  assert.deepEqual(
+    entry?.txs.map((tx) => tx.lt),
+    Array.from({ length: 59 }, (_, index) => String(158 - index))
+  );
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.equal(entry?.stats.lastUpdateSeqno, 124);
+};
+
+const testBlockFollowerRejectsReorderedCatchupSegment = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, linkedHistoryHash(100))]);
+  store.markHistoryComplete(validAddress);
+
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '103', lastTxHash: linkedHistoryHash(103) };
+    },
+    async getTransactions() {
+      const linked = makeLinkedRawRange(103, 100);
+      return [linked[0]!, linked[2]!, linked[1]!, linked[3]!];
+    },
+  });
+  const opcodes = loadOpcodes();
+  const service = new IndexerService(config, store, source, opcodes, []);
+  const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
+
+  await (follower as any).refreshAddress(validAddress, 125);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.txs[0]?.lt, '100');
+  assert.equal(entry?.stats.historyComplete, false);
+  assert.equal(entry?.stats.lastUpdateSeqno, 125);
+};
+
+const testBlockFollowerProvesFirstTransactionHistory = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.getOrCreate(validAddress);
+  store.markHistoryComplete(validAddress);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '3', lastTxHash: linkedHistoryHash(3) };
+    },
+    async getTransactions() {
+      return makeLinkedRawRange(3, 1);
+    },
+  });
+  const opcodes = loadOpcodes();
+  const service = new IndexerService(config, store, source, opcodes, []);
+  const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
+
+  await (follower as any).refreshAddress(validAddress, 126);
+
+  const entry = store.get(validAddress);
+  assert.deepEqual(entry?.txs.map((transaction) => transaction.lt), ['3', '2', '1']);
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.equal(entry?.stats.lastUpdateSeqno, 126);
+};
+
+const testBlockFollowerMarksIncompleteBeforeCatchupFailure = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, linkedHistoryHash(100))]);
+  store.markHistoryComplete(validAddress);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '103', lastTxHash: linkedHistoryHash(103) };
+    },
+    async getTransactions() {
+      throw new Error('catch-up unavailable');
+    },
+  });
+  const opcodes = loadOpcodes();
+  const service = new IndexerService(config, store, source, opcodes, []);
+  const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
+
+  await assert.rejects(() => (follower as any).refreshAddress(validAddress, 127), /catch-up unavailable/);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.stats.historyComplete, false);
+};
+
+const testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '158', lastTxHash: linkedHistoryHash(158) };
+    },
+    async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
+      calls.push({ lt, hash, limit });
+      return makeLinkedRawRange(158, 141);
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.deepEqual(calls, [{ lt: '158', hash: linkedHistoryHash(158), limit: 50 }]);
+  assert.equal(entry?.txs.length, 18);
+  assert.equal(entry?.stats.lastBackfillLt, '141');
+  assert.equal(entry?.stats.historyComplete, false);
+  assert.deepEqual(queued, [validAddress]);
+};
+
+const testInitialHistoryFailuresAreTypedAndBounded = async () => {
+  const baseConfig = {
+    ...loadConfig(),
+    initialHistoryTimeoutMs: 20,
+    rateLimitEnabled: false,
+  };
+
+  const finiteFailureConfig = { ...baseConfig };
+  const finiteFailureStore = new MemoryStore(finiteFailureConfig);
+  const finiteFailureService = new IndexerService(
+    finiteFailureConfig,
+    finiteFailureStore,
+    makeSource({
+      async getAccountState() { return { balance: '0', lastTxLt: '1', lastTxHash: linkedHistoryHash(1) }; },
+      async getTransactions() {
+        throw new ChainReadError('upstream_unavailable');
+      },
+    }),
+    loadOpcodes(),
+    []
+  );
+  await assert.rejects(finiteFailureService.getTransactions(validAddress, 1), (error: unknown) => error instanceof ChainReadError && error.code === 'upstream_unavailable');
+
+  for (const dataSource of ['http', 'lite'] as const) {
+    const config = { ...baseConfig, dataSource };
+    const hangingStore = new MemoryStore(config);
+    const hangingService = new IndexerService(
+      config,
+      hangingStore,
+      makeSource({
+      async getAccountState() { return { balance: '0', lastTxLt: '1', lastTxHash: linkedHistoryHash(1) }; },
+        async getTransactions() {
+          return await new Promise<RawTransaction[]>(() => undefined);
+        },
+      }),
+      loadOpcodes(),
+      []
+    );
+    const app = fastify({ logger: false });
+    registerTestRoutes(app, config, hangingService);
+    await app.ready();
+
+    const startedAt = Date.now();
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/indexer/v1/accounts/${validAddress}/txs?page=1`,
+    });
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(response.statusCode, 504);
+    assert.equal(response.json().code, 'upstream_timeout');
+    assert.ok(elapsedMs >= config.initialHistoryTimeoutMs);
+    assert.ok(elapsedMs < 1_000, `hanging ${dataSource} history read escaped its owned bound (${elapsedMs}ms)`);
+    assert.equal(hangingStore.get(validAddress)?.stats.historyComplete, false);
+    await app.close();
+  }
+
+  let rejectedAfterTimeout = false;
+  const lateFailureService = new IndexerService(
+    finiteFailureConfig,
+    new MemoryStore(finiteFailureConfig),
+    makeSource({
+      async getAccountState() { return { balance: '0', lastTxLt: '1', lastTxHash: linkedHistoryHash(1) }; },
+      async getTransactions() {
+        return await new Promise<RawTransaction[]>((_resolve, reject) => {
+          setTimeout(() => {
+            rejectedAfterTimeout = true;
+            reject(new Error('late source rejection'));
+          }, 50);
+        });
+      },
+    }),
+    loadOpcodes(),
+    []
+  );
+  await assert.rejects(
+    () => lateFailureService.getTransactions(validAddress, 1),
+    (error: unknown) => error instanceof ChainReadError && error.code === 'upstream_timeout'
+  );
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(rejectedAfterTimeout, true);
+};
+
+const testInitialTransactionsEmptyPageMarksHistoryComplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  let calls = 0;
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '0', accountState: 'uninitialized' };
+    },
+    async getTransactions() {
+      calls += 1;
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls, 0, 'An uninitialized account has no cursor to query');
+  assert.equal(entry?.txs.length, 0);
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.deepEqual(queued, []);
+};
+
+const testInitialTransactionsEmptyPageWithHeadStaysIncomplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '7', lastTxHash: linkedHistoryHash(7) };
+    },
+    async getTransactions() {
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 0);
+  assert.equal(entry?.stats.historyComplete, false);
+  assert.deepEqual(queued, [validAddress]);
+};
+
+const testInitialTransactionsLinkedHistoryStartMarksComplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '7', lastTxHash: linkedHistoryHash(7) };
+    },
+    async getTransactions() {
+      return makeLinkedRawRange(7, 1);
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 7);
+  assert.equal(entry?.stats.lastBackfillLt, '1');
+  assert.equal(entry?.stats.historyComplete, true);
+  assert.deepEqual(queued, []);
+};
+
+const testBackfillContinuesAfterShortPagesUntilHistoryStartProof = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 20,
+    maxPagesPerAddress: 30,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(
+    validAddress,
+    Array.from(
+      { length: 18 },
+      (_, index) => makeIndexedTx(158 - index, linkedHistoryHash(158 - index))
+    )
+  );
+  const calls: Array<{ lt?: string; hash?: string; limit: number }> = [];
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: '158', lastTxHash: linkedHistoryHash(158) };
+    },
+    async getTransactions(_address: string, limit: number, lt?: string, hash?: string) {
+      calls.push({ lt, hash, limit });
+      if (lt === '141') {
+        return makeLinkedRawRange(141, 123);
+      }
+      if (lt === '123') {
+        return makeLinkedRawRange(123, 75);
+      }
+      if (lt === '75') return makeLinkedRawRange(75, 27);
+      if (lt === '27') return makeLinkedRawRange(27, 1);
+      throw new Error(`unexpected cursor ${String(lt)}:${String(hash)}`);
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.deepEqual(calls.map((call) => call.lt), ['141', '123', '75', '27']);
+  assert.deepEqual(calls.map((call) => call.limit), [50, 50, 50, 50]);
+  assert.equal(entry?.txs.length, 158);
+  assert.deepEqual(
+    entry?.txs.map((tx) => tx.lt),
+    Array.from({ length: 158 }, (_, index) => String(158 - index))
+  );
+  assert.equal(entry?.stats.lastBackfillLt, '1');
+  assert.equal(entry?.stats.historyComplete, true);
+};
+
+const testBackfillDuplicateCursorStaysIncomplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, 'old')]);
+  let calls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      calls += 1;
+      return [makeRawTx(100, 'old')];
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls, 1);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.stats.lastBackfillLt, '100');
+  assert.equal(entry?.stats.historyComplete, false);
+};
+
+const testBackfillEmptyInclusivePageStaysIncomplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 10,
+    backfillPageBatch: 5,
+    backfillMaxPagesPerAddress: 10,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100, 'old')]);
+  let calls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      calls += 1;
+      return [];
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  const entry = store.get(validAddress);
+  assert.equal(calls, 1);
+  assert.equal(entry?.stats.lastBackfillLt, '100');
+  assert.equal(entry?.stats.historyComplete, false);
+};
+
+const testBackfillPageCapStaysIncomplete = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 1,
+    backfillMaxPagesPerAddress: 1,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(100), makeIndexedTx(99)]);
+  let calls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      calls += 1;
+      return [makeRawTx(98)];
+    },
+  });
+  const worker = new BackfillWorker(
+    config,
+    store,
+    source,
+    loadOpcodes(),
+    createLogger('fatal')
+  );
+
+  await (worker as any).processAddress(validAddress);
+
+  assert.equal(calls, 0);
+  assert.equal(store.get(validAddress)?.stats.historyComplete, false);
+};
+
+const testPartialCachedHistoryIsQueuedForBackfill = async () => {
+  const config = {
+    ...loadConfig(),
+    pageSize: 2,
+    backfillPageBatch: 2,
+    backfillMaxPagesPerAddress: 4,
+    maxPagesPerAddress: 20,
+    globalMaxPages: 100,
+  };
+  const store = new MemoryStore(config);
+  store.addTransactions(validAddress, [makeIndexedTx(90, linkedHistoryHash(90))]);
+
+  let sourceCalls = 0;
+  const source = makeSource({
+    async getTransactions() {
+      sourceCalls += 1;
+      return [];
+    },
+  });
+  const service = new IndexerService(config, store, source, loadOpcodes(), []);
+  const queued: string[] = [];
+  service.setBackfillEnqueue((address) => queued.push(address));
+
+  await service.ensureInitialTransactions(validAddress);
+
+  assert.equal(sourceCalls, 0);
+  assert.deepEqual(queued, [validAddress]);
+  assert.equal(store.get(validAddress)?.stats.historyComplete, false);
 };
 
 const testBlockFollowerMarksHistoryIncompleteWhenCatchupIsCapped = async () => {
@@ -1752,12 +1951,14 @@ const testBlockFollowerMarksHistoryIncompleteWhenCatchupIsCapped = async () => {
       return [makeRawTx(100), makeRawTx(99), makeRawTx(98), makeRawTx(97)];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
   await (follower as any).refreshAddress(validAddress, 124);
   const entry = store.get(validAddress);
+  assert.equal(entry?.txs.length, 1);
+  assert.equal(entry?.txs[0]?.lt, '50');
   assert.equal(entry?.stats.historyComplete, false);
   assert.equal(entry?.stats.lastUpdateSeqno, 124);
 };
@@ -1784,7 +1985,7 @@ const testBlockFollowerStopsOnDuplicateCursorPage = async () => {
       return [makeRawTx(100, 'h100')];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -1805,19 +2006,23 @@ const testBlockFollowerSkipsFetchWhenLatestTransactionIsUnchanged = async () => 
     globalMaxPages: 100,
   };
   const store = new MemoryStore(config);
-  store.addTransactions(validAddress, [makeIndexedTx(100, 'h100')]);
+  store.addTransactions(validAddress, [{
+    ...makeIndexedTx(100, linkedHistoryHash(100)),
+    prevTransactionLt: '0',
+    prevTransactionHash: linkedHistoryHash(0),
+  }]);
   store.markHistoryComplete(validAddress);
   let fetchCalls = 0;
   const source = makeSource({
     async getAccountState() {
-      return { balance: '1', lastTxLt: '100', lastTxHash: 'h100' };
+      return { balance: '1', lastTxLt: '100', lastTxHash: linkedHistoryHash(100) };
     },
     async getTransactions() {
       fetchCalls += 1;
-      return [makeRawTx(100, 'h100')];
+      return [makeLinkedRawTx(100)];
     },
   });
-  const opcodes = loadOpcodes(undefined);
+  const opcodes = loadOpcodes();
   const service = new IndexerService(config, store, source, opcodes, []);
   const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
 
@@ -1831,48 +2036,59 @@ const testBlockFollowerSkipsFetchWhenLatestTransactionIsUnchanged = async () => 
 
 const run = async () => {
   await testRateLimitIgnoresUntrustedForwardedFor();
-  await testRateLimitUsesForwardedForOnlyWithTrustedProxy();
+  await testRateLimitUsesAuthenticatedEdgeOnly();
   await testRateLimitBucketsAreIsolated();
   testRateLimiterResetsExpiredWindowsAndDisabledLimiterAllowsAll();
-  await testJsonRpcGetTransactionsFillsLimitAcrossPages();
-  await testJsonRpcGetTransactionsCapsLimitAndDedupesPages();
   await testRestTxEndpointRejectsMalformedCursorsBeforeServiceCall();
-  await testRestAddressAndPayloadRoutesRejectInvalidPathsBeforeServiceCall();
+  await testRestAddressRoutesRejectInvalidPathsBeforeServiceCall();
   await testStreamRejectsMissingOrInvalidAddresses();
+  await testStreamPreservesCorsAndRateLimitHeadersAfterHijack();
+  await runTransactionEvidenceTests();
+  await runGetterFreshnessTests();
   await testJsonRpcRejectsMalformedTransactionCursors();
   await testJsonRpcRejectsMissingMethodAndInvalidTransactionAddressBeforeServiceCall();
   await testJsonRpcRejectsMalformedAccountAndGetterInputsBeforeServiceCall();
-  await testJsonRpcAddressInformationNormalizesMissingStateFields();
+  await testGetterRoutesRejectMalformedJsonShapesBeforeServiceCall();
+  await testJsonRpcAddressInformationRejectsUnavailableAnchor();
   await testJsonRpcRejectsUnsupportedAndDisabledWriteMethods();
-  await testJsonRpcProxySurfacesInvalidUpstreamJson();
+  await testLocalnetJsonRpcDoesNotDiscoverPublicEndpoints();
   await testRunGetMethodRejectsMalformedStackBeforeServiceCall();
   await testRunGetMethodRejectsOversizedStackBeforeServiceCall();
-  await testJsonRpcCursorPaginationStopsOnDuplicateCursor();
-  await testDefiSnapshotRejectsInvalidInputsBeforeServiceCall();
   await testDlmmPoolsSnapshotRejectsInvalidInputsBeforeServiceCall();
   await testSnapshotGetRoutesRejectInvalidAddressesBeforeServiceCall();
   await testSnapshotEndpointsSurfaceLoadErrors();
-  await testJsonRpcBatchGetMethodRejectsOversizedAndMalformedCalls();
-  await testJsonRpcBatchGetMethodRejectsMissingCallsAndIsolatesFailures();
   await testDebugEndpointReturnsDisabledWithoutService();
-  await testAdministrativeRoutesAreDisabledAndPublicReadsStayOpen();
-  await testAdministrativeAuthorization();
+  await testMutableOperationalRoutesRequireAdminToken();
+  await testOperationalRoutesRequireAdminAndPublicReadsStayOpen();
   await testWriteRpcRelayIsPublicWhenExplicitlyEnabled();
   testCorsExactOriginAllowlistAndWildcardFallback();
   await testDocsRouteSetsNonceCspAndSecurityHeaders();
-  testDangerousEnvValuesFailClosed();
+  testInvalidConfigIsRejected();
+  testInitialHistoryTimeoutEnvIsStrictAndBounded();
   testRateLimitBucketEnvRejectsMalformedAndDangerousOverrides();
   testSnapshotFileLoaderRejectsMalformedFiles();
   testClassifierIgnoresMalformedBodies();
+  testHistoryStartProofRejectsOutOfRangeLt();
   testMemoryOverflowMarksHistoryIncomplete();
   testMemoryStoreDeduplicatesTransactions();
   testMemoryStoreImportNormalizesStatsAndSortOrder();
   testMemoryStoreGlobalLimitEvictsColdAddresses();
   testMemoryStoreMaxAddressEvictionAdjustsTotal();
-  await testAccountSwapQueryRejectsInvalidTimeWindow();
-  await testSccpProofRejectsPartialTrustedCheckpoint();
-  await testSccpProofRejectsMalformedRequiredFieldsBeforeServiceCall();
   await testBlockFollowerCatchesUpAcrossMultipleBatches();
+  await testBlockFollowerContinuesAfterShortBatchBeforePreviousLatest();
+  await testBlockFollowerRejectsReorderedCatchupSegment();
+  await testBlockFollowerProvesFirstTransactionHistory();
+  await testBlockFollowerMarksIncompleteBeforeCatchupFailure();
+  await testInitialHistoryFailuresAreTypedAndBounded();
+  await testInitialTransactionsShortPageStaysIncompleteAndQueuesBackfill();
+  await testInitialTransactionsEmptyPageMarksHistoryComplete();
+  await testInitialTransactionsEmptyPageWithHeadStaysIncomplete();
+  await testInitialTransactionsLinkedHistoryStartMarksComplete();
+  await testBackfillContinuesAfterShortPagesUntilHistoryStartProof();
+  await testBackfillEmptyInclusivePageStaysIncomplete();
+  await testBackfillDuplicateCursorStaysIncomplete();
+  await testBackfillPageCapStaysIncomplete();
+  await testPartialCachedHistoryIsQueuedForBackfill();
   await testBlockFollowerMarksHistoryIncompleteWhenCatchupIsCapped();
   await testBlockFollowerStopsOnDuplicateCursorPage();
   await testBlockFollowerSkipsFetchWhenLatestTransactionIsUnchanged();

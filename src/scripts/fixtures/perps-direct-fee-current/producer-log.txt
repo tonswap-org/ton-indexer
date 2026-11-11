@@ -1,0 +1,11 @@
+92 targets, 0 compiled, buildHash 85ebd1826adb6096ab0f9e592b073adb9b839adb7e12b260b0f351f02bcf4520
+Referral proof directory: /Users/mtakemiya/.tonswap/releases/testnet/r2/redeploy-20261007-2e5cc193-c760-431b-9288-590037fbf333/capture-staging.01/directFee
+PASS default tests/referral/PerpsTradeReferralPayout.spec.ts (19.658 s)
+  First-release Perps direct protocol fee custody
+    ✓ delivers the T3 fee after payout finality without referral fan-out (17510 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       1 passed, 1 total
+Snapshots:   0 total
+Time:        19.709 s
+Ran all test suites within paths "tests/referral/PerpsTradeReferralPayout.spec.ts".
