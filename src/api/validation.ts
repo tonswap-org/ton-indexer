@@ -16,24 +16,19 @@ export const parsePositiveInt = (value?: string) => {
   return parsed;
 };
 
-const normalizeBase64 = (input: string) => {
-  let value = input.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = value.length % 4;
-  if (pad === 2) value += '==';
-  if (pad === 3) value += '=';
-  if (pad === 1) return null;
-  return value;
-};
-
 export const isValidHashBase64 = (value: string): boolean => {
-  const normalized = normalizeBase64(value);
-  if (!normalized) return false;
-  try {
-    const buf = Buffer.from(normalized, 'base64');
-    return buf.length === 32;
-  } catch {
-    return false;
-  }
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(value)) return false;
+  if (/[+/]/.test(value) && /[-_]/.test(value)) return false;
+  const standardInput = value.replace(/-/g, '+').replace(/_/g, '/');
+  const unpadded = standardInput.replace(/=+$/, '');
+  if (unpadded.length % 4 === 1) return false;
+  const padded = unpadded.padEnd(Math.ceil(unpadded.length / 4) * 4, '=');
+  const decoded = Buffer.from(padded, 'base64');
+  const canonical = decoded.toString('base64');
+  return (
+    decoded.length === 32 &&
+    (standardInput === canonical || standardInput === canonical.replace(/=+$/, ''))
+  );
 };
 
 export const isValidLt = (value: string): boolean => {

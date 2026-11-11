@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tonswap_platform
+      POSTGRES_USER: tonswap_platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - platform-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U tonswap_platform -d tonswap_platform']
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  migrate:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://tonswap_platform:${POSTGRES_PASSWORD}@postgres:5432/tonswap_platform
+    command: [node, dist/migrate.js]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://tonswap_platform:${POSTGRES_PASSWORD}@postgres:5432/tonswap_platform
+      HOST: 0.0.0.0
+      PORT: 8787
+      PLATFORM_MODE: api
+      TRUST_LOOPBACK_PROXY: '0'
+    ports: ['127.0.0.1:18787:8787']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8787/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://tonswap_platform:${POSTGRES_PASSWORD}@postgres:5432/tonswap_platform
+      PLATFORM_MODE: worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+volumes:
+  platform-db:

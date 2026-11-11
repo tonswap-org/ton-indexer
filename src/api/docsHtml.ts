@@ -1,11 +1,15 @@
-export const buildDocsHtml = () => {
+import { publicIndexerPath } from './publicMount';
+
+const nonceAttribute = (nonce?: string) => (nonce ? ` nonce="${nonce}"` : '');
+
+export const buildDocsHtml = (nonce?: string, indexer?: string) => {
   const parts = [
     '<!doctype html>',
     '<html>',
     '  <head>',
     '    <meta charset=\"utf-8\" />',
     '    <title>TONSWAP Indexer API</title>',
-    '    <style>',
+    `    <style${nonceAttribute(nonce)}>`,
     '      body { font-family: ui-sans-serif, system-ui, -apple-system; padding: 20px; line-height: 1.4; }',
     '      .row { margin-bottom: 10px; }',
     '      textarea { width: 100%; height: 120px; }',
@@ -23,21 +27,12 @@ export const buildDocsHtml = () => {
     '        <option value=\"/api/indexer/v1/contracts\">/contracts</option>',
     '        <option value=\"/api/indexer/v1/metrics\">/metrics</option>',
     '        <option value=\"/api/indexer/v1/metrics/prometheus\">/metrics/prometheus</option>',
-    '        <option value=\"/api/indexer/v1/accounts/{addr}/balance\">/accounts/{addr}/balance</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/balances\">/accounts/{addr}/balances</option>',
-    '        <option value=\"/api/indexer/v1/accounts/{addr}/assets\">/accounts/{addr}/assets</option>',
-    '        <option value=\"/api/indexer/v1/jettons/{jetton}/transfer/{owner}/payload\">/jettons/{jetton}/transfer/{owner}/payload</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/txs\">/accounts/{addr}/txs</option>',
-    '        <option value=\"/api/indexer/v1/accounts/{addr}/swaps\">/accounts/{addr}/swaps</option>',
+    '        <option value=\"/api/indexer/v1/markets/spot:T3-X/candles\">/markets/{market}/candles</option>',
     '        <option value=\"/api/indexer/v1/accounts/{addr}/state\">/accounts/{addr}/state</option>',
-    '        <option value=\"/api/indexer/v1/perps/{addr}/snapshot\">/perps/{addr}/snapshot</option>',
     '        <option value=\"/api/indexer/v1/governance/{voting}/snapshot\">/governance/{voting}/snapshot</option>',
-    '        <option value=\"/api/indexer/v1/farms/{factory}/snapshot\">/farms/{factory}/snapshot</option>',
-    '        <option value=\"/api/indexer/v1/options/{factory}/snapshot\">/options/{factory}/snapshot</option>',
-    '        <option value=\"/api/indexer/v1/cover/{manager}/snapshot\">/cover/{manager}/snapshot</option>',
     '        <option value=\"/api/indexer/v1/stream/balances\">/stream/balances</option>',
-    '        <option value=\"/api/indexer/v1/stream\">/stream</option>',
-    '        <option value=\"/api/indexer/v1/debug\">/debug</option>',
     '      </select>',
     '    </div>',
     '    <div class=\"row\">',
@@ -49,20 +44,15 @@ export const buildDocsHtml = () => {
     '      <input id=\"query\" placeholder=\"page=1\" size=\"40\" />',
     '    </div>',
     '    <div class=\"row\">',
-    '      <label>Bearer token (admin):</label>',
-    '      <input id=\"token\" placeholder=\"optional\" size=\"60\" />',
-    '    </div>',
-    '    <div class=\"row\">',
     '      <button id=\"run\">Send</button>',
     '    </div>',
     '    <pre id=\"output\"></pre>',
     '',
-    '    <script>',
+    `    <script${nonceAttribute(nonce)}>`,
     '      const output = document.getElementById(\"output\");',
     '      const endpoint = document.getElementById(\"endpoint\");',
     '      const addr = document.getElementById(\"addr\");',
     '      const query = document.getElementById(\"query\");',
-    '      const token = document.getElementById(\"token\");',
     '      const run = document.getElementById(\"run\");',
     '',
       '      const buildUrl = () => {',
@@ -95,10 +85,8 @@ export const buildDocsHtml = () => {
     '      run.addEventListener(\"click\", async () => {',
     '        output.textContent = \"Loading...\";',
     '        const url = buildUrl();',
-    '        const headers = {};',
-    '        if (token.value) headers[\"Authorization\"] = `Bearer ${token.value}`;',
     '        try {',
-    '          const res = await fetch(url, { headers });',
+    '          const res = await fetch(url);',
     '          const text = await res.text();',
     '          try {',
     '            output.textContent = JSON.stringify(JSON.parse(text), null, 2);',
@@ -114,5 +102,7 @@ export const buildDocsHtml = () => {
     '</html>',
   ];
 
-  return parts.join('\\n');
+  const mount = publicIndexerPath(indexer, '/api/indexer/v1')
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return parts.join('\n').replaceAll('/api/indexer/v1', () => mount);
 };

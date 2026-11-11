@@ -1,0 +1,22 @@
+{
+  "schema": "tonswap-current-pool-factory-fixtures-v3",
+  "producerReceiptSha256": "e40ab695737f0e2fbea80911e3a2e6c4f3d66fe9f419f1a665ce5d1479937b23",
+  "logSha256": "391c766171981eb9cca34a93d468e53399726ebaacd267effc6534643210ec98",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "files": [
+    {
+      "file": "public-outside-add-1-default.json.br",
+      "sha256": "d157c0a9519305c757c8e81201ad2faf8151e9e2a7f283fb92e1b646e4ad4616",
+      "originalFile": "public-outside-add-1-default.json",
+      "originalSha256": "f4f2556c6ba25464570695951575146152d1beefff9793546f157d56f420a21f",
+      "originalBytes": 8187650
+    },
+    {
+      "file": "public-outside-add-1-x6.json.br",
+      "sha256": "bed6c5bb16043d477dc45c3bffbfa62e599ba95578dfd83b2613befbe4d10302",
+      "originalFile": "public-outside-add-1-x6.json",
+      "originalSha256": "f598fe36041d5ccb26116a3ce6d9f42147a26962a137a32b32e8c206943eb077",
+      "originalBytes": 8188342
+    }
+  ]
+}

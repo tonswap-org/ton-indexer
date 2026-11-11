@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 export type OpcodeSets = {
   swap: Set<number>;
   lpDeposit: Set<number>;
@@ -8,51 +6,24 @@ export type OpcodeSets = {
   jettonNotify: Set<number>;
 };
 
-const safeParseHex = (value: string): number | null => {
-  try {
-    return Number.parseInt(value, 16);
-  } catch {
-    return null;
-  }
-};
+/** Current wire operations from contracts/dlmm/pool.tolk and
+ * contracts/shared/jetton/jetton_types.tolk. Classification is part of this
+ * decoder's code; release configuration cannot add meanings to opcodes. */
+export const OPCODES = Object.freeze({
+  SWAP_EXACT_IN: 0x44535750,
+  SWAP_FORWARD: 0x53574150,
+  ADD_LIQUIDITY_FORWARD: 0x444c4144,
+  ADD_LIQUIDITY: 0x44414444,
+  ADD_LIQUIDITY_FOR: 0x444c4146,
+  REMOVE_LIQUIDITY: 0x44524d56,
+  JETTON_TRANSFER: 0x0f8a7ea5,
+  JETTON_TRANSFER_NOTIFICATION: 0x7362d09c,
+});
 
-export const loadOpcodes = (path?: string): OpcodeSets => {
-  const sets: OpcodeSets = {
-    // Defaults are DLMM-only (production).
-    swap: new Set([0x53574150, 0x44535750]), // OP_SWAP_FORWARD ('SWAP'), DLMM: OP_SWAP_EXACT_IN ('DSWP')
-    lpDeposit: new Set([0x444c4144, 0x44414444, 0x444c4146]), // DLMM: 'DLAD'/'DADD'/'DLAF'
-    lpWithdraw: new Set([0x44524d56]), // DLMM: 'DRMV'
-    jettonTransfer: new Set([0x0f8a7ea5]),
-    jettonNotify: new Set([0x7362d09c]),
-  };
-
-  if (!path) return sets;
-  try {
-    const raw = readFileSync(path, 'utf8');
-    const data = JSON.parse(raw) as Record<string, Record<string, string>>;
-
-    for (const contract of Object.values(data)) {
-      for (const [name, value] of Object.entries(contract)) {
-        const parsed = safeParseHex(value);
-        if (parsed === null || Number.isNaN(parsed)) continue;
-        if (name.includes('OP_SWAP')) sets.swap.add(parsed);
-        if (
-          name.includes('OP_DLMM_ADD_LIQUIDITY_FORWARD') ||
-          name.includes('OP_DLMM_ADD_LIQUIDITY') ||
-          name.includes('OP_DLMM_ADD_LIQUIDITY_FOR')
-        ) {
-          sets.lpDeposit.add(parsed);
-        }
-        if (name.includes('OP_DLMM_REMOVE_LIQUIDITY')) {
-          sets.lpWithdraw.add(parsed);
-        }
-        if (name.includes('OP_JETTON_TRANSFER')) sets.jettonTransfer.add(parsed);
-        if (name.includes('OP_JETTON_TRANSFER_NOTIFICATION')) sets.jettonNotify.add(parsed);
-      }
-    }
-  } catch {
-    // Keep defaults if file missing or invalid.
-  }
-
-  return sets;
-};
+export const loadOpcodes = (): OpcodeSets => ({
+  swap: new Set([OPCODES.SWAP_FORWARD, OPCODES.SWAP_EXACT_IN]),
+  lpDeposit: new Set([OPCODES.ADD_LIQUIDITY_FORWARD, OPCODES.ADD_LIQUIDITY, OPCODES.ADD_LIQUIDITY_FOR]),
+  lpWithdraw: new Set([OPCODES.REMOVE_LIQUIDITY]),
+  jettonTransfer: new Set([OPCODES.JETTON_TRANSFER]),
+  jettonNotify: new Set([OPCODES.JETTON_TRANSFER_NOTIFICATION]),
+});

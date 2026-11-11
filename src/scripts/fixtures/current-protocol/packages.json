@@ -1,0 +1,32 @@
+{
+  "claims": {
+    "suite": "tests/system/ReleaseGovernance.spec.ts",
+    "tests": 2,
+    "receiptSha256": "22b796caf0315f7c958459b957ad10d2e11e6faa308b234dff273d650683d198",
+    "bindingSha256": "864374257eab0e0ec39f493aed040668d8d6e042cf7c3005a123f86647950f70"
+  },
+  "remint": {
+    "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+    "tests": 2,
+    "receiptSha256": "74b69bd776525255ce576395bd738f3599d40de5e0142e3ef037d2a78e3cabec",
+    "bindingSha256": "226d06f1b2f43370711cdd110d80c292586f2b92ace7cda679492dbec305a93a"
+  },
+  "route": {
+    "suite": "tests/dex/FreshT3Route.spec.ts",
+    "tests": 8,
+    "receiptSha256": "84eb37fe3994841ff572ba4eff523405ce399cb37b72211fc1221e0ae39c929d",
+    "bindingSha256": "a9642ed54d6a1267518530eaffd68ae6eb4a5c3a879fe45661f4bcaf41ac5729"
+  },
+  "gasVault": {
+    "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+    "tests": 2,
+    "receiptSha256": "f4e6328afa2cbb9522891e3505ef09edc8f3c8f12f8c55e44cc77abbbf476986",
+    "bindingSha256": "55f449f6429b6aeb17cca913c850249402470f2f557c52014195a23d24342842"
+  },
+  "owed": {
+    "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+    "tests": 2,
+    "receiptSha256": "4f889c79c3433f7589d75a43eed267bdf0e60955bfd59b24874169f00469cf55",
+    "bindingSha256": "2e0c2e408b171f1b88aa615349393e00156052747956901fb6d7d7adebb9ca19"
+  }
+}

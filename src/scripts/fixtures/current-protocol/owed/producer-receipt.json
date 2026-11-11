@@ -1,0 +1,36 @@
+{
+  "schema": "tonswap-capture-producer-v1",
+  "producer": "owed",
+  "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+  "tests": 2,
+  "captureDirectory": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/.local/state/current-protocol-captures-20261018-v1/owed",
+  "exitCode": 0,
+  "runtime": {
+    "node": "v22.23.3",
+    "tolk": "1.5.0",
+    "sandbox": "0.42.0"
+  },
+  "logSha256": "f963fabc4d1da567f5de12ae1c3d2c04cf5ef4b72c682857bfc7c6111e8d5875",
+  "build": {
+    "file": "build-binding.json",
+    "sha256": "2e0c2e408b171f1b88aa615349393e00156052747956901fb6d7d7adebb9ca19",
+    "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+    "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d"
+  },
+  "compiled": {
+    "DlmmPool": {
+      "file": "current-compiled/DlmmPool.json",
+      "sha256": "27dbe389ef93cf50d5866fa88aa62bfd6b9d36d03eb0cca1893a2b44b56c7845",
+      "codeHash": "f74ba1cd4e52aac326c562d1d61ec4c5af217415c104c2816d73223caddc3ad7",
+      "boc": "compiler/DlmmPool.boc",
+      "bocSha256": "868e2aaec0a6edd4b52e91d67e44d0972d610a64947bd4c04111dda3de999b14"
+    }
+  },
+  "artifacts": {
+    "build-binding.json": "2e0c2e408b171f1b88aa615349393e00156052747956901fb6d7d7adebb9ca19",
+    "case-01.json": "1a00deeca2680f094178ea1116a7fdd75e27211befe77dd07d69a23164d15f46",
+    "case-02.json": "9d8b7e3a9b8c6eba9eb498462d04237e11eb4b50e0c21b58cd256d1235afe831",
+    "compiler/DlmmPool.boc": "868e2aaec0a6edd4b52e91d67e44d0972d610a64947bd4c04111dda3de999b14",
+    "current-compiled/DlmmPool.json": "27dbe389ef93cf50d5866fa88aa62bfd6b9d36d03eb0cca1893a2b44b56c7845"
+  }
+}

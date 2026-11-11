@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readDatabaseUrl } from './database';
+import { readSecretText } from './secrets';
+import { dirname, resolve } from 'node:path';
 
-export type Network = 'mainnet' | 'testnet';
+export type Network = 'mainnet' | 'testnet' | 'localnet';
 export type IndexerMode = 'dev' | 'production';
 export type RateLimitBucketName = 'accounts' | 'stream' | 'snapshot' | 'rpc' | 'docs' | 'default';
 export type RateLimitBucketConfig = { windowMs: number; max: number };
@@ -12,27 +13,28 @@ export type Config = {
   host: string;
   mode: IndexerMode;
   network: Network;
-  dataSource: 'http' | 'lite';
   corsEnabled: boolean;
   corsAllowOrigin: string;
+  corsAllowOrigins: string[];
   corsAllowMethods: string;
   corsAllowHeaders: string;
   corsExposeHeaders: string;
   corsMaxAge: number;
   snapshotPath?: string;
+  databaseUrl?: string;
+  ledgerMaxWatchedAccounts: number;
+  ledgerMaxPagesPerSync: number;
+  ledgerMaxRelatedAccounts: number;
   snapshotOnExit: boolean;
   snapshotAutosaveEnabled: boolean;
   snapshotAutosaveIntervalMs: number;
-  adminToken?: string;
-  adminEnabled: boolean;
   rateLimitEnabled: boolean;
   rateLimitWindowMs: number;
   rateLimitMax: number;
   rateLimitBuckets: RateLimitBuckets;
   responseCacheEnabled: boolean;
-  balanceCacheTtlMs: number;
+  initialHistoryTimeoutMs: number;
   txCacheTtlMs: number;
-  stateCacheTtlMs: number;
   healthCacheTtlMs: number;
   metricsCacheTtlMs: number;
   pageSize: number;
@@ -43,33 +45,50 @@ export type Config = {
   backfillPageBatch: number;
   backfillMaxPagesPerAddress: number;
   backfillConcurrency: number;
-  jettonMetadataTtlMs: number;
   watchlistRefreshMs: number;
   blockPollMs: number;
-  httpEndpoint?: string;
-  rpcProxyEndpoint?: string;
-  rpcProxyEndpoints: string[];
   enableWriteRpc: boolean;
-  rpcProxyApiKey?: string;
-  rpcProxyTimeoutMs: number;
-  rpcProxyRetryAttempts: number;
-  rpcProxyRetryDelayMs: number;
   liteserverPool?: string;
-  soraRpcEndpoint?: string;
-  soraRpcTimeoutMs: number;
-  soraCheckpointCacheTtlMs: number;
-  soraTonTrustedCheckpointSeqno?: number;
-  soraTonTrustedCheckpointHash?: string;
   logLevel: string;
-  registryPath: string;
-  opcodesPath?: string;
+  adminToken?: string;
+  releaseManifestSource?: string;
+  edgeKey?: string;
+  ledgerWorkers: number;
+  diskGuardPath: string;
+  diskSoftFloorBytes: number;
+  diskHardFloorBytes: number;
 };
 
-const numberFromEnv = (key: string, fallback: number) => {
+const numberFromEnv = (
+  key: string,
+  fallback: number,
+  options: { min?: number; max?: number; integer?: boolean } = {}
+) => {
   const raw = process.env[key];
   if (!raw) return fallback;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  const value = options.integer ? Math.trunc(parsed) : parsed;
+  if (options.min !== undefined && value < options.min) return fallback;
+  if (options.max !== undefined && value > options.max) return fallback;
+  return value;
+};
+
+const strictBoundedIntegerFromEnv = (
+  key: string,
+  fallback: number,
+  options: { min: number; max: number }
+) => {
+  const raw = process.env[key];
+  if (raw === undefined || raw === '') return fallback;
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) {
+    throw new Error(`${key} must be a canonical integer between ${options.min} and ${options.max}`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < options.min || value > options.max) {
+    throw new Error(`${key} must be a canonical integer between ${options.min} and ${options.max}`);
+  }
+  return value;
 };
 
 const stringFromEnv = (key: string, fallback?: string) => {
@@ -106,58 +125,39 @@ const booleanFromEnv = (key: string, fallback: boolean) => {
   return fallback;
 };
 
+const enumFromEnv = <T extends string>(key: string, fallback: T, allowed: readonly T[]): T => {
+  const raw = process.env[key];
+  if (raw === undefined || raw === '') return fallback;
+  const normalized = raw.toLowerCase();
+  if ((allowed as readonly string[]).includes(normalized)) return normalized as T;
+  throw new Error(`${key} must be one of ${allowed.join(', ')}, got ${raw}`);
+};
+
 const modeFromEnv = (): IndexerMode => {
-  const raw = (process.env.INDEXER_MODE || 'dev').toLowerCase();
-  if (raw === 'production' || raw === 'dev') return raw;
-  return 'dev';
+  return enumFromEnv<IndexerMode>('INDEXER_MODE', 'dev', ['dev', 'production']);
 };
 
 const networkFromEnv = (): Network => {
-  // Default to testnet for current TONSWAP deployments; mainnet requires real registry addresses.
-  const raw = (process.env.TON_NETWORK || 'testnet').toLowerCase();
-  if (raw === 'mainnet' || raw === 'testnet') return raw;
-  return 'testnet';
-};
-
-const dataSourceFromEnv = (): 'http' | 'lite' => {
-  const raw = (process.env.TON_DATASOURCE || '').toLowerCase();
-  if (raw === 'lite') return 'lite';
-  return 'http';
+  // The manifest must independently match this network at startup.
+  return enumFromEnv<Network>('TON_NETWORK', 'testnet', ['mainnet', 'testnet', 'localnet']);
 };
 
 export const loadConfig = (): Config => {
   const mode = modeFromEnv();
   const network = networkFromEnv();
-  const registryPath = resolve(process.cwd(), 'registry', `${network}.json`);
-  const opcodesPath = stringFromEnv(
-    'OPCODES_PATH',
-    resolve(process.cwd(), '..', 'tonswap_tolk', 'config', 'opcodes.json')
-  );
+  const edgeKey = readSecretText(process.env, 'INDEXER_EDGE_KEY');
+  if (edgeKey !== undefined && edgeKey.length < 32) throw new Error('INDEXER_EDGE_KEY must have at least 32 characters');
+  const diskSoftFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_SOFT_FLOOR_BYTES', 2 * 1024 ** 3, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  const diskHardFloorBytes = strictBoundedIntegerFromEnv('INDEXER_DISK_HARD_FLOOR_BYTES', 512 * 1024 ** 2, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  if (diskHardFloorBytes > diskSoftFloorBytes) throw new Error('INDEXER_DISK_HARD_FLOOR_BYTES must not exceed INDEXER_DISK_SOFT_FLOOR_BYTES');
 
-  const configuredProxyEndpoints = listFromEnv([
-    'INDEXER_WRITE_RPC_ENDPOINTS',
-    'TON_WRITE_RPC_ENDPOINTS',
-    'TONSWAP_WRITE_RPC_ENDPOINTS',
-    'BLUEPRINT_WRITE_ENDPOINTS',
-    'TON_RPC_ENDPOINTS',
-    'BLUEPRINT_ENDPOINTS'
-  ]);
-  const singleProxyEndpoint =
-    stringFromEnv('INDEXER_WRITE_RPC_ENDPOINT') ||
-    stringFromEnv('TON_WRITE_RPC_ENDPOINT') ||
-    stringFromEnv('TONSWAP_WRITE_RPC_ENDPOINT') ||
-    stringFromEnv('BLUEPRINT_WRITE_ENDPOINT') ||
-    stringFromEnv('TON_RPC_ENDPOINT') ||
-    stringFromEnv('BLUEPRINT_ENDPOINT');
-  const rpcProxyEndpoints = singleProxyEndpoint
-    ? [...configuredProxyEndpoints, singleProxyEndpoint].filter(
-        (endpoint, index, list) => list.indexOf(endpoint) === index
-      )
-    : configuredProxyEndpoints;
   const defaultRateLimitWindowMs = 60_000;
   const defaultRateLimitMax = mode === 'production' ? 2_000 : 10_000;
-  const rateLimitWindowMs = numberFromEnv('RATE_LIMIT_WINDOW_MS', defaultRateLimitWindowMs);
-  const rateLimitMax = numberFromEnv('RATE_LIMIT_MAX', defaultRateLimitMax);
+  const rateLimitWindowMs = numberFromEnv('RATE_LIMIT_WINDOW_MS', defaultRateLimitWindowMs, {
+    min: 1,
+    integer: true
+  });
+  const rateLimitMax = numberFromEnv('RATE_LIMIT_MAX', defaultRateLimitMax, { min: 1, integer: true });
   const defaultBuckets: RateLimitBuckets = {
     accounts: { windowMs: rateLimitWindowMs, max: rateLimitMax },
     stream: { windowMs: 10_000, max: mode === 'production' ? 200 : 1_000 },
@@ -175,13 +175,21 @@ export const loadConfig = (): Config => {
       for (const key of Object.keys(defaultBuckets) as RateLimitBucketName[]) {
         const candidate = parsed[key];
         if (!candidate || typeof candidate !== 'object') continue;
-        const windowMs =
-          typeof candidate.windowMs === 'number' && Number.isFinite(candidate.windowMs) && candidate.windowMs > 0
+        const candidateWindowMs =
+          typeof candidate.windowMs === 'number' && Number.isFinite(candidate.windowMs)
             ? Math.trunc(candidate.windowMs)
+            : Number.NaN;
+        const candidateMax =
+          typeof candidate.max === 'number' && Number.isFinite(candidate.max)
+            ? Math.trunc(candidate.max)
+            : Number.NaN;
+        const windowMs =
+          Number.isSafeInteger(candidateWindowMs) && candidateWindowMs > 0
+            ? candidateWindowMs
             : merged[key].windowMs;
         const max =
-          typeof candidate.max === 'number' && Number.isFinite(candidate.max) && candidate.max > 0
-            ? Math.trunc(candidate.max)
+          Number.isSafeInteger(candidateMax) && candidateMax > 0
+            ? candidateMax
             : merged[key].max;
         merged[key] = { windowMs, max };
       }
@@ -192,91 +200,68 @@ export const loadConfig = (): Config => {
   })();
 
   return {
-    port: numberFromEnv('PORT', 8787),
-    host: stringFromEnv('HOST', '0.0.0.0')!,
+    port: numberFromEnv('PORT', 8787, { min: 0, max: 65_535, integer: true }),
+    host: stringFromEnv('HOST', '127.0.0.1')!,
     mode,
     network,
-    dataSource: dataSourceFromEnv(),
     corsEnabled: booleanFromEnv('CORS_ENABLED', true),
     corsAllowOrigin: stringFromEnv('CORS_ALLOW_ORIGIN', '*')!,
+    corsAllowOrigins: listFromEnv(['CORS_ALLOW_ORIGINS']),
     corsAllowMethods: stringFromEnv('CORS_ALLOW_METHODS', 'GET,HEAD,POST,OPTIONS')!,
-    corsAllowHeaders: stringFromEnv('CORS_ALLOW_HEADERS', 'authorization,content-type,accept')!,
+    corsAllowHeaders: stringFromEnv('CORS_ALLOW_HEADERS', 'content-type,accept')!,
     corsExposeHeaders: stringFromEnv(
       'CORS_EXPOSE_HEADERS',
-      'x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset'
+      'x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset,retry-after'
     )!,
-    corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600),
+    corsMaxAge: numberFromEnv('CORS_MAX_AGE', 600, { min: 0, integer: true }),
     snapshotPath: stringFromEnv('SNAPSHOT_PATH'),
+    databaseUrl: readDatabaseUrl(),
+    ledgerMaxWatchedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_WATCHED_ACCOUNTS', 1000, {min:1,max:100000}),
+    ledgerMaxPagesPerSync: strictBoundedIntegerFromEnv('INDEXER_MAX_PAGES_PER_SYNC',20,{min:1,max:100}),
+    ledgerMaxRelatedAccounts: strictBoundedIntegerFromEnv('INDEXER_MAX_RELATED_ACCOUNTS',256,{min:1,max:1024}),
     snapshotOnExit: booleanFromEnv('SNAPSHOT_ON_EXIT', false),
     snapshotAutosaveEnabled: booleanFromEnv(
       'SNAPSHOT_AUTOSAVE_ENABLED',
       mode === 'production' && Boolean(stringFromEnv('SNAPSHOT_PATH'))
     ),
-    snapshotAutosaveIntervalMs: numberFromEnv('SNAPSHOT_AUTOSAVE_INTERVAL_MS', 30_000),
-    adminToken: stringFromEnv('ADMIN_TOKEN'),
-    adminEnabled: booleanFromEnv('ADMIN_ENABLED', mode === 'production'),
+    snapshotAutosaveIntervalMs: numberFromEnv('SNAPSHOT_AUTOSAVE_INTERVAL_MS', 30_000, { min: 1, integer: true }),
     rateLimitEnabled: booleanFromEnv('RATE_LIMIT_ENABLED', true),
     rateLimitWindowMs,
     rateLimitMax,
     rateLimitBuckets,
     responseCacheEnabled: booleanFromEnv('RESPONSE_CACHE_ENABLED', true),
-    balanceCacheTtlMs: numberFromEnv('BALANCE_CACHE_TTL_MS', 2_000),
-    txCacheTtlMs: numberFromEnv('TX_CACHE_TTL_MS', 1_000),
-    stateCacheTtlMs: numberFromEnv('STATE_CACHE_TTL_MS', 1_000),
-    healthCacheTtlMs: numberFromEnv('HEALTH_CACHE_TTL_MS', 1_000),
-    metricsCacheTtlMs: numberFromEnv('METRICS_CACHE_TTL_MS', 1_000),
-    pageSize: numberFromEnv('PAGE_SIZE', 10),
-    maxPagesPerAddress: numberFromEnv('MAX_PAGES_PER_ADDRESS', 150),
-    maxAddresses: numberFromEnv('MAX_ADDRESSES', 5_000),
-    idleTtlMs: numberFromEnv('IDLE_TTL_MS', 2 * 60 * 60 * 1000),
-    globalMaxPages: numberFromEnv('GLOBAL_MAX_PAGES', 200_000),
-    backfillPageBatch: numberFromEnv('BACKFILL_PAGE_BATCH', 5),
-    backfillMaxPagesPerAddress: numberFromEnv('BACKFILL_MAX_PAGES_PER_ADDRESS', 150),
-    backfillConcurrency: numberFromEnv('BACKFILL_CONCURRENCY', 2),
-    jettonMetadataTtlMs: numberFromEnv('JETTON_METADATA_TTL_MS', 24 * 60 * 60 * 1000),
-    watchlistRefreshMs: numberFromEnv('WATCHLIST_REFRESH_MS', 5_000),
-    blockPollMs: numberFromEnv('BLOCK_POLL_MS', 5_000),
-    httpEndpoint: stringFromEnv('TON_HTTP_ENDPOINT'),
-    rpcProxyEndpoint: singleProxyEndpoint,
-    rpcProxyEndpoints,
+    initialHistoryTimeoutMs: strictBoundedIntegerFromEnv('INITIAL_HISTORY_TIMEOUT_MS', 10_000, {
+      min: 1,
+      max: 120_000
+    }),
+    txCacheTtlMs: numberFromEnv('TX_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
+    healthCacheTtlMs: numberFromEnv('HEALTH_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
+    metricsCacheTtlMs: numberFromEnv('METRICS_CACHE_TTL_MS', 1_000, { min: 0, integer: true }),
+    pageSize: numberFromEnv('PAGE_SIZE', 10, { min: 1, integer: true }),
+    maxPagesPerAddress: numberFromEnv('MAX_PAGES_PER_ADDRESS', 150, { min: 1, integer: true }),
+    maxAddresses: numberFromEnv('MAX_ADDRESSES', 5_000, { min: 1, integer: true }),
+    idleTtlMs: numberFromEnv('IDLE_TTL_MS', 2 * 60 * 60 * 1000, { min: 1, integer: true }),
+    globalMaxPages: numberFromEnv('GLOBAL_MAX_PAGES', 200_000, { min: 1, integer: true }),
+    backfillPageBatch: numberFromEnv('BACKFILL_PAGE_BATCH', 5, { min: 1, integer: true }),
+    backfillMaxPagesPerAddress: numberFromEnv('BACKFILL_MAX_PAGES_PER_ADDRESS', 150, { min: 1, integer: true }),
+    backfillConcurrency: numberFromEnv('BACKFILL_CONCURRENCY', 2, { min: 1, integer: true }),
+    watchlistRefreshMs: numberFromEnv('WATCHLIST_REFRESH_MS', 5_000, { min: 1, integer: true }),
+    blockPollMs: numberFromEnv('BLOCK_POLL_MS', 5_000, { min: 1, integer: true }),
     enableWriteRpc: booleanFromEnv('INDEXER_ENABLE_WRITE_RPC', false),
-    rpcProxyApiKey:
-      stringFromEnv('INDEXER_WRITE_RPC_API_KEY') ||
-      stringFromEnv('TON_WRITE_RPC_API_KEY') ||
-      stringFromEnv('TONSWAP_WRITE_RPC_API_KEY') ||
-      stringFromEnv('BLUEPRINT_WRITE_API_KEY') ||
-      stringFromEnv('TON_RPC_API_KEY') ||
-      stringFromEnv('BLUEPRINT_API_KEY'),
-    rpcProxyTimeoutMs: numberFromEnv('INDEXER_RPC_PROXY_TIMEOUT_MS', 30_000),
-    rpcProxyRetryAttempts: numberFromEnv('INDEXER_RPC_PROXY_RETRY_ATTEMPTS', 4),
-    rpcProxyRetryDelayMs: numberFromEnv('INDEXER_RPC_PROXY_RETRY_DELAY_MS', 600),
     liteserverPool: stringFromEnv(
-      network === 'mainnet' ? 'LITESERVER_POOL_MAINNET' : 'LITESERVER_POOL_TESTNET'
+      network === 'mainnet'
+        ? 'LITESERVER_POOL_MAINNET'
+        : network === 'testnet'
+          ? 'LITESERVER_POOL_TESTNET'
+          : 'LITESERVER_POOL_LOCALNET'
     ),
-    soraRpcEndpoint:
-      stringFromEnv('SORA_RPC_HTTP_ENDPOINT') ||
-      stringFromEnv('SORA_HTTP_ENDPOINT') ||
-      stringFromEnv('SORA_RPC_ENDPOINT'),
-    soraRpcTimeoutMs: numberFromEnv('SORA_RPC_TIMEOUT_MS', 10_000),
-    soraCheckpointCacheTtlMs: numberFromEnv('SORA_TON_TRUSTED_CHECKPOINT_CACHE_TTL_MS', 10_000),
-    soraTonTrustedCheckpointSeqno: (() => {
-      const raw = stringFromEnv('SORA_TON_TRUSTED_CHECKPOINT_SEQNO');
-      if (!raw) return undefined;
-      const parsed = Number(raw);
-      return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
-    })(),
-    soraTonTrustedCheckpointHash: stringFromEnv('SORA_TON_TRUSTED_CHECKPOINT_HASH'),
     logLevel: stringFromEnv('LOG_LEVEL', 'info')!,
-    registryPath,
-    opcodesPath,
+    adminToken: readSecretText(process.env, 'INDEXER_ADMIN_TOKEN'),
+    releaseManifestSource: stringFromEnv('INDEXER_RELEASE_MANIFEST'),
+    edgeKey,
+    ledgerWorkers: strictBoundedIntegerFromEnv('INDEXER_LEDGER_WORKERS', 3, { min: 2, max: 8 }),
+    diskGuardPath: stringFromEnv('INDEXER_DISK_GUARD_PATH', dirname(resolve(stringFromEnv('SNAPSHOT_PATH', './snapshot.json')!)))!,
+    diskSoftFloorBytes,
+    diskHardFloorBytes,
   };
-};
-
-export const readRegistryFile = (path: string) => {
-  try {
-    const raw = readFileSync(path, 'utf8');
-    return JSON.parse(raw) as Record<string, string>;
-  } catch (error) {
-    throw new Error(`Failed to read registry at ${path}: ${(error as Error).message}`);
-  }
 };

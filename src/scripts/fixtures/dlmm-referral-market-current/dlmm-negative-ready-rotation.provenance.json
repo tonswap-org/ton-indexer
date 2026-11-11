@@ -1,0 +1,8 @@
+{
+  "file": "dlmm-negative-ready-rotation.json",
+  "source": "/Users/mtakemiya/dev/tonswap/output/first-testnet/generation-20260925-g33/preparation/dlmm-current-wallet-02/negative/dlmm-negative-ready-rotation.json",
+  "sha256": "f4c8bcebcc28c829d250bab5065e1cf7ba90d0c90cbc17eabe10917e40d6be79",
+  "transactions": 92,
+  "compressed": false,
+  "poolCodeHash": "f4b771e4e9a1102214916e5f121fedf79dfda242c412a4e679b1dfc9e15efe9b"
+}

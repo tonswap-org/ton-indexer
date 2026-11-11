@@ -1,218 +1,142 @@
 # TONSWAP Indexer Roadmap
 
-## Design (v1)
+## Durable-ledger deployment readiness — 2026-10-06
 
-### Goals
-- Fast balance and tx history for TONSWAP UI (sub-100ms cache hits).
-- Confirmed-only data (no unconfirmed state).
-- Any address lookup with pagination (10 txs/page).
-- Typed txs (swap, lp_deposit, lp_withdraw, transfer, contract_call).
-- Match `tonswap_web` wallet history expectations (`txId`, `txType`, `detail`).
+`GET /api/indexer/v1/ledger/readiness` is a read-only native testnet deployment
+gate. HTTP 200 uses `tonswap-native-ledger-readiness-v1` with exact manifest
+service/release identity, the pinned compiled JS/SQL hashes, the full durable
+database release identity and canonical ISO `checkedAt`. The actual configured
+PostgreSQL namespace must match the generated canonical SQL catalog in one
+repeatable-read snapshot. Missing storage, identity/schema drift or changed
+compiled files returns HTTP 503. Requests do not initialize storage, enroll
+accounts or collect history, and responses cannot be cached. The native release
+producer separately qualifies the installed compiled store on its owned native
+PostgreSQL runtime before its guard admits this build and endpoint.
 
-### Constraints / Assumptions
-- No self-hosted full/archive node.
-- Primary data source is public liteservers (variable latency, limited history).
-- Local storage budget: target <= 50GB (should be configurable lower).
-- Full history may not be available for some addresses; expose that status in API.
-- **Chosen for v1**: memory-only storage (no persistent DB).
-- Memory-only is volatile (history lost on restart; `total_pages` unknown until re-backfill).
-- Support mainnet and testnet; default is mainnet unless explicitly flagged.
+## Current Perps qualification — 2026-09-27
 
-### Persistence Modes
-- **Memory-only (selected for v1)**:
-  - Fast, simple, zero disk.
-  - Loses history on restart; `total_pages` becomes unknown until re-backfill.
-  - Requires aggressive in-memory caps and eviction.
-- **SQLite (future option)**:
-  - Small, local file-based DB; no server.
-  - Enables stable `total_pages` and backfill completion across restarts.
-  - Reduces repeated backfill load on public liteservers.
+The current decoder distinguishes ordinary CLOSE's empty context, MODIFY's
+complete prior position and managed CLOSE/CFNG's exact position commitment plus
+native sponsor. It validates pending operation kind separately from terminal
+reason, preserves context identity through the oracle callback and verifies an
+accepted managed exit against its actual prior position. Mesh sponsors require
+job 405 and the configured control return collector; malformed, substituted or
+trailing context fields are rejected.
+An ordinary owner full CLOSE can supersede a pending maintenance CLOSE, even
+with the same business query ID, while allocating a different wire nonce. This
+exception does not allow replacement of other paid pending orders.
+The indexer regression exercises that exception with synthetic intake boundaries
+and an unchanged ordinary-CLOSE wire; the existing native risk suite separately
+tests actual supersession. These are not a captured supersession ledger graph.
 
-### Network Selection
-- Default: **testnet** (current TONSWAP deployments).
-- Mainnet mode is supported, but requires real registry/mainnet addresses.
-  - Configuration example:
-    - `TON_NETWORK=mainnet|testnet` (default `testnet`)
-    - `LITESERVER_POOL_MAINNET=...` (set after mainnet deploy)
-    - `LITESERVER_POOL_TESTNET=127.0.0.1:PORT` (localhost liteserver)
+Fresh direct-owner CFNG claims use the authenticated oracle callback for economic
+execution. Their native context binds the intake transaction's logical time to
+direct refund kind 0, module 0 and the owner refund address. Existing pending
+funding transfers keep the contract's direct retry path and original settlement
+journal. Oracle acceptance, fee allocation, trader-margin returns and physical
+LP-funded payment remain separate facts with independent evidence.
 
-### High-Level Architecture
-- **Lite client adapter**: queries a pool of public liteservers.
-- **Indexing core**:
-  - **Hot watchlist updater**: every new masterchain block, refresh balances/txs for watched addresses.
-  - **On-demand backfill**: when an address is first requested, fetch recent txs immediately, then backfill older history in background if possible.
-- **Memory-only state**:
-  - In-process maps for accounts, jettons, txs, page index, and stats.
-  - LRU/TTL eviction to cap memory.
-  - No full rescan while online; incremental updates per block.
-- **Storage (v1)**:
-  - Memory-only maps + in-process LRU/TTL eviction.
-- **Storage (future)**:
-  - Optional SQLite for persistence across restarts.
-- **API service**: read-through cache; never hits chain on request path unless cache miss.
+The managed maintenance decoder regression passed against original final14
+native transaction and storage captures. A later capture-only native test change
+adds accepted/rejected CFNG and exhausted-reserve-close cases. The final15 risk
+producer passes all 53 native tests and independent compilation at source
+closure `c93e4a60...`, with Engine `d3a74ae2...`. Targeted oracle-execution
+integration passes against the authenticated 11-case staged fixture directory,
+including the three new actual claim cases and missing-custody/context negatives.
+The log is `../output/first-testnet/generation-20260925-g33/preparation/indexer-claim-integration-final15-01.log`.
+Earlier final14 captures retain their original provenance. All six final15
+native producers now pass at counts 53/7/32/5/1/1 and their current fixtures are
+adopted. The complete indexer `npm test`, including pretest and all 47 ledger
+scripts, passes alongside both typechecks, 592 web Perps unit tests and 13 browser
+scenarios. The final provenance check verifies all six native receipts and the
+exact current 234-file indexer inventory used by both web projector families.
+The receipt is `../output/first-testnet/generation-20260925-g33/preparation/perps-current-precheck-final15.json`.
+Frozen whole-release qualification and testnet deployment remain pending.
 
-### API Design (fixed page size = 10)
+## Current design
 
-#### GET /api/indexer/v1/accounts/{addr}/balance
-Response:
-- `ton.balance`, `ton.last_tx_lt`, `ton.last_tx_hash`
-- `jettons[]` (master, wallet, balance, decimals, symbol)
-- `confirmed=true`, `updated_at`
-- `network` (`mainnet` | `testnet`)
+The current service has one reviewed manifest and one locally configured liteserver pool. All mainnet, testnet and localnet peers are supplied through an absolute local global-config path or explicit inline peer list. Testnet is the default network. There is no HTTP provider, remote peer discovery, static address registry or opcode file loading. Native release metadata and deployment/code bindings come only from the manifest; opcodes are bundled.
 
-#### GET /api/indexer/v1/accounts/{addr}/txs?page=1
-Response:
-- `page`, `page_size=10`
-- `total_txs` (known count)
-- `total_pages` (null if history incomplete)
-- `total_pages_min` (lower bound)
-- `history_complete` (boolean)
-- `txs[]` (typed; includes both `kind/actions` and UI-ready fields)
-- `network` (`mainnet` | `testnet`)
+Current reads pin one monotonic network-authenticated head. Account responses include real shard-block anchors and creation times. The source shares only active identical queries and bounds cancellation, retries and hedges. Current balances contain GRAM plus all manifest tokens with exact atomic values and explicit ok/not_deployed/unavailable states. No failed token read becomes zero. A single HeadFeed drives shared SSE refreshes. Completed getter/balance caches are absent; snapshot reuse is explicit, bounded and keeps its original asOfSeqno. Time-dependent farms and volatility snapshots do not reuse results.
 
-##### txs[] entry (UI-ready)
-- `txId = "{lt}:{hash}"`
-- `utime`, `status`, `reason`
-- `txType` (human label)
-- `inSource`, `inValue`, `outCount`
-- `detail` (swap/lp/mint union)
-- `kind`, `actions[]` (optional debug/extended)
+The public surfaces are the current OpenAPI contract: balances, paginated activity, current account state, pinned readFresh, runGetMethod, selected product snapshots, candles, contracts/service identity, health and the two local-source JSON-RPC mounts. Durable owner ledger, discovery and historical market routes provide separately qualified evidence. Removed balance/asset aliases, payload construction, swap-list, Options/Perps/DeFi snapshot and multi-getter batch routes have no compatibility aliases. Activity hints never certify settlement.
 
-### TONSWAP Web Alignment
-- Use `txId = "{lt}:{hash}"` (matches existing UI parsing).
-- Provide `WalletHistoryEntry`-like fields so UI can skip client-side parsing:
-  - `txType`, `status`, `reason`, `inSource`, `inValue`, `outCount`, `detail`.
-- `detail` mirrors UI unions:
-  - `swap` -> `{ kind: 'swap', payToken, receiveToken, payAmount, receiveAmount }`
-  - `lp` -> `{ kind: 'lp', pair, tokenA, tokenB, amountA, amountB }`
-  - `mint` -> `{ kind: 'mint', mode, inputToken, outputToken, inputAmount, outputAmount }`
-- Derive `status` using the same logic as `../tonswap_web/services/toncenter.ts#getTransactionStatus`.
+REST failures are flat `{error,code}` with honest status and no-store; 429/503/504 include Retry-After. Route deadlines propagate aborts: getter/balance/JSON-RPC 5s, snapshot 10s and fresh batch 18s. The limiter authenticates the edge key plus visitor IP, otherwise uses the raw socket; forwarded-for headers have no authority. The reviewed nginx template preserves application errors and SSE, blocks operational routes and supplies only the static unavailable-backend 503. Enabled BOC sends use one attempt on the same chain source.
 
-#### GET /api/indexer/v1/accounts/{addr}/state
-- Combined balance + last_tx + last_seen_utime + last_confirmed_seqno
+## Persistence and publication
 
-#### GET /api/indexer/v1/health
-- `last_master_seqno`, `indexer_lag_sec`, `liteserver_pool_status`
+Bounded in-memory activity maps and optional manifest-scoped snapshots support UI history and diagnostics. They do not supply settlement proof or durable exports. PostgreSQL retains original physical transaction chains, archives, qualified wallet identities, owner checks and immutable published projections. First-release deployments start from a fresh canonical schema; no old-schema fallback, inferred projection scope or automatic migration exists.
 
-### Typed Transaction Model
-- `kind` enum: `swap | lp_deposit | lp_withdraw | transfer | contract_call | unknown`
-- `actions[]` includes typed payload:
-  - `swap`: pool, token_in/out, amounts, min_out, sender
-  - `lp_deposit`: pool, token amounts, lp_minted
-  - `lp_withdraw`: pool, lp_burned, token amounts
-  - `transfer`: asset (ton/jetton), amount, from/to
-- Decode based on TONSWAP router/pool/LP contracts (address or code hash registry).
-- Fallback: classify standard Jetton transfer; else `contract_call`.
+Each physical account gets its own page allowance and cross-process lock. Exact linked history reaches genesis independently of the observation boundary. Owner cycles acquire one head and refresh every relevant physical account at that boundary. The owner check stores server checkedAt, the chain boundary, head vector, pending accounts and current/published bindings. Every previous graph account must be present with equal-or-later LT (exact hash at equal LT), and every prior resolved binding must stay resolved before publication. A failed refresh preserves the prior generation. An eligible unchanged-head check writes only its mutable check, without history/project work.
 
-### Contract Registry / Opcodes (from `../tonswap_tolk`)
-- Contract addresses loaded from:
-  - `registry/mainnet.json` (mainnet default).
-  - `registry/testnet.json` (testnet runs).
-  - `../tonswap_tolk/tmp_debug/module_addresses.json` (dev/testnet sync source).
-  - `../tonswap_tolk/tmp_debug/dlmm.*.address` (if DLMM pools are used).
-- Opcode map loaded from `../tonswap_tolk/config/opcodes.json`:
-  - `contracts/clmm/pool.tolk` → `OP_SWAP`, `OP_ADD_LIQ`, `OP_REMOVE_LIQ`, etc.
-  - `contracts/clmm/router.tolk` → router ops and jetton notify opcode.
-- Allow override via config for mainnet/testnet differences.
-  - Note: `registry/mainnet.json` is a placeholder and must be filled with real mainnet addresses.
-  - Note: `registry/testnet.json` should be refreshed after new testnet deployments.
+The exact-ledger-v21 fingerprint includes economic events, represented physical scope, related account address/role/history completeness and stable issues. Related generation IDs, observed heads, timestamps and mutable refresh diagnostics are excluded. Current uncursored pages merge the latest completed check only for their matching publication; continuation cursors retain immutable snapshots. Positive evidence needs exact covered transactions. Absence-based conclusions additionally require current-boundary coverage, never just stored historyComplete. Confirmed regression counts are alarms and do not substitute for the input rule.
 
-### Pagination Strategy (page numbers)
-- Store `txs` ordered by `(address, lt desc, hash desc)`.
-- Create `page_index` with one row per page (every 10th tx):
-  - `(address, page, lt, hash)`.
-- To serve page N:
-  1) Lookup `(lt, hash)` in `page_index`.
-  2) Query 10 txs from `txs` with `(lt, hash) <= cursor`.
-- `total_pages` only when `history_complete=true`.
+Ordinary ledger pagination uses immutable generation-bound cursors, exact network/owner/date bounds and limits 1–500. Activity history uses page numbers (default 10) with bounded retained pages. Market ledgers and perps ranges retain their own proof scope; a complete requested perps interval never claims all-history completeness. Raw evidence and previously published generations have no automatic deletion policy.
 
-### Storage Schema (memory-only structures)
-- `accounts`: map keyed by address with balance + last tx pointer.
-- `jetton_balances`: map keyed by (owner, master).
-- `txs`: per-address list ordered by `(lt desc, hash desc)` capped by max pages.
-- `page_index`: per-address page cursor array (every 10th tx).
-- `account_stats`: per-address `{ tx_count, history_complete, last_backfill_lt }`.
-- `watchlist`: per-address `{ last_request_at, last_update_seqno }`.
+## Scheduling and operations
 
-### In-Memory Limits (defaults)
-- `PAGE_SIZE = 10`
-- `MAX_PAGES_PER_ADDRESS = 150` (keeps 1,500 txs per address in memory)
-- `MAX_ADDRESSES = 5_000`
-- `IDLE_TTL_MS = 2 hours` (evict idle addresses + history)
-- `GLOBAL_MAX_PAGES = 200_000` (global LRU cap across all addresses)
-  - Evict coldest pages first; refetch on demand if user navigates deep history.
+The priority scheduler has 2–8 workers (default 3), reserves a foreground slot and coalesces running requests into one follow-up. Retry backoff is 2–60s. A 30s sweep revisits watches requested within 15min or unresolved; startup physically prewarms current manifest singletons and spot pools. Each account retains its own history-page allowance. Worker SQL capacity is workers × 5 + 4, separately from 10 read connections. Perps collection/sweeps are isolated from read/admission work and retain their bounded queue, persisted 5–300s backoff, cross-process locks and 15-minute active-generation expiry.
 
-### Worker Flow (memory-only)
-- **Request path**:
-  - `/balance`: if cached -> return. If missing -> fetch account state, cache, add to watchlist.
-  - `/txs?page=N`: if cached page exists -> return. If missing -> fetch recent txs, cache, start backfill.
-- **Backfill worker**:
-  - Walk `getTransactions` using `(lt, hash)` cursor.
-  - Append txs and page_index until no older data or limit reached.
-  - Update `total_txs`, `total_pages_min`, and `history_complete` when exhausted.
-- **Block follower**:
-  - Poll masterchain head every block.
-  - For each new block, update only watchlist addresses.
-  - Merge new txs to front, update `page_index`, adjust counts.
-- **Restart behavior**:
-  - In-memory state wiped; `history_complete=false` until re-backfill.
+Configuration validates before listen; the listener opens before chain/database/native initialization. Health reports actual component state; compiled ledger readiness authenticates the exact build, release, canonical schema and read permissions. Connection failures retry without resetting data; catalog/identity conflicts remain unavailable. Disk monitoring starts unknown/critical and skips snapshot writes unless ok. Snapshot serialization and logging are bounded asynchronous work. Runtime metrics expose chain and event-loop health, phase/I/O timings, scheduler depth/age, pool wait, database size and first-publication latency.
 
-### Freshness Model
-- Confirmed-only updates every masterchain block (~5s).
-- Hot watchlist addresses updated continuously.
-- Cold addresses fetched on-demand, then optionally backfilled.
+Current validation is Node 22, offline package-owned scripts/typechecks, whole-suite gates and isolated native PostgreSQL 16 tests under INDEXER_TEST_DATABASE_URL. test:ledger runs with only PATH and LANG. The native readiness body, build hash inputs, SQL identities and exported store surfaces remain a cross-repository contract.
 
-### Memory Control
-- Only store addresses that have been requested.
-- TTL for inactive addresses (e.g., 30–90 days).
-- Keep only last N pages per address.
+A release uses one cutover window: ready the new build/database beside the old one if capacity permits, publish the new web, switch the proxy, then record ledger admission and run release acceptance. If parallel native runtimes cannot fit, publish the web before restarting the indexer. Rollback restores the old proxy upstream/database while keeping the new web. Operational latency, peer reliability, disk capacity and live qualification remain release-session evidence, not claims established by offline tests.
 
----
+## Retained product qualification
 
-## Roadmap / Tasks
+The following requirements define exact current contract evidence independently of the read/API refactor.
 
-### Phase 0 — Decisions & Specs
-- [ ] Collect TONSWAP contract registry (router/pool/LP addresses or code hashes) from `../tonswap_tolk` (testnet synced; mainnet pending deploy outputs).
-- [x] Decide persistence: **memory-only** (history lost on restart).
-- [x] Decide cache: Redis vs in-process LRU (start in-process if disk is tight).
-- [x] Finalize API response shapes to match `tonswap_web` types.
-- [x] Define network config flags (mainnet default, testnet optional).
-- [x] Create `registry/mainnet.json` and `registry/testnet.json` (testnet mirrors `../tonswap_tolk/tmp_debug/module_addresses.json` + token roots).
-- [x] Add a sync note/script to refresh `registry/testnet.json` after redeploys.
+## Current T3 referral identity
 
-### Phase 1 — Core Ingestion (MVP)
-- [x] Implement lite client adapter with liteserver pool + retry/backoff.
-- [x] Build block follower (masterchain polling + shard enumeration).
-- [x] Parse txs and store basic fields + balance updates.
-- [x] Implement watchlist refresh on each confirmed block.
-- [x] Build in-memory store + eviction (max pages/address, TTL for idle addresses).
+The first-release T3 ledger requires the mandatory invitation reference in MINT,
+REDM and collateral-deposit notes, the inline inviter in the burn application,
+and the current Hub referral state reference. Old wire/storage layouts remain
+unsupported. Historical redemption proof and owner continuation must retain the
+original inviter. Qualified mint/redemption settlement exposes that original
+`referrer` (nullable); it never infers a sponsor from current registry state.
 
-### Phase 2 — Typed Tx Classification
-- [x] Implement TONSWAP ABI decoding for swap/add/remove liquidity.
-- [x] Implement Jetton transfer detection (standard opcode).
-- [x] Store `kind` + `actions_json` for each tx.
-- [x] Add tests with sample TONSWAP txs.
-- [x] Map decoded ops to `WalletHistoryEntry.detail` fields for UI.
-- [x] Reuse `getTransactionStatus` logic from `tonswap_web` for status mapping.
-- [x] Track pool addresses (seed from registry, then expand via ClmmPoolFactory deploy events).
+Validation: `npx tsx src/scripts/ledger-t3-test.ts`,
+`npx tsx src/scripts/ledger-t3-discovery-test.ts`, `npx tsc --noEmit` and
+`npx tsx src/scripts/openapi-test.ts`. Captured discovery bytes are immutable;
+the old Hub layout is explicitly rejected and a separately labeled synthetic
+current-layout state exercises discovery.
 
-### Phase 3 — Pagination + Backfill
-- [x] Implement on-demand backfill worker per address.
-- [x] Build `page_index` while backfilling (every 10th tx).
-- [x] Track `history_complete` and `total_pages_min`.
-- [x] API: `/txs?page=N` using `page_index`.
+The Hub referral-state decoder also requires the inline completed-user-mint
+dictionary and validates every archived key, finalized journal, and receipt
+identity. The current fixture producer is
+`T3_WEB_FIXTURES_DIR=../tonswap_web/tests/fixtures npx tsx src/scripts/ledger-t3-test.ts`;
+it writes only the mint/redemption fixtures and preserves frozen old receipts.
 
-### Phase 4 — Caching & Performance
-- [x] Read-through cache for `/balance` and `/txs`.
-- [x] Add LRU/TTL for hot addresses and recent txs (memory-only caps).
+### First-release native funding evidence (2026-09-18)
 
-### Phase 5 — Ops & UX
-- [x] `/health` endpoint with indexer lag and liteserver status.
-- [x] Metrics: request p95, lag, backfill backlog.
-- [x] Background eviction for stale addresses (optional).
+Managed control/settlement branches use current CNFW funding contexts and CNRF
+actual native returns. Decode business data separately from complete outer wire
+identity; exact messages, original BOCs, qualified historical code/state and
+physical wallet balance transitions remain mandatory for product settlement.
+Current TVM12+ `extra_flags` is metadata even where an SDK/provider calls its
+serialized field `ihrFee`/`ihr_fee`. It must never be added to native expenses.
+The native funding and native terminal tests cover this boundary. Full current
+Perps/RiskVault journal decoder integration and new deployment qualification
+remain open until their exact sources and original state captures close.
 
-### Phase 6 — Integration
-- [x] Wire API into `../tonswap_web` UI.
-- [x] Replace client-side parsing with server-provided `WalletHistoryEntry` fields.
-- [x] Add UI handling for `history_complete=false` and `total_pages_min`.
-- [x] UX: show “History syncing…” until backfill completes.
+### Current Governance snapshot
+
+The current `/api/indexer/v1/governance/{governance}/snapshot` endpoint is bound to the manifest Governance singleton and code. One fresh head authenticates original active account storage and `get_params` for all three classes. The decoder reads current locks and proposals; it rejects the retired Voting layout. Pages scan at most 64 uint32 IDs against the authenticated monotonic counter. Absent allocated IDs are pruned with unknown removal reason, while IDs at or above the counter were never allocated. The endpoint cannot establish historical completeness or target execution.
+
+Proposal close, delay and expiry follow the current class parameters and chain time, including the strict `now > expiresAt` expiry cutoff. A closed proposal may still need a permissionless advance; queued status is never payment or target execution. Missing original state, mismatched code/head or a failed getter makes the whole page unavailable. Completed snapshots are not reused. The API shape and original native default/x6 qualification are documented in README and OpenAPI.
+
+### Current two-pool Spot evidence
+
+`POST /api/indexer/v1/spot/operation-evidence` also accepts `kind: route` for
+manifest-installed A→T3→B routes. The exact reviewed transfer body and resolved
+source-wallet first-hop LT/hash select a bounded original causal graph. Both
+pools, the coordinator and all token wallets retain current manifest/same-head
+identity binding. The route response uses `tonswap-spot-route-evidence-v1` and
+returns original owner dispatch, transaction and account-state cells; it does not
+classify settlement. Consumers independently verify both reserve boundaries,
+physical input and final output/refund credits. Intermediate T3 returned to the
+owner is a refund, not successful delivery of B. Missing evidence and exhausted
+work/size bounds remain explicitly incomplete.
+
+Current T3 paired-mint and reserve-swap consumers use the same bounded operation-evidence transport. Pairs carry both immutable deposits and source first hops; the UI separately reviews bind, seal, accept, unlink and refund actions. Reserve swaps preserve exact output/minimum and use physical reserve credits. Partial wallet requests retain funded claims and require authenticated closure for unsent legs. Current hub membership, original owner dispatch and physical output remain independent checks.

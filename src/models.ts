@@ -1,4 +1,4 @@
-export type Network = 'mainnet' | 'testnet';
+export type Network = 'mainnet' | 'testnet' | 'localnet';
 
 export type TxKind =
   | 'swap'
@@ -77,15 +77,22 @@ export type MessageSummary = {
   value?: string;
   op?: number;
   body?: string;
+  createdLt?: string;
+  bounced?: boolean;
+  forwardFeeRaw?: string;
+  /** TVM12+ message flags, not a monetary fee. */
+  extraFlagsRaw?: string;
 };
 
 export type UiDetail =
+  | { kind: 'contract_call'; contract?: string; op?: number }
   | {
       kind: 'swap';
       payToken?: string;
       receiveToken?: string;
       payAmount?: string;
       receiveAmount?: string;
+      minimumReceiveAmount?: string;
       queryId?: string;
       executionType?: SwapExecutionType;
       twapSlice?: number;
@@ -116,51 +123,17 @@ export type IndexedTx = {
   address: string;
   lt: string;
   hash: string;
+  /** Canonical account-chain predecessor retained for history integrity checks. */
+  prevTransactionLt?: string;
+  prevTransactionHash?: string;
   utime: number;
   success: boolean;
+  totalFeesRaw?: string;
   inMessage?: MessageSummary;
   outMessages: MessageSummary[];
   kind: TxKind;
   actions: TxAction[];
   ui: UiTx;
-};
-
-export type AccountBalance = {
-  ton: {
-    balance: string;
-    last_tx_lt?: string;
-    last_tx_hash?: string;
-  };
-  jettons: Array<{
-    master: string;
-    wallet: string;
-    balance: string;
-    decimals?: number;
-    symbol?: string;
-  }>;
-  confirmed: boolean;
-  updated_at: number;
-  network: Network;
-};
-
-export type AccountAssetBalance = {
-  kind: 'native' | 'jetton';
-  symbol?: string;
-  address?: string;
-  wallet?: string;
-  balance_raw: string;
-  balance: string;
-  decimals: number;
-};
-
-export type AccountBalances = {
-  address: string;
-  ton_raw: string;
-  ton: string;
-  assets: AccountAssetBalance[];
-  confirmed: boolean;
-  updated_at: number;
-  network: Network;
 };
 
 export type JettonMetadata = {
@@ -200,5 +173,7 @@ export type AccountStats = {
 export type HealthStatus = {
   lastMasterSeqno?: number;
   indexerLagSec?: number;
-  liteserverPoolStatus?: string;
+  chain: { peersConfigured: number; peersReady: number; headSeqno: number | null; headAgeSec: number | null };
+  ledger: 'disabled' | 'connecting' | 'ready' | 'unavailable';
+  disk: 'ok' | 'low' | 'critical';
 };

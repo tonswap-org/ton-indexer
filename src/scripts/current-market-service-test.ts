@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { PGlite } from '@electric-sql/pglite';
+import fastify from 'fastify';
+import { currentDlmmMarketOriginals } from './support/currentDlmmFixture';
+import { currentDlmmMarketGraphFixture } from './support/currentDlmmMarketGraphFixture';
+import { CurrentDlmmMarketGraphBuilder } from '../ledger/currentDlmmMarketGraph';
+import { projectCurrentDlmmMarket } from '../ledger/currentDlmmMarketProjection';
+import { DlmmMarketService } from '../ledger/marketService';
+import { registerMarketLedgerRoutes } from '../ledger/marketRoutes';
+import { PostgresMarketStore } from '../ledger/marketStore';
+import type { CurrentDlmmMarketProjection } from '../ledger/currentDlmmMarketTypes';
+import type { LedgerSqlPool } from '../ledger/store';
+import type { Logger } from '../utils/logger';
+const logger:Logger={info:()=>{},warn:()=>{},error:()=>{},debug:()=>{}};
+async function main(){const originals=currentDlmmMarketOriginals();for(const config of ['default','x6']){
+ const f=currentDlmmMarketGraphFixture(originals.find(c=>c.file===`order-0-filled-${config}.json`)),builder=new CurrentDlmmMarketGraphBuilder(f.ledger,f.source),g=await builder.build(f.binding);
+ if(g.issues.length)console.log('graph diagnostic',g.issues,f.adapter.control,f.adapter.refusedAccounts);assert.deepEqual(g.issues,[],`${config} actual current graph`);const p=projectCurrentDlmmMarket(f.binding,g.evidence,g.wallets,g.dependencies,g.executionSeqnos,g.archives,g.anchors);assert.equal(p.observations.length,3,JSON.stringify(p.candidates));assert.equal(p.historyComplete,true,JSON.stringify(p.issues));
+ const db=new PGlite(),pool={query:async(sql:string,args?:any[])=>args===undefined?(await db.exec(sql)).at(-1)??{rows:[]}:db.query(sql,args),connect:async()=>({...pool,release:()=>{}}),end:async()=>db.close()} as unknown as LedgerSqlPool,store=new PostgresMarketStore<CurrentDlmmMarketProjection>(pool,'dlmm-market-ledger-v2');await store.initialize();
+ const service=new DlmmMarketService(f.ledger,f.source,store,[f.binding],logger);await service.stop();await service.sync(f.binding.pool);const first=await service.page(f.binding.pool,{});assert.equal(first.coverage?.schema,'dlmm-market-ledger-v2');assert.equal(first.coverage?.historyComplete,true);const generation=first.coverage!.generation;
+ const app=fastify();registerMarketLedgerRoutes(app,service);await app.ready();const url=`/api/indexer/v1/markets/${encodeURIComponent(f.binding.pool)}`;
+ const response=await app.inject(`${url}/observations?limit=1`);assert.equal(response.statusCode,200);assert.equal(response.headers['cache-control'],'no-store');const page=response.json();assert.equal(page.observations.length,1);assert.equal(page.observations[0].settlementMode,'physical-credit');assert(page.nextCursor);assert.equal((await app.inject(`${url}/observations?limit=1&cursor=${page.nextCursor}`)).json().coverage.generation,generation);
+ assert.equal((await app.inject(`${url}/candidates?limit=1`)).json().candidates.length,1);assert.equal((await app.inject(`${url}/candidates?cursor=${page.nextCursor}`)).statusCode,400);
+ for(const suffix of ['?limit=0','?limit=501','?from_utime=2&to_utime=1','?cursor=bad','?generation=bad'])assert.equal((await app.inject(`${url}/observations${suffix}`)).statusCode,400);
+ assert.equal((await app.inject('/api/indexer/v1/markets/invalid/observations')).statusCode,400);assert.equal((await app.inject(`/api/indexer/v1/markets/${encodeURIComponent(f.binding.t3.root)}/observations`)).statusCode,404);
+ const priorIdentityCalls=f.control.identityCalls;const limited=await new CurrentDlmmMarketGraphBuilder(f.ledger,f.source,1).build(f.binding);assert(limited.issues.includes('market_related_account_limit'));assert.equal(f.control.identityCalls,priorIdentityCalls,'identity RPC budget checked before discovery');assert.equal(projectCurrentDlmmMarket(f.binding,limited.evidence,limited.wallets,limited.dependencies,limited.executionSeqnos,limited.archives,limited.anchors).observations.length,0);
+ f.control.badExecutionSeqno=true;const mismatched=await builder.build(f.binding),mismatchProjection=projectCurrentDlmmMarket(f.binding,mismatched.evidence,mismatched.wallets,mismatched.dependencies,mismatched.executionSeqnos,mismatched.archives,mismatched.anchors);assert(mismatched.issues.includes('market_execution_block_unavailable'));assert.equal(mismatchProjection.historyComplete,false);assert(mismatchProjection.observations.every(o=>o.assetPrecision.input.status==='unresolved'&&o.assetPrecision.output.status==='unresolved'));f.control.badExecutionSeqno=false;
+ f.control.missingRootCacheContext=true;const sourceReads=f.control.rootSourceReads,refreshed=await builder.build(f.binding);assert(f.control.rootSourceReads>sourceReads,'old cache context refreshed from configured source');assert.equal(projectCurrentDlmmMarket(f.binding,refreshed.evidence,refreshed.wallets,refreshed.dependencies,refreshed.executionSeqnos,refreshed.archives,refreshed.anchors).historyComplete,true);f.control.missingRootSourceContext=true;const noContext=await builder.build(f.binding);assert(noContext.issues.includes('market_historical_precision_unavailable'));assert.equal(projectCurrentDlmmMarket(f.binding,noContext.evidence,noContext.wallets,noContext.dependencies,noContext.executionSeqnos,noContext.archives,noContext.anchors).historyComplete,false);f.control.missingRootCacheContext=false;f.control.missingRootSourceContext=false;
+ f.control.stale=true;await service.sync(f.binding.pool);const stale=await service.page(f.binding.pool,{});assert.equal(stale.coverage!.historyComplete,false);assert(stale.coverage!.issues.includes('market_current_boundary_unavailable'));assert.equal((await service.page(f.binding.pool,{generation})).coverage!.historyComplete,true);f.control.stale=false;
+ f.control.getterOutage=true;const missing=await builder.build(f.binding);assert(missing.issues.includes('market_current_identity_unavailable'));assert.equal(projectCurrentDlmmMarket(f.binding,missing.evidence,missing.wallets,missing.dependencies,missing.executionSeqnos,missing.archives,missing.anchors).observations.length,0);
+ await app.close();await store.pool.end();console.log(`${config}: current original graph/service/API, strict execution-block precision, limits, getter outage and immutable pages passed`);
+ }console.log('Current market service qualification passed; historical ABI service source retained under scripts/archive.');}
+void main().catch(e=>{console.error(e);process.exitCode=1;});

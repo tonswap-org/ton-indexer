@@ -1,0 +1,59 @@
+{
+  "schema": "launchpad-ledger-native-run-v1",
+  "command": [
+    "./node_modules/.bin/vitest",
+    "--configLoader",
+    "runner",
+    "run",
+    "tests/wire/launchpadHolderCapture.wire.test.ts"
+  ],
+  "cwd": "/Users/mtakemiya/dev/tonswap/.work/fresh-consumer-20261014/tonswap_web",
+  "startedAt": "2026-10-18T05:54:37.001531+00:00",
+  "completedAt": "2026-10-18T05:55:05.366303+00:00",
+  "exitCode": 0,
+  "sourceLockSha256": "274a8d5c682ccd4d28d03ded600ad0cb569919fa2dc3c1e5dcd4a9bb2a215a19",
+  "changedSources": [],
+  "outputs": [
+    {
+      "path": "captures/lost-bounce-default/0-default-complete.json",
+      "bytes": 8601099,
+      "sha256": "49f544872fa33ba89902ba7074a8b0e6abe3f2a8161c8babf87800e9eecd02a4"
+    },
+    {
+      "path": "captures/lost-bounce-default/original.json",
+      "bytes": 1490875,
+      "sha256": "adf1c877b71b97ab3f914092273987b52d1ae891780a8db06bd1bb0476ffa6ae"
+    },
+    {
+      "path": "captures/lost-bounce-x6/0-x6-complete.json",
+      "bytes": 8602297,
+      "sha256": "f162e257610436437f1811207946bd2dddcf0d130a2ee15ba170a21483f3bfef"
+    },
+    {
+      "path": "captures/lost-bounce-x6/original.json",
+      "bytes": 1491493,
+      "sha256": "38bfc03c09fb1853c50019ed1f1f1813bda7e1a690a89c2f9062dd8212032c0b"
+    },
+    {
+      "path": "captures/notification-default/0-default-complete.json",
+      "bytes": 7291146,
+      "sha256": "2f2f4ae520b97171e703b108ec39469f09adf088d9f60efd8f611036f8cdd25e"
+    },
+    {
+      "path": "captures/notification-default/original.json",
+      "bytes": 132593,
+      "sha256": "86ffa6189fe098d88ba34d29bb2837ad60bc09a1a0d2f053fb0a87dc73d73af6"
+    },
+    {
+      "path": "captures/notification-x6/0-x6-complete.json",
+      "bytes": 7291996,
+      "sha256": "90a506a9e7b164734298c8b39e580dc653c65618d67e8b13fdce35944b273f55"
+    },
+    {
+      "path": "captures/notification-x6/original.json",
+      "bytes": 132603,
+      "sha256": "c4036ec3d574bad53411d73904395216d43e47491a574652c7776269fb1316da"
+    }
+  ],
+  "logSha256": "b506fad73a78233749a3dc99db8c4c93000d2763db5a91f6bfd1e9e47c2fe902"
+}

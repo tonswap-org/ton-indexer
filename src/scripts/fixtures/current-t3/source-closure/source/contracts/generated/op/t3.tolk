@@ -1,0 +1,27 @@
+tolk 1.5.0
+
+// Auto-generated. Do not edit manually.
+const OP_T3_CREDIT_CERTIFICATE: int = 0x54334343;
+const OP_T3_FAILURE_CERTIFICATE: int = 0x54334643;
+const OP_T3_GOV: int = 0x54334756;
+const OP_T3_HUB_ACCEPT: int = 0x54334841;
+const OP_T3_HUB_MINT_RETRY: int = 0x5433484d;
+const OP_T3_HUB_PAIR_BIND: int = 0x54334842;
+const OP_T3_HUB_PAYOUT: int = 0x54334850;
+const OP_T3_HUB_PAYOUT_RETRY: int = 0x54334852;
+const OP_T3_HUB_RECEIPT: int = 0x5433484c;
+const OP_T3_HUB_REFUND: int = 0x54334846;
+const OP_T3_MINT: int = 0x54334d4e;
+const OP_T3_NOTIFICATION_CERTIFICATE: int = 0x54334e43;
+const OP_T3_PAIR: int = 0x5433504d;
+const OP_T3_PROOF_STEP: int = 0x54335046;
+const OP_T3_REDEEM: int = 0x54335244;
+const OP_T3_ROUTED_FAILURE_CERTIFICATE: int = 0x54335246;
+const OP_T3_SWAP: int = 0x54335357;
+const OP_T3_WALLET_BURN: int = 0x54335742;
+const OP_T3_WALLET_CANCEL: int = 0x54335758;
+const OP_T3_WALLET_DELIVERY: int = 0x5433444c;
+const OP_T3_WALLET_MARK: int = 0x5433574b;
+const OP_T3_WALLET_MINT: int = 0x5433574d;
+const OP_T3_WALLET_RETRY: int = 0x54335759;
+

@@ -1,0 +1,63 @@
+{
+  "schema": "tonswap-capture-producer-v1",
+  "producer": "remint",
+  "suite": "tests/system/ReleaseUserSmoke.spec.ts",
+  "tests": 2,
+  "captureDirectory": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/.local/state/current-protocol-captures-20261018-v1/remint",
+  "exitCode": 0,
+  "runtime": {
+    "node": "v22.23.3",
+    "tolk": "1.5.0",
+    "sandbox": "0.42.0"
+  },
+  "logSha256": "652a3e870f505ed47f5efad93e253a0acae5d4b06b3eb85f0b254dd7b10ceb5a",
+  "build": {
+    "file": "build-binding.json",
+    "sha256": "226d06f1b2f43370711cdd110d80c292586f2b92ace7cda679492dbec305a93a",
+    "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+    "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d"
+  },
+  "compiled": {
+    "JettonV21Minter": {
+      "file": "current-compiled/JettonV21Minter.json",
+      "sha256": "acb693b478b51cb05cdd5d2ad76ca0854f8fad84cf2ecbad8aa1e8ba41b0170c",
+      "codeHash": "37fb274466a01db790720de6ea3e5b2797aadaa517cad7f9dc6e35d49b189c4f",
+      "boc": "compiler/JettonV21Minter.boc",
+      "bocSha256": "e6e9ca2348b06b4414b966592fd895f4fcd7bbfc0ca3290bf9ad3c0722292234"
+    },
+    "JettonV21Wallet": {
+      "file": "current-compiled/JettonV21Wallet.json",
+      "sha256": "42b2ce99d08059efd8f7d0940ea03499571d6aac9e71bd563fbfc9c8a5f02917",
+      "codeHash": "fdd0e33b685ba04a6a5b6beb6b103b76312b5649ac0c55a1ebe680e08d83efee",
+      "boc": "compiler/JettonV21Wallet.boc",
+      "bocSha256": "332b673ea75b5d30f7b467299ea8c6b8814dc6f439f573184843ee3ed640152c"
+    },
+    "Remint": {
+      "file": "current-compiled/Remint.json",
+      "sha256": "f1940a609f77a518def3000c87f76f9a70002743a2fd47e6c6bc0372f54d6c65",
+      "codeHash": "530e85d1b97b10c5788810ad99fa4efb75e7ea7a7323f88ba5c01ea5b8654575",
+      "boc": "compiler/Remint.boc",
+      "bocSha256": "8c8ba22aa05e9bee36b7465c90aee24721fab48c8efbbfa46965079df6ef6d40"
+    },
+    "T3Wallet": {
+      "file": "current-compiled/T3Wallet.json",
+      "sha256": "1ef22d2d58124353a2e8afcee5096470604c28480854ff60fa8c0ebb612947cf",
+      "codeHash": "3bd7020c846ba45b9291003c3d0fe79fb6e9428a26819ee63e3ed30e0dd9abf6",
+      "boc": "compiler/T3Wallet.boc",
+      "bocSha256": "9bfaea10002418ef0f9714783ebaa72745bf46a7dedd5cb861900fbb711a38e7"
+    }
+  },
+  "artifacts": {
+    "build-binding.json": "226d06f1b2f43370711cdd110d80c292586f2b92ace7cda679492dbec305a93a",
+    "case-01.json": "a6e4d37e4a654c8236e93c550d6c74fb43bb353d91e2a67c5719b145bd298923",
+    "case-02.json": "1655df5d1e513de322f1792c366c04cc49e7e6be1cb8c2e41ef51b929203dd07",
+    "compiler/JettonV21Minter.boc": "e6e9ca2348b06b4414b966592fd895f4fcd7bbfc0ca3290bf9ad3c0722292234",
+    "compiler/JettonV21Wallet.boc": "332b673ea75b5d30f7b467299ea8c6b8814dc6f439f573184843ee3ed640152c",
+    "compiler/Remint.boc": "8c8ba22aa05e9bee36b7465c90aee24721fab48c8efbbfa46965079df6ef6d40",
+    "compiler/T3Wallet.boc": "9bfaea10002418ef0f9714783ebaa72745bf46a7dedd5cb861900fbb711a38e7",
+    "current-compiled/JettonV21Minter.json": "acb693b478b51cb05cdd5d2ad76ca0854f8fad84cf2ecbad8aa1e8ba41b0170c",
+    "current-compiled/JettonV21Wallet.json": "42b2ce99d08059efd8f7d0940ea03499571d6aac9e71bd563fbfc9c8a5f02917",
+    "current-compiled/Remint.json": "f1940a609f77a518def3000c87f76f9a70002743a2fd47e6c6bc0372f54d6c65",
+    "current-compiled/T3Wallet.json": "1ef22d2d58124353a2e8afcee5096470604c28480854ff60fa8c0ebb612947cf"
+  }
+}

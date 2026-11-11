@@ -1,0 +1,155 @@
+{
+  "description": "Unmodified raw locally executed current indexed-journal engine fixtures; no deployed testnet state claim. Exhausted state is actual129-owner refresh execution with exact retained128 receipts. Paid/callback/order/settlement traces and fractional funding originate from the same qualified production code.",
+  "engineCodeHash": "24f7394f39ea333d4cf49815e4717adc4585f08053554070b3cd6cd09e758c24",
+  "generators": [
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/tests/perps/PerpsOracleRefresh.spec.ts",
+      "sha256": "2f26a06b875be3b92cf03979eb2dd794c1bf5a29260f619f7811a841bda591e4",
+      "bytes": 39977
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/tests/perps/PerpsExecutionFunding.spec.ts",
+      "sha256": "c349bab917655d8211176c2e9a84a228a39b50296bc1fd2355c53e9525024e72",
+      "bytes": 6179
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/tests/fixtures/perpsOrder.ts",
+      "sha256": "4bff1b83c7d2dfdf99b7ae5b84f8df3d8c4fba95548a3418798fc76dfdc3f2df",
+      "bytes": 8356
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/tests/perps/PerpsEngineFunding.spec.ts",
+      "sha256": "9debde0977d4a57b7bce9e699f27a2855dc89a304094b2aa8b0e8d0adf115ff0",
+      "bytes": 110163
+    }
+  ],
+  "sourceInventory": {
+    "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-order-plan-implementation-01/contract-source-inputs-03.json",
+    "sha256": "15bccaf974b8bf1e216a1f99cf4bb7daab013a881bd8af0c036b506e3ee0fcf6",
+    "bytes": 6854061
+  },
+  "qualification": [
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-order-plan-implementation-01/qualification-contract-01.log",
+      "sha256": "f9a44c318c1e5c88afdce1be0339a0d7566dd8b2e0424a7fc907374066b9cd53",
+      "bytes": 6038
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-order-plan-implementation-01/qualification-parity-03.log",
+      "sha256": "bcc4bfc675bc69a3393eb6d8272bdc21e889083ec2446cce798706e76329e097",
+      "bytes": 506
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-order-plan-implementation-01/qualification-funding-01.log",
+      "sha256": "c0d01dcefec8dbfc3bbe3a21268dfc81cec5a91ca8e9426899e3f1f2a08fc991",
+      "bytes": 3894
+    },
+    {
+      "path": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/canonical-order-plan-implementation-01/qualification-typecheck-01.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ],
+  "qualificationNote": "Main combined run retainedEXIT1 only for absent sibling parity fixture; 51 contract cases passed. Exact parity test then passed2/2 in independent sparse fixture, without changing original frozen frontend.",
+  "artifacts": [
+    {
+      "relative": "close-accepted.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/close-accepted.json",
+      "sha256": "1e175fcd34b2ba33d2db4b8cf6404a10dccbeafc50d4bc7c264ff1efdb10373e"
+    },
+    {
+      "relative": "close-bad-debt-accepted.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/close-bad-debt-accepted.json",
+      "sha256": "fd116004bd66f3b2152a69f22d2ecea3f3cf18362a645fa197cbdf163325fda3"
+    },
+    {
+      "relative": "close-intake-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/close-intake-rejected.json",
+      "sha256": "ad59ce52e045905c3bc1a9e4e7eacde32091914d2ac2af46a2dc35f5a6b0bd37"
+    },
+    {
+      "relative": "close-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/close-rejected.json",
+      "sha256": "0dff52592d69b23630d86f3fe3b189c37419621b648940cf4318e9c1c78046f0"
+    },
+    {
+      "relative": "current-close.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/current-close.json",
+      "sha256": "dcc39ed3456e7b71167decedd4559133350b99f8fd0c9716e4741aca0b486e53"
+    },
+    {
+      "relative": "current-open.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/current-open.json",
+      "sha256": "24db9cb65fb47cf7023221b2fd0c47da27f833ac52f62d510e92596a486c228a"
+    },
+    {
+      "relative": "current-referral-notification.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/current-referral-notification.json",
+      "sha256": "92d86bc356aa4006be837a6856d886ca2cda23e72a4ca36ceeaa6d9c54d674b5"
+    },
+    {
+      "relative": "current-wallets.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/current-wallets.json",
+      "sha256": "eb3e1f00bd4a5594e9cc0eb7c5e7694e15fcb1e835dfc24d438595f5438211cf"
+    },
+    {
+      "relative": "engine-exhausted-current.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/engine-qualified-state.json",
+      "sha256": "bd935055322cf62c8c535491f3b2afec15cefd0370deadb9756681f0e875b57e"
+    },
+    {
+      "relative": "funding-remainder-current.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/funding-remainder-qualified-state.json",
+      "sha256": "81ffb0e869e7cec722cd215d5f6383ebf2f1ca729b32cb53bd5f93edb046e668"
+    },
+    {
+      "relative": "open-accepted-excess.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-accepted-excess.json",
+      "sha256": "5a3953320d9709abaaef33418a4e17ddd4896a38787c7eb936a01cbca948cf35"
+    },
+    {
+      "relative": "open-accepted.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-accepted.json",
+      "sha256": "24db9cb65fb47cf7023221b2fd0c47da27f833ac52f62d510e92596a486c228a"
+    },
+    {
+      "relative": "open-bounced.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-bounced.json",
+      "sha256": "711c6210a47f9f00cecbdc32307e35feec67aabafe67ba204368fbdf1a390df1"
+    },
+    {
+      "relative": "open-duplicate.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-duplicate.json",
+      "sha256": "4cdda620b9ef82fa54aa99faac45918036b01d0846e1d3a242a35a0b63e66635"
+    },
+    {
+      "relative": "open-expired.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-expired.json",
+      "sha256": "ebf97700f76a28ab52ce1145c4edadaf306e92cd02ac1be8f198449f11aba705"
+    },
+    {
+      "relative": "open-insurance-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-insurance-rejected.json",
+      "sha256": "d8810fa04b81fb60fe340a67e5fec279c7b724ad48f8e44342b450fdad3dc2bf"
+    },
+    {
+      "relative": "open-recovery-accepted.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-recovery-accepted.json",
+      "sha256": "eff80ba18bf10f62d8d1054ec1c499b1506633feb23ea25efc5cf4d019d12def"
+    },
+    {
+      "relative": "open-recovery-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-recovery-rejected.json",
+      "sha256": "fa3d9d9f4510b3c180be8cc13f8f882c081e6f11fe273d27f07247e092bbf776"
+    },
+    {
+      "relative": "open-rejected.json",
+      "source": "/Users/mtakemiya/dev/tonswap/output/playwright/perps-ux-20260913/coordinated-release/workspace/tonswap_tolk_pure_plans_01/artifacts/perps-oracle-pull/execution-fixtures/open-rejected.json",
+      "sha256": "0c823b40e27d95dea5dfe2e72f2abccca3fc36c20daec08d3056f4358ced9eac"
+    }
+  ],
+  "historicalRejectedArtifact": {
+    "relative": "../perps-range-wallet-testnet-20260914.json",
+    "sha256": "bbcb5f1154e3e949ce0d646cc5cdf5b5c8cd2b94134e9d2cf145753dbe77c6b9"
+  }
+}

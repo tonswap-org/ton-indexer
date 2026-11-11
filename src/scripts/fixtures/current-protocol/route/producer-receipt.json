@@ -1,0 +1,51 @@
+{
+  "schema": "tonswap-capture-producer-v1",
+  "producer": "route",
+  "suite": "tests/dex/FreshT3Route.spec.ts",
+  "tests": 8,
+  "captureDirectory": "/Users/mtakemiya/dev/tonswap/tonswap_tolk/.local/state/current-protocol-captures-20261018-v1/route",
+  "exitCode": 0,
+  "runtime": {
+    "node": "v22.23.3",
+    "tolk": "1.5.0",
+    "sandbox": "0.42.0"
+  },
+  "logSha256": "d0ec09b6c380c7e3d9cd5126b48ef7972cfdb2876d5d2eff046ac19c4f889f51",
+  "build": {
+    "file": "build-binding.json",
+    "sha256": "a9642ed54d6a1267518530eaffd68ae6eb4a5c3a879fe45661f4bcaf41ac5729",
+    "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+    "buildHash": "639a09ce4da115b89df5bfbf2e7f9a0a36eef78689e2023f7f0fae6e4664e26d"
+  },
+  "compiled": {
+    "DlmmPool": {
+      "file": "current-compiled/DlmmPool.json",
+      "sha256": "27dbe389ef93cf50d5866fa88aa62bfd6b9d36d03eb0cca1893a2b44b56c7845",
+      "codeHash": "f74ba1cd4e52aac326c562d1d61ec4c5af217415c104c2816d73223caddc3ad7",
+      "boc": "compiler/DlmmPool.boc",
+      "bocSha256": "868e2aaec0a6edd4b52e91d67e44d0972d610a64947bd4c04111dda3de999b14"
+    },
+    "SwapCoordinator": {
+      "file": "current-compiled/SwapCoordinator.json",
+      "sha256": "095875db7d3314ef70fd22f7d9099777005a5e5e07eac8aace3bf9dc5613b70d",
+      "codeHash": "80f1621a4292d48cee8ef61ecaccb18208507cf888ce9802488ef6b1b702bded",
+      "boc": "compiler/SwapCoordinator.boc",
+      "bocSha256": "e6e9b77e7405e949e077fb90111977570c812b5968125bc969f9987a7ecfb51f"
+    }
+  },
+  "artifacts": {
+    "build-binding.json": "a9642ed54d6a1267518530eaffd68ae6eb4a5c3a879fe45661f4bcaf41ac5729",
+    "case-01.json": "5db5ef4667d13f70b2af4145317d37c56a652dfc68133ee55ca87ccfc0babd3c",
+    "case-02.json": "d7ed34da2796e28c5f61d2adff28f9e0ebeda4e8f8ab9130e7be20a2c111675d",
+    "case-03.json": "e2aac3134551c2129084384590cc8a8ae844c407e65b42bd297cacd0ea8fbb89",
+    "case-04.json": "81abaa85847291ef6c5f5f2b5f6c9ec987b192f0701f5742e59da9006eddfcb4",
+    "case-05.json": "175606c913562979aaee71ae18b17025b1c5380567261289ebec86367f5055fd",
+    "case-06.json": "3e684ebabf247dc48dc8972817e9a79509e5d9595c35404eb94b35f8e992ab1c",
+    "case-07.json": "32cf45e97c068cccc667ff03c47ce88d5fdbe5f2685f4c1311b915f62c8615a1",
+    "case-08.json": "3ecd3d7ce20aa22fb24ce1c298ea50c0a8ad3f678603fa9e253d89bb3639aeae",
+    "compiler/DlmmPool.boc": "868e2aaec0a6edd4b52e91d67e44d0972d610a64947bd4c04111dda3de999b14",
+    "compiler/SwapCoordinator.boc": "e6e9b77e7405e949e077fb90111977570c812b5968125bc969f9987a7ecfb51f",
+    "current-compiled/DlmmPool.json": "27dbe389ef93cf50d5866fa88aa62bfd6b9d36d03eb0cca1893a2b44b56c7845",
+    "current-compiled/SwapCoordinator.json": "095875db7d3314ef70fd22f7d9099777005a5e5e07eac8aace3bf9dc5613b70d"
+  }
+}

@@ -39,6 +39,15 @@ const toFriendlyAddress = (addr?: unknown): string | undefined => {
   return addr.toString({ urlSafe: true, bounceable: true });
 };
 
+const addressesEqual = (left?: string, right?: string): boolean => {
+  if (!left || !right) return false;
+  try {
+    return Address.parse(left).equals(Address.parse(right));
+  } catch {
+    return left === right;
+  }
+};
+
 type DecodedJettonTransfer = {
   queryId: bigint;
   amount: string;
@@ -184,7 +193,7 @@ const SWAP_EXECUTION_MODE_TWAP = 2;
 const SWAP_EXECUTION_MAX_STEP_V1 = 255;
 const SWAP_EXECUTION_MAX_STEP_V2 = 31;
 const SWAP_QUERY_TOKEN_SYMBOL_BY_CODE: Record<number, string> = {
-  1: 'TON',
+  1: 'GRAM',
   2: 'T3',
   3: 'USDT',
   4: 'USDC',
@@ -254,18 +263,15 @@ const decodeDlmmAddLiquidityForward = (payload?: Cell): DecodedDlmmAddLiquidityF
   if (!payload) return null;
   try {
     const slice = payload.beginParse();
-    if (slice.remainingBits < 32) return null;
+    if (slice.remainingBits < 32 + 64) return null;
     const op = slice.loadUint(32);
     if (op !== OP_DLMM_ADD_LIQUIDITY_FORWARD) return null;
+    // The business query id is part of the forwarded DLMM wire format even
+    // though it is not currently exposed by the indexer's LP action model.
+    slice.loadUintBig(64);
     const owner = slice.loadAddressAny();
-    if (slice.remainingBits < 32) {
-      return { owner: toFriendlyAddress(owner) };
-    }
-    const rawBin = slice.loadUint(32);
-    const binId = rawBin > 0x7fffffff ? rawBin - 0x1_0000_0000 : rawBin;
-    if (slice.remainingBits < 256) {
-      return { owner: toFriendlyAddress(owner), binId };
-    }
+    if (slice.remainingBits < 32 + 256) return null;
+    const binId = slice.loadInt(32);
     const minLpOut = slice.loadUintBig(256);
     return { owner: toFriendlyAddress(owner), binId, minLpOut: minLpOut.toString() };
   } catch {
@@ -410,9 +416,12 @@ const decodeLpWithdraw = (body?: string): DecodedLpWithdraw | null => {
     if (base.remainingBits < 32) return null;
     const op = base.loadUint(32);
     if (op === OP_DLMM_REMOVE_LIQUIDITY) {
+      base.loadUintBig(64); // Current DRMV query ID precedes the signed bin.
       const rawBin = base.loadUint(32);
       const binId = rawBin > 0x7fffffff ? rawBin - 0x1_0000_0000 : rawBin;
       const shares = base.loadUintBig(256);
+      base.loadAddress();
+      if(base.remainingBits||base.remainingRefs)return null;
       return { lpBurned: shares.toString(), binId };
     }
     if (op === OP_REMOVE_LIQ) {
@@ -486,10 +495,10 @@ export const classifyTransaction = (
     outMsgs.some((m) => opMatches(m, opcodes.jettonTransfer) || opMatches(m, opcodes.jettonNotify))
   ) {
     kind = 'transfer';
-  } else if (inMsg?.value || outMsgs.some((m) => m.value)) {
-    kind = 'transfer';
   } else if (inMsg?.op || outMsgs.some((m) => m.op)) {
     kind = 'contract_call';
+  } else if (inMsg?.value || outMsgs.some((m) => m.value)) {
+    kind = 'transfer';
   }
 
   const actions: TxAction[] = [];
@@ -520,7 +529,7 @@ export const classifyTransaction = (
       detail = {
         kind: 'swap',
         payAmount: amountIn,
-        receiveAmount: swap?.minAmountOut,
+        minimumReceiveAmount: swap?.minAmountOut,
         payToken,
         receiveToken,
         queryId,
@@ -539,16 +548,12 @@ export const classifyTransaction = (
       const inferredReceiveToken = swap?.zeroForOne === 1 ? 'X' : swap?.zeroForOne === 0 ? 'T3' : undefined;
       const payToken = executionHint?.payTokenSymbol ?? inferredPayToken;
       const receiveToken = executionHint?.receiveTokenSymbol ?? inferredReceiveToken;
-      const recipientWallet = swap?.recipient;
-      const amountOut =
-        recipientWallet
-          ? jettonTransfers.find((t) => t.decoded.destination === recipientWallet)?.decoded.amount
-          : undefined;
+      // An emitted transfer is only a requested payout. Physical recipient
+      // credit and the linked settlement journal belong to the account ledger.
       actions.push({
         kind: 'swap',
         pool: pickPool(swapViaNotify.msg),
         amountIn,
-        amountOut,
         minOut: swap?.minAmountOut,
         sender: swapViaNotify.decoded.sender,
         queryId,
@@ -561,7 +566,7 @@ export const classifyTransaction = (
       detail = {
         kind: 'swap',
         payAmount: amountIn,
-        receiveAmount: amountOut ?? swap?.minAmountOut,
+        minimumReceiveAmount: swap?.minAmountOut,
         payToken,
         receiveToken,
         queryId,
@@ -583,7 +588,7 @@ export const classifyTransaction = (
       const receiveToken = executionHint?.receiveTokenSymbol ?? inferredReceiveToken;
       actions.push({
         kind: 'swap',
-        pool: pickPool(inMsg ?? outMsgs[0]),
+        pool: pickPool(swapMsg),
         amountIn: swap?.amountIn,
         minOut: swap?.minAmountOut,
         queryId: queryIdRaw,
@@ -598,7 +603,7 @@ export const classifyTransaction = (
         payToken,
         receiveToken,
         payAmount: swap?.amountIn,
-        receiveAmount: swap?.minAmountOut,
+        minimumReceiveAmount: swap?.minAmountOut,
         queryId: queryIdRaw,
         executionType: executionHint?.executionType,
         twapSlice: executionHint?.twapSlice,
@@ -632,7 +637,7 @@ export const classifyTransaction = (
         amountA,
         binId: forward?.binId,
         minLpOut: forward?.minLpOut,
-        owner: forward?.owner,
+        owner: forward?.owner ?? lpDepositViaNotify[0]?.decoded.sender,
       });
       detail = { kind: 'lp', amountA };
     } else {
@@ -640,7 +645,7 @@ export const classifyTransaction = (
       const lp = decodeLpDeposit(lpMsg?.body);
       actions.push({
         kind: 'lp_deposit',
-        pool: pickPool(inMsg ?? outMsgs[0]),
+        pool: pickPool(lpMsg),
         amountA: lp?.amountA,
         amountB: lp?.amountB,
         binId: lp?.binId,
@@ -652,7 +657,7 @@ export const classifyTransaction = (
     const lp = decodeLpWithdraw(lpMsg?.body);
     actions.push({
       kind: 'lp_withdraw',
-      pool: pickPool(inMsg ?? outMsgs[0]),
+      pool: pickPool(lpMsg),
       amountA: lp?.amountA,
       amountB: lp?.amountB,
       lpBurned: lp?.lpBurned,
@@ -686,12 +691,13 @@ export const classifyTransaction = (
       amount: amount ?? '0',
       from: fromAddress,
       to: toAddress,
-      source: toAddress === address ? 'in' : 'out',
+      source: addressesEqual(toAddress, address) ? 'in' : 'out',
     });
     detail = { kind: 'transfer', asset: isJetton ? 'jetton' : 'ton', amount };
   } else if (kind === 'contract_call') {
-    actions.push({ kind: 'contract_call', contract: inMsg?.destination ?? outMsgs[0]?.destination, op: inMsg?.op });
-    detail = { kind: 'unknown' };
+    const message = inMsg?.source && inMsg.op ? inMsg : outMsgs.find((entry) => entry.op) ?? inMsg;
+    detail = { kind: 'contract_call', contract: message?.destination, op: message?.op };
+    actions.push(detail);
   }
 
   const status = tx.status ?? (tx.success ? 'success' : 'failed');
@@ -715,8 +721,11 @@ export const classifyTransaction = (
     address,
     lt: tx.lt,
     hash: tx.hash,
+    prevTransactionLt: tx.prevTransactionLt,
+    prevTransactionHash: tx.prevTransactionHash,
     utime: tx.utime,
     success: tx.success,
+    totalFeesRaw: tx.totalFeesRaw,
     inMessage: inMsg,
     outMessages: outMsgs,
     kind,

@@ -1,0 +1,35 @@
+tolk 1.5.0
+
+// Contract-wave pool bounds. Funding constants are qualified by SwapBudget before release.
+const MAX_SWAP_BINS = 7;
+const MAX_LIQ_ADD_BINS = 1;
+const MAX_LIQ_REMOVE_BINS = 2;
+const MAX_BINS = 8192;
+const MAX_POSITIONS = 12288;
+const MAX_CAMPAIGNS = 32;
+const POOL_OWED_CAP = 512;
+const POOL_PUBLIC_BIN_SPACING = 2500;
+const POOL_PUBLIC_FEE_PIPS = 3000;
+const POOL_PUBLIC_WALLET_GAS_X = 30000;
+const POOL_PUBLIC_WALLET_GRAM_X = 0;
+const STEP_GAS_MAX = 30000;
+const SWAP_PREWALK_GAS_MAX = 60000;
+const APPLY_TAIL_GAS_MAX = 80000;
+const SWAP_GAS_MAX = 300000;
+const SWAP_FLOOR_GAS = 70000;
+const POOL_REFUND_TAIL_GAS = 350000;
+const POOL_REFUND_SEND_TAIL_GAS = 45000;
+const ADD_GAS_MAX = 300000;
+const ADD_TAIL_GAS_MAX = 85000;
+const REMOVE_GAS_MAX = 300000;
+const FARM_GAS_MAX = 190000;
+const POOL_ADMIN_GAS_MAX = 80000;
+const FACTORY_CREATE_GAS = 30000;
+const FACTORY_RELAY_GAS = 10000;
+// Fresh T3 profile parsing: full PRDY handler 22,119 gas; >20% margin.
+const FACTORY_READY_GAS = 30000;
+const POOL_INIT_GAS = 30000;
+const MIN_ADD_VALUE = 1000000000;
+const SWEEP_MIN = 1000000000;
+const FARM_CLAIM_WINDOW = 2592000;
+const POOL_SWEEP_WIRED = true;

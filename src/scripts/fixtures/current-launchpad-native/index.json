@@ -1,0 +1,432 @@
+{
+  "schema": "tonswap-current-launchpad-fixtures-v1",
+  "qualification": "Unmodified original productionHub native capture JSON compressed losslessly. Original producer completion and all180 locked producer/build/worker source bytes are retained portably; installed npm dependency bytes are not reconstructed from lockfiles. Source/head envelopes are synthetic sandbox evidence, not public consensus/deployment authority. Existing current-capture-build has exactly matching complete source/artifact trees and independently verified original compiler closures. Current original account envelopes additionally preserve exact same-head cold-wallet absence from the native producer; missing history is never synthesized as absence.",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "buildFixture": "../current-capture-build",
+  "producerReceiptSha256": "eeac262af172229ee9cea9e576a0213cc907f099f2c1066d786101d20b20c5f2",
+  "sourceInventorySha256": "4c16780b5f5d88e952084cc698234eb9e059b5cbb41a64d5b600dc66c19c58a0",
+  "sourceTreeSha256": "15bc5cda4c7c0c74fa4a1d59d3093c13707fec21a58f2ee4ed6b2f2989914096",
+  "logSha256": "6a47e09105758d9e68634b75e5236a5a2771364a8f1957c8fcf8d3ede584a669",
+  "producerRunnerSha256": "acc992792d091e25e7eebe0004617a61f0664f12981df4f9090801c805d657fb",
+  "producerSourceArchive": {
+    "file": "producer-source.tar.gz",
+    "sha256": "be717eb96cb146299f38de86b852790fdb7239375d6a5ae819b35d848605e281",
+    "files": 180,
+    "originalBytes": 15062241
+  },
+  "buildTargets": [
+    "BounceWallet",
+    "BuybackExecutor",
+    "CounterpartyHarness",
+    "CoverAutomationUpkeep",
+    "CoverVault",
+    "DlmmBookHarness",
+    "DlmmPool",
+    "DlmmPoolFactory",
+    "DlmmWireHarness",
+    "EmissionsSplitter",
+    "FeeRouter",
+    "FullMathHarness",
+    "FundingRejector",
+    "GasVault",
+    "GenesisDistributor",
+    "Governance",
+    "HostileJettonMinter",
+    "HostileJettonWallet",
+    "JettonSlotHarness",
+    "JettonSweepHarness",
+    "JettonV21Minter",
+    "JettonV21Wallet",
+    "LpVault",
+    "MerkleClaim",
+    "ModuleGateHarness",
+    "ObsRingHarness",
+    "OptionFactory",
+    "OptionSeriesManager",
+    "OptionVault",
+    "OraclePoolStub",
+    "OutperformanceOption",
+    "ParisianPolicyManager",
+    "PerpsEngine",
+    "PerpsFundingHarness",
+    "PolicyTypesHarness",
+    "ReferralRegistry",
+    "Remint",
+    "RiskVault",
+    "SaleAuction",
+    "SaleBonding",
+    "SaleFactory",
+    "SaleFixed",
+    "SerializationHarness",
+    "ShoutOption",
+    "SpotOrder",
+    "SpotOrderFactory",
+    "SpotOrderMockPool",
+    "StagedInstaller",
+    "SwapCoordinator",
+    "SwapPayloadHarness",
+    "T3Hub",
+    "T3RecoveryProof",
+    "T3Wallet",
+    "TepJettonCodecHarness",
+    "TestnetFaucet",
+    "Treasury",
+    "VerdictHarness",
+    "VestingVault",
+    "WrapperTemplateExample"
+  ],
+  "files": [
+    {
+      "file": "captures/0-default-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-default-claim.json",
+      "sha256": "3255227dd2dd5d9aadcc139665aa7ef6d16465dfc016acb005fa415b7e7be7d5",
+      "originalSha256": "8cde17d51ac9b959b8e9e8940e6c82b3af9f3dbf5cf4ee937bdfc0e91703f186",
+      "originalBytes": 64904
+    },
+    {
+      "file": "captures/0-default-contribute.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-default-contribute.json",
+      "sha256": "30d70ef6fb6d5a0e8e52505bd65effafb091f5b108e82dbb469054c44257830d",
+      "originalSha256": "0ea5b5cb36f834b17ff3fbf814a1454a1caa3561e65827511f5f1dc4fe45f768",
+      "originalBytes": 109570
+    },
+    {
+      "file": "captures/0-default-finalize.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-default-finalize.json",
+      "sha256": "86c97823bd73083a13414199561af1ef327e25e11e8b11f4e30179e96eb41678",
+      "originalSha256": "d38b1f9c1d3ac529994ddb7bf4205413f3787c242e7f151002da1a339bd427df",
+      "originalBytes": 360064
+    },
+    {
+      "file": "captures/0-default-lp-release.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-default-lp-release.json",
+      "sha256": "6ad98379b3b22776fe2d03731aaf9c1d5a041b99c30a9e3f8a58e6eb7b4fc30f",
+      "originalSha256": "ef2007617ed88fddbb9bb021d098d0e96dbcdfe4a94475189f0736195ea404b4",
+      "originalBytes": 221715
+    },
+    {
+      "file": "captures/0-default-lp-seed.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-default-lp-seed.json",
+      "sha256": "45fbef7441871d84968b5bd63623bcb24a9754cb3e095c1282791c6af170100b",
+      "originalSha256": "868562d94b2071f37893d7c9e81e5cafa3ae64ac691b2dce31ad6f8137e0a5d2",
+      "originalBytes": 454349
+    },
+    {
+      "file": "captures/0-default-vest-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-default-vest-claim.json",
+      "sha256": "d592b23657bf5ca1fd4f61d5de59ae1d077f900adb8fd90c1ab2ee64a89fa258",
+      "originalSha256": "bd8d866e77b47f7c1129a45e878b6f8d5e0ff4a2c1c2dbfebc25ccd597319992",
+      "originalBytes": 33067
+    },
+    {
+      "file": "captures/0-x6-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-x6-claim.json",
+      "sha256": "edddf2294faba77f11d738ba8516811b4f51a4080cab40149c5a7e6e43d16f6e",
+      "originalSha256": "d633765a27e3bd705bbe6ddd20704f24f50b7fc06720711b3fd3448797287237",
+      "originalBytes": 64922
+    },
+    {
+      "file": "captures/0-x6-contribute.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-x6-contribute.json",
+      "sha256": "314e82a23eb64ced5a15e9ab46ade3be09d772d1e0b1fc95458db2c26344435a",
+      "originalSha256": "4b468a99ca89f74cb1183cab9a34943fe9e4cfc7b4e24b1a1e9b35a0ac494236",
+      "originalBytes": 109596
+    },
+    {
+      "file": "captures/0-x6-finalize.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-x6-finalize.json",
+      "sha256": "74fdac278e610def28e1bb4521b056ec6f73555e68da98eceb034b331999dcbe",
+      "originalSha256": "79285012527b11a9dc9c261e2b28615aa2d114d4a57a619c52a7c1dfbdfdd446",
+      "originalBytes": 360174
+    },
+    {
+      "file": "captures/0-x6-lp-release.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-x6-lp-release.json",
+      "sha256": "e29f61fa3db539e2fb748b4cb583e2407a07826ab6b4d0fa0681162882875362",
+      "originalSha256": "9552749b265450635af74c1a810f753e0d9bca8cb6dbc44a98776a6fff56ccd4",
+      "originalBytes": 221753
+    },
+    {
+      "file": "captures/0-x6-lp-seed.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-x6-lp-seed.json",
+      "sha256": "a35daaef6590fad646e5c471d90dff3309c512df395a1df4c9fd30ad284e99ee",
+      "originalSha256": "59a2a40e3b297a005033dcd175289fccfbc34bcce9d1f65cc965dcdef13b920c",
+      "originalBytes": 454419
+    },
+    {
+      "file": "captures/0-x6-vest-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/0-x6-vest-claim.json",
+      "sha256": "72f725cbef421e76ec6ee939a47e154171cd36c4b9c07051a62267720707c135",
+      "originalSha256": "6e1991ad63486f360568105d76964212894268943db47ea0c386475df722bbb8",
+      "originalBytes": 33097
+    },
+    {
+      "file": "captures/1-default-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-default-claim.json",
+      "sha256": "f14966cd5377e6ce85894e7b31859be11555ea07b7c3109620b730ff6a900049",
+      "originalSha256": "659e88fc5126872dc890d7934b2bdbfc227ed1a7771448b5db09325f31ace06e",
+      "originalBytes": 64912
+    },
+    {
+      "file": "captures/1-default-contribute.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-default-contribute.json",
+      "sha256": "1d5d6d69ebbe9e789114276c86726fe919de106c35660ee8e7cb216749863159",
+      "originalSha256": "b2058cb1db337f9ec3f03b6c412fc948da1b8e1abaef52b06ad374c5974c8600",
+      "originalBytes": 109578
+    },
+    {
+      "file": "captures/1-default-finalize.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-default-finalize.json",
+      "sha256": "d2f2a895958f86dc1dee01a670280c77573f27dba09329ed1fd7e5ce2e81fe5a",
+      "originalSha256": "e667303d836c7ffdf3a9b6cbf6220b6e291d91a55f930d2178efe236eccb1d0a",
+      "originalBytes": 360072
+    },
+    {
+      "file": "captures/1-default-lp-release.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-default-lp-release.json",
+      "sha256": "96b35e2a5d0ae16ee3fb372d536d18744ff4ccca022163320bbe257d70f86ac0",
+      "originalSha256": "ef28847cb1d2cfbd23dc3c60c26638c831a74eaf96d8a00d4c6b1fdc421a5832",
+      "originalBytes": 221715
+    },
+    {
+      "file": "captures/1-default-lp-seed.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-default-lp-seed.json",
+      "sha256": "66414b561a53be0a2bd9c48f9d7f103492b428fc2a88cf793f1a9bca26147f8d",
+      "originalSha256": "1eee0a774328be92081ce757b1affdedad9f4aa905353d7e165ee1643929b5f2",
+      "originalBytes": 454349
+    },
+    {
+      "file": "captures/1-default-vest-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-default-vest-claim.json",
+      "sha256": "63fa91bf214cb2ee06620a2434c031a795069e6dde5bc0de0807d8ab55cbde09",
+      "originalSha256": "c5e0f925d1c99f7de649693a206b61955a11e440edad4f666de04a255a0a9830",
+      "originalBytes": 33067
+    },
+    {
+      "file": "captures/1-x6-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-x6-claim.json",
+      "sha256": "887b24c6db7719ae6d386a541c16b66a226d470809159e65d8255b755f31c62c",
+      "originalSha256": "bc9f36248eb17127f999b57b1b52d52423abda2270fbca1be591600e231d3d32",
+      "originalBytes": 64930
+    },
+    {
+      "file": "captures/1-x6-contribute.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-x6-contribute.json",
+      "sha256": "380ee0cfb1f6d6c14eeef736d1275745562299cd36f0e44a201aa8b6d16533fc",
+      "originalSha256": "a1fa43265c4b88b67fc8df582dfbd5f5dd27bfff8d5d56c5818853db6e71ecec",
+      "originalBytes": 109608
+    },
+    {
+      "file": "captures/1-x6-finalize.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-x6-finalize.json",
+      "sha256": "e8e3d2655e0b28692234fb738cfc4ee3519320881549518b9a50655387058ca4",
+      "originalSha256": "6f7d200b7a999f6da295e8820060134062fd090e79eac3f7d085749f5accfe3c",
+      "originalBytes": 360182
+    },
+    {
+      "file": "captures/1-x6-lp-release.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-x6-lp-release.json",
+      "sha256": "fd3416aa34eb68184abfeab22e7e3ad6fa3ff50ed2c476c7b475e128dcc8c750",
+      "originalSha256": "bf695ff2813b0221ab4108f7d95892c30dd67ad2312a0c6b1f027f3424f4a9a5",
+      "originalBytes": 221753
+    },
+    {
+      "file": "captures/1-x6-lp-seed.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-x6-lp-seed.json",
+      "sha256": "93672d509e2ba00aeb60491e9dfab62781214db870cdee620da51e112f0411a1",
+      "originalSha256": "4821cd9a405c4bc91f8cfefa6e6b124b089a73f4235c7b64151286695247b734",
+      "originalBytes": 454419
+    },
+    {
+      "file": "captures/1-x6-vest-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/1-x6-vest-claim.json",
+      "sha256": "d3d5c94be5fbbd041a8d3873550c7385678b03cc3779b5d1fdb476dbba8d4ae1",
+      "originalSha256": "b9b9747506711de376ee82949ac8a1314d98e9fb0d5f8d02a36e54e6f61ad415",
+      "originalBytes": 33097
+    },
+    {
+      "file": "captures/2-default-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-default-claim.json",
+      "sha256": "aaeb02ab72077d1d3abf9f900b2f42f7e2817240ec67f438af16a6e471289bf7",
+      "originalSha256": "2a3fcf09cc4cdc760031c25ac20978d24741ecf647998b5249a50bca86059e42",
+      "originalBytes": 64960
+    },
+    {
+      "file": "captures/2-default-contribute.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-default-contribute.json",
+      "sha256": "b3d84b4cb0b9d67594f4a817338a2d3a7039de918fdb37bb54ebcb7e53bba882",
+      "originalSha256": "f5d9c253569ffee0a463ae842978e0f6781a00a511fc444a792ea8d393c8b62e",
+      "originalBytes": 109626
+    },
+    {
+      "file": "captures/2-default-finalize.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-default-finalize.json",
+      "sha256": "6c1f191b78f163d85fd2735fc3bd29646a9029bd1e9fced66814f47e00d16f12",
+      "originalSha256": "79f6fb97d4ac3e77623fb503fec6c9f1bc94ce6f1b5f61418a41eb3cb725faad",
+      "originalBytes": 371128
+    },
+    {
+      "file": "captures/2-default-lp-release.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-default-lp-release.json",
+      "sha256": "516b8694eba80eea65a0549b0656dc4058343a959adce16002506a053b82840f",
+      "originalSha256": "c3db81a9f05fbc185feeeecb845c3d5f5be9db5be8965344fcef176acd454f5b",
+      "originalBytes": 221715
+    },
+    {
+      "file": "captures/2-default-lp-seed.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-default-lp-seed.json",
+      "sha256": "bb01e85995a47561e3557be7449aecc4487894ab6ed7b076df530cb6b713bd90",
+      "originalSha256": "a35ad001e35aa1e539f4d6ee9c237ad081f4e4cbfec90473bae9360d6258daa7",
+      "originalBytes": 454348
+    },
+    {
+      "file": "captures/2-default-vest-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-default-vest-claim.json",
+      "sha256": "867366a0721002cad7ee0d6807dbc25f9f578f02f75307804134dcf06f917034",
+      "originalSha256": "31b8fe555360a18755ce09e581db42ffd421c98ecab73cc728645a9d19307fbb",
+      "originalBytes": 33067
+    },
+    {
+      "file": "captures/2-x6-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-x6-claim.json",
+      "sha256": "85157f9c926ce61b0076e3546d0bac6efc50edf8c078249504d341e227ec1d20",
+      "originalSha256": "e7ee2e04aad39b530d780bab83fd80a65413d9bc65a6719698e3d8c243489c32",
+      "originalBytes": 64978
+    },
+    {
+      "file": "captures/2-x6-contribute.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-x6-contribute.json",
+      "sha256": "717a315e161fc2616a669c801daad650331a8f2df9c2166b844689073898eb5c",
+      "originalSha256": "f1a48ab9c2b816930156873511b58a68d130a70a8169b3bcb322f3faf0e9096b",
+      "originalBytes": 109652
+    },
+    {
+      "file": "captures/2-x6-finalize.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-x6-finalize.json",
+      "sha256": "116bda1f64c619c0b02be65faa1432dd364d9393341d172f945c488b389f4d4d",
+      "originalSha256": "a4670f5e1c5c1f97f1cbd143a2690fc4392332bc0745425017ca93fb5c5cde4e",
+      "originalBytes": 371246
+    },
+    {
+      "file": "captures/2-x6-lp-release.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-x6-lp-release.json",
+      "sha256": "e7d1b25817e5f81fdc50a1952643d5d4f2b9416e0c0f1d7a1c151f737cc27af9",
+      "originalSha256": "a0741bd15a0c3d9f8437af06c7ecff6c54b5686c227b8c873d805b6dc70c7076",
+      "originalBytes": 221753
+    },
+    {
+      "file": "captures/2-x6-lp-seed.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-x6-lp-seed.json",
+      "sha256": "bfca8668fad0ea03aebc31f518325e3ac2dc5be90f88e783ccbd2934ebec63e4",
+      "originalSha256": "1444ac7607adb5e641bb2f3c8b433a736aff63e2b7efa19e47ef6bf90a342b1f",
+      "originalBytes": 454418
+    },
+    {
+      "file": "captures/2-x6-vest-claim.json.gz",
+      "kind": "captures",
+      "originalFile": "captures/2-x6-vest-claim.json",
+      "sha256": "bfa3728280c72f6fdb4bb702e08d62af90a75d3bc4af8683ec2bf4abb36dfae2",
+      "originalSha256": "cd5ee218d1c37522f038e9f0491bfdeb11a49819df8cf98cc89a1314c4018719",
+      "originalBytes": 33097
+    },
+    {
+      "file": "complete/0-default-complete.json.gz",
+      "kind": "complete",
+      "originalFile": "complete/0-default-complete.json",
+      "sha256": "f352a7b521a9dcd101ef7bd92410d2c7512160ca7ee6e3bd906d9e18d7889830",
+      "originalSha256": "aa12a115ba4e839948702f794f3f888fc8f8b99ad8f1f3ec48dc19ebf7f00ec4",
+      "originalBytes": 9455352
+    },
+    {
+      "file": "complete/0-x6-complete.json.gz",
+      "kind": "complete",
+      "originalFile": "complete/0-x6-complete.json",
+      "sha256": "e4c4cad98998e43f8539bd60b37bcf4a7e3dbe837e0731f662bab8264049fb3c",
+      "originalSha256": "4b618d24d2fc9a43115da659efd299997aec1fb3eb2c588d29abd69a5e635b47",
+      "originalBytes": 9456203
+    },
+    {
+      "file": "complete/1-default-complete.json.gz",
+      "kind": "complete",
+      "originalFile": "complete/1-default-complete.json",
+      "sha256": "123e549b95629607141102732bc54c20a668822d9b11f94949dbc033e49bf228",
+      "originalSha256": "43822412cdd24a576232cc16900400946e98a9c3a639037c280a0708622cf174",
+      "originalBytes": 9455524
+    },
+    {
+      "file": "complete/1-x6-complete.json.gz",
+      "kind": "complete",
+      "originalFile": "complete/1-x6-complete.json",
+      "sha256": "67eda083e858406ab948433e0e33000f584fc841548f1932b3eb4961c66b3f04",
+      "originalSha256": "20856b5ac335a78e710aaad56557f28f18e1dcf8b645339f1c68854a9e20c96c",
+      "originalBytes": 9456379
+    },
+    {
+      "file": "complete/2-default-complete.json.gz",
+      "kind": "complete",
+      "originalFile": "complete/2-default-complete.json",
+      "sha256": "0881b7be65ea8a25e20913fedd2e988fdfd071d9965aa4d6e88a134fdfdf3fe2",
+      "originalSha256": "49d45a6275c23bbb3d558f6e579a26f5bc35e57f0590632302fea553f88248cf",
+      "originalBytes": 9467148
+    },
+    {
+      "file": "complete/2-x6-complete.json.gz",
+      "kind": "complete",
+      "originalFile": "complete/2-x6-complete.json",
+      "sha256": "e31469b89d1daaee7e244c2b9a9da59c7b85b9e262f3f7f83e3714efe84f4eec",
+      "originalSha256": "3e45bb2d0d3006cc95a330160e5977df40519d640401801e5cb6b87b9232fe94",
+      "originalBytes": 9468007
+    },
+    {
+      "file": "refund/0-default-complete.json.gz",
+      "kind": "refund",
+      "originalFile": "refund/0-default-complete.json",
+      "sha256": "28274c504e66250e02302bbb7c644fab1a828156d226ade1d9c2663024412aff",
+      "originalSha256": "ea1395d34dbbc1071db1b973fb0d6b962c522e8d806d9fb6855ec1ff7fa8bedc",
+      "originalBytes": 7735610
+    },
+    {
+      "file": "refund/0-x6-complete.json.gz",
+      "kind": "refund",
+      "originalFile": "refund/0-x6-complete.json",
+      "sha256": "fe93f171b505292eb2ffeb322d49aebfc6947174269327afe6589e0beba0ca98",
+      "originalSha256": "99d1c82826ced37a778feecf7b83e23f38cc17e66383c5747bfdf464b01bb19c",
+      "originalBytes": 7736261
+    }
+  ]
+}

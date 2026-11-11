@@ -1,0 +1,58 @@
+{
+  "schema": "tonswap-capture-producer-v1",
+  "producer": "t3Recovery",
+  "suite": "tests/system/T3RecoveryCapture.spec.ts",
+  "tests": 6,
+  "captureDirectory": "/Users/mtakemiya/dev/tonswap/.work/cw/state/captures-native-recovery-20261014-v1/t3Recovery",
+  "exitCode": 0,
+  "runtime": {
+    "node": "v22.23.3",
+    "tolk": "1.5.0",
+    "sandbox": "0.42.0"
+  },
+  "logSha256": "b27e64a517bffd341f88cd463f9c21f50f3e9573131c45decc93468340dfe9f3",
+  "build": {
+    "file": "build-binding.json",
+    "sha256": "9be45cd6c2429512aec47c21c120caa314a7cadb6747541b9a37996484d3b365",
+    "manifestSha256": "366e72a3593a321128bb6744018e51599980c9d7f40af9c063417f23d1320a4b",
+    "buildHash": "e7c9ea2bfb0cdff6375b72d64599eeefd39c00330a4050e8e26e737cc038cebf"
+  },
+  "compiled": {
+    "T3Hub": {
+      "file": "current-compiled/T3Hub.json",
+      "sha256": "346f0c74fd4ad43215763ce08cc8363a86d617a12d00257f6ed4aabf46dfe5e7",
+      "codeHash": "b2fb1bebba68bfd5444424f914f22e2a4d6ac0cf0a69c1803106ea25ef0b67cb",
+      "boc": "compiler/T3Hub.boc",
+      "bocSha256": "36175ba5d3e434bcc16904ccbe0c3c054e8513f23052c3c776e348a826323d03"
+    },
+    "T3RecoveryProof": {
+      "file": "current-compiled/T3RecoveryProof.json",
+      "sha256": "a8ab9e3496c78c579191930b30f3fe89185f4fd82de9f4f351dcc91812301176",
+      "codeHash": "66fea90500722cc6f723b1ca26231dec5bdb680d6ff45876bd9eba5bea79ba00",
+      "boc": "compiler/T3RecoveryProof.boc",
+      "bocSha256": "bd8fb94194ff50ec733290a98677a0bf0f6ce5dfcb8e81bddcc443316240b60b"
+    },
+    "T3Wallet": {
+      "file": "current-compiled/T3Wallet.json",
+      "sha256": "1ef22d2d58124353a2e8afcee5096470604c28480854ff60fa8c0ebb612947cf",
+      "codeHash": "3bd7020c846ba45b9291003c3d0fe79fb6e9428a26819ee63e3ed30e0dd9abf6",
+      "boc": "compiler/T3Wallet.boc",
+      "bocSha256": "9bfaea10002418ef0f9714783ebaa72745bf46a7dedd5cb861900fbb711a38e7"
+    }
+  },
+  "artifacts": {
+    "build-binding.json": "9be45cd6c2429512aec47c21c120caa314a7cadb6747541b9a37996484d3b365",
+    "case-01.json": "5bde00b9e8b7c1e27b9237af200c7d85baf84a1ea7d08f3e927992cba7c475d8",
+    "case-02.json": "c1775b9c47342b9a5d77c9b5fd19c2fa5a001acc9834806aaa1c0e48e169da1e",
+    "case-03.json": "ef33de895c1abf06f08ac56b0200de1146ac54652fa3cd7e1ea258cd8f52903e",
+    "case-04.json": "83e8997e130107ccf7223c0563b04f10f43225f316590a92823155da4990fbc9",
+    "case-05.json": "c1427c9ea6aefd83dde8456d245f9d663eae21b6b9b6d7f1e7331743634f138a",
+    "case-06.json": "ea69a8cc32d4e08a94b485e4cb0f67c3d9760268cfb9396662f4cbf55da3166e",
+    "compiler/T3Hub.boc": "36175ba5d3e434bcc16904ccbe0c3c054e8513f23052c3c776e348a826323d03",
+    "compiler/T3RecoveryProof.boc": "bd8fb94194ff50ec733290a98677a0bf0f6ce5dfcb8e81bddcc443316240b60b",
+    "compiler/T3Wallet.boc": "9bfaea10002418ef0f9714783ebaa72745bf46a7dedd5cb861900fbb711a38e7",
+    "current-compiled/T3Hub.json": "346f0c74fd4ad43215763ce08cc8363a86d617a12d00257f6ed4aabf46dfe5e7",
+    "current-compiled/T3RecoveryProof.json": "a8ab9e3496c78c579191930b30f3fe89185f4fd82de9f4f351dcc91812301176",
+    "current-compiled/T3Wallet.json": "1ef22d2d58124353a2e8afcee5096470604c28480854ff60fa8c0ebb612947cf"
+  }
+}

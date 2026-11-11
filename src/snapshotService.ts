@@ -1,6 +1,6 @@
 import { Config } from './config';
 import { MemoryStore } from './store/memoryStore';
-import { loadSnapshotFile, saveSnapshotFile } from './snapshot';
+import { loadSnapshotFile, writeSnapshotFile } from './snapshot';
 
 export class SnapshotService {
   private config: Config;
@@ -11,13 +11,13 @@ export class SnapshotService {
     this.store = store;
   }
 
-  save(path?: string) {
+  async save(path?: string) {
     const target = path ?? this.config.snapshotPath;
     if (!target) {
       throw new Error('SNAPSHOT_PATH not configured');
     }
     const snapshot = this.store.exportSnapshot();
-    saveSnapshotFile(target, snapshot);
+    await writeSnapshotFile(target, snapshot);
     return { path: target, entries: snapshot.entries.length };
   }
 

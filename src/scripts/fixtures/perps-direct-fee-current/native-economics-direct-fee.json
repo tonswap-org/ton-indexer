@@ -1,0 +1,51 @@
+{
+  "environment": "VM15 local Sandbox execution; not live",
+  "priceScenario": "stress-400-nanotons-per-gas",
+  "source": "tests/referral/PerpsTradeReferralPayout.spec.ts",
+  "engineCodeHash": "7cb945ded54aaca9793cd34d9822371abfad78f4b10fb7150ce9918f7cce4fb3",
+  "nativeEconomics": [
+    {
+      "action": "Bob-open",
+      "quoteNano": "3140000000",
+      "traderNetSpentNano": "1283917024",
+      "engineNativeDeltaNano": "0",
+      "directEngineRefundNano": "1605018183",
+      "feeRouterT3DeltaNano": "22500000"
+    },
+    {
+      "action": "Bob-close",
+      "quoteNano": "3110000000",
+      "traderNetSpentNano": "1182347562",
+      "engineNativeDeltaNano": "0",
+      "directEngineRefundNano": "1852205645",
+      "feeRouterT3DeltaNano": "22500000"
+    }
+  ],
+  "roundTripNetNano": "2466264586",
+  "protectedProtocolNativeDeltas": {
+    "open": {
+      "engine": "0",
+      "pool": "0",
+      "riskVault": "0",
+      "riskController": "0",
+      "feeRouter": "0",
+      "engineWallet": "36928198",
+      "feeRouterWallet": "0",
+      "riskVaultWallet": "0"
+    },
+    "close": {
+      "engine": "0",
+      "pool": "0",
+      "riskVault": "0",
+      "riskController": "0",
+      "feeRouter": "0",
+      "engineWallet": "0",
+      "feeRouterWallet": "0",
+      "riskVaultWallet": "0"
+    }
+  },
+  "nativeProcessingSelfFunded": true,
+  "maximumQualifiedOpenInterestT3Nano": "22500000000",
+  "qualifiedGramT3Conversion": null,
+  "commercialViabilityQualified": false
+}

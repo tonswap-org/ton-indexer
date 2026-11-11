@@ -1,0 +1,101 @@
+{
+  "schema": "tonswap-authenticated-live-replay-fixture-v1",
+  "network": "ton:testnet",
+  "readOnly": true,
+  "capturedAt": "2026-09-12T10:40:12.874Z",
+  "address": "0:38697fcef0a87c58390747ccc5f39eb7adc0388bafa93b99dc2a14ec449755f0",
+  "containingMasterSeqno": 84297582,
+  "cursor": {
+    "lt": "96066824000019",
+    "hash": "5bfc365626a79a7808612f618ca3b5a52d3cddaddd9e0823f09722c20a586691"
+  },
+  "predecessor": "predecessor.boc",
+  "steps": [
+    {
+      "transaction": "transaction-0.boc",
+      "block": "block-0.boc",
+      "config": "config-0.boc"
+    },
+    {
+      "transaction": "transaction-1.boc",
+      "block": "block-1.boc",
+      "config": "config-1.boc"
+    },
+    {
+      "transaction": "transaction-2.boc",
+      "block": "block-2.boc",
+      "config": "config-2.boc"
+    },
+    {
+      "transaction": "transaction-3.boc",
+      "block": "block-3.boc",
+      "config": "config-3.boc"
+    },
+    {
+      "transaction": "transaction-4.boc",
+      "block": "block-4.boc",
+      "config": "config-4.boc"
+    }
+  ],
+  "transactions": [
+    {
+      "lt": "96066824000007",
+      "hash": "cf677711093bea5550207cd76a6e204a342a1b3c563bf055bb1c3feda7c18f02",
+      "utime": 1789207007,
+      "oldAccountHash": "c48d067d49ad47505165c3b723c19010454cb9385ca76226a0a26354354876b6",
+      "newAccountHash": "10ed06f5f49e261937734a1fdb9121fe90678ffd7cea55d46dc1ea0335b51747"
+    },
+    {
+      "lt": "96066824000012",
+      "hash": "e0b606c4ea7ec1832b56adc40ca8b6c719a5d3efdf37c4d7d4f63df930cc59ea",
+      "utime": 1789207007,
+      "oldAccountHash": "10ed06f5f49e261937734a1fdb9121fe90678ffd7cea55d46dc1ea0335b51747",
+      "newAccountHash": "6937f1c69979a484ccd6a84393d90d7a62c9053067e4e25bbfdece01276dead9"
+    },
+    {
+      "lt": "96066824000014",
+      "hash": "7b9c800c271328b81162513fa88159a41fcc4897acacef866a469ac74aacf440",
+      "utime": 1789207007,
+      "oldAccountHash": "6937f1c69979a484ccd6a84393d90d7a62c9053067e4e25bbfdece01276dead9",
+      "newAccountHash": "cebd3d6f1a356d5f20d3bcd75e9e1fc01722673f6cf5af469b63ef06105b669e"
+    },
+    {
+      "lt": "96066824000015",
+      "hash": "6b902464ad89572f1fb3a164c32b5cf64087b54f76c17448b96b69a6cdfbb775",
+      "utime": 1789207007,
+      "oldAccountHash": "cebd3d6f1a356d5f20d3bcd75e9e1fc01722673f6cf5af469b63ef06105b669e",
+      "newAccountHash": "9c3d6374d4982b49ffe282309af955eeea33e247718b150621845efcaf03ab46"
+    },
+    {
+      "lt": "96066824000019",
+      "hash": "5bfc365626a79a7808612f618ca3b5a52d3cddaddd9e0823f09722c20a586691",
+      "utime": 1789207007,
+      "oldAccountHash": "9c3d6374d4982b49ffe282309af955eeea33e247718b150621845efcaf03ab46",
+      "newAccountHash": "901d06c328b0540ef5981ac24573604dd978ee5d6fe19289648e3ec485da025f"
+    }
+  ],
+  "files": {
+    "predecessor.boc": "40e86a0f8e80968a4128e4bd345c18555dcd79a775e45fe251eeb3411454140e",
+    "transaction-0.boc": "b0f041bf91fbf0212d0a0ce2116415f246f5a35b10d3fa31dae240dcb8575e01",
+    "block-0.boc": "29b2f988cebaefd2fd297897a5f1ed058e82ae6f933d6c05111f729e97a36532",
+    "config-0.boc": "4b43b9ced22bebd121ed8187cfc8a8ca6ccb66a4e7d028696681e13bff4ec1e2",
+    "transaction-1.boc": "4768b435ce55ca23c411b69087bfc7517410e6394ce8fcea594a4afc0288f6c8",
+    "block-1.boc": "29b2f988cebaefd2fd297897a5f1ed058e82ae6f933d6c05111f729e97a36532",
+    "config-1.boc": "4b43b9ced22bebd121ed8187cfc8a8ca6ccb66a4e7d028696681e13bff4ec1e2",
+    "transaction-2.boc": "93e57421a8137df5b62a0d014fdb33140f898d5250df5064e921b3ac87c13cd2",
+    "block-2.boc": "29b2f988cebaefd2fd297897a5f1ed058e82ae6f933d6c05111f729e97a36532",
+    "config-2.boc": "4b43b9ced22bebd121ed8187cfc8a8ca6ccb66a4e7d028696681e13bff4ec1e2",
+    "transaction-3.boc": "eff027d6ca218ce57aba443e9fff7f3da079601faafd453a0a71a5fb8757647f",
+    "block-3.boc": "29b2f988cebaefd2fd297897a5f1ed058e82ae6f933d6c05111f729e97a36532",
+    "config-3.boc": "4b43b9ced22bebd121ed8187cfc8a8ca6ccb66a4e7d028696681e13bff4ec1e2",
+    "transaction-4.boc": "550089d7b678a0a44228baaac80656963666a8ed79ac021f8fc868d540ff8634",
+    "block-4.boc": "29b2f988cebaefd2fd297897a5f1ed058e82ae6f933d6c05111f729e97a36532",
+    "config-4.boc": "4b43b9ced22bebd121ed8187cfc8a8ca6ccb66a4e7d028696681e13bff4ec1e2"
+  },
+  "source": "Live LiteClientDataSource.getAccountStateAtTransaction; canonical predecessor, original shard blocks and masterchain-committed config proofs; no generated prices, messages or state.",
+  "package": {
+    "name": "@ton/sandbox",
+    "version": "0.43.0",
+    "integrity": "sha512-WiUc/k8VFLq8NNTltOeRJpxssvftCm1gVFT9qXBZUeUyhj+keSQWGk1+4J/hRXe7f8pVeEimAHvF6ECoI/osgQ=="
+  }
+}

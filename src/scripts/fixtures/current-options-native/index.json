@@ -1,0 +1,178 @@
+{
+  "schema": "tonswap-current-options-fixtures-v1",
+  "qualification": "Unmodified original native capture JSON compressed losslessly. Producer original completion receipt and local static source inventory are retained separately; source bytes and executor binary remain in the owning repo durable operational evidence. Head/release envelopes are explicit sandbox mocks, not consensus proof. Contract source closures and original compiler BOCs are independently portable in current-capture-build.",
+  "manifestSha256": "9d56c4bf5045e35207f01061f34f26eef6253fdc0b3a619d78cc21249bd319f5",
+  "producerReceiptSha256": "3cd8d5c6eab59d4b0b19e2ff8a03f531d8604c478755ec89af26ab3c71aeb707",
+  "sourceInventorySha256": "15c7774609936364ee4ab52bd1b2292d2fe0043b7f5e010da896bea52afe022c",
+  "logSha256": "010047feb6087abb60a4b6fb0dc4aef2f64f659110ca4e6c12ce0a47ee2ae31a",
+  "files": [
+    {
+      "file": "buy-default.json.br",
+      "sha256": "0940d24fcf451316ac3d80558752dc42baa1358c3f595aa007055f3dd7127615",
+      "originalFile": "buy-default.json",
+      "originalSha256": "b96bdb729ac1bac8bc47b00205343a48211c361d12e13b93f22672cd012c3ff7",
+      "originalBytes": 3992582
+    },
+    {
+      "file": "buy-x6.json.br",
+      "sha256": "b7fa96698f0cc592a708dba941e12a8c7797ffc8a3aa057905854aac41097522",
+      "originalFile": "buy-x6.json",
+      "originalSha256": "c02a9b88c6cfd674edeafa79a24092a2a2112e2e12cade19697b5066c1477d4b",
+      "originalBytes": 3993103
+    },
+    {
+      "file": "exercise-refused-default.json.br",
+      "sha256": "3795d62f7fae1df05e2eb8b138ad2f9ac88c9c0df15582512f94a0e6d3172318",
+      "originalFile": "exercise-refused-default.json",
+      "originalSha256": "de542a8a49bf14ab7ed2ea0d5174d2abfd38509101269576427df636853006f0",
+      "originalBytes": 6525790
+    },
+    {
+      "file": "exercise-refused-x6.json.br",
+      "sha256": "57bb73b5ad39b9e5f4656b0941cf90b862581d2f5772368a06e5a8054137b5de",
+      "originalFile": "exercise-refused-x6.json",
+      "originalSha256": "02f1dbd10718e53b7bfc113b1ba979fddb72324808f065e2048b3198389f5a16",
+      "originalBytes": 6526440
+    },
+    {
+      "file": "fund-default.json.br",
+      "sha256": "285eab3d4247510befbe4863a185789e4df5b34e29d83e8ae07795ee104690e2",
+      "originalFile": "fund-default.json",
+      "originalSha256": "c2be246c22adc29e9655fcf537d3d6058caa6831d01fd694576d83ce1b54e1d4",
+      "originalBytes": 3260856
+    },
+    {
+      "file": "fund-x6.json.br",
+      "sha256": "a89eb9447e64162c7ac4dc6dad257711fb5516084def26b3ccdf485531ca0024",
+      "originalFile": "fund-x6.json",
+      "originalSha256": "aeba12e0d29845675a5101b015b90cd0e189ed8accc831489ec51b66381b8456",
+      "originalBytes": 3261313
+    },
+    {
+      "file": "owed-default.json.br",
+      "sha256": "36c4096717c40fba02a3c41f36326bfca03c6ddd2b78bca10dbda3ca25587027",
+      "originalFile": "owed-default.json",
+      "originalSha256": "0483915d594cee90a2d801c8935ee2f81e2bfaec527a00dec747b70be820890c",
+      "originalBytes": 4894644
+    },
+    {
+      "file": "owed-x6.json.br",
+      "sha256": "2146cc37a2f74a78cb2452518042911dd9ac8d6e3e7bbe080407799ebfa4aac4",
+      "originalFile": "owed-x6.json",
+      "originalSha256": "500086e72e42d2999cf942e4d7910678cd9800e06a6ae1b53e206cf9ec525703",
+      "originalBytes": 4895649
+    },
+    {
+      "file": "payout-default.json.br",
+      "sha256": "00f0372395882bf251465f74e353e5e146c5486fc41d94a814e11bb13bf00402",
+      "originalFile": "payout-default.json",
+      "originalSha256": "ebc1c838fcef34b394c5c451f422c18fc5fa8e2503bc7ad78ca756e66edbc4f0",
+      "originalBytes": 5294147
+    },
+    {
+      "file": "payout-x6.json.br",
+      "sha256": "15bd524ef9f2e3bab3efaa466a2f45ec1398873938d8212bb8dee8de9c58332e",
+      "originalFile": "payout-x6.json",
+      "originalSha256": "d6b2725b987b9e6f806f2f16dd6e2a6e3cc3666edab8889a0fdfafd58aced42c",
+      "originalBytes": 5294828
+    },
+    {
+      "file": "real-pool-buy-default.json.br",
+      "sha256": "979b8a3adf173899218d2211ec9a9ee3a9926ab6af096c3f240c3717b71d3ba7",
+      "originalFile": "real-pool-buy-default.json",
+      "originalSha256": "a4e748f198f0e9dd8071cd3df7cd6eb64e35c86decf25524e0a23136e6e03a6c",
+      "originalBytes": 5977726
+    },
+    {
+      "file": "real-pool-buy-x6.json.br",
+      "sha256": "4a068188621422924c69fb38c8f8a79cce84bcb940ea626b8dabe04c048de7e6",
+      "originalFile": "real-pool-buy-x6.json",
+      "originalSha256": "e543cf4ee16a1ffd1d48d3fa7a3f8aa29a4f7da7f371401471f4464a2dc8a254",
+      "originalBytes": 5978352
+    },
+    {
+      "file": "refund-default.json.br",
+      "sha256": "ae0343466c4e18228ec9c1a67a2d9c16b130980f363a2ddd0bfa1597dafd3d4c",
+      "originalFile": "refund-default.json",
+      "originalSha256": "8f6a32c7c47adc62fd43de988c843034e73297c0ef137fd3afa826ba1e0b9cc3",
+      "originalBytes": 4635789
+    },
+    {
+      "file": "refund-x6.json.br",
+      "sha256": "bdeac6056c05fcc8b9750c173b5edcfd738202b2620ef58d56287a04bf20f2e6",
+      "originalFile": "refund-x6.json",
+      "originalSha256": "9e7959be25b2dd86950e3d0fab112783629213c2d7794b909f5d9bb1b523dc54",
+      "originalBytes": 4636382
+    },
+    {
+      "file": "retry-before-mark-default.json.br",
+      "sha256": "ec9a7d5c1b88c47c93da525c5de8d69bc173d8876c11b86ce5b62476f52ab488",
+      "originalFile": "retry-before-mark-default.json",
+      "originalSha256": "d3fc53a229be773f1c2044c76035cbf68e50ee954907e2f405baaff327eebd98",
+      "originalBytes": 4552198
+    },
+    {
+      "file": "retry-before-mark-x6.json.br",
+      "sha256": "3ae7b5968f624abf849a832b7c213f91366817d7195f52d6e28c031daeb98b0c",
+      "originalFile": "retry-before-mark-x6.json",
+      "originalSha256": "260c9e75d03ed057f35774128a9feb539621a3420fe486331384ec6da2820de6",
+      "originalBytes": 4553161
+    },
+    {
+      "file": "retry-default.json.br",
+      "sha256": "bc9101d0feb650223e15f6b7b345dfdb384fe098758b56160a5fc8657c055ab8",
+      "originalFile": "retry-default.json",
+      "originalSha256": "83d6faeb683e6afd6fc831889ab333bcf06c6636b47f60c316ce9a0d795af8b6",
+      "originalBytes": 4849228
+    },
+    {
+      "file": "retry-marked-default.json.br",
+      "sha256": "bde9ec0419f60591cef5396ceb0427a391ce7a2aca105426a129ae61bc2c723b",
+      "originalFile": "retry-marked-default.json",
+      "originalSha256": "4e213c1a459fbb5c686928fcf7b59f1e58c391f1614d1e61bfb007b32289392e",
+      "originalBytes": 4626665
+    },
+    {
+      "file": "retry-marked-x6.json.br",
+      "sha256": "3e143cf7f4f9ff8faaf3e46ae071aea58c85889f286b282e651a4fc961417c22",
+      "originalFile": "retry-marked-x6.json",
+      "originalSha256": "b3aa625cd863df26f39e37ee9637277eb03811dfec1bbcf572c486781ceabb7b",
+      "originalBytes": 4627644
+    },
+    {
+      "file": "retry-x6.json.br",
+      "sha256": "ea8a962b8141c6de8be6362657af1083999f8838f62eed9fd31741f1e97053a7",
+      "originalFile": "retry-x6.json",
+      "originalSha256": "1508e3e27fae0d5b320fa9a6d0f979eb7a5d34cd719b7deb561289ba95aeae18",
+      "originalBytes": 4850247
+    },
+    {
+      "file": "withdraw-default.json.br",
+      "sha256": "5cf50f8af921ae455be671f4260d3d5db1742ad80bd44a22474a4eb391f74e44",
+      "originalFile": "withdraw-default.json",
+      "originalSha256": "de164644c80cd9aceed5d648abb474581097cb137feae3d03c24abf759673bb4",
+      "originalBytes": 3794043
+    },
+    {
+      "file": "withdraw-x6.json.br",
+      "sha256": "0a814429a1615b15a48bacbc1dc9927b9c14ba46c9bff31803c0568d2f82b0e6",
+      "originalFile": "withdraw-x6.json",
+      "originalSha256": "6c4625bd42af71c38d28df681fdfbfb1040d7f4d5970d41a16e5b1df3c4e228a",
+      "originalBytes": 3794578
+    },
+    {
+      "file": "zero-payout-default.json.br",
+      "sha256": "711edafc6477828b764f5fbf175e5ca6e034f96ab850f1dc77478f673c77e6d4",
+      "originalFile": "zero-payout-default.json",
+      "originalSha256": "eba8315a2a6fb946811242683676cb1c1f36e42a126f0c3e0622830489436656",
+      "originalBytes": 7263346
+    },
+    {
+      "file": "zero-payout-x6.json.br",
+      "sha256": "40d05895bf63394552e4ad5120639dc87421b855a7615bc9fda7f976efa7e43f",
+      "originalFile": "zero-payout-x6.json",
+      "originalSha256": "860d23191d2c4f1c1bdfbc7c8447792611b86c73c92a8af0d3b935e502fabb2b",
+      "originalBytes": 7264076
+    }
+  ]
+}

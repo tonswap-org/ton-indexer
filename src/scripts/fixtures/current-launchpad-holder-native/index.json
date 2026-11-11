@@ -1,0 +1,126 @@
+{
+  "schema": "tonswap-current-launchpad-holder-fixtures-v1",
+  "qualification": "Exact native production Hub source/target histories, native certificate and treasury-dispatched JRCM. Synthetic proof block/head wrappers are not consensus or deployment authority. Retained source and original bytes are immutable; installed npm dependencies are not reconstructed from locks.",
+  "files": [
+    {
+      "file": "capture/producer-receipt.json",
+      "sha256": "631f34efcb19a3efac946df0cff6403bbd2de033a16b6128b8cca6c5d2d21c2c"
+    },
+    {
+      "file": "capture/source-inventory.json",
+      "sha256": "274a8d5c682ccd4d28d03ded600ad0cb569919fa2dc3c1e5dcd4a9bb2a215a19"
+    },
+    {
+      "file": "capture/producer.log",
+      "sha256": "b506fad73a78233749a3dc99db8c4c93000d2763db5a91f6bfd1e9e47c2fe902"
+    },
+    {
+      "file": "capture/producer-runner.py",
+      "sha256": "b96893517ff9a03a34256c25d9d9be8573dcc2a2eb42929578656d5c64d22b89"
+    },
+    {
+      "file": "capture/producer-source.tar.gz",
+      "sha256": "8eb2761d781bc2821f7eb7b178491398f76c711c78079ad5b831df53aa86a2f0",
+      "sourceFiles": 181
+    },
+    {
+      "file": "capture/captures/lost-bounce-default/0-default-complete.json.gz",
+      "sha256": "f4e7741aeed8457fa8dd39db96fe4d697dabad39ecfafc99dc66a6747df7ea4f",
+      "originalSha256": "49f544872fa33ba89902ba7074a8b0e6abe3f2a8161c8babf87800e9eecd02a4",
+      "originalBytes": 8601099
+    },
+    {
+      "file": "capture/captures/lost-bounce-default/original.json.gz",
+      "sha256": "038ff85eec768b71ccf33336e8f7f6b4585c3fe379c1a1ad593500095e6e063e",
+      "originalSha256": "adf1c877b71b97ab3f914092273987b52d1ae891780a8db06bd1bb0476ffa6ae",
+      "originalBytes": 1490875
+    },
+    {
+      "file": "capture/captures/lost-bounce-x6/0-x6-complete.json.gz",
+      "sha256": "450e3b0bfbc6bcc8d9eb6a6a566a3893c2ed9ac7da844755507928820f97fb37",
+      "originalSha256": "f162e257610436437f1811207946bd2dddcf0d130a2ee15ba170a21483f3bfef",
+      "originalBytes": 8602297
+    },
+    {
+      "file": "capture/captures/lost-bounce-x6/original.json.gz",
+      "sha256": "f877cd1b22fb10e31276daf9a148d24b207cbacf61991d06c57d266bd8f714d6",
+      "originalSha256": "38bfc03c09fb1853c50019ed1f1f1813bda7e1a690a89c2f9062dd8212032c0b",
+      "originalBytes": 1491493
+    },
+    {
+      "file": "capture/captures/notification-default/0-default-complete.json.gz",
+      "sha256": "0b270b37b1511f5aeaad56381979fe64a10c090ab1128ee8ed9a54489417c0dd",
+      "originalSha256": "2f2f4ae520b97171e703b108ec39469f09adf088d9f60efd8f611036f8cdd25e",
+      "originalBytes": 7291146
+    },
+    {
+      "file": "capture/captures/notification-default/original.json.gz",
+      "sha256": "006823ff37fdbb370dde526cab2cd7749bd88b097a29e4fd478e5bcad03b4b46",
+      "originalSha256": "86ffa6189fe098d88ba34d29bb2837ad60bc09a1a0d2f053fb0a87dc73d73af6",
+      "originalBytes": 132593
+    },
+    {
+      "file": "capture/captures/notification-x6/0-x6-complete.json.gz",
+      "sha256": "25237e7eea9342670cf2708213cf0fe6d3ff1617af64132d8947616f4668ad1a",
+      "originalSha256": "90a506a9e7b164734298c8b39e580dc653c65618d67e8b13fdce35944b273f55",
+      "originalBytes": 7291996
+    },
+    {
+      "file": "capture/captures/notification-x6/original.json.gz",
+      "sha256": "22a48a74640899ee0f331a52e082cc57274ccf94c3ac2f7284d8a40ac9fcac8a",
+      "originalSha256": "c4036ec3d574bad53411d73904395216d43e47491a574652c7776269fb1316da",
+      "originalBytes": 132603
+    },
+    {
+      "file": "proof/producer-receipt.json",
+      "sha256": "118d75f0bae9600791b8c9c4c9de3419b47521a752c4f07f74b15f15c62983ad"
+    },
+    {
+      "file": "proof/source-inventory.json",
+      "sha256": "6e4383d71acd9ec637280903ea4321601eea751b8faca819e9fd16351231d60f"
+    },
+    {
+      "file": "proof/producer.log",
+      "sha256": "1dad98c724d4bda63554afafc65d6c6cd9649009c41f4ea82c6c13db3609610e"
+    },
+    {
+      "file": "proof/producer-runner.py",
+      "sha256": "251f5be6426f2fcbc262285ce60f3718f74dffe91715c0556a23560547c6da02"
+    },
+    {
+      "file": "proof/producer-source.tar.gz",
+      "sha256": "92b749380e5871ab539070ad2c170577980a89a81cca4fdbec7c64ddb055fc6d",
+      "sourceFiles": 277
+    },
+    {
+      "file": "proof/captures/lost-bounce-default.json.gz",
+      "sha256": "63dfa98e1fdbcb4c6f8a35474778d2b32be73efb3b7e0670858698734403a3c6",
+      "originalSha256": "6ad72a404331d3bcfca09e27ce3430f09942bb84a4a4c08a12c7a1fdc7852ac0",
+      "originalBytes": 507465
+    },
+    {
+      "file": "proof/captures/lost-bounce-x6.json.gz",
+      "sha256": "1acd31dcae74ab87ad06cd8cce255e2822951891bf2c4073ad1a62e30af4332f",
+      "originalSha256": "330237078fd7b5867f5e7d4d27687a8e730ed07379480c484463bc02ad80482a",
+      "originalBytes": 507472
+    },
+    {
+      "file": "proof/captures/notification-default.json.gz",
+      "sha256": "6c93ea5d7266041eba0d5ead299dca3e4d2a997e71405395dd1ee43a55a9d3b4",
+      "originalSha256": "96ab44b4fbb205103c0bed9eead6c519ff9ed9bb9571d4ff89954e019602783f",
+      "originalBytes": 508304
+    },
+    {
+      "file": "proof/captures/notification-x6.json.gz",
+      "sha256": "0510c3964e134aeecabb602c1d18f0f08c47df0c2bbeeb2719b4d0e309a7eac1",
+      "originalSha256": "2f83a7c445221cf1a5167d7bd0e49c78671ca252bbd35c5c9b5c08065ee33cf0",
+      "originalBytes": 508299
+    },
+    {
+      "file": "collector.json.gz",
+      "sha256": "9a3866260587b09b5204df2e0e275aafff06e953152c802a117492a605d13ddc",
+      "originalSha256": "6a29724bbae1525f7af1fe2d8d733746f8c91c2cf77bf232dcf447d43b240e9a",
+      "originalBytes": 6005447
+    }
+  ]
+}

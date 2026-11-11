@@ -1,0 +1,8 @@
+{
+  "scope": "Actual current compiled Sandbox capture. Original native conservation and mandatory funded FIFO journal layout; not live historical-state qualification.",
+  "file": "payout.json",
+  "source": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/rv-fifo-final-payout.json",
+  "sha256": "ccc380b20c51e24e42db61d7f129d3bf11241d954e05509dda6aaf5061a498ac",
+  "closure": "/Users/mtakemiya/dev/tonswap/output/risk-engine-release-20260917/generation-10-mesh-r1/risk-vault-fifo-capture-provenance.json",
+  "closureSha256": "1e0e4532db9a366e8e58a02685c19e6849696a30c0e565b8e9c0d849fe3abc90"
+}
