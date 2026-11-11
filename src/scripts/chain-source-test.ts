@@ -29,8 +29,30 @@ async function main() {
   globalThis.fetch = async () => { throw new Error('Network discovery forbidden'); };
   const lazy = createLiteChainSource({ network: 'testnet', logger, peers: [{ host: '127.0.0.1', port: 1, publicKey: Buffer.alloc(32) }],
     engineFactory: () => { created++; return new FakeLiteEngine(async req => answer(req)); } });
-  try { assert.equal(created, 0); assert.equal(lazy.health().peersReady, 0); await lazy.head(); assert.equal(created, 1); }
+  try {
+    assert.equal(created, 0); assert.equal(lazy.health().peersReady, 0); await lazy.head();
+    assert.equal(created, 2, 'first use opens one engine per lane, so the fresh lane is connected before the first user read');
+  }
   finally { globalThis.fetch = originalFetch; await lazy.close(); }
+
+  // Indexing failures bench a peer only on the shared lane; a user's current read keeps reaching it.
+  let failGetters = true;
+  const benchable = new FakeLiteEngine(async req => {
+    if (failGetters && req.kind === 'liteServer.runSmcMethod') throw new Error('peer unavailable');
+    return answer(req);
+  });
+  const laned = sourceFor(benchable);
+  try {
+    await assert.rejects(laned.runGetMethod(address, 'indexing', [], { at }), code('upstream_unavailable'));
+    failGetters = false;
+    await assert.rejects(laned.runGetMethod(address, 'indexing', [], { at }), code('upstream_unavailable'),
+      'the shared lane circuit is open after its failures');
+    const fresh = await laned.read([{ kind: 'getter', address, method: 'x', args: [] }], { at, lane: 'fresh' });
+    assert.equal(fresh.results.length, 1, 'the fresh lane still reaches the peer the shared lane benched');
+    const health = laned.health();
+    assert.equal(health.peersReady, 0, 'a lane left without peers reads as unhealthy while the other lane serves');
+    assert.deepEqual(health.peers.map(row => [row.open, row.failures > 0]), [[true, true]], 'the shared lane failure still shows');
+  } finally { await laned.close(); }
 
   const tracker = new HeadTracker('testnet');
   assert.equal(tracker.accept(masterAnswer(mc)).seqno, 100);
@@ -122,5 +144,6 @@ async function main() {
     assert.equal((await recoveringSource.head()).seqno, 100);
   } finally { await recoveringSource.close(); }
   console.log('Chain source: monotonic head, pinned block, cancellable sharing, exact getter arguments, VM denials and lazy recovery passed');
+  console.log('Chain source: fresh reads keep their own lane when indexing failures bench a peer');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

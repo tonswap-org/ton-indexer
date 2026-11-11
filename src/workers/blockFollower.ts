@@ -12,9 +12,14 @@ import { errorDiagnostic, Logger } from '../utils/logger';
 import { IndexerService } from '../indexerService';
 import { PoolTracker } from '../poolTracker';
 import type { HeadFeed } from '../runtime/headFeed';
+import { answeredUnavailable } from '../data/boundedLiteEngine';
 
 const transactionIdentity = (transaction: { lt: string; hash: string }) =>
   `${transaction.lt}:${transaction.hash}`;
+
+/** How long an account head whose history no reachable liteserver holds (pruned blocks of a dormant
+ * account) is left alone before asking again. A new transaction asks at once. */
+export const UNAVAILABLE_HISTORY_RETRY_MS = 10 * 60_000;
 
 const retainedExactTransactions = (
   expected: readonly { lt: string; hash: string }[],
@@ -45,6 +50,8 @@ export class BlockFollower {
   private pendingHead?: ChainHead;
   private lastSeqno?: number;
   private inFlight = false;
+  /** Watched accounts whose current head history every reachable liteserver answered it no longer holds. */
+  private readonly unavailableHistory = new Map<string, { head: string; retryAt: number }>();
 
   constructor(
     config: Config,
@@ -93,6 +100,10 @@ export class BlockFollower {
       this.store.purgeStale();
       const workflowGeneration = this.store.getWorkflowGeneration();
       const watchlist = this.store.listWatchlist();
+      const watched = new Set(watchlist.map((entry) => entry.address));
+      for (const address of this.unavailableHistory.keys()) {
+        if (!watched.has(address)) this.unavailableHistory.delete(address);
+      }
       if (watchlist.length === 0) return;
 
       const batchSize = 10;
@@ -180,6 +191,17 @@ export class BlockFollower {
     // history is incomplete until continuity and exact retention are proven.
     this.store.markHistoryIncomplete(address);
 
+    // Every reachable liteserver already answered that it no longer holds this head's history. Asking
+    // again on every poll cannot change that answer; it only loads the pool. Ask after the account
+    // changes or the retry window passes.
+    const headIdentity = `${headLt}:${headHash}`;
+    const unavailable = this.unavailableHistory.get(address);
+    if (unavailable?.head === headIdentity && unavailable.retryAt > Date.now()) {
+      this.store.setLastUpdateSeqno(address, seqno);
+      return;
+    }
+    this.unavailableHistory.delete(address);
+
     const batchSize = Math.max(1, this.config.pageSize * this.config.backfillPageBatch);
     const maxPages = Math.min(
       this.config.backfillMaxPagesPerAddress,
@@ -199,6 +221,7 @@ export class BlockFollower {
     let reachedCachedIndex: number | undefined;
     let reachedHistoryStart = false;
     let truncatedByCapacity = false;
+    let historyUnavailable = false;
 
     for (
       let requestIndex = 0;
@@ -209,12 +232,20 @@ export class BlockFollower {
         batchSize,
         Math.max(1, maxFetchedTransactions - raw.length + (raw.length > 0 ? 1 : 0))
       );
-      const batch = await this.source.getTransactions(
-        address,
-        requestLimit,
-        cursorLt,
-        cursorHash, {signal: this.controller.signal}
-      );
+      let batch: RawTransaction[];
+      try {
+        batch = await this.source.getTransactions(
+          address,
+          requestLimit,
+          cursorLt,
+          cursorHash, {signal: this.controller.signal}
+        );
+      } catch (error) {
+        // Pruned history is an answer, not an outage: keep any linked prefix fetched so far.
+        if (!answeredUnavailable(error)) throw error;
+        historyUnavailable = true;
+        break;
+      }
       this.controller.signal.throwIfAborted();
       if (batch.length === 0) break;
 
@@ -249,6 +280,15 @@ export class BlockFollower {
       if (added === 0) break;
       cursorLt = oldest.lt;
       cursorHash = oldest.hash;
+    }
+
+    if (historyUnavailable) {
+      this.unavailableHistory.set(address, { head: headIdentity, retryAt: Date.now() + UNAVAILABLE_HISTORY_RETRY_MS });
+      if (raw.length === 0) {
+        this.logger.info('watchlist history is not held by any reachable liteserver', { address, lt: headLt });
+        this.store.setLastUpdateSeqno(address, seqno);
+        return;
+      }
     }
 
     const rawOldest = raw[raw.length - 1];

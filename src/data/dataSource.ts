@@ -208,7 +208,9 @@ export type TonBlockIdExt = {
 
 export type ChainHead = TonBlockIdExt & { utime: number };
 export type AccountAnchor = { shardBlock: TonBlockIdExt; genUtime: number };
-export type ReadOptions = { signal?: AbortSignal; at?: ChainHead };
+/** `lane: 'fresh'` (honored by `read`) runs the read on the source's own fresh-read connections and peer
+ * health, apart from indexing work. Only the public current-read route asks for it. */
+export type ReadOptions = { signal?: AbortSignal; at?: ChainHead; lane?: 'fresh' };
 /** Original lite-server proofs. Consumers verify these cells again; the labels
  * alone do not establish an account or masterchain commitment. */
 export type RecoveryProofAnchor = {

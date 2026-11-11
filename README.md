@@ -302,7 +302,7 @@ The regression suite covers transaction-chain continuity, reorg replacement,
 snapshot integrity, bounded liteserver retries, classifier decoding, and public API
 validation/streaming behavior.
 
-The source uses one monotonic, network-authenticated process head with a one-second reuse window. Account and getter reads pin that head, share only identical in-flight work and propagate cancellation. Peers retain health, failure and circuit state; bounded retries and delayed hedges never extend the caller deadline. Only one delayed hedge may belong to a read, with at most eight globally. Message submission is a single attempt and is never hedged or replayed after a disconnect. Run `npx tsx src/scripts/chain-source-test.ts` and `npx tsx src/scripts/lite-engine-test.ts` for source lifecycle checks.
+The source uses one monotonic, network-authenticated process head with a one-second reuse window. Account and getter reads pin that head, share only identical in-flight work and propagate cancellation. Peers retain health, failure and circuit state; bounded retries and delayed hedges never extend the caller deadline. Only one delayed hedge may belong to a read, with at most eight globally. Message submission is a single attempt and is never hedged or replayed after a disconnect. A liteserver error answer, such as history a peer no longer holds (`lt not in db`), is an answer rather than a fault: the read may try another peer within its bounds but never counts that peer as failed or opens its circuit; only transport failures and timeouts do. Query timers yield to pending I/O, so a busy process never times out an answer that already arrived. `/readFresh` runs on its own lane with separate connections and peer health, so indexing load cannot leave it without a peer; `/health` reports the smaller lane's count of usable peers. Run `npx tsx src/scripts/chain-source-test.ts` and `npx tsx src/scripts/lite-engine-test.ts` for source lifecycle checks.
 
 Ledger wire checks retain only immutable body hash/opcode facts keyed by exact
 original bytes, bounded to 1,024 entries and 4 MiB of key storage. Full code/data
@@ -2184,6 +2184,17 @@ old and at most five seconds ahead with a consistent peer clock, checked both
 before dispatch and at completion. A valid stale answer may try another peer
 within the existing bounds but never opens that peer's circuit. Explicit-block
 reads retain their original boundary during a chain stall or host clock skew.
+
+A `liteServer.error` answer (for example pruned history, `lt not in db`) is
+likewise an answer: it may try another peer but never counts as a peer failure
+or opens a circuit. Query timers yield to pending I/O, so a busy process never
+turns an answer that already arrived into a timeout. The public `/readFresh`
+route runs on a separate lite lane with its own connections and peer health;
+every other read uses the shared lane. The block follower leaves an account head
+whose history every reachable liteserver answered it no longer holds for
+`UNAVAILABLE_HISTORY_RETRY_MS` (10 minutes) or until the account changes. Run the
+lite-engine, chain-source, history-integrity and fresh-read tests after changing
+these rules.
 
 Confirmed current Perps operations recognize the PX, oracle, RiskVault and T3
 custody message vocabulary when removing generic undecoded warnings. Original
