@@ -587,6 +587,17 @@ before dispatch and at completion. A valid stale answer may try another peer
 within the existing bounds but never opens that peer's circuit. Explicit-block
 reads retain their original boundary during a chain stall or host clock skew.
 
+A `liteServer.error` answer (for example pruned history, `lt not in db`) is
+likewise an answer: it may try another peer but never counts as a peer failure
+or opens a circuit. Query timers yield to pending I/O, so a busy process never
+turns an answer that already arrived into a timeout. The public `/readFresh`
+route runs on a separate lite lane with its own connections and peer health;
+every other read uses the shared lane, and `/health` reports the smaller lane's
+usable peers. The block follower leaves an account head whose history every
+reachable liteserver answered it no longer holds for `UNAVAILABLE_HISTORY_RETRY_MS`
+(10 minutes) or until the account changes. Run the lite-engine, chain-source,
+history-integrity and fresh-read tests after changing these rules.
+
 Current Perps generic warning removal recognizes only its current PX/oracle/risk
 and T3 custody vocabulary within a decoded operation. It never replaces original
 transaction, historical state or cash verification; unknown grouped messages

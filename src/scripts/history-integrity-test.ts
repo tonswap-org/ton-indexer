@@ -1,5 +1,7 @@
 import { fixtureChainSource, fixtureHead, type FixtureChainSource, type ChainFixtureOptions } from './support/chainFixture';
 import assert from 'node:assert/strict';
+import { mock } from 'node:test';
+import { BoundedLiteQueryError, LiteServerAnswerError } from '../data/boundedLiteEngine';
 import { currentPoolFactoryFixture } from './support/currentPoolFactoryFixture';
 import { testCurrentPoolTracker } from './current-pool-tracker-test';
 import { loadConfig } from '../config';
@@ -11,7 +13,7 @@ import { createLogger } from '../utils/logger';
 import { loadOpcodes } from '../utils/opcodes';
 import { classifyTransaction } from '../utils/txClassifier';
 import { BackfillWorker } from '../workers/backfillWorker';
-import { BlockFollower } from '../workers/blockFollower';
+import { BlockFollower, UNAVAILABLE_HISTORY_RETRY_MS } from '../workers/blockFollower';
 
 const address = `0:${'1'.repeat(64)}`;
 const hash = (lt: number) =>
@@ -718,6 +720,54 @@ const testSnapshotGenerationInvalidatesCapturedFollowerBatches = async () => {
   assert.deepEqual(store.listWatchlist().map((entry) => entry.address), [replacementAddress]);
 };
 
+/** A dormant account's latest transaction can sit in blocks no non-archival liteserver keeps. That answer
+ * cannot change until the account transacts, so the follower must not re-ask it on every poll. */
+const testFollowerLeavesUnavailableHistoryUntilTheAccountChanges = async () => {
+  const store = new MemoryStore(config);
+  let headLt = 7;
+  let reads = 0;
+  let transport = false;
+  const allPeers = (cause: unknown) => new ChainReadError('upstream_unavailable', {
+    cause: new BoundedLiteQueryError([{ endpointIndex: 0, cause }, { endpointIndex: 1, cause }]),
+  });
+  const source = makeSource({
+    async getAccountState() {
+      return { balance: '1', lastTxLt: String(headLt), lastTxHash: hash(headLt) };
+    },
+    async getTransactions() {
+      reads += 1;
+      throw allPeers(transport ? new Error('connection reset') : new LiteServerAnswerError(651, 'cannot find block: lt not in db'));
+    },
+  });
+  const service = new IndexerService(config, store, source, opcodes, []);
+  const follower = new BlockFollower(config, store, source, opcodes, createLogger('fatal'), service);
+
+  await (follower as any).refreshAddress(address, 1);
+  assert.equal(reads, 1);
+  assert.equal(store.get(address)?.stats.historyComplete, false);
+  await (follower as any).refreshAddress(address, 2);
+  assert.equal(reads, 1, 'history every liteserver answered it no longer holds is not asked again on the next poll');
+  assert.equal(store.get(address)?.stats.lastUpdateSeqno, 2, 'the account is still followed');
+  assert.equal(store.get(address)?.stats.historyComplete, false);
+
+  headLt = 9;
+  await (follower as any).refreshAddress(address, 3);
+  assert.equal(reads, 2, 'a new account head asks again at once');
+
+  const now = Date.now();
+  const clock = mock.method(Date, 'now', () => now + UNAVAILABLE_HISTORY_RETRY_MS + 1);
+  try {
+    await (follower as any).refreshAddress(address, 4);
+    assert.equal(reads, 3, 'after the retry window the same head is asked again');
+  } finally { clock.mock.restore(); }
+
+  transport = true;
+  headLt = 11;
+  await assert.rejects((follower as any).refreshAddress(address, 5), ChainReadError, 'a transport failure still fails the refresh');
+  await assert.rejects((follower as any).refreshAddress(address, 6), ChainReadError, 'and is asked again on the next poll');
+  assert.equal(reads, 5);
+};
+
 const testRejectedInitialForkDoesNotMutatePoolTracker = async () => {
   const { capture, raw } = currentPoolFactoryFixture().cases[0]!;
   const factory = capture.factory;
@@ -756,6 +806,7 @@ const run = async () => {
   await testFollowerCountsActualProgressAcrossShortPages();
   await testSnapshotGenerationInvalidatesCapturedFollowerBatches();
   await testRejectedInitialForkDoesNotMutatePoolTracker();
+  await testFollowerLeavesUnavailableHistoryUntilTheAccountChanges();
   testCurrentPoolTracker();
   process.stdout.write('history integrity ok\n');
 };

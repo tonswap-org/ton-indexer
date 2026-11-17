@@ -32,6 +32,33 @@ export class UnusableLiteAnswer extends Error {
   constructor(cause: unknown) { super('Liteserver answer cannot serve this read', { cause }); this.name = 'UnusableLiteAnswer'; }
 }
 
+/** A `liteServer.error` answer. The peer is reachable and answered that it cannot serve this query,
+ * for example history it no longer holds ("lt not in db"). Like an unusable answer it is never a peer
+ * failure: another peer may still hold the data, and every non-archival peer answers pruned history
+ * the same way, so counting it would bench the whole healthy pool. */
+export class LiteServerAnswerError extends Error {
+  constructor(readonly code: number, message: string) { super(message); this.name = 'LiteServerAnswerError'; }
+}
+
+/** True when every peer a query reached answered that it cannot serve it, with no transport failure or
+ * timeout: asking again soon will get the same answer. */
+export function answeredUnavailable(error: unknown): boolean {
+  for (let current = error, depth = 0; current && depth < 8; current = (current as { cause?: unknown }).cause, depth++) {
+    if (current instanceof BoundedLiteQueryError) return !current.timedOut && current.attempts.length > 0
+      && current.attempts.every(attempt => attempt.cause instanceof LiteServerAnswerError);
+  }
+  return false;
+}
+
+/** A timeout that yields to pending I/O first. After the process was busy (a long synchronous task or GC),
+ * expired timers run before the socket callbacks that arrived meanwhile; deferring the expiry to the check
+ * phase lets an answer that arrived in time win, so a stall here never reads as a slow or failed peer. */
+export function afterIo(ms: number, expire: () => void): () => void {
+  let immediate: NodeJS.Immediate | undefined;
+  const timer = setTimeout(() => { immediate = setImmediate(expire); }, ms);
+  return () => { clearTimeout(timer); if (immediate) clearImmediate(immediate); };
+}
+
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => { cleanup(); reject(signal.reason ?? cancelled()); };
@@ -91,9 +118,10 @@ export class AbortableLitePeer extends EventEmitter implements LiteEngine {
         if (answer.kind !== 'adnl.message.answer') return;
         const query = this.pending.get(answer.queryId.toString('hex'));
         if (!query) return;
-        if (answer.answer.length >= 4 && answer.answer.readInt32LE(0) === -1146494648)
-          query.finish(new Error(Codecs.liteServer_Error.decode(new TLReadBuffer(answer.answer)).message));
-        else {
+        if (answer.answer.length >= 4 && answer.answer.readInt32LE(0) === -1146494648) {
+          const error = Codecs.liteServer_Error.decode(new TLReadBuffer(answer.answer));
+          query.finish(new LiteServerAnswerError(error.code, error.message));
+        } else {
           try { query.finish(undefined, query.decode(answer.answer)); } catch (error) { query.finish(error); }
         }
       } catch (error) { disconnected(error); }
@@ -120,12 +148,12 @@ export class AbortableLitePeer extends EventEmitter implements LiteEngine {
         if (settled) return;
         settled = true;
         this.pending.delete(key);
-        clearTimeout(timer);
+        cancelTimer();
         options.signal?.removeEventListener('abort', abort);
         if (error) reject(error); else resolve(value as RES);
       };
       const abort = () => finish(options.signal?.reason ?? cancelled());
-      const timer = setTimeout(() => finish(cancelled()), timeout);
+      const cancelTimer = afterIo(timeout, () => finish(cancelled()));
       this.pending.set(key, { finish, decode: data => f.decodeResponse(new TLReadBuffer(data)) });
       options.signal?.addEventListener('abort', abort, { once: true });
       if (options.signal?.aborted) abort();
@@ -187,7 +215,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
     const started = performance.now();
     const deadline = started + budget;
     const deadlineController = new AbortController();
-    const timer = setTimeout(() => deadlineController.abort(cancelled()), budget);
+    const cancelDeadline = afterIo(budget, () => deadlineController.abort(cancelled()));
     const signal = AbortSignal.any([deadlineController.signal, this.shutdown.signal, ...(args.signal ? [args.signal] : [])]);
     const failures: { endpointIndex: number; cause: unknown }[] = [];
     const used = new Set<number>();
@@ -209,7 +237,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
       const timeout = Math.max(1, Math.min(Math.floor(deadline - start), this.options.attemptTimeoutMs,
         Math.max(400, Math.min(1_500, Math.round(3 * (state.latencyMs ?? 500))))));
       const controller = new AbortController(); controllers.add(controller);
-      const perAttempt = setTimeout(() => controller.abort(cancelled()), timeout);
+      const cancelAttempt = afterIo(timeout, () => controller.abort(cancelled()));
       const attemptSignal = AbortSignal.any([signal, controller.signal]);
       let ok = false;
       try {
@@ -224,7 +252,12 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
         if (unusable) throw unusable;
         return value;
       } catch (cause) {
-        if (cause instanceof UnusableLiteAnswer) {
+        if (cause instanceof LiteServerAnswerError) {
+          // An answer, not a fault: the peer stays healthy and its circuit closed. Its latency is
+          // not sampled, since an error answer says nothing about what a served query costs.
+          ok = true; state.failures = 0; state.until = 0;
+        }
+        if (cause instanceof UnusableLiteAnswer || cause instanceof LiteServerAnswerError) {
           answered.add(index);
           if (!signal.aborted) failures.push({ endpointIndex: index, cause });
         } else if (attemptSignal.reason !== hedgeCancelled && !signal.aborted) {
@@ -235,7 +268,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
         if (cause instanceof ChainReadError && cause.code === 'upstream_timeout') timedOut = true;
         throw cause;
       } finally {
-        clearTimeout(perAttempt); controllers.delete(controller); state.probing = false;
+        cancelAttempt(); controllers.delete(controller); state.probing = false;
         try { this.observer?.(index, ok, performance.now() - start); } catch { /* Telemetry cannot fail a read. */ }
       }
     };
@@ -283,7 +316,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
       if (args.signal?.aborted) throw args.signal.reason ?? cancelled();
       if (!(error instanceof ChainReadError)) throw error;
     } finally {
-      clearTimeout(timer);
+      cancelDeadline();
       for (const controller of controllers) controller.abort(hedgeCancelled);
     }
     if (this.closed) throw new Error('Engine is closed');

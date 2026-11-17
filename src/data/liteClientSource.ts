@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { decodeOriginalTransaction, assertOriginalTransactionPage } from './transactionEvidence';
 import {
   Address,
@@ -12,7 +13,7 @@ import {
 } from '@ton/core';
 import { provenShardAccount, provenConfig, proofRoots } from './liteProof';
 import { LiteClient, type LiteEngine } from 'ton-lite-client';
-import { AbortableLitePeer, BoundedLiteEngine, BoundedLiteQueryError, UnusableLiteAnswer } from './boundedLiteEngine';
+import { AbortableLitePeer, afterIo, BoundedLiteEngine, BoundedLiteQueryError, UnusableLiteAnswer } from './boundedLiteEngine';
 import type { LiteserverPeer } from './liteserverPool';
 import { HeadTracker } from './headTracker';
 import { createLiteClientCache } from './liteAccountCache';
@@ -68,6 +69,10 @@ export type ChainSourceObserver = { query?(peer: number, ok: boolean, ms: number
 type SourceOptions = { network: Network; peers: LiteserverPeer[]; logger: Logger; observer?: ChainSourceObserver;
   engineFactory?: (peer: LiteserverPeer) => LiteEngine };
 type Flight = { controller: AbortController; promise: Promise<unknown>; users: number };
+/** `shared` serves everything by default; `fresh` serves only reads that ask for it (`read` with
+ * `lane: 'fresh'`, the public current-read route). */
+type LaneName = 'shared' | 'fresh';
+type Lane = { engine: BoundedLiteEngine; client: LiteClient };
 const liteBlock = (head: ChainHead): LiteBlockId => ({ workchain: head.workchain, shard: head.shard, seqno: head.seqno,
   rootHash: Buffer.from(head.rootHashHex, 'hex'), fileHash: Buffer.from(head.fileHashHex, 'hex') });
 
@@ -75,8 +80,9 @@ export function createLiteChainSource(options: SourceOptions): LiteClientDataSou
 
 export class LiteClientDataSource implements ChainSource {
   readonly network: Network;
-  private client!: LiteClient;
-  private engine?: BoundedLiteEngine;
+  private lanes?: Record<LaneName, Lane>;
+  /** The lane of the current async call chain. */
+  private readonly lane = new AsyncLocalStorage<LaneName>();
   private closed = false;
   private readonly heads: HeadTracker;
   private readonly flights = new Map<string, Flight>();
@@ -87,21 +93,30 @@ export class LiteClientDataSource implements ChainSource {
     this.logger = options.logger;
     this.heads = new HeadTracker(this.network, options.observer?.head);
   }
-  private ensure(): BoundedLiteEngine {
+  /** Both lanes open together on first use, so the fresh lane is connected before the first user read.
+   * Each lane owns its connections and its peer health: background load, failures and open circuits on
+   * the shared lane can never leave a user's current read without a peer, and its queries never queue
+   * behind large history answers on the same connection. */
+  private currentLane(): Lane {
     if (this.closed) throw new ChainReadError('upstream_unavailable');
-    if (!this.engine) {
-      const engines = this.options.peers.map(peer => this.options.engineFactory?.(peer)
-        ?? new AbortableLitePeer(`tcp://${peer.host}:${peer.port}`, peer.publicKey));
-      this.engine = new BoundedLiteEngine(engines, undefined, this.options.observer?.query);
-      this.client = new LiteClient({ engine: this.engine, cacheMap: createLiteClientCache });
+    if (!this.lanes) {
+      const open = (): Lane => {
+        const engines = this.options.peers.map(peer => this.options.engineFactory?.(peer)
+          ?? new AbortableLitePeer(`tcp://${peer.host}:${peer.port}`, peer.publicKey));
+        const engine = new BoundedLiteEngine(engines, undefined, this.options.observer?.query);
+        return { engine, client: new LiteClient({ engine, cacheMap: createLiteClientCache }) };
+      };
+      this.lanes = { shared: open(), fresh: open() };
     }
-    return this.engine;
+    return this.lanes[this.lane.getStore() ?? 'shared'];
   }
+  private ensure(): BoundedLiteEngine { return this.currentLane().engine; }
+  private get client(): LiteClient { return this.currentLane().client; }
   private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> { this.ensure(); return fn(this.client); }
   private async queryLite<T>(fn: () => Promise<T>): Promise<T> { this.ensure(); return fn(); }
   private async scope<T>(options: { signal?: AbortSignal; at?: ChainHead }, run: (signal: AbortSignal) => Promise<T>, timeout = 5_000): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new ChainReadError('upstream_timeout')), timeout);
+    const cancelTimer = afterIo(timeout, () => controller.abort(new ChainReadError('upstream_timeout')));
     const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : [])]);
     try {
       if (signal.aborted) throw new ChainReadError('upstream_timeout');
@@ -115,10 +130,12 @@ export class LiteClientDataSource implements ChainSource {
       if (cause instanceof ChainReadError) throw cause;
       throw new ChainReadError(signal.aborted || (cause instanceof BoundedLiteQueryError && cause.timedOut)
         ? 'upstream_timeout' : 'upstream_unavailable', { cause });
-    } finally { clearTimeout(timer); }
+    } finally { cancelTimer(); }
   }
   private shared<T>(key: string, signal: AbortSignal, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     if (signal.aborted) return Promise.reject(new ChainReadError('upstream_timeout'));
+    // A flight runs on the lane that started it; a caller on the other lane never joins it.
+    key = `${this.lane.getStore() ?? 'shared'}|${key}`;
     let flight = this.flights.get(key);
     if (!flight) {
       const controller = new AbortController();
@@ -315,7 +332,7 @@ export class LiteClientDataSource implements ChainSource {
     });
   }
   async read(calls: FreshReadCall[], options: ReadOptions = {}) {
-    return this.scope(options, async signal => {
+    const run = () => this.scope(options, async signal => {
       const head = options.at ?? await this.head({ signal, current: true });
       const results = await executeFreshCalls(calls, async (call, ownedSignal) => {
         if (ownedSignal.aborted) throw new ChainReadError('upstream_timeout');
@@ -328,6 +345,8 @@ export class LiteClientDataSource implements ChainSource {
       if (!options.at) this.heads.assertCurrent(head);
       return { head, results };
     }, 18_000);
+    // Everything this read does, including its head, runs on the fresh lane's connections and health.
+    return options.lane === 'fresh' ? this.lane.run('fresh', run) : run();
   }
   async getAccountStateAtSeqno(address: string, seqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
     return this.scope(options, async signal => this.ensure().withOptions({ signal, awaitSeqno: seqno }, async () => {
@@ -516,13 +535,24 @@ export class LiteClientDataSource implements ChainSource {
   async sendMessage(boc: Buffer, options: { signal?: AbortSignal } = {}): Promise<void> {
     await this.scope(options, async () => { await this.client.sendMessage(boc); });
   }
+  /** One row per peer across both lanes: a failure or open circuit on either lane shows. `peersReady` is
+   * the smaller lane's count of peers it can use now, so a lane left without peers reads as unhealthy
+   * even while the other lane still serves. */
   health() {
-    const peers = this.engine?.health() ?? this.options.peers.map((_, index) => ({ index, ready: false, open: false, failures: 0, latencyMs: null }));
-    return { peersConfigured: peers.length, peersReady: peers.filter(peer => peer.ready && !peer.open).length, head: this.heads.current(), peers };
+    const lanes = this.lanes ? [this.lanes.shared.engine.health(), this.lanes.fresh.engine.health()] : [];
+    const peers = this.options.peers.map((_, index) => {
+      const rows = lanes.map(lane => lane[index]);
+      return { index, ready: rows.some(row => row.ready), open: rows.some(row => row.open),
+        failures: Math.max(0, ...rows.map(row => row.failures)),
+        latencyMs: rows.map(row => row.latencyMs).find(ms => ms !== null) ?? null };
+    });
+    const usable = lanes.map(lane => lane.filter(row => row.ready && !row.open).length);
+    return { peersConfigured: peers.length, peersReady: usable.length ? Math.min(...usable) : 0, head: this.heads.current(), peers };
   }
   async close(): Promise<void> {
     if (this.closed) return; this.closed = true;
     for (const flight of this.flights.values()) flight.controller.abort(new ChainReadError('upstream_unavailable'));
-    this.flights.clear(); this.engine?.close();
+    this.flights.clear();
+    for (const lane of Object.values(this.lanes ?? {})) lane.engine.close();
   }
 }
