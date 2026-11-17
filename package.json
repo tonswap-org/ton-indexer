@@ -86,7 +86,10 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/tonswap-org/ton-indexer/issues"
