@@ -150,6 +150,7 @@ async function main() {
   const withRelay = (tail: Cell) => new Cell({ bits: originalState.bits, refs: [
     beginCell().storeSlice(originalState.refs[0].beginParse()).storeSlice(tail.beginParse()).endCell(), ...originalState.refs.slice(1),
   ] });
+  assert(manifest.contracts.FeeRouter);
   const relay = Address.parse(manifest.contracts.FeeRouter.address);
   const withWake = (state: Cell, wake: Cell) => new Cell({bits: state.bits, refs: [...state.refs.slice(0,-1),
     beginCell().storeSlice(state.refs.at(-1)!.beginParse()).storeSlice(wake.beginParse()).endCell()]});
