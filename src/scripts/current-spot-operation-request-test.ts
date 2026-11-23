@@ -1,5 +1,6 @@
+import { isPlatformActivityNotice } from '../runtime/spotEvidenceIdentity';
 import assert from 'node:assert/strict';
-import { Address, beginCell, Cell } from '@ton/core';
+import { Address, beginCell, Cell, internal, type Message } from '@ton/core';
 import { orderTermsToCell, type OrderTerms } from '../orders/state';
 import {
   readSpotOperationRequest, SpotEvidenceError, type CurrentDirectSpotRequest, type CurrentRouteSpotRequest, type CurrentOrderCreateSpotRequest, type CurrentOrderSettlementSpotRequest,
@@ -86,6 +87,21 @@ export function orderSettlementSpotOperationRequestFixture(funded = true, revers
 }
 
 function main() {
+  {
+    const manifest = { ...runtimeManifestFixture(), schema: 'tonswap-release-v2' as const };
+    const pool = manifest.spotMarkets[0].pool, router = manifest.contracts.FeeRouter!.address;
+    const refund = Address.parse(runtimeAddress(561));
+    const body = beginCell().storeUint(0x47564143, 32).storeAddress(refund).endCell();
+    const raw = internal({ to: router, value: 1n, bounce: false, body });
+    if (raw.info.type !== 'internal') throw Error('internal activity fixture');
+    const message: Message = { ...raw, info: { ...raw.info, src: Address.parse(pool) } };
+    const eligible = (candidate: Message) => isPlatformActivityNotice(manifest, candidate, pool, [pool]);
+    assert.equal(eligible(message), true);
+    assert.equal(isPlatformActivityNotice(manifest, message, router, [pool]), false);
+    assert.equal(isPlatformActivityNotice({ ...manifest, schema: 'tonswap-release-v1' }, message, pool, [pool]), false);
+    assert.equal(eligible({ ...message, body: beginCell().storeSlice(body.beginParse()).storeBit(true).endCell() }), false);
+    assert.equal(eligible({ ...message, info: { ...raw.info, src: Address.parse(pool), dest: refund } }), false);
+  }
   let rejected = 0;
   const bad = (value: unknown, manifest = runtimeManifestFixture(), status = 400) => {
     assert.throws(() => readSpotOperationRequest(value, manifest), error => error instanceof SpotEvidenceError

@@ -122,7 +122,7 @@ export async function readPoolEvidenceContext(manifest: RuntimeReleaseManifest, 
 }
 export async function collectPoolOperationEvidence(manifest: RuntimeReleaseManifest, source: ChainSource, store: PhysicalEvidenceStore, parsed: ReturnType<typeof readPoolOperationRequest>, signal?: AbortSignal): Promise<CurrentPoolOperationEvidence> {
   const {request}=parsed,context=await readPoolEvidenceContext(manifest,source,parsed,signal),{head,pins,completeAccounts}=context;
-  const graph=await collectProductPhysicalGraph(source,store,head,{owner:request.owner,target:parsed.target,body:parsed.body,dispatch:request.dispatch,pins,completeAccounts,
+  const graph=await collectProductPhysicalGraph(source,store,head,{activity:{manifest,sources:[request.pool]},owner:request.owner,target:parsed.target,body:parsed.body,dispatch:request.dispatch,pins,completeAccounts,
     includeAccounts:context.ownerWallets.map(w=>w.wallet).filter(w=>!context.absent.has(w))},signal);
   try {for(const row of graph.transactions)if(row.account===request.pool){const tx=verifyOrderTransaction(row);for(const shard of [tx.before,tx.after])if(shard.account?.storage.state.type==='active')verifyPoolEvidenceIdentity(activeOrderAccount(shard,manifest.templates.DlmmPool).data,context.identityManifest,context);}}
   catch {graph.coverage.complete=false;graph.coverage.gaps.push({code:'pool_release_config_mismatch',account:request.pool});}

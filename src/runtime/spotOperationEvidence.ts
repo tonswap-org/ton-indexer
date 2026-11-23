@@ -4,11 +4,11 @@ import type { AccountStateResponse, ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
 import { createJettonWalletReader } from '../data/jettonWallet';
 import { activeOrderAccount, orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
-import { canonicalOrderTerms, decodeOrderState, orderInitialData } from '../orders/state';
+import { canonicalOrderTerms, decodeOrderFactoryData, matchesOrderFactoryIdentity, decodeOrderState, orderInitialData } from '../orders/state';
 import { canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
 import { SpotEvidenceError, type ParsedDirectSpotOperationRequest, type ParsedRouteSpotOperationRequest, type ParsedSpotOperationRequest } from './spotOperationRequest';
 import { collectSpotRouteEvidence, type CurrentSpotRouteEvidence } from './spotRouteEvidence';
-import { assertPoolIdentity, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
+import { assertPoolIdentity, isPlatformActivityNotice, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
 export { assertPoolIdentity, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
 
 type PinnedAccount = { address: string; codeBoc: string; dataBoc: string };
@@ -125,6 +125,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         if (edges % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); signal?.throwIfAborted(); }
         const message = loadMessage(cell.beginParse()); if (message.info.type !== 'internal') continue;
         const address = message.info.dest.toRawString();
+        if (isPlatformActivityNotice(manifest, message, row.evidence.account, [request.pool])) continue;
         if (!allowed.has(address)) { gaps.push({ code: 'related_account_outside_operation', account: address }); continue; }
         const candidates = await history(address, candidate => checked(candidate).tx.prevTransactionLt < originLt);
         const matches = candidates.filter(candidate => { const tx = checked(candidate); return tx.tx.lt > checked(row).tx.lt && tx.incoming && sameMessage(cell, tx.incoming); });
@@ -136,8 +137,8 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
   }
   const creation = parsed as Exclude<ParsedSpotOperationRequest, { body: Cell }>, request = creation.request;
   const factoryPin = manifest.contracts.SpotOrderFactory!;
-  const factory = pinnedAccount(request.factory, await current(request.factory), factoryPin.codeHash), f = orderCell(factory.dataBoc).beginParse();
-  const orderCode = f.loadRef(); f.loadUintBig(64); f.endParse();
+  const factory = pinnedAccount(request.factory, await current(request.factory), factoryPin.codeHash);
+  const factoryState = decodeOrderFactoryData(orderCell(factory.dataBoc)), orderCode = factoryState.code;
   if (orderCode.isExotic || orderCode.hash().toString('hex') !== manifest.templates.SpotOrder
     || contractAddress(0, { code: orderCode, data: orderInitialData(Address.parse(request.factory), Address.parse(request.owner), BigInt(request.nonce)) }).toRawString() !== request.order)
     throw new SpotEvidenceError(400, 'bad_request');
@@ -211,7 +212,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
       || initializedOrder.refundSeen || initializedOrder.refundKind !== 0 || initializedOrder.refusal !== 0
       || initializedOrder.inputWallet || initializedOrder.keeper || initializedOrder.prevKeeper
       || !initializedOrder.termsCell?.equals(actual) || !currentOrder.termsCell?.equals(actual)) throw unavailable();
-    for (const shard of [tx.before, tx.after]) if (!activeOrderAccount(shard, factoryPin.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+    for (const shard of [tx.before, tx.after]) if (!matchesOrderFactoryIdentity(activeOrderAccount(shard, factoryPin.codeHash).data, factoryState)) throw unavailable();
     response.transactions = [origin.evidence, child.evidence];
   } catch { gaps.push({ code: 'creation_request_mismatch', account: request.factory }); }
   if (request.kind === 'order-settlement' && response.request.kind === 'order-settlement') {
@@ -227,7 +228,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         && input.info.value.coins.toString() === attempt.valueNano && 'creationBodies' in creation && input.body.equals(creation.creationBodies[index])) {
         try {
           for (const boundary of [checked(row).before, checked(row).after])
-            if (!activeOrderAccount(boundary, factoryPin.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+            if (!matchesOrderFactoryIdentity(activeOrderAccount(boundary, factoryPin.codeHash).data, factoryState)) throw unavailable();
           pending.push(row);
           continue;
         } catch { /* A cursor cannot authorize a different factory implementation. */ }
@@ -301,6 +302,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         if (edges % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); signal?.throwIfAborted(); }
         const message = loadMessage(cell.beginParse()); if (message.info.type !== 'internal') continue;
         const address = message.info.dest.toRawString();
+        if (isPlatformActivityNotice(manifest, message, row.evidence.account, [request.pool])) continue;
         if (!allowed.has(address)) { gaps.push({ code: 'related_account_outside_operation', account: address }); continue; }
         if (absent.has(address)) {
           // Only a never-funded, zero-execution closed order may account for its

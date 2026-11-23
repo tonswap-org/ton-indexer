@@ -150,6 +150,21 @@ export function orderInitialData(factory: Address, owner: Address, nonce: bigint
 }
 
 /** Reads storage only. Callers must authenticate its code, child address, factory and immutable terms. */
+/** Read immutable factory identity without traversing the mutable v2 queue. */
+export function decodeOrderFactoryData(data: Cell) {
+  const s = ordinary(data, 'factory'), code = s.loadRef(), salt = s.loadUintBig(64);
+  if (code.isExotic) throw Error('Invalid order factory template');
+  const activity = s.remainingBits !== 0;
+  if (activity) {
+    const count = s.loadUint(16);
+    s.loadUint(32);
+    const root = s.loadMaybeRef();
+    if (count > 4096 || (count === 0) !== (root === null) || root?.isExotic) throw Error('Invalid order factory queue');
+  }
+  s.endParse();
+  return { code, salt, activity };
+}
+
 export function decodeOrderState(data: Cell): OrderState {
   const s = ordinary(data, 'storage');
   const factory = s.loadAddress(), owner = s.loadAddress(), nonce = s.loadUintBig(64), body = s.loadMaybeRef();
@@ -166,6 +181,10 @@ export function decodeOrderState(data: Cell): OrderState {
   const cancelRequested = b.loadBoolean(), refundSeen = b.loadBoolean();
   const refundKind = b.loadUint(2), refusal = b.loadUint(2), p = ordinary(b.loadRef(), 'peers');
   const termsCell = b.loadRef();
+  if (b.remainingBits === 68) {
+    b.loadUintBig(64);
+    if (b.loadUint(4) > 8) throw Error('Invalid automated order retry backoff');
+  }
   b.endParse();
   const inputWallet = p.loadMaybeAddress(), keeper = p.loadMaybeAddress(), prevKeeper = p.loadMaybeAddress();
   p.endParse();
@@ -196,4 +215,9 @@ export function decodeOrderState(data: Cell): OrderState {
     refundKind: refundKind as 0 | 1 | 2, refusal: refusal as 0 | 1 | 2,
     inputWallet, keeper, prevKeeper, terms, termsCell, termsHash: termsCell.hash().toString('hex'),
     soldIn, inFlight, unexecutedIn: terms.amountIn - soldIn };
+}
+
+export function matchesOrderFactoryIdentity(data: Cell, expected: ReturnType<typeof decodeOrderFactoryData>) {
+  const state = decodeOrderFactoryData(data);
+  return state.activity === expected.activity && state.salt === expected.salt && state.code.equals(expected.code);
 }

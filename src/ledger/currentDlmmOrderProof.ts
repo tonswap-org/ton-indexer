@@ -2,7 +2,7 @@ import { orderShard } from '../orders/evidence';
 import { currentOrderWalletAbsent } from './currentDlmmOrderAbsence';
 import { recoverCurrentOrderInput } from './currentDlmmOrderRecovery';
 import { Address, beginCell, Cell, contractAddress } from '@ton/core';
-import { decodeOrderState, orderInitialData, orderTermsToCell, parseOrderTerms, validateOrderTerms, type OrderTerms } from '../orders/state';
+import { decodeOrderFactoryData, decodeOrderState, orderInitialData, orderTermsToCell, parseOrderTerms, validateOrderTerms, type OrderTerms } from '../orders/state';
 import { decodeSwap, decodeSwapEvent, decodeSwapOutcome, decodeSwapResult, readCurrentDlmmPool } from './currentDlmmState';
 import { currentDlmmPoolBinding, currentT3ActiveState, decodeSpotTokenTransfer, readSpotWalletBalance, verifyCurrentT3Transaction, verifySpotMessageLink, verifySpotPoolBoundary, verifySpotTokenDelivery, type CurrentDlmmProofBinding, type CurrentDlmmWallet, type CurrentT3Transaction as Tx, type CurrentT3TransactionEvidence, type SpotProofBinding } from './currentDlmmPhysical';
 import type { CurrentDlmmCashLeg, CurrentDlmmEconomics } from './currentDlmmEconomics';
@@ -24,7 +24,7 @@ export function readCurrentDlmmOrderCreations(owner:string,b:CurrentDlmmProofBin
  for(const origin of txs.filter(t=>t.account===owner&&t.succeeded))for(const out of origin.tx.outMessages.values()){
   const found=maybe(()=>{need(out.info.type==='internal'&&raw(out.info.dest)===pin.address&&!out.info.bounced,'factory request');const q=out.body.beginParse();need(q.loadUint(32)===0x4f435254,'OCRT');const query=q.loadUintBig(64),nonce=q.loadUintBig(64),reviewed=q.loadRef();q.endParse();const original=parseOrderTerms(reviewed);
    const factory=one(txs.filter(t=>t.account===pin.address&&t.succeeded&&verifySpotMessageLink(origin,t)));need(factory,'original factory');validateOrderTerms(original,Address.parse(owner),factory.tx.now);
-   const a=currentT3ActiveState(factory.before,pin.codeHash),z=currentT3ActiveState(factory.after,pin.codeHash);need(a.splitDepth===null&&z.splitDepth===null&&a.data.equals(z.data),'immutable factory');const data=a.data.beginParse(),code=data.loadRef();data.loadUintBig(64);data.endParse();need(!code.isExotic&&code.hash().toString('hex')===b.release.templates.SpotOrder,'order template');
+   const a=currentT3ActiveState(factory.before,pin.codeHash),z=currentT3ActiveState(factory.after,pin.codeHash);need(a.splitDepth===null&&z.splitDepth===null&&a.data.equals(z.data),'immutable factory');const {code}=decodeOrderFactoryData(a.data);need(!code.isExotic&&code.hash().toString('hex')===b.release.templates.SpotOrder,'order template');
    const initial=orderInitialData(Address.parse(pin.address),Address.parse(owner),nonce),order=contractAddress(0,{code,data:initial}).toRawString(),termsCell=orderTermsToCell({...original,startAt:Math.max(original.startAt,factory.tx.now)}),terms=parseOrderTerms(termsCell),pool=raw(terms.pool)!;
    const p=b.pools.find(p=>p.pool===pool),pay=p?.[terms.sellIndex===0?'t3':'x'];need(p&&pay&&pay.root===raw(terms.inputMaster)&&raw(terms.recipient)===owner,'installed terms');
    const child=one(txs.filter(t=>t.account===order&&t.succeeded&&verifySpotMessageLink(factory,t)));need(child,'original child');const m=input(child,pin.address),init=m.init;need(init?.code?.equals(code)&&init.data?.equals(initial)&&init.splitDepth==null&&init.special==null&&!init.libraries?.size,'canonical StateInit');const s=m.body.beginParse();need(s.loadUint(32)===0x4f494e49&&s.loadUintBig(64)===query&&s.loadRef().equals(termsCell),'OINI');s.endParse();need(child.tx.prevTransactionLt===0n&&(!child.before.account||child.before.account.storage.state.type==='uninit'),'child genesis');
@@ -80,11 +80,21 @@ export function decodeCurrentDlmmOrders(owner:string,b:CurrentDlmmProofBinding,e
     const found=recoverCurrentOrderInput(source,r,orderWallet,pb.wallets.pay,pb,txs,{order:c.order,owner,factory:b.release.contracts.SpotOrderFactory!.address,nonce:c.nonce,terms:c.termsCell});
     if(found)e.evidenceHashes.push(...found.evidenceHashes);return found?.credit??null;
    };
-   for(const exec of orderHistory.filter(t=>t.succeeded&&maybe(()=>input(t).body.beginParse().preloadUint(32)===0x4f455845)===true)){
+   const factory = b.release.contracts.SpotOrderFactory!.address;
+   const executions = orderHistory.filter(t => t.succeeded && maybe(() => {
+    const message = input(t), body = message.body.beginParse(), op = body.loadUint(32);
+    if (op === 0x4f455845) return true;
+    if (op !== 0x4f504f4b || message.info.type !== 'internal' || raw(message.info.src) !== factory || raw(c.terms.executor) !== factory) return false;
+    body.loadUintBig(64); body.loadUintBig(64); body.loadCoins(); body.loadAddress(); body.endParse();
+    const before = orderState(t,c,b,false), after = orderState(t,c,b);
+    return before.state === 1 && after.state === 2 && !before.cancelRequested && after.execId === before.execId + 1
+      && after.executedSlices === before.executedSlices && raw(after.keeper) === c.order;
+   }) === true);
+   for(const exec of executions){
     const before=orderState(exec,c,b,false),after=orderState(exec,c,b);need(before.state===1&&after.state===2&&after.execId===before.execId+1,'execution transition');
     const amount=before.executedSlices===c.terms.slices-1?c.terms.amountIn-BigInt(c.terms.slices-1)*(c.terms.amountIn/BigInt(c.terms.slices)):c.terms.amountIn/BigInt(c.terms.slices),query=(1n<<63n)|BigInt(after.execId),minimum=(amount*c.terms.minOutTotal+c.terms.amountIn-1n)/c.terms.amountIn;
     const source=one(walletHistory.filter(t=>t.succeeded&&verifySpotMessageLink(exec,t)&&maybe(()=>input(t,c.order).body.beginParse().preloadUint(32)===0x0f8a7ea5)===true));need(source,'slice original debit');const r=decodeSpotTokenTransfer(input(source,c.order).body),swap=decodeSwap(r.payload),keeper=input(exec);
-    need(keeper.info.type==='internal'&&r.response===raw(keeper.info.src)&&r.query===query&&r.amount===amount&&r.owner===c.pool&&!r.custom&&r.forwardValue>0n&&swap&&swap.minOut===minimum&&swap.deadline===c.terms.expiresAt&&raw(swap.recipient)===owner&&raw(swap.refundTo)===c.order&&swap.notifyOrigin&&swap.fwdGram===0n&&swap.refundFwdGram>0n&&!swap.fwdPayload,'exact slice transfer');
+    need(keeper.info.type==='internal'&&r.response===(keeper.body.beginParse().preloadUint(32)===0x4f504f4b?c.order:raw(keeper.info.src))&&r.query===query&&r.amount===amount&&r.owner===c.pool&&!r.custom&&r.forwardValue>0n&&swap&&swap.minOut===minimum&&swap.deadline===c.terms.expiresAt&&raw(swap.recipient)===owner&&raw(swap.refundTo)===c.order&&swap.notifyOrigin&&swap.fwdGram===0n&&swap.refundFwdGram>0n&&!swap.fwdPayload,'exact slice transfer');
     const credit=deliver(source,r,orderWallet,pb.wallets.poolPay);account(source,-amount);
     if(!credit){const ownerCredit=recovered(source,r);need(ownerCredit,'physical failed-slice recovery');cash(source,ownerCredit,orderWallet,pb.wallets.pay);refunded+=amount;continue;}e.evidenceHashes.push(credit.hash);
     const pool=one(txs.filter(t=>t.account===c.pool&&t.succeeded&&verifySpotMessageLink(credit,t)&&maybe(()=>{const n=input(t,credit.account).body.beginParse();need(n.loadUint(32)===0x7362d09c&&n.loadUintBig(64)===query&&n.loadCoins()===amount&&raw(n.loadAddress())===c.order&&either(n).equals(r.payload),'notification');verifySpotPoolBoundary(t,pb);return true;})===true));need(pool,'pool original boundary');e.evidenceHashes.push(pool.hash);

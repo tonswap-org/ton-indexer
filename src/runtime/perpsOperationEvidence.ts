@@ -82,7 +82,7 @@ export type CurrentPerpsOperationEvidence = ProductPhysicalGraph & { schema: 'to
 export async function collectPerpsOperationEvidence(manifest: RuntimeReleaseManifest, source: ChainSource, store: PhysicalEvidenceStore,
   parsed: ReturnType<typeof readPerpsOperationRequest>, signal?: AbortSignal): Promise<CurrentPerpsOperationEvidence> {
   const p = parsed.request, c = await readPerpsEvidenceContext(manifest, source, store, parsed, signal);
-  const graph = await collectProductPhysicalGraph(source, store, c.head, { owner: p.owner, target: p.sourceWallet ?? p.engine, body: parsed.body, dispatch: p.dispatch,
+  const graph = await collectProductPhysicalGraph(source, store, c.head, { activity: { manifest, sources: [p.engine] }, owner: p.owner, target: p.sourceWallet ?? p.engine, body: parsed.body, dispatch: p.dispatch,
     pins: c.pins, completeAccounts: c.completeAccounts, includeAccounts: c.includeAccounts, allowFrozenPins: c.allowFrozenPins, reader: c.reader }, signal);
   verifyPerpsEvidenceHistory(manifest, c, graph.transactions);
   assertFreshHeadTime(c.head.utime); signal?.throwIfAborted(); return boundProductResponse<CurrentPerpsOperationEvidence>({ schema: 'tonswap-perps-operation-evidence-v1',

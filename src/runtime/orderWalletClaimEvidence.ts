@@ -9,7 +9,7 @@ import { canonicalLedgerHash } from '../ledger/normalize';
 import { findTransactionState } from '../ledger/archive';
 import { t3Attempt, t3Delivery } from '../ledger/currentT3Wire';
 import { activeOrderAccount, orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
-import { canonicalOrderTerms, decodeOrderState, orderInitialData } from '../orders/state';
+import { matchesOrderFactoryIdentity, decodeOrderFactoryData, canonicalOrderTerms, decodeOrderState, orderInitialData } from '../orders/state';
 import { boundaryState, boundaryTransaction, canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
 import { readSpotOperationRequest, SpotEvidenceError, type ParsedOrderSettlementSpotOperationRequest } from './spotOperationRequest';
 
@@ -64,7 +64,7 @@ export async function collectOrderWalletClaimEvidence(manifest: RuntimeReleaseMa
   const selected = await walletReader.wallet(hub.address, request.order, { at: head, signal });
   if (selected.status !== 'ok') throw unavailable();
   const factoryState = await reader.current(request.factory), factory = pinned(request.factory, factoryState, manifest.contracts.SpotOrderFactory!.codeHash);
-  const fs = orderCell(factory.dataBoc).beginParse(), orderCode = fs.loadRef(); fs.loadUintBig(64); fs.endParse();
+  const factoryIdentity = decodeOrderFactoryData(orderCell(factory.dataBoc)), orderCode = factoryIdentity.code;
   const initial = { code: orderCode, data: orderInitialData(Address.parse(request.factory), Address.parse(request.owner), BigInt(request.nonce)) };
   if (orderCode.isExotic || orderCode.hash().toString('hex') !== manifest.templates.SpotOrder || contractAddress(0, initial).toRawString() !== request.order)
     throw new SpotEvidenceError(400, 'bad_request');
@@ -129,7 +129,7 @@ export async function collectOrderWalletClaimEvidence(manifest: RuntimeReleaseMa
       if (!row || input?.info.type !== 'internal' || input.info.bounced || input.info.src.toRawString() !== request.owner
         || input.info.value.coins.toString() !== attempt.valueNano || !input.body.equals(parsed.creationBodies[index])) throw unavailable();
       for (const boundary of [tx(row).before, tx(row).after])
-        if (!activeOrderAccount(boundary, manifest.contracts.SpotOrderFactory!.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+        if (!matchesOrderFactoryIdentity(activeOrderAccount(boundary, manifest.contracts.SpotOrderFactory!.codeHash).data, factoryIdentity)) throw unavailable();
     } catch { gaps.push({ code: 'original_creation_dispatch_unobserved', account: request.factory, lt: attempt.lt }); }
   }
   if (gaps.length) return finish();
@@ -144,7 +144,7 @@ export async function collectOrderWalletClaimEvidence(manifest: RuntimeReleaseMa
     const initialized = decodeOrderState(activeOrderAccount(c.after, manifest.templates.SpotOrder).data);
     if (initialized.state !== 1 || initialized.execId || initialized.executedSlices || initialized.closeReason || initialized.attemptAt || initialized.lastExecutedAt
       || initialized.cancelRequested || initialized.refundSeen || initialized.refundKind || initialized.refusal || initialized.inputWallet || initialized.keeper || initialized.prevKeeper) throw unavailable();
-    for (const boundary of [f.before, f.after]) if (!activeOrderAccount(boundary, manifest.contracts.SpotOrderFactory!.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+    for (const boundary of [f.before, f.after]) if (!matchesOrderFactoryIdentity(activeOrderAccount(boundary, manifest.contracts.SpotOrderFactory!.codeHash).data, factoryIdentity)) throw unavailable();
     for (const row of orderHistory.rows) for (const boundary of [tx(row).before, tx(row).after]) {
       if (!boundary.account || boundary.account.storage.state.type === 'uninit') continue;
       const active = activeOrderAccount(boundary, manifest.templates.SpotOrder), state = decodeOrderState(active.data);

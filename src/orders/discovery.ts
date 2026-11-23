@@ -1,7 +1,7 @@
 import { Address, beginCell, Cell, contractAddress, loadMessage, storeStateInit } from '@ton/core';
 import { createHash } from 'node:crypto';
 import { activeOrderAccount, digest, orderCell, requireOrder, verifyOrderTransaction, type OrderTransactionEvidence } from './evidence';
-import { canonicalOrderTerms, decodeOrderState, orderInitialData, parseOrderTerms } from './state';
+import { canonicalOrderTerms, decodeOrderFactoryData, decodeOrderState, orderInitialData, parseOrderTerms } from './state';
 
 export const orderJson = (value: unknown): string => {
   if (Array.isArray(value)) return '[' + value.map(orderJson).join(',') + ']';
@@ -46,7 +46,7 @@ function authenticateOrderAttempt(release: OrderRelease, factoryEvidence: OrderT
   requireOrder(f.succeeded, 'factory transaction failed');
   const before = activeOrderAccount(f.before, release.factoryCodeHash), after = activeOrderAccount(f.after, release.factoryCodeHash);
   requireOrder(before.data.equals(after.data), 'factory immutable state changed');
-  const fs = before.data.beginParse(), orderCode = fs.loadRef(); fs.loadUintBig(64); fs.endParse();
+  const { code: orderCode } = decodeOrderFactoryData(before.data);
   requireOrder(digest(orderCode) === release.orderCodeHash, 'factory child code mismatch');
   const incoming = f.tx.inMessage;
   requireOrder(incoming?.info.type === 'internal' && !incoming.info.bounced && incoming.info.src.workChain === 0, 'owner request missing');
