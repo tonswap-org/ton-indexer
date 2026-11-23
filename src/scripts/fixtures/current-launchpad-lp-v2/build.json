@@ -1,0 +1,16 @@
+{
+  "source": "04b81cc87c3e1a07a437fff7a2813be7bf2653cb",
+  "buildHash": "f397bdb1a9290958ae3d3a7c5b8b0e6efa3e92e5241384473e6fda873af66d88",
+  "templates": {
+    "SaleFixed": "d98ca4d9ff584da6492854cfb1a9c62312ebd5d949f59f9142d91411f0f13c6a",
+    "SaleBonding": "d98ca4d9ff584da6492854cfb1a9c62312ebd5d949f59f9142d91411f0f13c6a",
+    "SaleAuction": "d98ca4d9ff584da6492854cfb1a9c62312ebd5d949f59f9142d91411f0f13c6a",
+    "LpVault": "52aa7a75a4565f08ee11822e03a129b3455001d149b563522c261b659af71332",
+    "VestingVault": "d0fb54f46383e5f50f6c6541e7ac345f976bd61af45738dd1555c9b39148f73b",
+    "DlmmPool": "e08049a71616432a86d82cc912b6021d02bacabfa86ae68b2fbe2c50e9f721d0",
+    "T3Wallet": "3bd7020c846ba45b9291003c3d0fe79fb6e9428a26819ee63e3ed30e0dd9abf6",
+    "T3RecoveryProof": "66fea90500722cc6f723b1ca26231dec5bdb680d6ff45876bd9eba5bea79ba00",
+    "JettonV21Minter": "37fb274466a01db790720de6ea3e5b2797aadaa517cad7f9dc6e35d49b189c4f",
+    "JettonV21Wallet": "fdd0e33b685ba04a6a5b6beb6b103b76312b5649ac0c55a1ebe680e08d83efee"
+  }
+}

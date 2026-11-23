@@ -3,6 +3,7 @@ import type { OrderTransactionEvidence } from '../orders/evidence';
 import { activeOrderAccount } from '../orders/evidence';
 import { decodeLaunchSale, decodeLaunchLp, decodeLaunchVesting, launchChildAddress, LAUNCH_OP } from './currentLaunchpadState';
 import { verifyLaunchpadArchiveClaim, verifyLaunchpadHolderClaim } from './currentLaunchpadRecovery';
+import { verifyManualLpAutomation, LP_SEED_REPLY, readSeedPreview } from './currentLaunchpadSeed';
 import { verifyCurrentLaunchpadLiquidity } from './currentLaunchpadLiquidity';
 import { currentLaunchpadBindingFromManifest, descendants, launchpadChild, launchpadFactory, linked, receives, maybe, need, physicalTransfer, raw, tokenTransfer, verifyLaunchpadTransaction,
   type CurrentLaunchpadBinding, type CurrentLaunchpadTransaction as Tx, type LaunchpadCash, type LaunchpadToken } from './currentLaunchpadProof';
@@ -16,6 +17,7 @@ export type CurrentLaunchpadEconomics = {
   inventorySuppliedRaw: string; feeAllocatedRaw: string; lpFundingAllocatedRaw: string; creatorProceedsAllocatedRaw: string;
   recoveredAccountingRaw: string; owedRetiredRaw: string; recoveryBeneficiary: string | null;
   lpShares: { owner: string; pool: string; binId: number; beforeRaw: string; afterRaw: string; deltaRaw: string }[];
+  lpSeed?: { beneficiary:string; unlockAt:number; side:number; amountRaw:string; reserveBeforeRaw:string; reserveAfterDispatchRaw:string };
   aggregateOwed: boolean; paidIn: Record<string, string>; paidOut: Record<string, string>; pendingOut: Record<string, string>;
   cash: LaunchpadCash[]; evidenceHashes: string[]; issues: string[];
 };
@@ -106,13 +108,18 @@ export function decodeCurrentLaunchpadOperations(owner: string, binding: Current
       const before = child, after = launchpadChild(executed, binding, true);
       need(before.config && after.config);
       if (!after.config.equals(before.config)) {
-        need(binding.manifest.schema === 'tonswap-release-v2' && before.identity.role === 0 && after.identity.role === 0
+        need(binding.manifest.schema === 'tonswap-release-v2');
+        if(before.identity.role===1&&after.identity.role===1){
+          verifyManualLpAutomation(decodeLaunchLp(before),decodeLaunchLp(after),kind,query,executed);
+        }else{
+        need(before.identity.role === 0 && after.identity.role === 0
           && (kind === 'finalize' || kind === 'cancel'));
         const oldSale = decodeLaunchSale(before), newSale = decodeLaunchSale(after);
         need(oldSale.phase === 1 && [2, 3, 4].includes(newSale.phase) && oldSale.settlementReserve !== null
           && oldSale.settlementReserve > 0n && newSale.settlementReserve === 0n
           && oldSale.feeBps === newSale.feeBps && oldSale.termsCell.equals(newSale.termsCell)
           && before.config.refs[0].equals(after.config.refs[0]));
+        }
       }
       const factory = txs.filter(t => t.account === binding.manifest.contracts.SaleFactory!.address && t.tx.lt < executed.tx.lt).at(-1);
       need(factory); const factoryState = launchpadFactory(factory, binding, true); e.evidenceHashes.push(factory.hash);
@@ -202,6 +209,33 @@ export function decodeCurrentLaunchpadOperations(owner: string, binding: Current
       if (refund) need(e.cash.some(c => c.to === owner && c.root === binding.manifest.contracts.T3Hub!.address && BigInt(c.amountRaw) === refundAmount) || !payoutComplete);
       e.outcome = payoutComplete && !e.issues.some(i => i.endsWith('_required') || i.endsWith('_unresolved')) ? (refund ? 'refunded' : 'delivered') : 'accepted';
     } catch { e.outcome = 'unresolved'; e.issues.push('launchpad_current_evidence_incomplete'); }
+  }
+  if(binding.manifest.schema==='tonswap-release-v2')for(const executed of txs){
+    const message=executed.tx.inMessage;
+    if(!executed.succeeded||message?.info.type!=='internal'||message.info.bounced||message.body.isExotic||message.body.bits.length<32
+      ||message.body.beginParse().preloadUint(32)!==LP_SEED_REPLY)continue;
+    const r=maybe(()=>readSeedPreview(message.body,LP_SEED_REPLY));
+    const child=maybe(()=>launchpadChild(executed,binding));
+    if(!r?.allowed||child?.identity.role!==1)continue;
+    const before=maybe(()=>decodeLaunchLp(child)),after=maybe(()=>decodeLaunchLp(launchpadChild(executed,binding,true)));
+    if(!before?.automation||!after?.automation||raw(before.pool)!==raw(message.info.src)||before.automation.fund<=after.automation.fund
+      ||!([raw(before.identity.creator),raw(before.lpRecipient),executed.account].includes(owner)))continue;
+    const e=initial(executed,executed.account,child,'lp-seed-automatic',r.id,message.body.hash().toString('hex'),binding);
+    e.owner=owner;e.evidenceHashes=[executed.hash];
+    try{
+      const pins=new Map<string,LaunchpadToken>();
+      for(const slot of before.slots.values()){const root=raw(slot.master)!;pins.set(root,token(root,executed,binding,txs,e.evidenceHashes));}
+      const proof=verifyCurrentLaunchpadLiquidity(executed,binding,txs,pins);
+      if(proof.status==='unavailable'){e.issues.push('launchpad_lp_share_boundary_required');}
+      else{
+        e.lpSeed={beneficiary:raw(before.lpRecipient)!,unlockAt:before.unlockAt,side:r.side,amountRaw:String(r.amount),
+          reserveBeforeRaw:String(before.automation.fund),reserveAfterDispatchRaw:String(after.automation.fund)};
+        e.lpShares=proof.shares;e.cash=proof.cash;e.pendingOut=proof.pendingOut;e.projectRoot=raw(before.slots.get(1)?.master);
+        e.evidenceHashes.push(...proof.evidenceHashes);
+        e.outcome=proof.status==='confirmed'?'delivered':'accepted';
+      }
+    }catch{e.issues.push('launchpad_current_evidence_incomplete');}
+    result.push({economics:e});
   }
   return result;
 }
