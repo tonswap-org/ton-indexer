@@ -101,7 +101,14 @@ describe('official Receita receipt-month Compra evidence', () => {
     await expect(db.query('DELETE FROM platform_historical_fx_revisions WHERE id=$1',[first.revisionId])).rejects.toThrow();
   });
   it('single-flights, reuses durable cache after replacement and rejects altered cache values',async()=>{
-    const fetcher=vi.fn(async()=>response()),p=new Providers(db,config(),fetcher,()=>now),results=await Promise.all(Array.from({length:5},()=>p.receitaWorkRates('2025-06')));expect(fetcher).toHaveBeenCalledTimes(1);
+    const fetcher=vi.fn(async()=>response()),p=new Providers(db,config(),fetcher,()=>now);
+    const reads=vi.spyOn(db,'query');
+    const results=await Promise.all(Array.from({length:5},()=>p.receitaWorkRates('2025-06'))).finally(()=>{
+      const snapshots=reads.mock.calls.filter(([sql])=>sql.includes('SELECT value,expires_at FROM platform_quote_cache'));
+      reads.mockRestore();
+      expect(snapshots).toHaveLength(1);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
     const next=new Providers(db,config(),fetcher,()=>now);expect(await next.receitaWorkRates('2025-06')).toEqual(results[0]);
     const key=receitaWorkRatesCacheKey(results[0]!.request),record=(await db.query<{value:any}>('SELECT value FROM platform_quote_cache WHERE key=$1',[key])).rows[0]!.value;
     record.evidence.observation.buy='999';await db.query('UPDATE platform_quote_cache SET value=$1 WHERE key=$2',[JSON.stringify(record),key]);

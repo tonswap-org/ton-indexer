@@ -30,7 +30,7 @@ const emptyPrice = (assetId: string, date?: string): Price => ({ assetId, price:
   status: 'missing', precision: date ? 'daily' : 'spot', change24h: null });
 /** Public, wallet-independent provider queries only. Sources: frankfurter.dev and docs.coingecko.com. */
 export class Providers {
-  private inFlight = new Map<string, Promise<unknown>>();
+  private inFlight = new Map<string, Promise<{ value: unknown; expired: boolean }>>();
   private historicalAnchors: HistoricalAnchorRepository;
   private historicalFx: HistoricalFxRepository;
   private historicalDaily: HistoricalDailyRepository;
@@ -39,7 +39,19 @@ export class Providers {
   constructor(private db: Database, private config: Config, private fetcher: Fetcher = fetch,
     private clock: () => Date = () => new Date()) { this.historicalAnchors = new HistoricalAnchorRepository(db); this.historicalFx = new HistoricalFxRepository(db); this.historicalDaily = new HistoricalDailyRepository(db); this.ptaxArchive = new PtaxRepository(db); this.receitaWorkRatesArchive = new ReceitaWorkRatesRepository(db); }
 
-  private async cached<T>(key: string, seconds: number, fetchValue: () => Promise<T>, validate?: (value: unknown) => boolean | Promise<boolean>,
+  private cached<T>(key: string, seconds: number, fetchValue: () => Promise<T>, validate?: (value: unknown) => boolean | Promise<boolean>,
+    evidenceExpiry?: (value: T) => string): Promise<{ value: T; expired: boolean }> {
+    const existing = this.inFlight.get(key) as Promise<{ value: T; expired: boolean }> | undefined;
+    if (existing) return existing;
+    // Enroll the database read too. Concurrent reads can return the same old snapshot
+    // after a faster caller has already published and removed its in-flight refresh.
+    const pending = this.loadCached(key, seconds, fetchValue, validate, evidenceExpiry)
+      .finally(() => this.inFlight.delete(key));
+    this.inFlight.set(key, pending);
+    return pending;
+  }
+
+  private async loadCached<T>(key: string, seconds: number, fetchValue: () => Promise<T>, validate?: (value: unknown) => boolean | Promise<boolean>,
     evidenceExpiry?: (value: T) => string): Promise<{ value: T; expired: boolean }> {
     const stored = (await this.db.query<{ value: T; expires_at: Date | string }>(
       'SELECT value,expires_at FROM platform_quote_cache WHERE key=$1', [key])).rows[0];
@@ -48,21 +60,17 @@ export class Providers {
       evidenceExpiry ? Date.parse(evidenceExpiry(value)) : Infinity);
     // The mutable cache cannot extend the lifetime of immutable source evidence.
     if (cached && expiresAt(cached.value, cached.expires_at) > this.clock().getTime()) return { value: cached.value, expired: false };
-    let pending = this.inFlight.get(key) as Promise<T> | undefined;
-    if (!pending) {
-      pending = (async () => {
-        const value = await fetchValue();
-        if (validate && !await validate(value)) throw new Error('Provider observation does not match its cache evidence contract.');
-        await this.db.query(`INSERT INTO platform_quote_cache(key,value,expires_at) VALUES($1,$2,$3)
-          ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,expires_at=EXCLUDED.expires_at,fetched_at=now()`,
-        [key, JSON.stringify(value), new Date(expiresAt(value, new Date(this.clock().getTime() + seconds * 1000)))]);
-        return value;
-      })();
-      this.inFlight.set(key, pending);
+    try {
+      const value = await fetchValue();
+      if (validate && !await validate(value)) throw new Error('Provider observation does not match its cache evidence contract.');
+      await this.db.query(`INSERT INTO platform_quote_cache(key,value,expires_at) VALUES($1,$2,$3)
+        ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,expires_at=EXCLUDED.expires_at,fetched_at=now()`,
+      [key, JSON.stringify(value), new Date(expiresAt(value, new Date(this.clock().getTime() + seconds * 1000)))]);
+      return { value, expired: false };
+    } catch (error) {
+      if (cached) return { value: cached.value, expired: true };
+      throw error;
     }
-    try { return { value: await pending, expired: false }; }
-    catch (error) { if (cached) return { value: cached.value, expired: true }; throw error; }
-    finally { this.inFlight.delete(key); }
   }
 
   async historicalAnchor(coinGeckoId: string, at: string): Promise<HistoricalAnchorResponse> {
