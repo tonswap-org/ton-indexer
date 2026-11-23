@@ -8,7 +8,7 @@ export type ServiceMetadataConfig = { network: Network };
 /** Only exact current native bindings can advertise release-bound fresh reads. */
 export function currentNativeRuntime(network: Network, metadata?: RegistryMetadata): RuntimeReleaseManifest | undefined {
   const runtime = metadata?.runtime;
-  return runtime && validateReleaseManifest(runtime).ok && runtime.schema === 'tonswap-release-v1' && runtime.network === `ton:${network}`
+  return runtime && validateReleaseManifest(runtime).ok && runtime.network === `ton:${network}`
     && runtime.globalId === (network === 'mainnet' ? -239 : -3)
     && metadata?.releaseId === runtime.releaseId && metadata.manifestHash === runtime.manifestHash ? runtime : undefined;
 }

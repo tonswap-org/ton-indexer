@@ -32,6 +32,13 @@ try {
   assert.deepEqual(buildRuntimeManifestBundle(parsed.runtime).metadata.runtime, fixture);
   assert.equal(buildRuntimeManifestBundle(parsed.runtime).metadata.manifestHash, fixture.manifestHash);
   assert.equal(validateReleaseManifest(fixture).ok, true);
+  const activity = { ...fixture, schema: 'tonswap-release-v2' as const, execution: 'transaction-driven' as const };
+  delete activity.orderKeeper;
+  activity.manifestHash = hashReleaseManifest(activity);
+  assert.equal(parseCanonicalReleaseManifest(activity, 'testnet').runtime.execution, 'transaction-driven');
+  assert.equal(validateReleaseManifest({ ...activity, orderKeeper: fixture.orderKeeper }).ok, false);
+  assert.equal(validateReleaseManifest({ ...activity, execution: 'manual' }).ok, false);
+
   const native = parseCanonicalReleaseManifest(nativeLocalnetManifestText, 'localnet');
   const nativeBindings = deriveRuntimeManifestBindings(native.runtime);
   assert.equal(native.runtime.schema, 'tonswap-release-v1');
@@ -162,7 +169,7 @@ try {
   shapeFail('keeper-contract-collision', { orderKeeper: { address: contracts.Governance } }, 'orderKeeper duplicates an address');
   fail('keeper-pool-collision', { orderKeeper: { address: fixture.spotMarkets[0].pool } });
   fail('keeper-option-collision', { orderKeeper: { address: fixture.options[0].option } });
-  assert.equal(parseCanonicalReleaseManifest(runtimeManifestFixture({ orderKeeper: { address: runtimeAddress(901) } }), 'testnet').runtime.orderKeeper.address, runtimeAddress(901));
+  assert.equal(parseCanonicalReleaseManifest(runtimeManifestFixture({ orderKeeper: { address: runtimeAddress(901) } }), 'testnet').runtime.orderKeeper!.address, runtimeAddress(901));
 
   assert.throws(() => readCanonicalReleaseManifest('good.json', 'testnet'), /canonical absolute path/);
   const symlinkPath = join(root, 'symlink.json'); symlinkSync(path, symlinkPath);

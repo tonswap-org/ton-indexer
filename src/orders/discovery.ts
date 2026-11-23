@@ -16,7 +16,7 @@ export function bindOrderRelease(manifest: { [key: string]: unknown }): OrderRel
   const { manifestHash, ...content } = manifest;
   const contracts = manifest.contracts as Record<string, { address: string; codeHash: string }>, templates = manifest.templates as Record<string, string>;
   const factory = contracts?.SpotOrderFactory;
-  requireOrder(manifest.schema === 'tonswap-release-v1' && typeof manifestHash === 'string' && /^[a-f0-9]{64}$/.test(manifestHash) && orderHash(content) === manifestHash, 'release hash mismatch');
+  requireOrder((manifest.schema === 'tonswap-release-v1' || manifest.schema === 'tonswap-release-v2') && typeof manifestHash === 'string' && /^[a-f0-9]{64}$/.test(manifestHash) && orderHash(content) === manifestHash, 'release hash mismatch');
   requireOrder(typeof manifest.releaseId === 'string' && manifest.releaseId.length > 0 && ['ton:localnet', 'ton:testnet', 'ton:mainnet'].includes(String(manifest.network)), 'release identity missing');
   requireOrder(factory && /^0:[a-f0-9]{64}$/.test(factory.address) && /^[a-f0-9]{64}$/.test(factory.codeHash) && /^[a-f0-9]{64}$/.test(templates?.SpotOrder), 'current order release pins missing');
   return Object.freeze({ releaseId: manifest.releaseId, manifestHash, network: String(manifest.network), factory: factory.address, factoryCodeHash: factory.codeHash, orderCodeHash: templates.SpotOrder });

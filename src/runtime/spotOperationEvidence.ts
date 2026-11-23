@@ -244,7 +244,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
       else gaps.push({ code: 'original_funding_dispatch_unobserved', account: funding.sourceWallet, lt: funding.lt });
     }
     const allowed = new Set([request.owner, request.factory, request.order, request.pool, request.inputRoot,
-      manifest.orderKeeper.address, ...Object.values(settlement.wallets)]);
+      ...(manifest.orderKeeper ? [manifest.orderKeeper.address] : []), ...Object.values(settlement.wallets)]);
     // Current peers and historical permissionless executors come only from
     // this pinned child's authenticated state, never request expansion fields.
     for (const keeper of [currentOrder.keeper, currentOrder.prevKeeper, creation.terms.executor]) if (keeper) allowed.add(keeper.toRawString());
