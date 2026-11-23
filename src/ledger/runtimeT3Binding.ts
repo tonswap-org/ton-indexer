@@ -29,6 +29,8 @@ export async function deriveT3RedemptionBinding(manifest: RuntimeReleaseManifest
     if (state.accountState !== 'active' || !state.codeBoc || !state.dataBoc || Cell.fromBase64(state.codeBoc).isExotic || Cell.fromBase64(state.codeBoc).hash().toString('hex') !== hub.codeHash)
         throw Error('T3 hub state does not match the runtime manifest');
     const parsed = readCurrentT3Hub(state.dataBoc);
+    if (manifest.schema === 'tonswap-release-v2' && (!parsed.activity || parsed.activity !== manifest.contracts.FeeRouter?.address))
+        throw Error('T3 activity relay differs from the release');
     if (parsed.governance !== manifest.contracts.Governance?.address || parsed.walletCodeHash !== manifest.templates.T3Wallet || parsed.proofCodeHash !== manifest.templates.T3RecoveryProof)
         throw Error('T3 immutable authority or template mismatch');
     const tokens = ['USDT', 'USDC', 'KUSD'].map(symbol => manifest.tokens.find(t => t.symbol === symbol));

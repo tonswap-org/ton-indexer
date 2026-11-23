@@ -135,8 +135,13 @@ const seriesCodec = codec<NativeOptionSeries>(s => {
     const t = ordinary(s.loadRef()), terms = { writer: addr(t), child: addr(t), kind: t.loadUint(16), expiry: t.loadUint(32), maxNotional: t.loadCoins(), premiumBps: t.loadUint(32), collateralBps: t.loadUint(32), requiredReserve: t.loadCoins(), creationCell: t.loadRef() };
     t.endParse();
     const creation = decodeOptionCreation(terms.creationCell);
-    const state = { funded: s.loadCoins(), fundIntent: s.loadUintBig(64), withdrawnBacking: s.loadCoins(), locked: s.loadCoins(), pendingLock: s.loadCoins(), pendingNotional: s.loadCoins(), openNotional: s.loadCoins(), purged: s.loadBit(), recordCount: s.loadUint(16), positions: s.loadDict(Dictionary.Keys.BigUint(64), positionCodec) };
-    return finished(s, { ...terms, creation, ...state });
+    const state = { funded: s.loadCoins(), fundIntent: s.loadUintBig(64), withdrawnBacking: s.loadCoins(), locked: s.loadCoins(), pendingLock: s.loadCoins(), pendingNotional: s.loadCoins(), openNotional: s.loadCoins(), purged: s.loadBit(), recordCount: s.loadUint(16) };
+  if (s.remainingBits === 107) {
+    // V2 stores settlement phase, due time, payout cursor and retry count before the position map.
+    s.loadUint(2); s.loadUint(32); s.loadUintBig(64); s.loadUint(8);
+  }
+  const positions = s.loadDict(Dictionary.Keys.BigUint(64), positionCodec);
+    return finished(s, { ...terms, creation, ...state, positions });
 });
 const pendingCodec = codec(s => finished(s, { seriesId: s.loadUintBig(64), buyer: addr(s), notional: s.loadCoins(), net: s.loadCoins(), fee: s.loadCoins(), lock: s.loadCoins() }));
 export const optionIntentCodec = codec<NativeOptionIntent>(s => finished(s, { queryId: s.loadUintBig(64), kind: s.loadUint(8), owner: addr(s), amount: s.loadCoins(), kept: s.loadCoins(), createdAt: s.loadUint(32), askedAt: s.loadUint(32), seriesId: s.loadUintBig(64), notional: s.loadCoins() }));
@@ -153,8 +158,14 @@ export function decodeOptionFactory(c: Cell) {
     const s = ordinary(c), governance = addr(s), closed = s.loadBit(), peers = ordinary(s.loadRef()), p = ordinary(s.loadRef());
     const vault = addr(peers), manager = optionalAddr(peers), shoutCode = peers.loadRef(), outperfCode = peers.loadRef();
     peers.endParse();
-    const policy = finished(p, { used: p.loadCoins(), cap: p.loadCoins(), feeBps: p.loadUint(16), bumpActivate: p.loadUint(16), bumpDeactivate: p.loadUint(16), pauseThreshold: p.loadUint(16), bumpPercent: p.loadUint(16), bumpActive: p.loadBit(), fundedTotal: p.loadCoins(), lockedTotal: p.loadCoins(), pendingNotional: p.loadCoins(), seriesCount: p.loadUint(16), recordCount: p.loadUint(16), shoutCollateral: p.loadUint(32), outperfCollateral: p.loadUint(32) });
-    return finished(s, { governance, closed, vault, manager, shoutCode, outperfCode, policy, series: s.loadDict(Dictionary.Keys.BigUint(64), seriesCodec), pending: s.loadDict(Dictionary.Keys.BigUint(64), pendingCodec) });
+    const policy = { used: p.loadCoins(), cap: p.loadCoins(), feeBps: p.loadUint(16), bumpActivate: p.loadUint(16), bumpDeactivate: p.loadUint(16), pauseThreshold: p.loadUint(16), bumpPercent: p.loadUint(16), bumpActive: p.loadBit(), fundedTotal: p.loadCoins(), lockedTotal: p.loadCoins(), pendingNotional: p.loadCoins(), seriesCount: p.loadUint(16), recordCount: p.loadUint(16), shoutCollateral: p.loadUint(32), outperfCollateral: p.loadUint(32) };
+  const activity = p.remainingBits !== 0;
+  if (activity) {
+    const due = p.loadMaybeRef();
+    if (due?.isExotic) throw Error('Invalid option due index');
+  }
+  p.endParse();
+    return finished(s, { governance, closed, vault, manager, shoutCode, outperfCode, activity, policy, series: s.loadDict(Dictionary.Keys.BigUint(64), seriesCodec), pending: s.loadDict(Dictionary.Keys.BigUint(64), pendingCodec) });
 }
 export function decodeOptionManager(c: Cell) {
     const s = ordinary(c);
@@ -187,11 +198,11 @@ export function decodeOptionChild(c: Cell) {
         const p = ordinary(terms.pools);
         pools = finished(p, { basePool: addr(p), quotePool: optionalAddr(p) });
     }
-    const oracle = finished(o, { initial: o.loadUintBig(128), quoteInitial: o.loadUintBig(128), strike: o.loadUintBig(128), answered0: o.loadBit(), medium0: o.loadUintBig(128), long0: o.loadUintBig(128), answered1: o.loadBit(), medium1: o.loadUintBig(128), long1: o.loadUintBig(128), state: o.loadUint(2), window: o.loadUint(16), decidedAt: o.loadUintBig(64) });
+    const oracle = finished(o, { initial: o.loadUintBig(128), quoteInitial: o.loadUintBig(128), strike: o.loadUintBig(128), answered0: o.loadBit(), medium0: o.loadUintBig(128), long0: o.loadUintBig(128), answered1: o.loadBit(), medium1: o.loadUintBig(128), long1: o.loadUintBig(128), state: o.loadUint(2), window: o.loadUint(16), decidedAt: o.loadUintBig(64), failures: o.remainingBits === 8 ? o.loadUint(8) : 0 });
     return finished(s, { factory, seriesId, terms: terms && pools ? { ...terms, ...pools } : null, oracle, positionCount: s.loadUint(16), openNotional: s.loadCoins(), positions: s.loadDict(Dictionary.Keys.BigUint(64), childPositionCodec) });
 }
-export const optionChildAddress = (factory: Address, seriesId: bigint, code: Cell) => {
-    const oracle = beginCell().storeUint(0, 384).storeBit(false).storeUint(0, 256).storeBit(false).storeUint(0, 256).storeUint(0, 82).endCell();
+export const optionChildAddress = (factory: Address, seriesId: bigint, code: Cell, activity = false) => {
+    const oracle = beginCell().storeUint(0, 384).storeBit(false).storeUint(0, 256).storeBit(false).storeUint(0, 256).storeUint(0, activity ? 90 : 82).endCell();
     const data = beginCell().storeAddress(factory).storeUint(seriesId, 64).storeMaybeRef(null).storeRef(oracle).storeUint(0, 16).storeCoins(0).storeDict(null).endCell();
     return contractAddress(0, { code, data });
 };

@@ -32,7 +32,9 @@ export function readCurrentT3Hub(data: string | Cell) {
     s.endParse();
     const c = ordinary(configCell), governance = c.loadAddress().toRawString(), proofCodeHash = hash(c.loadUintBig(256)), amp = c.loadUint(16), rentBits = c.loadUint(32), rentCells = c.loadUint(32), walletCode = c.loadRef(), metadata = c.loadRef();
     const policies = c.loadDict(Dictionary.Keys.Uint(8), readOnly(p => { const v = { scale: p.loadUint(32), codeHash: hash(p.loadUintBig(256)), lockExit: p.loadUint(16), balanceExit: p.loadUint(16) }; p.endParse(); return v; }));
+    const activity = c.remainingBits ? c.loadMaybeAddress() : null;
     c.endParse();
+    if (activity && activity.workChain !== 0) throw Error('Invalid T3 activity relay');
     if (walletCode.isExotic || metadata.isExotic || amp < 100 || amp > 250 || policies.size !== 3 || [0, 1, 2].some(i => !policies.has(i)))
         throw Error('Invalid T3 config');
     const l = ordinary(ledgerCell), slots = l.loadDict(Dictionary.Keys.Uint(8), slotValue);
@@ -46,7 +48,7 @@ export function readCurrentT3Hub(data: string | Cell) {
     e.endParse();
     const t = ordinary(treesCell), trees = Array.from({ length: 4 }, () => { const v = ordinary(t.loadRef()), root = v.loadUintBig(256), initialized = v.loadBit(), lastKey = v.loadUintBig(64), lastLeaf = v.loadUintBig(256), frontier = v.loadMaybeRef(); v.endParse(); return { root, initialized, lastKey, lastLeaf, frontier }; });
     t.endParse();
-    return { dataHash: cell.hash().toString('hex'), configHash: configCell.hash().toString('hex'), governance, proofCodeHash, amp, rentBits, rentCells, walletCode, walletCodeHash: walletCode.hash().toString('hex'), policies, slots, owed, backing, pending, supply, feeBps, admitted, frozen, withdrawalsOnly, clears, trees };
+    return { dataHash: cell.hash().toString('hex'), configHash: configCell.hash().toString('hex'), activity: activity?.toRawString() ?? null, governance, proofCodeHash, amp, rentBits, rentCells, walletCode, walletCodeHash: walletCode.hash().toString('hex'), policies, slots, owed, backing, pending, supply, feeBps, admitted, frozen, withdrawalsOnly, clears, trees };
 }
 export function readCurrentT3Wallet(data: string | Cell) {
     const cell = typeof data === 'string' ? Cell.fromBase64(data) : data, s = ordinary(cell), c = ordinary(s.loadRef());

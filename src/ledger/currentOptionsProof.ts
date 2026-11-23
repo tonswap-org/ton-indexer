@@ -320,7 +320,7 @@ export function inspectNativeOptionEvidence(p: NativeOptionEvidenceRequest, b: N
             s.endParse();
             check(minimum === BigInt(p.amountRaw), 'exercise minimum');
             const originalFactory = factoryState(first, b, false), series = originalFactory.series.get(seriesId), position = series?.positions.get(tokenId);
-            check(series && position && !position.released && position.buyer.equals(address(p.owner)) && (p.series === null || p.series === raw(series.child)) && optionChildAddress(b.options.factory, seriesId, series.kind === 1 ? originalFactory.shoutCode : originalFactory.outperfCode).equals(series.child), 'original live position');
+            check(series && position && !position.released && position.buyer.equals(address(p.owner)) && (p.series === null || p.series === raw(series.child)) && optionChildAddress(b.options.factory, seriesId, series.kind === 1 ? originalFactory.shoutCode : originalFactory.outperfCode,originalFactory.activity).equals(series.child), 'original live position');
             const paid = one(events.filter(x => [4, 5].includes(x.e.kind) && x.e.tokenId === tokenId && x.e.intentId === tokenId && x.t.tx.lt > first.tx.lt && maybe(() => {
                 const before = vaultState(x.t, b, false).book.escrows.get(seriesId << 64n | tokenId), after = vaultState(x.t, b).book.escrows.get(seriesId << 64n | tokenId);
                 check(before && !after && before.owner.equals(address(p.owner)) && before.queryId === BigInt(p.queryId) && before.net === position.net && before.fee === position.fee && before.locked === position.lock, 'position escrow');
@@ -433,13 +433,13 @@ export function inspectNativeOptionEvidence(p: NativeOptionEvidenceRequest, b: N
         if (!factory)
             return { status: 'pending' };
         const fs = factoryState(factory, b), series = fs.series.get(seriesId);
-        check(series && (p.series === null || p.series === raw(series.child)) && optionChildAddress(b.options.factory, seriesId, series.kind === 1 ? fs.shoutCode : fs.outperfCode).equals(series.child), 'series state');
+        check(series && (p.series === null || p.series === raw(series.child)) && optionChildAddress(b.options.factory, seriesId, series.kind === 1 ? fs.shoutCode : fs.outperfCode,fs.activity).equals(series.child), 'series state');
         if (p.kind === 'fund') {
             const writer = vaultState(accepted.t, b).book.writers.get(seriesId);
             check(writer?.owner.equals(address(p.owner)) && writer.amounts.funded === BigInt(p.amountRaw) && series.writer.equals(writer.owner) && series.fundIntent === intentId && series.funded === writer.amounts.funded, 'writer backing acceptance');
             return effect(p, accepted.t, 'delivered', BigInt(p.amountRaw));
         }
-        check((p.series === null || p.series === raw(series.child)) && optionChildAddress(b.options.factory, seriesId, series.kind === 1 ? fs.shoutCode : fs.outperfCode).equals(series.child), 'canonical option series');
+        check((p.series === null || p.series === raw(series.child)) && optionChildAddress(b.options.factory, seriesId, series.kind === 1 ? fs.shoutCode : fs.outperfCode,fs.activity).equals(series.child), 'canonical option series');
         const position = series.positions.get(intentId), escrow = vaultState(accepted.t, b).book.escrows.get(seriesId << 64n | intentId);
         check(position && escrow && position.buyer.equals(address(p.owner)) && position.notional === BigInt(p.notionalRaw!) && position.net + position.fee === BigInt(p.amountRaw) && escrow.owner.equals(position.buyer) && escrow.queryId === BigInt(p.queryId) && escrow.net === position.net && escrow.fee === position.fee && escrow.locked === position.lock, 'position and custody');
         const child = one(txs.filter(t => t.account === raw(series.child) && t.succeeded && verifyCurrentT3MessageLink(t, factory)).filter(t => maybe(() => {

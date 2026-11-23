@@ -129,7 +129,7 @@ export async function collectLaunchpadOperationEvidence(manifest:RuntimeReleaseM
       includeAccounts.add(address);pins.set(address,manifest.templates.DlmmPool);
     }
   }
-  const graph=await collectProductPhysicalGraph(source,store,head,{owner:p.owner,target:parsed.dispatchTarget,body:parsed.body,dispatch:p.dispatch,pins,completeAccounts,includeAccounts:[...includeAccounts]},signal);
+  const graph=await collectProductPhysicalGraph(source,store,head,{activity:{manifest,sources:[p.sale]},owner:p.owner,target:parsed.dispatchTarget,body:parsed.body,dispatch:p.dispatch,pins,completeAccounts,includeAccounts:[...includeAccounts]},signal);
   if(poolContext)for(const row of graph.transactions)if(row.account===poolContext.pool)for(const shard of [verifyOrderTransaction(row).before,verifyOrderTransaction(row).after])if(shard.account?.storage.state.type==='active')verifyPoolEvidenceIdentity(activeOrderAccount(shard,manifest.templates.DlmmPool).data,poolContext.identityManifest,poolContext);
   assertFreshHeadTime(head.utime);signal?.throwIfAborted();return boundProductResponse<CurrentLaunchpadOperationEvidence>({schema:'tonswap-launchpad-operation-evidence-v1',releaseId:manifest.releaseId,manifestHash:manifest.manifestHash,
     asOf:{masterchainSeqno:head.seqno,unixTime:head.utime,blockRootHash:head.rootHashHex},request:{kind:p.kind,owner:p.owner,bodyHash:p.bodyHash},...graph},p.factory);

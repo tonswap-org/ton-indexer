@@ -44,9 +44,19 @@ export function nativePerpsTradeBody(t: NativePerpsTrade) {
   return b.endCell();
 }
 export const nativePerpsPositionKey = (owner: Address, id: number) => BigInt('0x' + beginCell().storeAddress(owner).storeUint(marketId(id), 32).endCell().hash().toString('hex'));
-export function decodeNativePerpsPosition(c: Cell) {
+export function decodeNativePerpsPosition(c: Cell, positionKey?: bigint) {
   const s = ordinary(c), gen = s.loadUintBig(64), size = s.loadIntBig(128), margin = s.loadCoins(),
     entryNotional = s.loadCoins(), lastFundingIndex = s.loadIntBig(128), p = ordinary(s.loadRef());
+  if (s.remainingBits) {
+    const holder = s.loadMaybeRef();
+    if (!holder && size !== 0n) fail('Live Perps position lacks its holder');
+    if (holder) {
+      const identity = ordinary(holder);
+      const key = nativePerpsPositionKey(address(identity), identity.loadUint(32));
+      identity.endParse();
+      if (positionKey !== undefined && positionKey !== key) fail('Perps holder differs from its position key');
+    }
+  }
   return finish(s, { gen, size, margin, entryNotional, lastFundingIndex,
     counterparty: finish(p, { reserved: p.loadCoins(), pendingFunding: p.loadCoins(), collectedLoss: p.loadCoins(), remainingEntitlement: p.loadCoins() }) });
 }

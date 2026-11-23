@@ -1,3 +1,4 @@
+import { decodeOrderFactoryData } from '../orders/state';
 import { currentOrderWalletAbsent } from './currentDlmmOrderAbsence';
 import { currentDlmmOrderCandidate } from './currentDlmmOrderDiscovery';
 import { ownerConnectedProtocolNodes, currentProtocolPins } from './currentProtocolEvents';
@@ -706,7 +707,7 @@ export class LedgerGraphBuilder {
         bindings[orderKey!]=false;
         try{
           const current=await source.getAccountState(orderFactory.address);if(!current.shardAccountBoc)throw Error('Original current order factory unavailable');
-          const state=activeOrderAccount(orderShard(current.shardAccountBoc,orderFactory.address).shard,orderFactory.codeHash),data=state.data.beginParse(),code=data.loadRef();data.loadUintBig(64);data.endParse();
+          const state=activeOrderAccount(orderShard(current.shardAccountBoc,orderFactory.address).shard,orderFactory.codeHash),{code}=decodeOrderFactoryData(state.data);
           for(const message of requests){if(!message.body)continue;try{const candidate=currentDlmmOrderCandidate(Cell.fromBase64(message.body),owner,configured,code);orderCandidates.set(candidate.order,candidate);}catch{/* A rejected malformed request supplies no child authority. */}}
           if(orderCandidates.size>this.maxAccounts)throw Error('Current order discovery bound');
           if(orderCandidates.size){await load(orderFactory.address,'counterparty');for(const candidate of orderCandidates.values())await load(candidate.order,'counterparty');}
@@ -809,7 +810,7 @@ export class LedgerGraphBuilder {
         }
         for (const id of ids) {
           const series = f.series.get(id);
-          if (!series || ![1,2].includes(series.kind) || !optionChildAddress(o.factory,id,series.kind===1?f.shoutCode:f.outperfCode).equals(series.child)) throw Error('Current Options child identity unavailable');
+          if (!series || ![1,2].includes(series.kind) || !optionChildAddress(o.factory,id,series.kind===1?f.shoutCode:f.outperfCode,f.activity).equals(series.child)) throw Error('Current Options child identity unavailable');
           await load(series.child.toRawString(), 'counterparty');
         }
         currentOptionsBinding = b; bindings[key] = true;
