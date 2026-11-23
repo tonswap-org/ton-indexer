@@ -45,7 +45,10 @@ export function readGovernanceStorage(cell: Cell) {
   }
   const s = cell.beginParse(), phase = s.loadUint(8), bootstrap = s.loadMaybeAddress(), bootstrapDeadline = s.loadUint(32),
     salt = s.loadUintBig(64), handoffBucket = s.loadUint(32), assets = s.loadRef().beginParse();
-  const jetton = assets.loadRef(), sweeps = assets.loadRef(), treasury = assets.loadMaybeAddress(); assets.endParse();
+  const jetton = assets.loadRef(), sweeps = assets.loadRef(), treasury = assets.loadMaybeAddress();
+  const activityRelay = assets.remainingBits ? assets.loadAddress() : null;
+  assets.endParse();
+  if (activityRelay && activityRelay.workChain !== 0) throw Error('Invalid Governance activity relay.');
   const ts = s.loadBit() ? { merkleClaim: s.loadAddress(), genesisTotal: s.loadUintBig(120), supplyBase: s.loadUintBig(120) } : null;
   const policy = s.loadDict(Dictionary.Keys.BigUint(256), { serialize: readonly, parse: v => v.asCell() });
   const policyCount = s.loadUint(16), st = s.loadRef().beginParse(), pr = s.loadRef().beginParse(); s.endParse();
@@ -65,7 +68,7 @@ export function readGovernanceStorage(cell: Cell) {
     const p = book.get(id);
     if (!p || p.queued || p.slot !== index) throw Error('Invalid Governance voting slot.');
   }
-  return { phase, bootstrap, bootstrapDeadline, salt, handoffBucket, jetton, sweeps, treasury, ts, policy, policyCount,
+  return { phase, bootstrap, bootstrapDeadline, salt, handoffBucket, jetton, sweeps, treasury, activityRelay, ts, policy, policyCount,
     stake: { totalLockedRaw, lockCount, deferredMax, mature, matureThrough, buckets, expired, expiredThrough, expiring, locks: ownerLocks },
     props: { nextId, live, escrowRaw, slots, proposals: book } };
 }
