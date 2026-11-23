@@ -103,7 +103,17 @@ export function decodeCurrentLaunchpadOperations(owner: string, binding: Current
     const reached = descendants(origin, txs); e.evidenceHashes = [...reached]; result.push({ economics: e });
     try {
       need(first && executed && first.succeeded && executed.succeeded && child?.config);
-      const before = child, after = launchpadChild(executed, binding, true); need(before.config && after.config?.equals(before.config));
+      const before = child, after = launchpadChild(executed, binding, true);
+      need(before.config && after.config);
+      if (!after.config.equals(before.config)) {
+        need(binding.manifest.schema === 'tonswap-release-v2' && before.identity.role === 0 && after.identity.role === 0
+          && (kind === 'finalize' || kind === 'cancel'));
+        const oldSale = decodeLaunchSale(before), newSale = decodeLaunchSale(after);
+        need(oldSale.phase === 1 && [2, 3, 4].includes(newSale.phase) && oldSale.settlementReserve !== null
+          && oldSale.settlementReserve > 0n && newSale.settlementReserve === 0n
+          && oldSale.feeBps === newSale.feeBps && oldSale.termsCell.equals(newSale.termsCell)
+          && before.config.refs[0].equals(after.config.refs[0]));
+      }
       const factory = txs.filter(t => t.account === binding.manifest.contracts.SaleFactory!.address && t.tx.lt < executed.tx.lt).at(-1);
       need(factory); const factoryState = launchpadFactory(factory, binding, true); e.evidenceHashes.push(factory.hash);
       const sale = raw(launchChildAddress({ ...before.identity, role: 0 }, factoryState.codes.get(before.identity.kind)!.code));

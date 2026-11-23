@@ -21,7 +21,14 @@ export const launchAddress=(id:LaunchIdentity,code:Cell)=>contractAddress(0,{cod
 export function readLaunchFactory(data:Cell,manifest:RuntimeReleaseManifest){
   const s=slice(data),governance=addr(s);s.loadBit();const p=slice(s.loadRef()),master=addr(p),fee=addr(p),dlmm=addr(p),profile=slice(p.loadRef());p.endParse();
   profile.loadUint(32);profile.loadCoins();profile.loadRef();profile.endParse();const feeBps=s.loadUint(16);
-  const codes=s.loadDict(Dictionary.Keys.Uint(8),{serialize(){throw fail();},parse(q:Slice){const code=q.loadRef();q.loadUint(32);q.loadUint(16);q.endParse();return code;}});s.endParse();
+  const codes=s.loadDict(Dictionary.Keys.Uint(8),{serialize(){throw fail();},parse(q:Slice){const code=q.loadRef();q.loadUint(32);q.loadUint(16);q.endParse();return code;}});
+  if (manifest.schema === 'tonswap-release-v2') {
+    const registry = slice(s.loadRef()), count = registry.loadUint(16), sequence = registry.loadUint(32);
+    const due = registry.loadMaybeRef(), bySale = registry.loadMaybeRef();
+    registry.endParse();
+    launchCheck(count <= 4096 && count <= sequence && Boolean(count) === Boolean(due) && Boolean(count) === Boolean(bySale));
+  }
+  s.endParse();
   const pins=[manifest.templates.SaleFixed,manifest.templates.SaleBonding,manifest.templates.SaleAuction,manifest.templates.LpVault,manifest.templates.VestingVault];
   launchCheck(governance===manifest.contracts.Governance?.address&&master===manifest.contracts.T3Hub?.address&&fee===manifest.contracts.FeeRouter?.address&&dlmm===manifest.contracts.DlmmPoolFactory?.address
     &&feeBps<=500&&codes.size===5&&pins.every((hash,i)=>codes.has(i)&&!codes.get(i)!.isExotic&&codes.get(i)!.hash().toString('hex')===hash));
@@ -40,8 +47,8 @@ export function readLaunchChild(data:Cell){
   managed.loadMaybeRef();managed.loadDict(Dictionary.Keys.Uint(8),Dictionary.Values.Cell());managed.endParse();const book=s.loadRef();s.endParse();return{id,config,slots,book};
 }
 export function readLaunchSaleConfig(config:Cell){
-  const c=slice(config),feeBps=c.loadUint(16),p=slice(c.loadRef()),fee=addr(p),lp=addr(p),vesting=p.loadMaybeAddress();p.endParse();const terms=readLaunchTerms(c.loadRef());c.endParse();
-  launchCheck(feeBps<=500&&(!vesting||vesting.workChain===0));return{fee,lp,vesting:vesting?.toRawString()??null,terms};
+  const c=slice(config),feeBps=c.loadUint(16),p=slice(c.loadRef()),fee=addr(p),lp=addr(p),vesting=p.loadMaybeAddress();p.endParse();const terms=readLaunchTerms(c.loadRef());const reserve=c.remainingBits?c.loadCoins():null;c.endParse();
+  launchCheck(feeBps<=500&&(!vesting||vesting.workChain===0));return{fee,lp,vesting:vesting?.toRawString()??null,terms,reserve};
 }
 
 /** Public project roots use the installed current vendor families. Observed
