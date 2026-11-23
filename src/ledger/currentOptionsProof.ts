@@ -8,6 +8,7 @@ import { t3Attempt, t3PathRoot } from './currentT3Wire';
  * cells. Request-shaped input is inferred from owner transactions by the ledger.
  * Neither an event nor a released right is proof of token delivery. */
 export type OptionsBinding = {
+    activityRelay?: Address;
     factory: Address;
     factoryHash: string;
     vault: Address;
@@ -124,7 +125,7 @@ export function currentOptionsBindingFromManifest(m: import('../config/runtimeMa
     const f = pin('OptionFactory'), v = pin('OptionVault'), manager = pin('OptionSeriesManager'), hub = pin('T3Hub'), token = m.tokens.find(t => t.symbol === 'T3');
     check(token && token.root === hub.address.toRawString() && token.masterCodeHash === hub.hash && token.walletCodeHash === m.templates.T3Wallet, 'release T3 identity');
     return { network: m.network.slice(4) as NativeOptionEvidenceRequest['network'], releaseId: m.releaseId, manifestHash: m.manifestHash, walletCodeHash: token.walletCodeHash, proofCodeHash: m.templates.T3RecoveryProof,
-        options: { factory: f.address, factoryHash: f.hash, vault: v.address, vaultHash: v.hash, manager: manager.address, managerHash: manager.hash, governance: pin('Governance').address, feeSink: pin('FeeRouter').address, treasury: pin('Treasury').address, shoutHash: m.templates.ShoutOption, outperfHash: m.templates.OutperformanceOption, t3Root: hub.address, t3MasterHash: hub.hash, t3WalletHash: token.walletCodeHash } };
+        options: { activityRelay: m.schema==='tonswap-release-v2' ? pin('FeeRouter').address : undefined, factory: f.address, factoryHash: f.hash, vault: v.address, vaultHash: v.hash, manager: manager.address, managerHash: manager.hash, governance: pin('Governance').address, feeSink: pin('FeeRouter').address, treasury: pin('Treasury').address, shoutHash: m.templates.ShoutOption, outperfHash: m.templates.OutperformanceOption, t3Root: hub.address, t3MasterHash: hub.hash, t3WalletHash: token.walletCodeHash } };
 }
 const raw = (a: Address | null | undefined) => a?.toRawString() ?? null;
 const hash = (c: Cell) => c.hash().toString('hex');
@@ -166,7 +167,7 @@ function factoryState(t: CurrentT3Transaction, b: NativeOptionProofBinding, afte
     check(t.account === raw(b.options.factory) && t.succeeded, 'factory transaction');
     currentT3ActiveState(t.before, b.options.factoryHash);
     const s = decodeOptionFactory(currentT3ActiveState(after ? t.after : t.before, b.options.factoryHash).data), o = b.options;
-    check(s.governance.equals(o.governance) && s.vault.equals(o.vault) && s.manager?.equals(o.manager) && hash(s.shoutCode) === o.shoutHash && hash(s.outperfCode) === o.outperfHash, 'factory identity');
+    check(s.governance.equals(o.governance) && s.vault.equals(o.vault) && s.manager?.equals(o.manager) && s.activityRelay?.toRawString() === o.activityRelay?.toRawString() && hash(s.shoutCode) === o.shoutHash && hash(s.outperfCode) === o.outperfHash, 'factory identity');
     return s;
 }
 function balance(t: CurrentT3Transaction, b: NativeOptionProofBinding, owner: string, after: boolean) {
@@ -333,7 +334,7 @@ export function inspectNativeOptionEvidence(p: NativeOptionEvidenceRequest, b: N
                 check(child, 'exercise causal graph');
                 currentT3ActiveState(child.before, series.kind === 1 ? b.options.shoutHash : b.options.outperfHash);
                 const state = decodeOptionChild(currentT3ActiveState(child.after, series.kind === 1 ? b.options.shoutHash : b.options.outperfHash).data), cp = state.positions.get(tokenId);
-                check(state.factory.equals(b.options.factory) && state.seriesId === seriesId && cp?.owner.equals(position.buyer) && cp.notional === position.notional && cp.net === position.net && cp.lock === position.lock && cp.outcome === (x.e.kind === 5 ? 2 : 1) && cp.payout === (x.e.kind === 5 ? 0n : x.e.amount), 'child settlement identity');
+                check(state.factory.equals(b.options.factory) && state.terms?.activityRelay?.toRawString()===(series.kind===1?b.options.activityRelay?.toRawString():undefined) && state.seriesId === seriesId && cp?.owner.equals(position.buyer) && cp.notional === position.notional && cp.net === position.net && cp.lock === position.lock && cp.outcome === (x.e.kind === 5 ? 2 : 1) && cp.payout === (x.e.kind === 5 ? 0n : x.e.amount), 'child settlement identity');
                 return true;
             }) === true));
             if (paid) {
@@ -350,7 +351,7 @@ export function inspectNativeOptionEvidence(p: NativeOptionEvidenceRequest, b: N
                 check(child, 'refusal child graph');
                 for (const boundary of [child.before, child.after]) {
                     const c = decodeOptionChild(currentT3ActiveState(boundary, series.kind === 1 ? b.options.shoutHash : b.options.outperfHash).data), cp = c.positions.get(tokenId);
-                    check(c.factory.equals(b.options.factory) && c.seriesId === seriesId && cp?.owner.equals(position.buyer) && cp.outcome === 0 && cp.notional === position.notional && cp.net === position.net && cp.lock === position.lock, 'refused child position');
+                    check(c.factory.equals(b.options.factory) && c.terms?.activityRelay?.toRawString()===(series.kind===1?b.options.activityRelay?.toRawString():undefined) && c.seriesId === seriesId && cp?.owner.equals(position.buyer) && cp.outcome === 0 && cp.notional === position.notional && cp.net === position.net && cp.lock === position.lock, 'refused child position');
                 }
                 return true;
             }) === true));
@@ -445,7 +446,7 @@ export function inspectNativeOptionEvidence(p: NativeOptionEvidenceRequest, b: N
         const child = one(txs.filter(t => t.account === raw(series.child) && t.succeeded && verifyCurrentT3MessageLink(t, factory)).filter(t => maybe(() => {
             currentT3ActiveState(t.before, series.kind === 1 ? b.options.shoutHash : b.options.outperfHash);
             const c = decodeOptionChild(currentT3ActiveState(t.after, series.kind === 1 ? b.options.shoutHash : b.options.outperfHash).data), cp = c.positions.get(intentId);
-            check(c.factory.equals(b.options.factory) && c.seriesId === seriesId && cp?.owner.equals(address(p.owner)) && cp.notional === position.notional && cp.net === position.net && cp.lock === position.lock, 'child position');
+            check(c.factory.equals(b.options.factory) && c.terms?.activityRelay?.toRawString()===(series.kind===1?b.options.activityRelay?.toRawString():undefined) && c.seriesId === seriesId && cp?.owner.equals(address(p.owner)) && cp.notional === position.notional && cp.net === position.net && cp.lock === position.lock, 'child position');
             return true;
         }) === true));
         if (!child)

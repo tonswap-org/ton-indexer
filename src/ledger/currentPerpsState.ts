@@ -96,6 +96,7 @@ export function decodeNativePerpsState(c: Cell) {
 }
 export type NativePerpsState = ReturnType<typeof decodeNativePerpsState>;
 export type PerpsBinding = {
+  activityRelay?: Address;
   engine: Address; engineHash: string; governance: Address; feeSink: Address; treasury: Address; riskVault: Address;
   t3Root: Address; t3MasterHash: string; t3WalletHash: string; poolHash: string; markets: Map<number, Address>;
 };

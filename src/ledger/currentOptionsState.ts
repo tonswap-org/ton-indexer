@@ -157,6 +157,7 @@ const childPositionCodec = codec<NativeOptionChildPosition>(s => { const owner =
 export function decodeOptionFactory(c: Cell) {
     const s = ordinary(c), governance = addr(s), closed = s.loadBit(), peers = ordinary(s.loadRef()), p = ordinary(s.loadRef());
     const vault = addr(peers), manager = optionalAddr(peers), shoutCode = peers.loadRef(), outperfCode = peers.loadRef();
+    const activityRelay = peers.remainingBits ? addr(peers) : null;
     peers.endParse();
     const policy = { used: p.loadCoins(), cap: p.loadCoins(), feeBps: p.loadUint(16), bumpActivate: p.loadUint(16), bumpDeactivate: p.loadUint(16), pauseThreshold: p.loadUint(16), bumpPercent: p.loadUint(16), bumpActive: p.loadBit(), fundedTotal: p.loadCoins(), lockedTotal: p.loadCoins(), pendingNotional: p.loadCoins(), seriesCount: p.loadUint(16), recordCount: p.loadUint(16), shoutCollateral: p.loadUint(32), outperfCollateral: p.loadUint(32) };
   const activity = p.remainingBits !== 0;
@@ -165,7 +166,7 @@ export function decodeOptionFactory(c: Cell) {
     if (due?.isExotic) throw Error('Invalid option due index');
   }
   p.endParse();
-    return finished(s, { governance, closed, vault, manager, shoutCode, outperfCode, activity, policy, series: s.loadDict(Dictionary.Keys.BigUint(64), seriesCodec), pending: s.loadDict(Dictionary.Keys.BigUint(64), pendingCodec) });
+    return finished(s, { governance, closed, vault, manager, shoutCode, outperfCode, activity, activityRelay, policy, series: s.loadDict(Dictionary.Keys.BigUint(64), seriesCodec), pending: s.loadDict(Dictionary.Keys.BigUint(64), pendingCodec) });
 }
 export function decodeOptionManager(c: Cell) {
     const s = ordinary(c);
@@ -188,7 +189,7 @@ export function decodeOptionVault(c: Cell) {
 export function decodeOptionChild(c: Cell) {
     const s = ordinary(c), factory = addr(s), seriesId = s.loadUintBig(64), termsCell = s.loadMaybeRef(), o = ordinary(s.loadRef());
     const t = termsCell ? ordinary(termsCell) : null;
-    const terms = t ? { writer: addr(t), expiry: t.loadUint(32), maxNotional: t.loadCoins(), strikeBps: t.loadUint(32), collateralBps: t.loadUint(32), cooldown: t.loadUint(32), floorWindow: t.loadUint(32), pools: t.loadRef() } : null;
+    const terms = t ? { writer: addr(t), expiry: t.loadUint(32), maxNotional: t.loadCoins(), strikeBps: t.loadUint(32), collateralBps: t.loadUint(32), cooldown: t.loadUint(32), floorWindow: t.loadUint(32), pools: t.loadRef(), activityRelay: t.remainingBits ? addr(t) : null } : null;
     let pools: {
         basePool: Address;
         quotePool: Address | null;
