@@ -14,10 +14,11 @@ export function readOrderFactory(data: Cell) {
   const queueCount = activity ? s.loadUint(16) : 0;
   const sequence = activity ? s.loadUint(32) : 0;
   const root = activity ? s.loadMaybeRef() : null;
+  const relay = activity && s.remainingBits ? s.loadAddress() : null;
   s.endParse();
-  requireQueue(!code.isExotic && queueCount <= ORDER_QUEUE_CAPACITY && queueCount <= sequence
+  requireQueue((!relay || relay.workChain === 0) && !code.isExotic && queueCount <= ORDER_QUEUE_CAPACITY && queueCount <= sequence
     && (queueCount === 0) === (root === null) && !root?.isExotic);
-  return { code, salt, activity, queueCount, sequence, root };
+  return { code, salt, activity, queueCount, sequence, root, relay };
 }
 
 // A TON dictionary edge stores a compressed label followed by a value or two branches.
@@ -78,7 +79,7 @@ export function orderCreationKey(before: Cell, after: Cell, automated: boolean, 
     return a.activity ? 0n : null;
   }
   const b = readOrderFactory(after);
-  requireQueue(b.activity && b.code.equals(a.code) && b.salt === a.salt && b.queueCount === a.queueCount + 1
+  requireQueue(b.activity && b.code.equals(a.code) && b.salt === a.salt && b.relay?.toRawString() === a.relay?.toRawString() && b.queueCount === a.queueCount + 1
     && b.sequence === a.sequence + 1 && b.root && order.workChain === 0 && Number.isSafeInteger(startAt)
     && startAt >= 0 && startAt <= 0xffff_ffff);
   const key = (BigInt(startAt) << 32n) | BigInt(b.sequence);
