@@ -53,7 +53,9 @@ export function readCurrentPerpsRiskVault(data: Cell, manifest: RuntimeReleaseMa
   }));
   const liabilities = s.loadDict(Dictionary.Keys.BigUint(256), readonly(q => {
     q.loadCoins(); q.loadCoins(); q.loadUintBig(64); q.loadUint(8); q.loadUint(16); q.loadCoins(); q.loadBit(); q.loadUint(32); q.loadCoins(); q.endParse(); return true;
-  })), count = s.loadUint(16); s.endParse();
+  })), count = s.loadUint(16);
+  if (manifest.schema === 'tonswap-release-v2') perpsCheck(address(s) === manifest.contracts.FeeRouter?.address);
+  s.endParse();
   const bucket = buckets.get(1); perpsCheck(count === liabilities.size && count <= 16384 && (!current || bucket)
     && (!bucket || bucket.controller === manifest.contracts.PerpsEngine?.address && bucket.payoutHook === manifest.contracts.PerpsEngine?.address));
   return { slot };
