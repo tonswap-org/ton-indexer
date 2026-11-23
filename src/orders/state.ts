@@ -176,14 +176,21 @@ export function decodeOrderState(data: Cell): OrderState {
   const inputWallet = p.loadMaybeAddress(), keeper = p.loadMaybeAddress(), prevKeeper = p.loadMaybeAddress();
   p.endParse();
   const terms = parseOrderTerms(termsCell);
+  // A v2 order can remember an owner cancellation or expiry while its input
+  // master is still resolving the wallet. Discovery completes the actual close.
+  const awaitingDiscovery = queuedKey !== null && state === 1 && execId === 0 && inputWallet === null;
+  const pendingClose = awaitingDiscovery && cancelRequested && (closeReason === 2 || closeReason === 3);
+  const closedAfterDiscovery = queuedKey === 0n && state === 3 && inputWallet !== null
+    && (closeReason === 2 || closeReason === 3) && cancelRequested;
+  const discoveryRetry = awaitingDiscovery && terms.executor?.equals(factory) && queuedKey !== 0n && attemptAt >= terms.startAt;
   if (state === 0 || refundKind > 2 || refusal > 2 || refundSeen !== (refundKind !== 0) ||
-      (state === 3 ? closeReason === 0 : closeReason !== 0) || executedSlices > terms.slices ||
+      (state === 3 ? closeReason === 0 : closeReason !== 0 && !pendingClose) || executedSlices > terms.slices ||
       executedSlices > execId || ((executedSlices === terms.slices) !== (state === 3 && closeReason === 1))) {
     throw Error('Invalid order execution state');
   }
   const refusedBeforeDiscovery = queuedKey === 0n && terms.executor?.equals(factory) && (state === 1 && !inputWallet || state === 3 && closeReason === 2);
-  if (execId === 0 ? (executedSlices !== 0 || lastExecutedAt !== 0 || attemptAt !== 0 ||
-      (cancelRequested && !refusedBeforeDiscovery) || refundSeen || refusal !== 0 || keeper !== null || prevKeeper !== null || state === 2) :
+  if (execId === 0 ? (executedSlices !== 0 || lastExecutedAt !== 0 || (attemptAt !== 0 && !discoveryRetry) ||
+      (cancelRequested && !refusedBeforeDiscovery && !pendingClose && !closedAfterDiscovery) || refundSeen || refusal !== 0 || keeper !== null || prevKeeper !== null || state === 2) :
       (inputWallet === null || keeper === null || (execId === 1 ? prevKeeper !== null : prevKeeper === null))) {
     throw Error('Invalid order execution identity');
   }

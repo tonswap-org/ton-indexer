@@ -188,8 +188,10 @@ export function readSpotOperationRequest(value: unknown, manifest: RuntimeReleas
         requireRequest(typeof f.hash === 'string' && /^[0-9a-f]{64}$/.test(f.hash));
         fundingBody = originalCell(f.bodyBoc, f.bodyHash); const b = fundingBody.beginParse();
         requireRequest(b.loadUint(32) === 0x0f8a7ea5); b.loadUintBig(64);
-        requireRequest(b.loadCoins() === terms.amountIn && wireAddress(b) === x.order && wireAddress(b) === owner
-          && !b.loadMaybeRef() && b.loadCoins() === 0n);
+        requireRequest(b.loadCoins() === terms.amountIn && wireAddress(b) === x.order && wireAddress(b) === owner && !b.loadMaybeRef());
+        const forwardValue = b.loadCoins();
+        requireRequest(forwardValue === 0n || (manifest.schema === 'tonswap-release-v2' && terms.executor?.toRawString() === x.factory
+          && forwardValue <= BigInt(f.valueNano as string)));
         if (b.loadBit()) { const payload = b.loadRef(); requireRequest(!payload.isExotic && payload.bits.length === 0 && payload.refs.length === 0); }
         b.endParse();
       }

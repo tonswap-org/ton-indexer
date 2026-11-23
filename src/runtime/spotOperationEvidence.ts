@@ -249,6 +249,36 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         && message.info.value.coins.toString() === funding.valueNano && parsedFunding && message.body.equals(parsedFunding)) pending.push(funded);
       else gaps.push({ code: 'original_funding_dispatch_unobserved', account: funding.sourceWallet, lt: funding.lt });
     }
+    const authorities = new Map<string, PhysicalBoundary>();
+    if (manifest.schema === 'tonswap-release-v2') {
+      // Settlement includes the original wallet approvals even when creation and funding
+      // shared one wallet transaction. Unrelated messages in the same batch stay outside the order.
+      const approved = pending.filter(row => {
+        const info = checked(row).tx.inMessage?.info;
+        return info?.type === 'internal' && !info.bounced && info.src.toRawString() === request.owner;
+      });
+      const firstDispatch = approved.reduce((earliest, row) => {
+        const message = checked(row).tx.inMessage;
+        return message?.info.type === 'internal' && message.info.createdLt < earliest ? message.info.createdLt : earliest;
+      }, checked(origin).tx.lt);
+      const wallet = await history(request.owner, row => checked(row).tx.lt < firstDispatch);
+      const retainSender = (row: PhysicalBoundary, candidates: PhysicalBoundary[], account: string, code: string) => {
+        const received = checked(row), incoming = received.incoming;
+        const dispatch = incoming && candidates.find(candidate => {
+          const sender = checked(candidate);
+          return sender.succeeded && sender.tx.lt < received.tx.lt && sender.outgoing.values().some(cell => sameMessage(cell, incoming));
+        });
+        if (dispatch) authorities.set(rowId(dispatch), dispatch);
+        else gaps.push({ code, account, lt: String(received.tx.lt) });
+      };
+      for (const row of approved) retainSender(row, wallet, request.owner, 'original_wallet_approval_unobserved');
+      for (const row of childHistory) {
+        const message = checked(row).tx.inMessage;
+        if (message?.info.type !== 'internal' || message.info.bounced || message.info.src.toRawString() !== request.factory
+          || message.body.bits.length < 32 || message.body.beginParse().preloadUint(32) !== 0x4f504f4b) continue;
+        retainSender(row, factoryHistory, request.factory, 'original_order_poke_unobserved');
+      }
+    }
     const allowed = new Set([request.owner, request.factory, request.order, request.pool, request.inputRoot,
       ...(manifest.orderKeeper ? [manifest.orderKeeper.address] : []), ...Object.values(settlement.wallets)]);
     // Current peers and historical permissionless executors come only from
@@ -307,7 +337,11 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         if (edges % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); signal?.throwIfAborted(); }
         const message = loadMessage(cell.beginParse()); if (message.info.type !== 'internal') continue;
         const address = message.info.dest.toRawString();
-        if (isPlatformActivityNotice(manifest, message, row.evidence.account, [request.pool])) continue;
+        if (isPlatformActivityNotice(manifest, message, row.evidence.account, [request.pool, request.factory])) continue;
+        if (manifest.schema === 'tonswap-release-v2' && row.evidence.account === request.factory
+          && address === manifest.contracts.GasVault?.address && message.info.src.toRawString() === request.factory
+          && !message.info.bounced && !message.info.bounce && !message.info.value.other?.size && !message.init
+          && !message.body.isExotic && message.body.bits.length === 0 && message.body.refs.length === 0) continue;
         if (!allowed.has(address)) { gaps.push({ code: 'related_account_outside_operation', account: address }); continue; }
         if (absent.has(address)) {
           // Only a never-funded, zero-execution closed order may account for its
@@ -322,6 +356,12 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         if (matches.length === 1) pending.push(matches[0]);
         else gaps.push({ code: matches.length ? 'ambiguous_related_transaction' : 'related_transaction_unobserved', account: address, lt: message.info.createdLt.toString() });
       }
+    }
+    for (const [id, authority] of authorities) {
+      if (!chosen.has(id) && chosen.size >= limits.returnedTransactions) {
+        gaps.push({ code: 'returned_transaction_limit', account: authority.evidence.account }); break;
+      }
+      chosen.set(id, authority);
     }
     settlement.transactions = [...chosen.values()].map(row => row.evidence);
   }

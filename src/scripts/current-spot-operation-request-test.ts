@@ -238,6 +238,16 @@ function main() {
       beginCell().storeUint(0x4f435254, 32).storeUint(1, 64).storeUint(0, 64).storeRef(orderTermsToCell({ ...f.terms, recipient: Address.parse(runtimeAddress(999)) })).endCell()])
       bad({ ...f.request, creations: [{ ...f.request.creations[0], ...encoded(body) }] }, f.manifest);
     if (!f.request.funding) continue;
+    const automated = orderTermsToCell({ ...f.terms, executor: Address.parse(f.request.factory) });
+    const v2 = { ...f.manifest, schema: 'tonswap-release-v2' as const };
+    const paid = (forward: bigint) => ({ ...f.request, ...encodedTerms(automated), funding: {
+      ...f.request.funding!, ...encoded(transferCell({ op: 0x0f8a7ea5, queryId: 43n, amount: f.terms.amountIn,
+        destination: Address.parse(f.request.order), response: Address.parse(f.request.owner), custom: null, forward, payload: Cell.EMPTY })),
+    } });
+    assert('fundingBody' in readSpotOperationRequest(paid(1000n), v2));
+    bad(paid(1001n), v2);
+    bad(paid(1000n), f.manifest);
+    bad({ ...paid(1000n), ...encodedTerms(f.termsCell) }, v2);
     for (const changes of [{ sourceWallet: 'bad' }, { valueNano: '0' }, { lt: '0' }, { lt: '01' }, { lt: (1n << 64n).toString() },
       { hash: 'A'.repeat(64) }, { hash: 'a'.repeat(63) }, { bodyHash: '0'.repeat(64) }, { extra: 1 }])
       bad({ ...f.request, funding: { ...f.request.funding, ...changes } }, f.manifest);

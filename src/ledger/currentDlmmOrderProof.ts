@@ -57,8 +57,21 @@ export function decodeCurrentDlmmOrders(owner:string,b:CurrentDlmmProofBinding,e
     }else need(walletHistory.length===0,'dictionary absence cannot erase wallet history');
     need(walletHistory.every(t=>!t.succeeded&&(!t.before.account||t.before.account.storage.state.type==='uninit')&&(!t.after.account||t.after.account.storage.state.type==='uninit')),'absence cannot erase funded wallet history');
     const closed=one(orderHistory.filter(t=>t.succeeded&&t.before.account?.storage.state.type==='active'&&orderState(t,c,b,false).state!==3&&orderState(t,c,b).state===3));need(closed,'unique unfunded close');
-    const close=input(closed),q=close.body.beginParse();need(q.loadUint(32)===(last.closeReason===2?0x4f434e4c:0x4f434c53),'original close command');q.loadUintBig(64);q.endParse();
-    need(close.info.type==='internal'&&(last.closeReason===2?close.info.src.toRawString()===owner:closed.tx.now>=c.terms.expiresAt),'close authority');
+    const close=input(closed),q=close.body.beginParse(),op=q.loadUint(32);q.loadUintBig(64);
+    need(close.info.type==='internal','internal close command');
+    const factory=b.release.contracts.SpotOrderFactory!.address;
+    if(op===0x4f504f4b){
+     need(b.release.schema==='tonswap-release-v2'&&last.closeReason===3&&raw(c.terms.executor)===factory
+      &&raw(close.info.src)===factory&&closed.tx.now>=c.terms.expiresAt,'automated expiry authority');
+     const key=q.loadUintBig(64);q.loadCoins();q.loadAddress();
+     const before=orderState(closed,c,b,false);
+     need(before.queuedKey!==null&&before.queuedKey!==undefined&&before.queuedKey!==0n
+      &&(before.queuedKey&0xffffffffn)===(key&0xffffffffn),'automated expiry row');
+    }else{
+     need(op===(last.closeReason===2?0x4f434e4c:0x4f434c53),'original close command');
+     need(last.closeReason===2?raw(close.info.src)===owner:closed.tx.now>=c.terms.expiresAt,'close authority');
+    }
+    q.endParse();
     const closeSender=close.info.src.toRawString();
     const dispatch=one(txs.filter(t=>t.account===closeSender&&t.succeeded&&verifySpotMessageLink(t,closed)));need(dispatch,'original close dispatch');
     const withdrawal=one(closed.tx.outMessages.values().filter(m=>maybe(()=>{need(m.info.type==='internal'&&!m.info.bounced&&raw(m.info.dest)===orderWallet.address,'absent input withdrawal');const r=decodeSpotTokenTransfer(m.body);return r.query===0n&&r.amount===c.terms.amountIn&&r.owner===owner&&r.response===owner&&!r.custom&&r.forwardValue===0n&&empty(r.payload);})===true));need(withdrawal,'original unfunded withdrawal');

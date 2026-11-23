@@ -1,10 +1,12 @@
 /** Original default/x6 sandbox cases; transport anchors remain synthetic. */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { Cell, serializeTuple, type TupleItem } from '@ton/core';
+import { decodeCurrentDlmmOrders } from '../ledger/currentDlmmOrderProof';
+import { currentDlmmFixtureBinding } from './support/currentDlmmFixture';
 import { parseRuntimeReleaseManifest } from '../config/runtimeManifest';
 import { collectSpotOperationEvidence } from '../runtime/spotOperationEvidence';
 import { readSpotOperationRequest } from '../runtime/spotOperationRequest';
@@ -30,8 +32,13 @@ const key = (row: OrderTransactionEvidence) => { const v = verifyOrderTransactio
 async function main() {
   const realNow = Date.now;
   try {
-    for (const selected of pooled.cases) {
-      const c = expand(selected.original), p = c.original;
+    const folder = process.argv[2];
+    const cases = folder ? readdirSync(folder).filter(file => file.endsWith('.json')).map(file => {
+      const bytes = readFileSync(join(folder, file));
+      return { file, original: JSON.parse(bytes.toString()), sha256: createHash('sha256').update(bytes).digest('hex') };
+    }) : pooled.cases;
+    for (const selected of cases) {
+      const c = folder ? selected.original : expand(selected.original), p = c.original;
       assert.equal(createHash('sha256').update(JSON.stringify(c, null, 2) + '\n').digest('hex'), selected.sha256);
       const manifest = parseRuntimeReleaseManifest(c.manifest, 'localnet');
       const rows = c.completeTransactions as OrderTransactionEvidence[];
@@ -54,6 +61,21 @@ async function main() {
       Date.now = () => c.unixTime * 1000;
       const parsed = readSpotOperationRequest(request, manifest), result = await collectSpotOperationEvidence(manifest, a.source, a.store, parsed);
       assert.equal(result.coverage.complete, true, `${selected.file}: ${JSON.stringify(result.coverage)}`);
+      if (manifest.schema === 'tonswap-release-v2') {
+        const binding = currentDlmmFixtureBinding(c);
+        const decode = (rows: typeof result.transactions) => decodeCurrentDlmmOrders(p.wallet, binding, rows)
+          .find(op => op.economics.order?.address === p.order)?.economics;
+        const e = decode(result.transactions);
+        assert.equal(e?.outcome, 'refunded');
+        assert.equal(e.order?.fundedInRaw,c.expected.funded);
+        assert.equal(e.order?.refundedInRaw,c.expected.refunded);
+        assert.equal(e.order?.consumedInRaw,'0');
+        assert.equal(e.order?.closeReason, c.recovery.winner==='original-init-wins' ? 3 : 2);
+        assert.equal(c.actions.filter((a:any)=>a.kind==='cancel').length,c.recovery.winner==='original-init-wins' ? 0 : 1);
+        const paid = e.cash.find(leg => leg.direction === 'in'); assert(paid);
+        const incomplete=decode(result.transactions.filter(row=>verifyOrderTransaction(row).hash!==paid.creditTransaction));
+        assert.equal(incomplete?.outcome,'unresolved','A closed order is insufficient without its physical owner credit');
+      }
       const returned = new Set(result.transactions.map(key));
       for (const creation of creations) assert(returned.has(`${p.factory}:${creation.lt}:${creation.hash}`), 'Every retained creation, including rejection/duplicate, is original evidence');
       const originalChild = rows.filter(r => r.account === p.order);
@@ -66,7 +88,7 @@ async function main() {
       assert(wrong.coverage.gaps.some(g => g.code === 'original_creation_dispatch_unobserved'));
       console.log(selected.file, result.transactions.length, 'originals; missing/wrong creation refused');
     }
-    assert.equal(pooled.cases.length, 8);
+    assert.equal(cases.length, 8);
   } finally { Date.now = realNow; }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
