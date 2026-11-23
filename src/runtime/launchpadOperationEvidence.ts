@@ -1,6 +1,6 @@
 import { Address, beginCell, Cell, TupleReader } from '@ton/core';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
-import { decodeLpAutomation } from '../ledger/currentLaunchpadState';
+import { decodeLaunchTerms, decodeLpAutomation } from '../ledger/currentLaunchpadState';
 import { t3Attempt } from '../ledger/currentT3Wire';
 import type { ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
@@ -116,7 +116,7 @@ export async function collectLaunchpadOperationEvidence(manifest:RuntimeReleaseM
     const lp=context.loaded.get(1);launchCheck(lp?.config&&!lp.config.isExotic&&!lp.book.isExotic);
     const config=lp.config.beginParse(),peers=config.loadRef().beginParse();
     launchCheck(peers.loadAddress().toRawString()===p.sale&&peers.loadAddress().toRawString()===context.terms.lpRecipient&&peers.loadAddress().toRawString()===manifest.contracts.DlmmPoolFactory!.address);peers.endParse();
-    launchCheck(config.loadInt(32)===context.terms.seedBin);const poolId=config.loadRef();
+    launchCheck(config.loadInt(32)===decodeLaunchTerms(context.terms.cell).seedBin);const poolId=config.loadRef();
     if(manifest.schema==='tonswap-release-v2')decodeLpAutomation(config.loadRef());config.endParse();
     const book=lp.book.beginParse(),pool=book.loadMaybeAddress();book.loadUint(32);book.loadUint(32);book.loadCoins();book.loadCoins();book.endParse();
     if(pool){
