@@ -1,10 +1,11 @@
+import { orderCreationKey, readOrderInit } from '../orders/factoryQueue';
 import { Address, Cell, beginCell, contractAddress, loadMessage, storeStateInit } from '@ton/core';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
 import type { AccountStateResponse, ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
 import { createJettonWalletReader } from '../data/jettonWallet';
 import { activeOrderAccount, orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
-import { canonicalOrderTerms, decodeOrderFactoryData, matchesOrderFactoryIdentity, decodeOrderState, orderInitialData } from '../orders/state';
+import { canonicalOrderTerms, parseOrderTerms, decodeOrderFactoryData, matchesOrderFactoryIdentity, decodeOrderState, orderInitialData } from '../orders/state';
 import { canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
 import { SpotEvidenceError, type ParsedDirectSpotOperationRequest, type ParsedRouteSpotOperationRequest, type ParsedSpotOperationRequest } from './spotOperationRequest';
 import { collectSpotRouteEvidence, type CurrentSpotRouteEvidence } from './spotRouteEvidence';
@@ -196,8 +197,12 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
     if (!tx.succeeded || message?.info.type !== 'internal' || message.info.bounced || message.info.src.toRawString() !== request.owner) throw unavailable();
     const body = message.body.beginParse(); if (body.loadUint(32) !== 0x4f435254) throw unavailable();
     const query = body.loadUintBig(64); if (body.loadUintBig(64).toString() !== request.nonce || !body.loadRef().equals(creation.termsCell)) throw unavailable(); body.endParse();
-    const actual = canonicalOrderTerms(creation.termsCell, Address.parse(request.owner), tx.tx.now), initialized = checked(child).tx.inMessage!.body.beginParse();
-    if (initialized.loadUint(32) !== 0x4f494e49 || initialized.loadUintBig(64) !== query || !initialized.loadRef().equals(actual)) throw unavailable(); initialized.endParse();
+    const actual = canonicalOrderTerms(creation.termsCell, Address.parse(request.owner), tx.tx.now);
+    const terms = parseOrderTerms(actual), automated = terms.executor?.toRawString() === request.factory;
+    const factoryCodeHash = manifest.contracts.SpotOrderFactory!.codeHash;
+    const key = orderCreationKey(activeOrderAccount(tx.before, factoryCodeHash).data, activeOrderAccount(tx.after, factoryCodeHash).data,
+      automated, terms.startAt, Address.parse(request.order));
+    readOrderInit(checked(child).tx.inMessage!.body.beginParse(), query, key, actual);
     const c = checked(child), delivered = c.tx.inMessage!;
     const expectedInit = { code: orderCode, data: orderInitialData(Address.parse(request.factory), Address.parse(request.owner), BigInt(request.nonce)) };
     if (!delivered.init || !beginCell().store(storeStateInit(delivered.init)).endCell().equals(beginCell().store(storeStateInit(expectedInit)).endCell())
@@ -208,7 +213,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
     if (initializedOrder.factory.toRawString() !== request.factory || initializedOrder.owner.toRawString() !== request.owner
       || initializedOrder.nonce.toString() !== request.nonce || initializedOrder.state !== 1
       || initializedOrder.executedSlices !== 0 || initializedOrder.execId !== 0 || initializedOrder.closeReason !== 0
-      || initializedOrder.attemptAt !== 0 || initializedOrder.lastExecutedAt !== 0 || initializedOrder.cancelRequested
+      || initializedOrder.attemptAt !== 0 || initializedOrder.lastExecutedAt !== 0 || initializedOrder.queuedKey !== key || initializedOrder.misses !== 0 || initializedOrder.cancelRequested !== (automated && key === 0n)
       || initializedOrder.refundSeen || initializedOrder.refundKind !== 0 || initializedOrder.refusal !== 0
       || initializedOrder.inputWallet || initializedOrder.keeper || initializedOrder.prevKeeper
       || !initializedOrder.termsCell?.equals(actual) || !currentOrder.termsCell?.equals(actual)) throw unavailable();

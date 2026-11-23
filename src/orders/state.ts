@@ -1,3 +1,4 @@
+import { readOrderFactory } from './factoryQueue';
 import { Address, beginCell, Cell } from '@ton/core';
 
 /** Current spot_order_messages.tolk and jetton_quotes.tolk wire layouts only. */
@@ -22,6 +23,7 @@ export type OrderState = {
   factory: Address; owner: Address; nonce: bigint; dataHash: string;
   /** 0 is the uninitialized StateInit; a present body must be 1, 2, or 3. */
   state: 0 | 1 | 2 | 3;
+  queuedKey?: bigint | null; misses?: number;
   /** 0 none, 1 filled, 2 cancelled, 3 expired. */
   closeReason: 0 | 1 | 2 | 3;
   executedSlices: number; execId: number; lastExecutedAt: number; attemptAt: number;
@@ -149,21 +151,7 @@ export function orderInitialData(factory: Address, owner: Address, nonce: bigint
   return beginCell().storeAddress(factory).storeAddress(owner).storeUint(nonce, 64).storeMaybeRef(null).endCell();
 }
 
-/** Reads storage only. Callers must authenticate its code, child address, factory and immutable terms. */
-/** Read immutable factory identity without traversing the mutable v2 queue. */
-export function decodeOrderFactoryData(data: Cell) {
-  const s = ordinary(data, 'factory'), code = s.loadRef(), salt = s.loadUintBig(64);
-  if (code.isExotic) throw Error('Invalid order factory template');
-  const activity = s.remainingBits !== 0;
-  if (activity) {
-    const count = s.loadUint(16);
-    s.loadUint(32);
-    const root = s.loadMaybeRef();
-    if (count > 4096 || (count === 0) !== (root === null) || root?.isExotic) throw Error('Invalid order factory queue');
-  }
-  s.endParse();
-  return { code, salt, activity };
-}
+export const decodeOrderFactoryData = readOrderFactory;
 
 export function decodeOrderState(data: Cell): OrderState {
   const s = ordinary(data, 'storage');
@@ -181,10 +169,9 @@ export function decodeOrderState(data: Cell): OrderState {
   const cancelRequested = b.loadBoolean(), refundSeen = b.loadBoolean();
   const refundKind = b.loadUint(2), refusal = b.loadUint(2), p = ordinary(b.loadRef(), 'peers');
   const termsCell = b.loadRef();
-  if (b.remainingBits === 68) {
-    b.loadUintBig(64);
-    if (b.loadUint(4) > 8) throw Error('Invalid automated order retry backoff');
-  }
+  const queuedKey = b.remainingBits === 68 ? b.loadUintBig(64) : null;
+  const misses = queuedKey !== null ? b.loadUint(4) : 0;
+  if (misses > 8) throw Error('Invalid automated order retry backoff');
   b.endParse();
   const inputWallet = p.loadMaybeAddress(), keeper = p.loadMaybeAddress(), prevKeeper = p.loadMaybeAddress();
   p.endParse();
@@ -194,8 +181,9 @@ export function decodeOrderState(data: Cell): OrderState {
       executedSlices > execId || ((executedSlices === terms.slices) !== (state === 3 && closeReason === 1))) {
     throw Error('Invalid order execution state');
   }
+  const refusedBeforeDiscovery = queuedKey === 0n && terms.executor?.equals(factory) && (state === 1 && !inputWallet || state === 3 && closeReason === 2);
   if (execId === 0 ? (executedSlices !== 0 || lastExecutedAt !== 0 || attemptAt !== 0 ||
-      cancelRequested || refundSeen || refusal !== 0 || keeper !== null || prevKeeper !== null || state === 2) :
+      (cancelRequested && !refusedBeforeDiscovery) || refundSeen || refusal !== 0 || keeper !== null || prevKeeper !== null || state === 2) :
       (inputWallet === null || keeper === null || (execId === 1 ? prevKeeper !== null : prevKeeper === null))) {
     throw Error('Invalid order execution identity');
   }
@@ -210,7 +198,7 @@ export function decodeOrderState(data: Cell): OrderState {
   // Closed storage discards the prior EXECUTING state. Its zero inFlight getter
   // cannot establish that a timed-out slice returned, or that a close refund paid.
   const inFlight = state === 2 && !refundSeen ? slice : 0n;
-  return { ...identity, state: state as 1 | 2 | 3, closeReason: closeReason as 0 | 1 | 2 | 3,
+  return { ...identity, queuedKey, misses, state: state as 1 | 2 | 3, closeReason: closeReason as 0 | 1 | 2 | 3,
     executedSlices, execId, lastExecutedAt, attemptAt, cancelRequested, refundSeen,
     refundKind: refundKind as 0 | 1 | 2, refusal: refusal as 0 | 1 | 2,
     inputWallet, keeper, prevKeeper, terms, termsCell, termsHash: termsCell.hash().toString('hex'),

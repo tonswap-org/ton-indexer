@@ -37,7 +37,7 @@ export function readCurrentPerpsEngine(data: Cell, manifest: RuntimeReleaseManif
   for (const [id, cell] of markets) {
     const m = slice(cell), pool = address(m), params = slice(m.loadRef()), totals = slice(m.loadRef()), funding = slice(m.loadRef()); m.endParse();
     const depth = params.loadCoins(), oiCap = params.loadCoins(), alpha = params.loadIntBig(128), beta = params.loadIntBig(128), leverage = params.loadUint(32), maintenance = params.loadUint(32), fundingCap = params.loadUint(32); params.endParse();
-    for (let i = 0; i < 3; i++) totals.loadCoins(); totals.endParse(); funding.loadIntBig(128); funding.loadIntBig(64); funding.loadIntBig(64); for (let i = 0; i < 3; i++) funding.loadUintBig(64); funding.endParse();
+    for (let i = 0; i < 3; i++) totals.loadCoins(); totals.endParse(); funding.loadIntBig(128); funding.loadIntBig(64); funding.loadIntBig(64); for (let i = 0; i < 3; i++) funding.loadUintBig(64); if (funding.remainingBits === 256) funding.loadUintBig(256); funding.endParse();
     perpsCheck(id >= 1 && id <= 4 && manifest.perpsMarkets.find(m => m.marketId === id)?.pool === pool && depth > 0n && oiCap <= 22500000000n
       && alpha >= 0n && alpha <= 10000n && beta >= 0n && beta <= 10000n && leverage >= 1 && leverage <= 10000 && maintenance >= 1 && maintenance <= 20000 && fundingCap >= 1 && fundingCap <= 1000);
     cap += oiCap; pools.set(id, pool);

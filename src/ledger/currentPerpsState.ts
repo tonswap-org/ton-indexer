@@ -69,7 +69,7 @@ export function decodeNativePerpsMarket(c: Cell) {
     || params.impactBeta < 0n || params.impactBeta > 10_000n || params.maxLeverageBps < 1 || params.maxLeverageBps > 10_000
     || params.maintenanceBps < 1 || params.maintenanceBps > 20_000 || params.fundingCapBps < 1 || params.fundingCapBps > 1000) fail('Invalid current Perps market parameters');
   return finish(s, { pool, params, totals: finish(t, { longOi: t.loadCoins(), shortOi: t.loadCoins(), pending: t.loadCoins() }),
-    funding: finish(f, { index: f.loadIntBig(128), remainder: f.loadIntBig(64), rate: f.loadIntBig(64), accruedAt: f.loadUintBig(64), observedAt: f.loadUintBig(64), validUntil: f.loadUintBig(64) }) });
+    funding: finish(f, { index: f.loadIntBig(128), remainder: f.loadIntBig(64), rate: f.loadIntBig(64), accruedAt: f.loadUintBig(64), observedAt: f.loadUintBig(64), validUntil: f.loadUintBig(64), ...(f.remainingBits===256?{sweepCursor:f.loadUintBig(256)}:{}) }) });
 }
 export function decodeNativePerpsPending(c: Cell) {
   const s = ordinary(c), entry = { owner: address(s), marketId: s.loadUint(32), queryId: s.loadUintBig(64), nonce: s.loadUintBig(64),
