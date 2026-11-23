@@ -100,10 +100,17 @@ export function decodeLaunchSale(child:ReturnType<typeof decodeLaunchChild>) {
   const armed=!!child.slots.get(0)?.wallet&&!!child.slots.get(1)?.wallet&&book.inventory>=terms.caps.saleSupply+terms.caps.saleSupply/2n&&(book.ready&1)!==0&&(!terms.vesting||(book.ready&2)!==0);
   return{...child,feeBps,...peers,terms,termsCell,settlementReserve,pricing:decodeLaunchPricing(child.identity.kind,terms.pricing),...book,armed};
 }
+export function decodeLpAutomation(cell:Cell) {
+  const s=ordinary(cell),fund=s.loadCoins(),planned=s.loadBoolean(),closed=s.loadBoolean(),nextSide=s.loadUint(8),sequence=s.loadUintBig(64);
+  const leg=(c:Cell)=>{const r=ordinary(c);return end(r,{remaining:r.loadCoins(),id:r.loadUintBig(64),sent:r.loadCoins()});};
+  const t3=leg(s.loadRef()),project=leg(s.loadRef());s.endParse();
+  if(nextSide>1)throw Error('Invalid LP seed side');
+  return {fund,planned,closed,nextSide,sequence,t3,project};
+}
 export function decodeLaunchLp(child:ReturnType<typeof decodeLaunchChild>) {
   if(child.identity.role!==1||!child.config)fail('Unconfigured LP vault');
-  const s=ordinary(child.config!),p=ordinary(s.loadRef()),peers=end(p,{sale:addr(p),lpRecipient:addr(p),dlmmFactory:addr(p)}),seedBin=s.loadInt(32),poolId=s.loadRef();s.endParse();
-  const b=ordinary(child.book);return{...child,...peers,seedBin,poolId,...end(b,{pool:optionalAddr(b),armedAt:b.loadUint(32),unlockAt:b.loadUint(32),t3Bal:b.loadCoins(),tokenBal:b.loadCoins()})};
+  const s=ordinary(child.config!),p=ordinary(s.loadRef()),peers=end(p,{sale:addr(p),lpRecipient:addr(p),dlmmFactory:addr(p)}),seedBin=s.loadInt(32),poolId=s.loadRef(),automation=s.remainingRefs?decodeLpAutomation(s.loadRef()):null;s.endParse();
+  const b=ordinary(child.book);return{...child,...peers,seedBin,poolId,automation,...end(b,{pool:optionalAddr(b),armedAt:b.loadUint(32),unlockAt:b.loadUint(32),t3Bal:b.loadCoins(),tokenBal:b.loadCoins()})};
 }
 export function decodeLaunchVesting(child:ReturnType<typeof decodeLaunchChild>) {
   if(child.identity.role!==2||!child.config)fail('Unconfigured vesting vault');
