@@ -18,7 +18,8 @@ export function perpsNativeManifest(c: any) {
   return { ...base, network: 'ton:localnet' as const, releaseId: p.releaseId, manifestHash: p.manifestHash,
     contracts: { ...base.contracts, PerpsEngine: role('PerpsEngine', b.engine, b.engineHash), RiskVault: role('RiskVault', b.riskVault, b.riskVaultHash),
       Governance: role('Governance', b.governance), FeeRouter: role('FeeRouter', b.feeSink), Treasury: role('Treasury', b.treasury), T3Hub: role('T3Hub', b.t3Root, b.t3MasterHash) },
-    templates: { ...base.templates, T3Wallet: b.t3WalletHash, DlmmPool: b.poolHash },
+    templates: { ...base.templates, T3Wallet: b.t3WalletHash, DlmmPool: b.poolHash,
+      ...(b.proofCodeHash ? { T3RecoveryProof: b.proofCodeHash } : {}) },
     tokens: [{ symbol: 'T3', root: raw(b.t3Root), decimals: 9, masterCodeHash: b.t3MasterHash, walletCodeHash: b.t3WalletHash }],
     perpsMarkets: b.markets.map(([marketId, address]: [number, any]) => ({ ...base.perpsMarkets.find(m => m.marketId === marketId)!, marketId, pool: raw(address) })) };
 }
