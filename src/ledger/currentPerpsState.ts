@@ -44,9 +44,19 @@ export function nativePerpsTradeBody(t: NativePerpsTrade) {
   return b.endCell();
 }
 export const nativePerpsPositionKey = (owner: Address, id: number) => BigInt('0x' + beginCell().storeAddress(owner).storeUint(marketId(id), 32).endCell().hash().toString('hex'));
-export function decodeNativePerpsPosition(c: Cell) {
+export function decodeNativePerpsPosition(c: Cell, positionKey?: bigint) {
   const s = ordinary(c), gen = s.loadUintBig(64), size = s.loadIntBig(128), margin = s.loadCoins(),
     entryNotional = s.loadCoins(), lastFundingIndex = s.loadIntBig(128), p = ordinary(s.loadRef());
+  if (s.remainingBits) {
+    const holder = s.loadMaybeRef();
+    if (!holder && size !== 0n) fail('Live Perps position lacks its holder');
+    if (holder) {
+      const identity = ordinary(holder);
+      const key = nativePerpsPositionKey(address(identity), identity.loadUint(32));
+      identity.endParse();
+      if (positionKey !== undefined && positionKey !== key) fail('Perps holder differs from its position key');
+    }
+  }
   return finish(s, { gen, size, margin, entryNotional, lastFundingIndex,
     counterparty: finish(p, { reserved: p.loadCoins(), pendingFunding: p.loadCoins(), collectedLoss: p.loadCoins(), remainingEntitlement: p.loadCoins() }) });
 }
@@ -59,7 +69,7 @@ export function decodeNativePerpsMarket(c: Cell) {
     || params.impactBeta < 0n || params.impactBeta > 10_000n || params.maxLeverageBps < 1 || params.maxLeverageBps > 10_000
     || params.maintenanceBps < 1 || params.maintenanceBps > 20_000 || params.fundingCapBps < 1 || params.fundingCapBps > 1000) fail('Invalid current Perps market parameters');
   return finish(s, { pool, params, totals: finish(t, { longOi: t.loadCoins(), shortOi: t.loadCoins(), pending: t.loadCoins() }),
-    funding: finish(f, { index: f.loadIntBig(128), remainder: f.loadIntBig(64), rate: f.loadIntBig(64), accruedAt: f.loadUintBig(64), observedAt: f.loadUintBig(64), validUntil: f.loadUintBig(64) }) });
+    funding: finish(f, { index: f.loadIntBig(128), remainder: f.loadIntBig(64), rate: f.loadIntBig(64), accruedAt: f.loadUintBig(64), observedAt: f.loadUintBig(64), validUntil: f.loadUintBig(64), ...(f.remainingBits===256?{sweepCursor:f.loadUintBig(256)}:{}) }) });
 }
 export function decodeNativePerpsPending(c: Cell) {
   const s = ordinary(c), entry = { owner: address(s), marketId: s.loadUint(32), queryId: s.loadUintBig(64), nonce: s.loadUintBig(64),
@@ -86,6 +96,7 @@ export function decodeNativePerpsState(c: Cell) {
 }
 export type NativePerpsState = ReturnType<typeof decodeNativePerpsState>;
 export type PerpsBinding = {
+  activityRelay?: Address;
   engine: Address; engineHash: string; governance: Address; feeSink: Address; treasury: Address; riskVault: Address;
   t3Root: Address; t3MasterHash: string; t3WalletHash: string; poolHash: string; markets: Map<number, Address>;
 };

@@ -1,5 +1,6 @@
 import { Address, beginCell, Cell, TupleReader } from '@ton/core';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
+import { decodeLaunchTerms, decodeLpAutomation } from '../ledger/currentLaunchpadState';
 import { t3Attempt } from '../ledger/currentT3Wire';
 import type { ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
@@ -115,7 +116,8 @@ export async function collectLaunchpadOperationEvidence(manifest:RuntimeReleaseM
     const lp=context.loaded.get(1);launchCheck(lp?.config&&!lp.config.isExotic&&!lp.book.isExotic);
     const config=lp.config.beginParse(),peers=config.loadRef().beginParse();
     launchCheck(peers.loadAddress().toRawString()===p.sale&&peers.loadAddress().toRawString()===context.terms.lpRecipient&&peers.loadAddress().toRawString()===manifest.contracts.DlmmPoolFactory!.address);peers.endParse();
-    config.loadInt(32);const poolId=config.loadRef();config.endParse();
+    launchCheck(config.loadInt(32)===decodeLaunchTerms(context.terms.cell).seedBin);const poolId=config.loadRef();
+    if(manifest.schema==='tonswap-release-v2')decodeLpAutomation(config.loadRef());config.endParse();
     const book=lp.book.beginParse(),pool=book.loadMaybeAddress();book.loadUint(32);book.loadUint(32);book.loadCoins();book.loadCoins();book.endParse();
     if(pool){
       launchCheck(pool.workChain===0);const address=pool.toRawString(),state=await source.getAccountState(address,{at:head,signal});launchCheck(state.shardAccountBoc);
@@ -129,7 +131,7 @@ export async function collectLaunchpadOperationEvidence(manifest:RuntimeReleaseM
       includeAccounts.add(address);pins.set(address,manifest.templates.DlmmPool);
     }
   }
-  const graph=await collectProductPhysicalGraph(source,store,head,{owner:p.owner,target:parsed.dispatchTarget,body:parsed.body,dispatch:p.dispatch,pins,completeAccounts,includeAccounts:[...includeAccounts]},signal);
+  const graph=await collectProductPhysicalGraph(source,store,head,{activity:{manifest,sources:poolContext?[p.sale,poolContext.pool]:[p.sale]},owner:p.owner,target:parsed.dispatchTarget,body:parsed.body,dispatch:p.dispatch,pins,completeAccounts,includeAccounts:[...includeAccounts]},signal);
   if(poolContext)for(const row of graph.transactions)if(row.account===poolContext.pool)for(const shard of [verifyOrderTransaction(row).before,verifyOrderTransaction(row).after])if(shard.account?.storage.state.type==='active')verifyPoolEvidenceIdentity(activeOrderAccount(shard,manifest.templates.DlmmPool).data,poolContext.identityManifest,poolContext);
   assertFreshHeadTime(head.utime);signal?.throwIfAborted();return boundProductResponse<CurrentLaunchpadOperationEvidence>({schema:'tonswap-launchpad-operation-evidence-v1',releaseId:manifest.releaseId,manifestHash:manifest.manifestHash,
     asOf:{masterchainSeqno:head.seqno,unixTime:head.utime,blockRootHash:head.rootHashHex},request:{kind:p.kind,owner:p.owner,bodyHash:p.bodyHash},...graph},p.factory);

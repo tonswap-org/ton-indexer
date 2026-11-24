@@ -31,7 +31,19 @@ export function readCurrentDlmmPool(data:Cell,pool:string){
  if(binCount!==bins.size||positionCount!==count||campaignCount!==farms.size||binCount>8192||positionCount>12288||campaignCount>32||t!==reserveT||x!==reserveX||feePips>100000||xDecimals>18||slots.size!==2||!slots.has(0)||!slots.has(1))throw fail('book totals');
  for(const[id,c]of farms)if(id===0n||id>=nextId||!decodeNativeFarm(id,c))throw fail('campaign');
  const recovery=recoveryCell?(()=>{const r=dlmmOrdinary(recoveryCell);return done(r,{dispatched:r.loadUintBig(256),handled:r.loadUintBig(256),pending:r.loadCoins(),tree:r.loadMaybeRef(),restored:r.loadUintBig(256)});})():null;
- const o=dlmmOrdinary(oracle),oracleState=done(o,{count:o.loadUint(16),curValue:o.loadInt(32),curHealthy:o.loadBit(),slots:o.loadDict(Dictionary.Keys.Uint(32),codec(v=>done(v,{cumV:v.loadIntBig(64),cumH:v.loadUintBig(40),mask:v.loadUint(8),lanes:v.loadUintBig(256)})))});if(oracleState.count!==oracleState.slots.size||oracleState.count>2049)throw fail('oracle count');
+ const o=dlmmOrdinary(oracle),oracleState={count:o.loadUint(16),curValue:o.loadInt(32),curHealthy:o.loadBit(),slots:o.loadDict(Dictionary.Keys.Uint(32),codec(v=>done(v,{cumV:v.loadIntBig(64),cumH:v.loadUintBig(40),mask:v.loadUint(8),lanes:v.loadUintBig(256)})))};
+ if(o.remainingBits){
+  const count=o.loadUint(16),pending=o.loadDict(Dictionary.Keys.BigUint(256),Dictionary.Values.Bool());
+  const marks=o.loadDict(Dictionary.Keys.BigUint(256),codec(s=>{
+   for(let i=0;i<4;i++){s.loadBit();s.loadIntBig(64);s.loadUintBig(40);}
+   s.endParse();return true;
+  }));
+  if(count>1024||count!==pending.size+marks.size||pending.keys().some(k=>marks.has(k)))throw fail('oracle marks');
+  if(o.remainingRefs){
+   const policy=dlmmOrdinary(o.loadRef());policy.loadAddress();policy.loadUintBig(256);policy.loadUint(16);policy.loadUintBig(256);policy.loadUint(16);policy.endParse();
+  }
+ }
+ o.endParse();if(oracleState.count!==oracleState.slots.size||oracleState.count>2049)throw fail('oracle count');
  return{flags,binSpacing,feePips,xDecimals,activeBin,protocolFeesT3,slots,owed,busy,sweeps,recovery,reserveT,reserveX,bins,factory,feeSink,treasury,positions,nextId,escrowT,escrowX,farms,oracle:oracleState};
 }
 export const POOL_OP={add:0x4c514133,remove:0x4c515233,outcome:0x4c514f33,event:0x4c514533,farmCreate:0x464d4333,farmAction:0x464d4133,farmEvent:0x464d4533,payout:0x50504f33,create:0x50435233} as const;

@@ -1,4 +1,4 @@
-import { Address, TupleReader, beginCell } from '@ton/core';
+import { Address, TupleReader, beginCell, type Message } from '@ton/core';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
 import type { ChainHead, ChainSource } from '../data/dataSource';
 import { SpotEvidenceError } from './spotOperationRequest';
@@ -31,4 +31,19 @@ export async function assertPoolIdentity(manifest: RuntimeReleaseManifest, sourc
   for (let i = 0; i < 3; i++) { const amount = s.readBigNumber(); if (amount < 0n || amount >= 1n << 120n) throw unavailable(); }
   for (const width of [16n, 16n, 8n]) { const count = s.readBigNumber(); if (count < 0n || count >= 1n << width) throw unavailable(); }
   if (s.remaining) throw unavailable();
+}
+
+// The activity notice carries native gas only. Its separate release proof covers
+// the dispatch. Account trade evidence still follows every asset debit and credit.
+export function isPlatformActivityNotice(manifest: RuntimeReleaseManifest, message: Message, sender: string, sources: readonly string[]) {
+  if (manifest.schema !== 'tonswap-release-v2' || !sources.includes(sender) || message.info.type !== 'internal'
+    || message.info.src.toRawString() !== sender || message.info.dest.toRawString() !== manifest.contracts.FeeRouter?.address
+    || message.info.bounced || message.info.bounce || message.info.value.coins <= 0n || message.info.value.other?.size
+    || message.init || message.body.isExotic || message.body.bits.length !== 299 || message.body.refs.length) return false;
+  try {
+    const body = message.body.beginParse();
+    if (body.loadUint(32) !== 0x47564143 || body.loadAddress().workChain !== 0) return false;
+    body.endParse();
+    return true;
+  } catch { return false; }
 }

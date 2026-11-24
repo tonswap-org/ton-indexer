@@ -20,7 +20,7 @@ export type JettonWalletBudget = {
   transferCopies: number; creditProtection: boolean;
 };
 export type RuntimeReleaseManifest = {
-  schema: 'tonswap-release-v1';
+  schema: 'tonswap-release-v1' | 'tonswap-release-v2';
   network: 'ton:mainnet' | 'ton:testnet' | 'ton:localnet';
   globalId: number;
   releaseId: string;
@@ -33,7 +33,8 @@ export type RuntimeReleaseManifest = {
   vendor: { stablecoin: { provenance: ReleaseAsset; minter: ReleaseAsset & { codeHash: string }; wallet: ReleaseAsset & { codeHash: string } } };
   campaign: { id: string; root: string; count: number; total: string; start: number; leaves: ReleaseAsset; proofs: ReleaseAsset };
   supplyBase: string;
-  orderKeeper: { address: string };
+  orderKeeper?: { address: string };
+  execution?: 'transaction-driven';
   spotMarkets: Array<{ symbol: string; pool: string; binSpacing: number; feePips: number; xDecimals: number; walletGasX: number; walletGramX: string; walletBudgetX: JettonWalletBudget }>;
   perpsMarkets: Array<{ marketId: number; symbol: string; pool: string }>;
   options: Array<{ templateId: number; kind: 'shout' | 'outperformance'; symbol: string; comparisonSymbol?: string;
@@ -68,7 +69,7 @@ const isInt = (x: unknown, min: number, max: number): x is number => Number.isSa
 const isSymbol = (x: unknown): x is string => typeof x === 'string' && /^[A-Z0-9_.$-]{1,32}$/.test(x);
 const sameKeys = (value: unknown, keys: readonly string[]) => isObject(value) && stableJson(Object.keys(value).sort()) === stableJson([...keys].sort());
 const KEYS = ['schema', 'network', 'globalId', 'releaseId', 'createdAt', 'source', 'services', 'contracts', 'templates', 'tokens',
-  'spotMarkets', 'perpsMarkets', 'options', 'vendor', 'campaign', 'supplyBase', 'orderKeeper', 'manifestHash'];
+  'spotMarkets', 'perpsMarkets', 'options', 'vendor', 'campaign', 'supplyBase', 'manifestHash'];
 const GLOBAL_ID: Record<string, number> = { 'ton:mainnet': -239, 'ton:testnet': -3, 'ton:localnet': -3 };
 const isStableIndexer = (value: unknown) => { const url = releaseServiceUrl(value); return !!url && value === `${url.origin}/api/indexer`; };
 export const validReleaseAsset = (a: unknown): a is ReleaseAsset => isObject(a) && isDigest(a.sha256)
@@ -89,8 +90,10 @@ export function validateReleaseManifest(x: unknown): { ok: true; m: RuntimeRelea
     const errors: string[] = [];
     const need = (ok: unknown, label: string) => { if (!ok) errors.push(label); };
     if (!isObject(x)) return { ok: false, errors: ['manifest must be an object'] };
-    need(stableJson(Object.keys(x).sort()) === stableJson([...KEYS].sort()), 'top-level keys');
-    need(x.schema === 'tonswap-release-v1', 'schema');
+    const activity = x.schema === 'tonswap-release-v2';
+    const keys = [...KEYS, activity ? 'execution' : 'orderKeeper'];
+    need(stableJson(Object.keys(x).sort()) === stableJson(keys.sort()), 'top-level keys');
+    need(activity || x.schema === 'tonswap-release-v1', 'schema');
     need(typeof x.network === 'string' && Object.hasOwn(GLOBAL_ID, x.network) && x.globalId === GLOBAL_ID[x.network], 'network/globalId');
     need(typeof x.releaseId === 'string' && /^[a-z]+-[A-Za-z0-9._-]+-[0-9a-f]{12}$/.test(x.releaseId)
         && isObject(x.source) && x.releaseId.endsWith(`-${String(x.source.build).slice(0, 12)}`), 'releaseId');
@@ -122,9 +125,12 @@ export function validateReleaseManifest(x: unknown): { ok: true; m: RuntimeRelea
         && isInt(campaign.count, 1, 2 ** 24) && isUint(campaign.total) && BigInt(campaign.total) > 0n && BigInt(campaign.total) < (1n << 120n)
         && isInt(campaign.start, 0, 0xffffffff) && validReleaseAsset(campaign.leaves) && validReleaseAsset(campaign.proofs), 'campaign');
     need(isUint(x.supplyBase) && isUint(campaign?.total) && BigInt(x.supplyBase) <= BigInt(campaign.total), 'supplyBase');
-    const keeper = x.orderKeeper;
-    need(sameKeys(keeper, ['address']) && isObject(keeper) && isAddress(keeper.address), 'orderKeeper');
-    if (isObject(keeper) && isAddress(keeper.address)) unique(keeper.address, 'orderKeeper');
+    if (activity) need(x.execution === 'transaction-driven', 'execution');
+    else {
+        const keeper = x.orderKeeper;
+        need(sameKeys(keeper, ['address']) && isObject(keeper) && isAddress(keeper.address), 'orderKeeper');
+        if (isObject(keeper) && isAddress(keeper.address)) unique(keeper.address, 'orderKeeper');
+    }
 
     const tokens: any[] = Array.isArray(x.tokens) ? x.tokens : [];
     need(Array.isArray(x.tokens) && tokens.some(t => t?.symbol === 'T3'), 'tokens');
@@ -296,7 +302,7 @@ const assertNoDuplicateJsonObjectKeys = (raw: string): void => {
 export function parseRuntimeReleaseManifest(value: unknown, expectedNetwork: Network): RuntimeReleaseManifest {
   const result = validateReleaseManifest(value);
   if (result.ok === false) {
-    if (result.errors.includes('schema')) throw Error('Release manifest schema must be tonswap-release-v1');
+    if (result.errors.includes('schema')) throw Error('Release manifest schema must be tonswap-release-v1 or tonswap-release-v2');
     if (result.errors.includes('manifestHash')) throw Error('Release manifest manifestHash does not match its canonical contents');
     throw Error(`Release manifest is invalid: ${result.errors.join(', ')}`);
   }

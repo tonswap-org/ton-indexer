@@ -1,7 +1,8 @@
+import { orderCreationKey, readOrderInit } from './factoryQueue';
 import { Address, beginCell, Cell, contractAddress, loadMessage, storeStateInit } from '@ton/core';
 import { createHash } from 'node:crypto';
 import { activeOrderAccount, digest, orderCell, requireOrder, verifyOrderTransaction, type OrderTransactionEvidence } from './evidence';
-import { canonicalOrderTerms, decodeOrderState, orderInitialData, parseOrderTerms } from './state';
+import { canonicalOrderTerms, decodeOrderFactoryData, decodeOrderState, orderInitialData, parseOrderTerms } from './state';
 
 export const orderJson = (value: unknown): string => {
   if (Array.isArray(value)) return '[' + value.map(orderJson).join(',') + ']';
@@ -16,7 +17,7 @@ export function bindOrderRelease(manifest: { [key: string]: unknown }): OrderRel
   const { manifestHash, ...content } = manifest;
   const contracts = manifest.contracts as Record<string, { address: string; codeHash: string }>, templates = manifest.templates as Record<string, string>;
   const factory = contracts?.SpotOrderFactory;
-  requireOrder(manifest.schema === 'tonswap-release-v1' && typeof manifestHash === 'string' && /^[a-f0-9]{64}$/.test(manifestHash) && orderHash(content) === manifestHash, 'release hash mismatch');
+  requireOrder((manifest.schema === 'tonswap-release-v1' || manifest.schema === 'tonswap-release-v2') && typeof manifestHash === 'string' && /^[a-f0-9]{64}$/.test(manifestHash) && orderHash(content) === manifestHash, 'release hash mismatch');
   requireOrder(typeof manifest.releaseId === 'string' && manifest.releaseId.length > 0 && ['ton:localnet', 'ton:testnet', 'ton:mainnet'].includes(String(manifest.network)), 'release identity missing');
   requireOrder(factory && /^0:[a-f0-9]{64}$/.test(factory.address) && /^[a-f0-9]{64}$/.test(factory.codeHash) && /^[a-f0-9]{64}$/.test(templates?.SpotOrder), 'current order release pins missing');
   return Object.freeze({ releaseId: manifest.releaseId, manifestHash, network: String(manifest.network), factory: factory.address, factoryCodeHash: factory.codeHash, orderCodeHash: templates.SpotOrder });
@@ -45,8 +46,7 @@ function authenticateOrderAttempt(release: OrderRelease, factoryEvidence: OrderT
   const f = verifyOrderTransaction(factoryEvidence);
   requireOrder(f.succeeded, 'factory transaction failed');
   const before = activeOrderAccount(f.before, release.factoryCodeHash), after = activeOrderAccount(f.after, release.factoryCodeHash);
-  requireOrder(before.data.equals(after.data), 'factory immutable state changed');
-  const fs = before.data.beginParse(), orderCode = fs.loadRef(); fs.loadUintBig(64); fs.endParse();
+  const { code: orderCode } = decodeOrderFactoryData(before.data);
   requireOrder(digest(orderCode) === release.orderCodeHash, 'factory child code mismatch');
   const incoming = f.tx.inMessage;
   requireOrder(incoming?.info.type === 'internal' && !incoming.info.bounced && incoming.info.src.workChain === 0, 'owner request missing');
@@ -64,8 +64,9 @@ function authenticateOrderAttempt(release: OrderRelease, factoryEvidence: OrderT
   const emitted = matches[0], message = loadMessage(emitted.beginParse());
   requireOrder(message.info.type === 'internal' && message.info.src.toRawString() === release.factory && !message.info.bounced && message.init, 'factory initialization malformed');
   requireOrder(beginCell().store(storeStateInit(message.init)).endCell().equals(beginCell().store(storeStateInit(init)).endCell()), 'child StateInit mismatch');
-  const body = message.body.beginParse(); requireOrder(body.loadUint(32) === 0x4f494e49 && body.loadUintBig(64) === queryId, 'OINI request mismatch');
-  requireOrder(body.loadRef().equals(canonicalTerms), 'canonical terms mismatch'); body.endParse();
+  const terms = parseOrderTerms(canonicalTerms), automated = terms.executor?.toRawString() === release.factory;
+  const key = orderCreationKey(before.data, after.data, automated, terms.startAt, Address.parse(address));
+  readOrderInit(message.body.beginParse(), queryId, key, canonicalTerms);
   const c = verifyOrderTransaction(childEvidence);
   requireOrder(c.incoming?.equals(emitted), 'child did not receive exact factory message');
   // @ton/core represents a pruned account reference as account=undefined. It
@@ -73,7 +74,7 @@ function authenticateOrderAttempt(release: OrderRelease, factoryEvidence: OrderT
   for (const boc of [childEvidence.beforeShardAccountBoc, childEvidence.afterShardAccountBoc]) {
     requireOrder(!orderCell(boc).refs[0].isExotic, 'child account boundary is pruned');
   }
-  return { release, f, c, owner, nonce, canonicalTerms, init, address,
+  return { release, f, c, owner, nonce, canonicalTerms, init, address, key, refused: automated && key === 0n,
     creation: { factoryLt: f.tx.lt.toString(), factoryHash: f.hash, messageHash: digest(emitted), childLt: c.tx.lt.toString(), childHash: c.hash } };
 }
 type OrderAttempt = ReturnType<typeof authenticateOrderAttempt>;
@@ -94,7 +95,7 @@ function initializedOrder(attempt: OrderAttempt): DiscoveredOrder {
   requireOrder(c.succeeded && after && after.state.termsCell?.equals(canonicalTerms), 'child initialization did not succeed');
   const state = after.state;
   requireOrder(state.state === 1 && state.executedSlices === 0 && state.execId === 0 && state.closeReason === 0 && state.attemptAt === 0 && state.lastExecutedAt === 0
-    && !state.cancelRequested && !state.refundSeen && state.refundKind === 0 && state.refusal === 0 && !state.inputWallet && !state.keeper && !state.prevKeeper, 'not initial child state');
+    && state.queuedKey === attempt.key && state.misses === 0 && state.cancelRequested === attempt.refused && !state.refundSeen && state.refundKind === 0 && state.refusal === 0 && !state.inputWallet && !state.keeper && !state.prevKeeper, 'not initial child state');
   return { release, address, owner: owner.toRawString(), nonce: nonce.toString(), termsBoc: canonicalTerms.toBoc().toString('base64'), termsHash: digest(canonicalTerms),
     creation };
 }

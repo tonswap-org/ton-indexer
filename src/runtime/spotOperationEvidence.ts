@@ -1,14 +1,15 @@
+import { orderCreationKey, readOrderInit } from '../orders/factoryQueue';
 import { Address, Cell, beginCell, contractAddress, loadMessage, storeStateInit } from '@ton/core';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
 import type { AccountStateResponse, ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
 import { createJettonWalletReader } from '../data/jettonWallet';
 import { activeOrderAccount, orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
-import { canonicalOrderTerms, decodeOrderState, orderInitialData } from '../orders/state';
+import { canonicalOrderTerms, parseOrderTerms, decodeOrderFactoryData, matchesOrderFactoryIdentity, decodeOrderState, orderInitialData } from '../orders/state';
 import { canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
 import { SpotEvidenceError, type ParsedDirectSpotOperationRequest, type ParsedRouteSpotOperationRequest, type ParsedSpotOperationRequest } from './spotOperationRequest';
 import { collectSpotRouteEvidence, type CurrentSpotRouteEvidence } from './spotRouteEvidence';
-import { assertPoolIdentity, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
+import { assertPoolIdentity, isPlatformActivityNotice, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
 export { assertPoolIdentity, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
 
 type PinnedAccount = { address: string; codeBoc: string; dataBoc: string };
@@ -125,6 +126,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         if (edges % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); signal?.throwIfAborted(); }
         const message = loadMessage(cell.beginParse()); if (message.info.type !== 'internal') continue;
         const address = message.info.dest.toRawString();
+        if (isPlatformActivityNotice(manifest, message, row.evidence.account, [request.pool])) continue;
         if (!allowed.has(address)) { gaps.push({ code: 'related_account_outside_operation', account: address }); continue; }
         const candidates = await history(address, candidate => checked(candidate).tx.prevTransactionLt < originLt);
         const matches = candidates.filter(candidate => { const tx = checked(candidate); return tx.tx.lt > checked(row).tx.lt && tx.incoming && sameMessage(cell, tx.incoming); });
@@ -136,8 +138,8 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
   }
   const creation = parsed as Exclude<ParsedSpotOperationRequest, { body: Cell }>, request = creation.request;
   const factoryPin = manifest.contracts.SpotOrderFactory!;
-  const factory = pinnedAccount(request.factory, await current(request.factory), factoryPin.codeHash), f = orderCell(factory.dataBoc).beginParse();
-  const orderCode = f.loadRef(); f.loadUintBig(64); f.endParse();
+  const factory = pinnedAccount(request.factory, await current(request.factory), factoryPin.codeHash);
+  const factoryState = decodeOrderFactoryData(orderCell(factory.dataBoc)), orderCode = factoryState.code;
   if (orderCode.isExotic || orderCode.hash().toString('hex') !== manifest.templates.SpotOrder
     || contractAddress(0, { code: orderCode, data: orderInitialData(Address.parse(request.factory), Address.parse(request.owner), BigInt(request.nonce)) }).toRawString() !== request.order)
     throw new SpotEvidenceError(400, 'bad_request');
@@ -195,8 +197,12 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
     if (!tx.succeeded || message?.info.type !== 'internal' || message.info.bounced || message.info.src.toRawString() !== request.owner) throw unavailable();
     const body = message.body.beginParse(); if (body.loadUint(32) !== 0x4f435254) throw unavailable();
     const query = body.loadUintBig(64); if (body.loadUintBig(64).toString() !== request.nonce || !body.loadRef().equals(creation.termsCell)) throw unavailable(); body.endParse();
-    const actual = canonicalOrderTerms(creation.termsCell, Address.parse(request.owner), tx.tx.now), initialized = checked(child).tx.inMessage!.body.beginParse();
-    if (initialized.loadUint(32) !== 0x4f494e49 || initialized.loadUintBig(64) !== query || !initialized.loadRef().equals(actual)) throw unavailable(); initialized.endParse();
+    const actual = canonicalOrderTerms(creation.termsCell, Address.parse(request.owner), tx.tx.now);
+    const terms = parseOrderTerms(actual), automated = terms.executor?.toRawString() === request.factory;
+    const factoryCodeHash = manifest.contracts.SpotOrderFactory!.codeHash;
+    const key = orderCreationKey(activeOrderAccount(tx.before, factoryCodeHash).data, activeOrderAccount(tx.after, factoryCodeHash).data,
+      automated, terms.startAt, Address.parse(request.order));
+    readOrderInit(checked(child).tx.inMessage!.body.beginParse(), query, key, actual);
     const c = checked(child), delivered = c.tx.inMessage!;
     const expectedInit = { code: orderCode, data: orderInitialData(Address.parse(request.factory), Address.parse(request.owner), BigInt(request.nonce)) };
     if (!delivered.init || !beginCell().store(storeStateInit(delivered.init)).endCell().equals(beginCell().store(storeStateInit(expectedInit)).endCell())
@@ -207,11 +213,11 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
     if (initializedOrder.factory.toRawString() !== request.factory || initializedOrder.owner.toRawString() !== request.owner
       || initializedOrder.nonce.toString() !== request.nonce || initializedOrder.state !== 1
       || initializedOrder.executedSlices !== 0 || initializedOrder.execId !== 0 || initializedOrder.closeReason !== 0
-      || initializedOrder.attemptAt !== 0 || initializedOrder.lastExecutedAt !== 0 || initializedOrder.cancelRequested
+      || initializedOrder.attemptAt !== 0 || initializedOrder.lastExecutedAt !== 0 || initializedOrder.queuedKey !== key || initializedOrder.misses !== 0 || initializedOrder.cancelRequested !== (automated && key === 0n)
       || initializedOrder.refundSeen || initializedOrder.refundKind !== 0 || initializedOrder.refusal !== 0
       || initializedOrder.inputWallet || initializedOrder.keeper || initializedOrder.prevKeeper
       || !initializedOrder.termsCell?.equals(actual) || !currentOrder.termsCell?.equals(actual)) throw unavailable();
-    for (const shard of [tx.before, tx.after]) if (!activeOrderAccount(shard, factoryPin.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+    for (const shard of [tx.before, tx.after]) if (!matchesOrderFactoryIdentity(activeOrderAccount(shard, factoryPin.codeHash).data, factoryState)) throw unavailable();
     response.transactions = [origin.evidence, child.evidence];
   } catch { gaps.push({ code: 'creation_request_mismatch', account: request.factory }); }
   if (request.kind === 'order-settlement' && response.request.kind === 'order-settlement') {
@@ -227,7 +233,7 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         && input.info.value.coins.toString() === attempt.valueNano && 'creationBodies' in creation && input.body.equals(creation.creationBodies[index])) {
         try {
           for (const boundary of [checked(row).before, checked(row).after])
-            if (!activeOrderAccount(boundary, factoryPin.codeHash).data.equals(orderCell(factory.dataBoc))) throw unavailable();
+            if (!matchesOrderFactoryIdentity(activeOrderAccount(boundary, factoryPin.codeHash).data, factoryState)) throw unavailable();
           pending.push(row);
           continue;
         } catch { /* A cursor cannot authorize a different factory implementation. */ }
@@ -243,8 +249,38 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         && message.info.value.coins.toString() === funding.valueNano && parsedFunding && message.body.equals(parsedFunding)) pending.push(funded);
       else gaps.push({ code: 'original_funding_dispatch_unobserved', account: funding.sourceWallet, lt: funding.lt });
     }
+    const authorities = new Map<string, PhysicalBoundary>();
+    if (manifest.schema === 'tonswap-release-v2') {
+      // Settlement includes the original wallet approvals even when creation and funding
+      // shared one wallet transaction. Unrelated messages in the same batch stay outside the order.
+      const approved = pending.filter(row => {
+        const info = checked(row).tx.inMessage?.info;
+        return info?.type === 'internal' && !info.bounced && info.src.toRawString() === request.owner;
+      });
+      const firstDispatch = approved.reduce((earliest, row) => {
+        const message = checked(row).tx.inMessage;
+        return message?.info.type === 'internal' && message.info.createdLt < earliest ? message.info.createdLt : earliest;
+      }, checked(origin).tx.lt);
+      const wallet = await history(request.owner, row => checked(row).tx.lt < firstDispatch);
+      const retainSender = (row: PhysicalBoundary, candidates: PhysicalBoundary[], account: string, code: string) => {
+        const received = checked(row), incoming = received.incoming;
+        const dispatch = incoming && candidates.find(candidate => {
+          const sender = checked(candidate);
+          return sender.succeeded && sender.tx.lt < received.tx.lt && sender.outgoing.values().some(cell => sameMessage(cell, incoming));
+        });
+        if (dispatch) authorities.set(rowId(dispatch), dispatch);
+        else gaps.push({ code, account, lt: String(received.tx.lt) });
+      };
+      for (const row of approved) retainSender(row, wallet, request.owner, 'original_wallet_approval_unobserved');
+      for (const row of childHistory) {
+        const message = checked(row).tx.inMessage;
+        if (message?.info.type !== 'internal' || message.info.bounced || message.info.src.toRawString() !== request.factory
+          || message.body.bits.length < 32 || message.body.beginParse().preloadUint(32) !== 0x4f504f4b) continue;
+        retainSender(row, factoryHistory, request.factory, 'original_order_poke_unobserved');
+      }
+    }
     const allowed = new Set([request.owner, request.factory, request.order, request.pool, request.inputRoot,
-      manifest.orderKeeper.address, ...Object.values(settlement.wallets)]);
+      ...(manifest.orderKeeper ? [manifest.orderKeeper.address] : []), ...Object.values(settlement.wallets)]);
     // Current peers and historical permissionless executors come only from
     // this pinned child's authenticated state, never request expansion fields.
     for (const keeper of [currentOrder.keeper, currentOrder.prevKeeper, creation.terms.executor]) if (keeper) allowed.add(keeper.toRawString());
@@ -301,6 +337,11 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         if (edges % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); signal?.throwIfAborted(); }
         const message = loadMessage(cell.beginParse()); if (message.info.type !== 'internal') continue;
         const address = message.info.dest.toRawString();
+        if (isPlatformActivityNotice(manifest, message, row.evidence.account, [request.pool, request.factory])) continue;
+        if (manifest.schema === 'tonswap-release-v2' && row.evidence.account === request.factory
+          && address === manifest.contracts.GasVault?.address && message.info.src.toRawString() === request.factory
+          && !message.info.bounced && !message.info.bounce && !message.info.value.other?.size && !message.init
+          && !message.body.isExotic && message.body.bits.length === 0 && message.body.refs.length === 0) continue;
         if (!allowed.has(address)) { gaps.push({ code: 'related_account_outside_operation', account: address }); continue; }
         if (absent.has(address)) {
           // Only a never-funded, zero-execution closed order may account for its
@@ -315,6 +356,12 @@ export async function collectSpotOperationEvidence(manifest: RuntimeReleaseManif
         if (matches.length === 1) pending.push(matches[0]);
         else gaps.push({ code: matches.length ? 'ambiguous_related_transaction' : 'related_transaction_unobserved', account: address, lt: message.info.createdLt.toString() });
       }
+    }
+    for (const [id, authority] of authorities) {
+      if (!chosen.has(id) && chosen.size >= limits.returnedTransactions) {
+        gaps.push({ code: 'returned_transaction_limit', account: authority.evidence.account }); break;
+      }
+      chosen.set(id, authority);
     }
     settlement.transactions = [...chosen.values()].map(row => row.evidence);
   }

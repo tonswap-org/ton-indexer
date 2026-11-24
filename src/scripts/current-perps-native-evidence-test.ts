@@ -15,10 +15,13 @@ export function perpsNativeManifest(c: any) {
     assert(value?.workChain === 0 && value.hash?.type === 'Buffer' && value.hash.data?.length === 32); return '0:' + Buffer.from(value.hash.data).toString('hex'); };
   const base = runtimeManifestFixture(), b = c.binding, p = c.request;
   const role = (key: keyof typeof base.contracts, address: any, hash?: string) => ({ ...base.contracts[key]!, address: raw(address), ...(hash ? { codeHash: hash } : {}) });
-  return { ...base, network: 'ton:localnet' as const, releaseId: p.releaseId, manifestHash: p.manifestHash,
+  const activity = b.activityRelay ? { schema: 'tonswap-release-v2' as const, execution: 'transaction-driven' as const } : {};
+  if (b.activityRelay) assert.equal(raw(b.activityRelay), raw(b.feeSink));
+  return { ...base, ...activity, network: 'ton:localnet' as const, releaseId: p.releaseId, manifestHash: p.manifestHash,
     contracts: { ...base.contracts, PerpsEngine: role('PerpsEngine', b.engine, b.engineHash), RiskVault: role('RiskVault', b.riskVault, b.riskVaultHash),
       Governance: role('Governance', b.governance), FeeRouter: role('FeeRouter', b.feeSink), Treasury: role('Treasury', b.treasury), T3Hub: role('T3Hub', b.t3Root, b.t3MasterHash) },
-    templates: { ...base.templates, T3Wallet: b.t3WalletHash, DlmmPool: b.poolHash },
+    templates: { ...base.templates, T3Wallet: b.t3WalletHash, DlmmPool: b.poolHash,
+      ...(b.proofCodeHash ? { T3RecoveryProof: b.proofCodeHash } : {}) },
     tokens: [{ symbol: 'T3', root: raw(b.t3Root), decimals: 9, masterCodeHash: b.t3MasterHash, walletCodeHash: b.t3WalletHash }],
     perpsMarkets: b.markets.map(([marketId, address]: [number, any]) => ({ ...base.perpsMarkets.find(m => m.marketId === marketId)!, marketId, pool: raw(address) })) };
 }

@@ -146,6 +146,21 @@ async function main() {
   await assert.rejects(createGovernanceSnapshotReader(badPin, source)(sample.account), unavailable);
   await assert.rejects(read(`0:${'a'.repeat(64)}`), unavailable);
   const empty = beginCell().endCell(), retired = beginCell().storeRef(empty).storeUint(0, 320).storeRef(empty).storeCoins(0).storeCoins(0).storeUint(2, 64).storeRef(empty).storeRef(empty).endCell();
+  const originalState = Cell.fromBase64(last.after.dataBoc);
+  const withRelay = (tail: Cell) => new Cell({ bits: originalState.bits, refs: [
+    beginCell().storeSlice(originalState.refs[0].beginParse()).storeSlice(tail.beginParse()).endCell(), ...originalState.refs.slice(1),
+  ] });
+  assert(manifest.contracts.FeeRouter);
+  const relay = Address.parse(manifest.contracts.FeeRouter.address);
+  const withWake = (state: Cell, wake: Cell) => new Cell({bits: state.bits, refs: [...state.refs.slice(0,-1),
+    beginCell().storeSlice(state.refs.at(-1)!.beginParse()).storeSlice(wake.beginParse()).endCell()]});
+  const next = beginCell().storeUint(900,32).endCell();
+  assert.equal(readGovernanceStorage(withWake(withRelay(beginCell().storeAddress(relay).endCell()),next)).props.nextWakeAt,900);
+  assert.throws(() => readGovernanceStorage(withWake(originalState,next)));
+  assert.equal(readGovernanceStorage(originalState).activityRelay, null);
+  assert(readGovernanceStorage(withRelay(beginCell().storeAddress(relay).endCell())).activityRelay?.equals(relay));
+  assert.throws(() => readGovernanceStorage(withRelay(beginCell().storeAddress(relay).storeBit(false).endCell())));
+  assert.throws(() => readGovernanceStorage(withRelay(beginCell().storeAddress(new Address(-1, relay.hash)).endCell())));
   assert.throws(() => readGovernanceStorage(retired));
   assert.throws(() => readGovernanceStorage(beginCell().storeSlice(Cell.fromBase64(last.after.dataBoc).beginParse()).storeBit(false).endCell()));
   hang = true; await assert.rejects(read(last.account, {}, AbortSignal.timeout(10)), error => error instanceof ChainReadError && error.code === 'upstream_timeout'); hang = false;

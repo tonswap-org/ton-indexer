@@ -5,7 +5,7 @@ import { assertFreshHeadTime } from '../data/freshHead';
 import { createJettonWalletReader } from '../data/jettonWallet';
 import { activeOrderAccount, orderCell, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
-import { assertPoolIdentity, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
+import { assertPoolIdentity, isPlatformActivityNotice, SPOT_EVIDENCE_LIMITS } from './spotEvidenceIdentity';
 import { SpotEvidenceError, type ParsedRouteSpotOperationRequest } from './spotOperationRequest';
 
 type PinnedAccount = { address: string; codeBoc: string; dataBoc: string };
@@ -182,6 +182,7 @@ export async function collectSpotRouteEvidence(manifest: RuntimeReleaseManifest,
       if (edges % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); signal?.throwIfAborted(); }
       const message = loadMessage(cell.beginParse()); if (message.info.type !== 'internal') continue;
       const address = message.info.dest.toRawString();
+      if (isPlatformActivityNotice(manifest, message, row.evidence.account, [request.pool, request.pool2])) continue;
       if (!allowed.has(address)) { gaps.push({ code: 'related_account_outside_operation', account: address }); continue; }
       const candidates = await history(address, candidate => checked(candidate).tx.prevTransactionLt < original.tx.lt);
       const matches = candidates.filter(candidate => { const tx = checked(candidate); return tx.tx.lt > checked(row).tx.lt && tx.incoming && sameMessage(cell, tx.incoming); });

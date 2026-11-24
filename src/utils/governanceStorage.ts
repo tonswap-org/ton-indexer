@@ -45,7 +45,10 @@ export function readGovernanceStorage(cell: Cell) {
   }
   const s = cell.beginParse(), phase = s.loadUint(8), bootstrap = s.loadMaybeAddress(), bootstrapDeadline = s.loadUint(32),
     salt = s.loadUintBig(64), handoffBucket = s.loadUint(32), assets = s.loadRef().beginParse();
-  const jetton = assets.loadRef(), sweeps = assets.loadRef(), treasury = assets.loadMaybeAddress(); assets.endParse();
+  const jetton = assets.loadRef(), sweeps = assets.loadRef(), treasury = assets.loadMaybeAddress();
+  const activityRelay = assets.remainingBits ? assets.loadAddress() : null;
+  assets.endParse();
+  if (activityRelay && activityRelay.workChain !== 0) throw Error('Invalid Governance activity relay.');
   const ts = s.loadBit() ? { merkleClaim: s.loadAddress(), genesisTotal: s.loadUintBig(120), supplyBase: s.loadUintBig(120) } : null;
   const policy = s.loadDict(Dictionary.Keys.BigUint(256), { serialize: readonly, parse: v => v.asCell() });
   const policyCount = s.loadUint(16), st = s.loadRef().beginParse(), pr = s.loadRef().beginParse(); s.endParse();
@@ -55,7 +58,10 @@ export function readGovernanceStorage(cell: Cell) {
     ownerLocks = st.loadDict(Dictionary.Keys.Address(), locks); st.endParse();
   const nextId = pr.loadUint(32), live = pr.loadUint(8), escrowRaw = pr.loadCoins().toString();
   const slots = Array.from({ length: 16 }, () => pr.loadUint(32));
-  const book = pr.loadDict(Dictionary.Keys.Uint(32), proposals); pr.endParse();
+  const book = pr.loadDict(Dictionary.Keys.Uint(32), proposals);
+  const nextWakeAt = pr.remainingBits ? pr.loadUint(32) : undefined;
+  pr.endParse();
+  if (nextWakeAt !== undefined && !activityRelay) throw Error('Unbound governance wakeup.');
   if (phase > 1 || nextId < 1 || live > 48 || live !== book.size || lockCount > 16_384 || lockCount !== ownerLocks.size
     || buckets.size > 33 || expiring.size > 367 || (ts && ts.supplyBase > ts.genesisTotal)) throw Error('Invalid Governance storage bounds.');
   for (const [id] of book) if (id < 1 || id >= nextId) throw Error('Invalid Governance proposal ID.');
@@ -65,9 +71,9 @@ export function readGovernanceStorage(cell: Cell) {
     const p = book.get(id);
     if (!p || p.queued || p.slot !== index) throw Error('Invalid Governance voting slot.');
   }
-  return { phase, bootstrap, bootstrapDeadline, salt, handoffBucket, jetton, sweeps, treasury, ts, policy, policyCount,
+  return { phase, bootstrap, bootstrapDeadline, salt, handoffBucket, jetton, sweeps, treasury, activityRelay, ts, policy, policyCount,
     stake: { totalLockedRaw, lockCount, deferredMax, mature, matureThrough, buckets, expired, expiredThrough, expiring, locks: ownerLocks },
-    props: { nextId, live, escrowRaw, slots, proposals: book } };
+    props: { nextId, live, escrowRaw, slots, proposals: book, ...(nextWakeAt === undefined ? {} : {nextWakeAt}) } };
 }
 
 export type GovernanceParams = { bucket: number; minVote: number; maxVote: number; review: number; delay: number; grace: number };

@@ -28,7 +28,7 @@
     "test:ledger:launchpad": "tsx src/scripts/ledger-current-launchpad-test.ts && tsx src/scripts/ledger-current-launchpad-discovery-test.ts && tsx src/scripts/ledger-current-launchpad-holder-test.ts && tsx src/scripts/ledger-current-launchpad-recovery-test.ts && tsx src/scripts/ledger-current-launchpad-archive-test.ts",
     "test:ledger:cutoff-history": "tsx src/scripts/active-pool-cutoff-history-test.ts",
     "test:ledger:market": "tsx src/scripts/ledger-current-dlmm-swap-test.ts && tsx src/scripts/ledger-current-dlmm-market-test.ts && tsx src/scripts/current-market-store-test.ts && tsx src/scripts/current-market-service-test.ts && npm run test:ledger:cutoff-history",
-    "test:ledger:liquidity": "tsx src/scripts/ledger-current-dlmm-test.ts && tsx src/scripts/ledger-current-dlmm-projection-test.ts && tsx src/scripts/ledger-current-launchpad-liquidity-test.ts",
+    "test:ledger:liquidity": "tsx src/scripts/ledger-current-dlmm-test.ts && tsx src/scripts/ledger-current-dlmm-projection-test.ts && tsx src/scripts/ledger-current-launchpad-liquidity-test.ts && tsx src/scripts/ledger-current-launchpad-automatic-test.ts",
     "test:ledger:native-terminal": "tsx src/scripts/ledger-native-terminal-test.ts",
     "test:report": "tsx src/scripts/report-regression-test.ts && tsx src/scripts/metadata-test.ts && tsx src/scripts/transaction-evidence-test.ts && tsx src/scripts/dataflow-regression-test.ts && tsx src/scripts/market-candles-test.ts && tsx src/scripts/ledger-current-t3-test.ts",
     "test:ledger:native-funding": "tsx src/scripts/ledger-native-funding-test.ts && tsx src/scripts/ledger-native-risk-vault-test.ts",

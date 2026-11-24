@@ -1,6 +1,6 @@
 import { activeOrderAccount, orderCell, orderShard, requireOrder, verifyOrderTransaction, type OrderTransactionEvidence } from './evidence';
 import { discoveredTerms, discoverOrders, orderFactoryHistoryHash, orderHash, orderJson, type DiscoveredOrder, type FailedOrderInitialization, type OrderGap, type OrderRelease } from './discovery';
-import { decodeOrderState } from './state';
+import { decodeOrderFactoryData, decodeOrderState } from './state';
 
 export type OrderHead = { masterchainSeqno: number; unixTime: number; blockRootHash: string };
 /** Supplied only by the authenticated chain adapter, at this exact immutable
@@ -28,9 +28,8 @@ export function orderFactoryCoverage(release: OrderRelease, head: OrderHead, cur
   history: readonly OrderTransactionEvidence[]): FactoryCoverage {
   requireOrder(current.address === release.factory && orderJson(current.asOf) === orderJson(head), 'factory boundary mismatch');
   const shard = orderShard(current.shardAccountBoc, release.factory).shard;
-  const factoryData = activeOrderAccount(shard, release.factoryCodeHash).data.beginParse();
-  requireOrder(factoryData.loadRef().hash().toString('hex') === release.orderCodeHash, 'factory child code mismatch');
-  factoryData.loadUintBig(64); factoryData.endParse();
+  const factoryData = decodeOrderFactoryData(activeOrderAccount(shard, release.factoryCodeHash).data);
+  requireOrder(factoryData.code.hash().toString('hex') === release.orderCodeHash, 'factory child code mismatch');
   const toLt = shard.lastTransactionLt.toString(), toHash = shard.lastTransactionHash.toString(16).padStart(64, '0');
   let expectedLt = shard.lastTransactionLt, expectedHash = toHash, fromLt: string | null = null;
   let expectedState = orderCell(current.shardAccountBoc).hash().toString('hex');

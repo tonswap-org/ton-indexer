@@ -1,3 +1,5 @@
+import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
+import { isPlatformActivityNotice } from './spotEvidenceIdentity';
 import { beginCell, Cell, loadMessage, storeShardAccount, storeStateInit, type ShardAccount } from '@ton/core';
 import type { ChainHead, ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
@@ -70,6 +72,7 @@ export function verifyFrozenProductHistory(rows: readonly Pick<PhysicalBoundary,
 export async function collectProductPhysicalGraph(source: ChainSource, store: PhysicalEvidenceStore, head: ChainHead,
   input: { owner: string; target: string; body: Cell; dispatch: ProductDispatch; pins: ReadonlyMap<string, string>;
     completeAccounts: readonly string[]; includeAccounts?: readonly string[]; historyOnlyAccounts?: readonly string[]; historyLimit?: number; reader?: ReturnType<typeof createPhysicalEvidenceReader>;
+    activity?: { manifest: RuntimeReleaseManifest; sources: string[] };
     onCausal?: (row: PhysicalBoundary) => void; allowFrozenPins?: ReadonlySet<string> }, signal?: AbortSignal): Promise<ProductPhysicalGraph> {
   const limits = PRODUCT_EVIDENCE_LIMITS, reader = input.reader ?? createPhysicalEvidenceReader(source, store, head, { signal, newTransactions: limits.newTransactions });
   const gaps: PhysicalGap[] = [], histories = new Map<string, PhysicalBoundary[]>(), selected = new Map<string, PhysicalBoundary>();
@@ -150,6 +153,7 @@ export async function collectProductPhysicalGraph(source: ChainSource, store: Ph
       if (++edges > limits.edges) { gaps.push({ code: 'message_edge_limit', account: row.evidence.account }); queue.length = 0; break; }
       if (edges % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); signal?.throwIfAborted(); }
       const message = loadMessage(raw.beginParse()); if (message.info.type !== 'internal') continue;
+      if (input.activity && isPlatformActivityNotice(input.activity.manifest, message, row.evidence.account, input.activity.sources)) continue;
       const account = message.info.dest.toRawString();
       if (message.info.dest.workChain !== 0) { gaps.push({ code: 'related_workchain_unavailable', account }); continue; }
       const wanted = messageHash(raw), matches = (await history(account)).filter(candidate => tx(candidate).tx.lt > tx(row).tx.lt

@@ -62,8 +62,8 @@ const walletBudget = z.object({ senderGas: uint(32, 10000), walletBounceGas: uin
   rentSeconds: uint(32, 1), rentBits: uint(32, 1), rentCells: uint(16, 1), initBits: uint(32, 1), initCells: uint(16, 1),
   initCopies: uint(8, 1).max(4), transferBits: uint(16, 880), transferCells: uint(8, 1), transferCopies: uint(8, 3).max(8),
   creditProtection: z.boolean() }).strict();
-const manifestSchema = z.object({
-  schema: z.literal('tonswap-release-v1'), network: z.enum(['ton:testnet', 'ton:mainnet']), globalId: z.number().int(),
+const commonManifest = z.object({
+  network: z.enum(['ton:testnet', 'ton:mainnet']), globalId: z.number().int(),
   releaseId: z.string().regex(/^[a-z]+-[A-Za-z0-9._-]+-[0-9a-f]{12}$/), createdAt: z.string().datetime(),
   source: z.object({ contracts: z.string().regex(/^[0-9a-f]{40}$/), build: digest }).strict(),
   services: z.object({ indexer: z.string().url(), tonRpc: z.string().url(), platform: z.string().url() }).strict(),
@@ -74,7 +74,7 @@ const manifestSchema = z.object({
   campaign: z.object({ id: atomic.refine(value => BigInt(value) < 1n << 256n), root: digest,
     count: z.number().int().min(1).max(2 ** 24), total: atomic.refine(value => BigInt(value) > 0n && BigInt(value) < 1n << 120n),
     start: uint(32), leaves: releaseAsset, proofs: releaseAsset }).strict(),
-  supplyBase: atomic, orderKeeper: z.object({ address }).strict(),
+  supplyBase: atomic,
   spotMarkets: z.array(z.object({ symbol, pool: address, binSpacing: z.number().int().min(1).max(0x7fffffff),
     feePips: uint(32), xDecimals: uint(5).max(18), walletGasX: uint(32, 10000).max(500000),
     walletGramX: atomic.refine(value => BigInt(value) <= 500000000n), walletBudgetX: walletBudget }).strict()).min(1).max(100),
@@ -83,6 +83,10 @@ const manifestSchema = z.object({
     comparisonSymbol: symbol.optional(), seriesId: atomic.optional(), option: address.optional(), expiry: atomic.optional() }).strict()),
   manifestHash: digest,
 }).strict();
+const manifestSchema = z.discriminatedUnion('schema', [
+  commonManifest.extend({ schema: z.literal('tonswap-release-v1'), orderKeeper: z.object({ address }).strict() }).strict(),
+  commonManifest.extend({ schema: z.literal('tonswap-release-v2'), execution: z.literal('transaction-driven') }).strict(),
+]);
 const stableJson = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key =>
@@ -112,7 +116,7 @@ export function parseDexReleaseManifest(value: unknown): DexReleaseBinding {
   if (BigInt(manifest.supplyBase) > BigInt(manifest.campaign.total)) throw new Error('DEX release supplyBase exceeds its campaign.');
   const contracts = Object.values(manifest.contracts);
   const unique = (values: string[]) => new Set(values).size === values.length;
-  const identities = [...contracts.map(contract => contract.address), manifest.orderKeeper.address,
+  const identities = [...contracts.map(contract => contract.address), ...(manifest.schema === 'tonswap-release-v1' ? [manifest.orderKeeper.address] : []),
     ...manifest.spotMarkets.map(market => market.pool), ...manifest.options.flatMap(option => option.option ? [option.option] : [])];
   if (!unique(manifest.tokens.map(token => token.symbol)) || !unique(manifest.tokens.map(token => token.root)) ||
     !unique(manifest.spotMarkets.map(market => market.symbol)) || !unique(identities)) throw new Error('DEX release contains duplicate identities.');

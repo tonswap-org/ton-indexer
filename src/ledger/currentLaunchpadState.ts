@@ -71,7 +71,19 @@ const codeCodec=codec(s=>end(s,{code:s.loadRef(),bits:s.loadUint(32),cells:s.loa
 export function decodeLaunchFactory(c:Cell) {
   const s=ordinary(c),governance=addr(s),closed=s.loadBit(),p=ordinary(s.loadRef()),t3Master=addr(p),feeSink=addr(p),dlmmFactory=addr(p),profile=ordinary(p.loadRef());p.endParse();
   const t3Profile=end(profile,{walletGas:profile.loadUint(32),walletGram:profile.loadCoins(),budget:decodeJettonWalletBudget(profile.loadRef())});validateJettonWalletProfile(t3Profile);
-  return end(s,{governance,closed,t3Master,feeSink,dlmmFactory,t3Profile,feeBps:s.loadUint(16),codes:s.loadDict(Dictionary.Keys.Uint(8),codeCodec)});
+  const feeBps = s.loadUint(16), codes = s.loadDict(Dictionary.Keys.Uint(8),codeCodec);
+  const registryCell = s.remainingRefs ? s.loadRef() : null;
+  let registry = null;
+  if (registryCell) {
+    const r = ordinary(registryCell), count = r.loadUint(16), sequence = r.loadUint(32);
+    const due = r.loadMaybeRef(), bySale = r.loadMaybeRef();
+    r.endParse();
+    if (count > 4096 || count > sequence || Boolean(count) !== Boolean(due) || Boolean(count) !== Boolean(bySale))
+      fail('Invalid sale scheduler state');
+    registry = { count, sequence, due, bySale };
+  }
+  const policy = registryCell ? new Cell({ bits: c.bits, refs: c.refs.slice(0, -1) }) : c;
+  return end(s,{governance,closed,t3Master,feeSink,dlmmFactory,t3Profile,feeBps,codes,registry,policy});
 }
 const slotCodec=codec<FreshJettonSlot>(s=>{const slot=end(s,{master:addr(s),wallet:optionalAddr(s),walletGas:s.loadUint(32),walletGram:s.loadCoins(),optional:s.loadBit(),budget:decodeJettonWalletBudget(s.loadRef())});validateJettonWalletProfile(slot);return slot;});
 export function decodeLaunchChild(c:Cell) {
@@ -82,16 +94,23 @@ export function decodeLaunchChild(c:Cell) {
 export const launchEntryCodec=codec(s=>end(s,{paid:s.loadCoins(),tokens:s.loadCoins()}));
 export function decodeLaunchSale(child:ReturnType<typeof decodeLaunchChild>) {
   if(child.identity.role!==0||!child.config)fail('Unconfigured sale');
-  const s=ordinary(child.config!),feeBps=s.loadUint(16),p=ordinary(s.loadRef()),peers=end(p,{feeSink:addr(p),lpVault:addr(p),vestingVault:optionalAddr(p)}),termsCell=s.loadRef();s.endParse();
+  const s=ordinary(child.config!),feeBps=s.loadUint(16),p=ordinary(s.loadRef()),peers=end(p,{feeSink:addr(p),lpVault:addr(p),vestingVault:optionalAddr(p)}),termsCell=s.loadRef(),settlementReserve=s.remainingBits?s.loadCoins():null;s.endParse();
   const terms=decodeLaunchTerms(termsCell),b=ordinary(child.book),book=end(b,{ready:b.loadUint(8),phase:b.loadUint(8),inventory:b.loadCoins(),raised:b.loadCoins(),sold:b.loadCoins(),t3Due:b.loadCoins(),tokDue:b.loadCoins(),openEntries:b.loadUint(16),entries:b.loadDict(Dictionary.Keys.Address(),launchEntryCodec)});
   if(book.phase<1||book.phase>4||book.openEntries!==book.entries.size||book.openEntries>16384||feeBps>500)fail('Invalid sale book');
   const armed=!!child.slots.get(0)?.wallet&&!!child.slots.get(1)?.wallet&&book.inventory>=terms.caps.saleSupply+terms.caps.saleSupply/2n&&(book.ready&1)!==0&&(!terms.vesting||(book.ready&2)!==0);
-  return{...child,feeBps,...peers,terms,termsCell,pricing:decodeLaunchPricing(child.identity.kind,terms.pricing),...book,armed};
+  return{...child,feeBps,...peers,terms,termsCell,settlementReserve,pricing:decodeLaunchPricing(child.identity.kind,terms.pricing),...book,armed};
+}
+export function decodeLpAutomation(cell:Cell) {
+  const s=ordinary(cell),fund=s.loadCoins(),planned=s.loadBoolean(),closed=s.loadBoolean(),nextSide=s.loadUint(8),sequence=s.loadUintBig(64);
+  const leg=(c:Cell)=>{const r=ordinary(c);return end(r,{remaining:r.loadCoins(),id:r.loadUintBig(64),sent:r.loadCoins()});};
+  const t3=leg(s.loadRef()),project=leg(s.loadRef());s.endParse();
+  if(nextSide>1)throw Error('Invalid LP seed side');
+  return {fund,planned,closed,nextSide,sequence,t3,project};
 }
 export function decodeLaunchLp(child:ReturnType<typeof decodeLaunchChild>) {
   if(child.identity.role!==1||!child.config)fail('Unconfigured LP vault');
-  const s=ordinary(child.config!),p=ordinary(s.loadRef()),peers=end(p,{sale:addr(p),lpRecipient:addr(p),dlmmFactory:addr(p)}),seedBin=s.loadInt(32),poolId=s.loadRef();s.endParse();
-  const b=ordinary(child.book);return{...child,...peers,seedBin,poolId,...end(b,{pool:optionalAddr(b),armedAt:b.loadUint(32),unlockAt:b.loadUint(32),t3Bal:b.loadCoins(),tokenBal:b.loadCoins()})};
+  const s=ordinary(child.config!),p=ordinary(s.loadRef()),peers=end(p,{sale:addr(p),lpRecipient:addr(p),dlmmFactory:addr(p)}),seedBin=s.loadInt(32),poolId=s.loadRef(),automation=s.remainingRefs?decodeLpAutomation(s.loadRef()):null;s.endParse();
+  const b=ordinary(child.book);return{...child,...peers,seedBin,poolId,automation,...end(b,{pool:optionalAddr(b),armedAt:b.loadUint(32),unlockAt:b.loadUint(32),t3Bal:b.loadCoins(),tokenBal:b.loadCoins()})};
 }
 export function decodeLaunchVesting(child:ReturnType<typeof decodeLaunchChild>) {
   if(child.identity.role!==2||!child.config)fail('Unconfigured vesting vault');

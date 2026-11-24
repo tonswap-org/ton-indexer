@@ -76,7 +76,9 @@ export function decodeNativePerpsRiskState(data:Cell,b:NativePerpsProofBinding){
  check(!data.isExotic,'ordinary risk state');
  const managed=s.loadRef().beginParse(),slots=managed.loadDict(Dictionary.Keys.Uint(8),currentPerpsSlotCodec),owed=managed.loadMaybeRef();managed.loadDict(Dictionary.Keys.Uint(8),cellCodec);managed.endParse();check(!s.loadRef().isExotic,'ordinary risk sweeps');
  const buckets=s.loadDict(Dictionary.Keys.Uint(16),{serialize(){throw Error('read only');},parse(q){const controller=q.loadAddress(),payoutHook=q.loadAddress(),floor=q.loadCoins(),c=q.loadRef();check(!c.isExotic&&controller.workChain===0&&payoutHook.workChain===0,'bucket identities');q.endParse();const v=c.beginParse(),value={controller,payoutHook,floor,locked:v.loadCoins(),reserved:v.loadCoins(),notional:v.loadCoins()};v.endParse();return value;}});
- const liabilities=s.loadDict(Dictionary.Keys.BigUint(256),{serialize(){throw Error('read only');},parse(q){const value={notional:q.loadCoins(),reserved:q.loadCoins(),actionId:q.loadUintBig(64),outcome:q.loadUint(8),reason:q.loadUint(16),paid:q.loadCoins(),applied:q.loadBit(),at:q.loadUint(32),deposit:q.loadCoins()};q.endParse();return value;}}),count=s.loadUint(16);s.endParse();
+ const liabilities=s.loadDict(Dictionary.Keys.BigUint(256),{serialize(){throw Error('read only');},parse(q){const value={notional:q.loadCoins(),reserved:q.loadCoins(),actionId:q.loadUintBig(64),outcome:q.loadUint(8),reason:q.loadUint(16),paid:q.loadCoins(),applied:q.loadBit(),at:q.loadUint(32),deposit:q.loadCoins()};q.endParse();return value;}}),count=s.loadUint(16);
+ const relay=s.remainingBits?s.loadAddress():null;s.endParse();
+ check(relay?.toRawString()===b.perps.activityRelay?.toRawString(),'risk activity relay');
  const bucket=buckets.get(1);check(bucket?.controller.equals(b.perps.engine)&&bucket.payoutHook.equals(b.perps.engine)&&slots.size===1&&slots.get(0)?.master.equals(b.perps.t3Root)&&!slots.get(0)?.optional&&count===liabilities.size&&count<=16384,'risk bucket or ledger');return{slots,owed,buckets,liabilities};
 }
 function balance(t:CurrentT3Transaction,b:NativePerpsProofBinding,owner:string,after:boolean){
@@ -92,7 +94,7 @@ function delivery(source:CurrentT3Transaction,target:CurrentT3Transaction,reques
 function reached(first:CurrentT3Transaction,txs:CurrentT3Transaction[]){const seen=new Set([first.hash]);for(const t of [...txs].sort((a,b)=>a.tx.lt<b.tx.lt?-1:1))if(!seen.has(t.hash)&&txs.some(a=>seen.has(a.hash)&&a.tx.lt<t.tx.lt&&verifyCurrentT3MessageLink(a,t)))seen.add(t.hash);return seen;}
 export function decodeNativePerpsEvent(c:Cell){check(!c.isExotic,'ordinary event');const s=c.beginParse();check(s.loadUint(32)===0x50584556,'PX_EVENT');const e={kind:s.loadUint(8),reason:s.loadUint(16),owner:s.loadAddress(),marketId:s.loadUint(32),queryId:s.loadUintBig(64)},d=s.loadRef().beginParse();s.endParse();const detail={size:d.loadIntBig(128),fill:d.loadCoins(),marginDelta:d.loadIntBig(128),fee:d.loadCoins(),lpPayout:d.loadCoins(),unpaidLoss:d.loadCoins()};d.endParse();check(e.kind>=1&&e.kind<=11&&e.reason<=10,'event bounds');return{...e,...detail};}
 function effect(p:PerpsEvidenceRequest,t:CurrentT3Transaction,status:PerpsEffect['status'],amount:bigint,gen:bigint|null,reason:number|null):PerpsEffect{return{status,requestBodyHash:p.bodyHash,transactionHash:t.hash,amountRaw:amount.toString(),gen:gen&&gen>0n?gen.toString():null,reason};}
-const position=(s:ReturnType<typeof currentPerpsEngineBoundary>,key:bigint)=>{const c=s.book.positions.get(key);return c?decodeNativePerpsPosition(c):null;};
+const position=(s:ReturnType<typeof currentPerpsEngineBoundary>,key:bigint)=>{const c=s.book.positions.get(key);return c?decodeNativePerpsPosition(c,key):null;};
 const equalCell=(a:Cell|undefined,b:Cell|undefined)=>a&&b?a.equals(b):!a&&!b;
 function payoutTarget(source:CurrentT3Transaction,request:ReturnType<typeof decodeSpotTokenTransfer>,b:NativePerpsProofBinding,from:string,to:string,txs:CurrentT3Transaction[],used?:Set<string>):CurrentT3Transaction|null{
  used?.add(source.hash);if(!source.succeeded)return null;
@@ -249,7 +251,7 @@ export function currentPerpsBindingFromManifest(m: import('../config/runtimeMani
  const e=pin('PerpsEngine'),r=pin('RiskVault'),hub=pin('T3Hub'),t=m.tokens.find(t=>t.symbol==='T3');
  check(t && t.root===hub.address.toRawString() && t.masterCodeHash===hub.hash && t.walletCodeHash===m.templates.T3Wallet,'T3 manifest identity');
  return {network:m.network.slice(4),releaseId:m.releaseId,manifestHash:m.manifestHash,riskVaultHash:r.hash,proofCodeHash:m.templates.T3RecoveryProof,
-  perps:{engine:e.address,engineHash:e.hash,governance:pin('Governance').address,feeSink:pin('FeeRouter').address,treasury:pin('Treasury').address,riskVault:r.address,
+  perps:{activityRelay:m.schema==='tonswap-release-v2'?pin('FeeRouter').address:undefined,engine:e.address,engineHash:e.hash,governance:pin('Governance').address,feeSink:pin('FeeRouter').address,treasury:pin('Treasury').address,riskVault:r.address,
    t3Root:hub.address,t3MasterHash:hub.hash,t3WalletHash:t.walletCodeHash,poolHash:m.templates.DlmmPool,markets:new Map(m.perpsMarkets.map(p=>[p.marketId,Address.parse(p.pool)]))}};
 }
 

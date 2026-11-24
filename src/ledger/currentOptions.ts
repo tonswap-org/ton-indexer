@@ -76,7 +76,12 @@ function descendants(first: Tx, txs: Tx[]) { const reached = new Set([first.hash
     if (txs.some(a => reached.has(a.hash) && linked(a, t)))
         reached.add(t.hash); return reached; }
 function vault(t: Tx, b: NativeOptionProofBinding, after = false) { need(t.account === raw(b.options.vault)); return decodeOptionVault(activeOrderAccount(after ? t.after : t.before, b.options.vaultHash).data); }
-function factory(t: Tx, b: NativeOptionProofBinding, after = false) { need(t.account === raw(b.options.factory)); return decodeOptionFactory(activeOrderAccount(after ? t.after : t.before, b.options.factoryHash).data); }
+function factory(t: Tx, b: NativeOptionProofBinding, after = false) {
+    need(t.account === raw(b.options.factory));
+    const state = decodeOptionFactory(activeOrderAccount(after ? t.after : t.before, b.options.factoryHash).data);
+    need(state.activityRelay?.toRawString() === b.options.activityRelay?.toRawString());
+    return state;
+}
 function either(s: ReturnType<Cell['beginParse']>) { if (s.loadBit()) {
     const c = s.loadRef();
     s.endParse();

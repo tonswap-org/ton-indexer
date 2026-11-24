@@ -32,6 +32,8 @@ function params(stack: TupleItem[], kind: number, globalId: number): GovernanceP
  * may be shared, but time-derived results never use a completed-response cache. */
 export function createGovernanceSnapshotReader(manifest: RuntimeReleaseManifest, source: ChainSource) {
   if (!validateReleaseManifest(manifest).ok || manifest.network !== `ton:${source.network}` || !manifest.contracts.Governance) return unavailable();
+  const activityRelay = manifest.schema === 'tonswap-release-v2' ? manifest.contracts.FeeRouter?.address : null;
+  if (activityRelay === undefined) return unavailable();
   const pin = { ...manifest.contracts.Governance }, releaseId = manifest.releaseId, manifestHash = manifest.manifestHash,
     network = source.network, globalId = manifest.globalId, reader = createSnapshotReader(source);
   return async (address: string, query: GovernanceSnapshotQuery = {}, signal?: AbortSignal) => {
@@ -62,6 +64,7 @@ export function createGovernanceSnapshotReader(manifest: RuntimeReleaseManifest,
             || Buffer.from(envelope.lastTxHash, /^[0-9a-f]{64}$/i.test(envelope.lastTxHash) ? 'hex' : 'base64').toString('hex')
               !== shard.lastTransactionHash.toString(16).padStart(64, '0')) return unavailable();
           const state = readGovernanceStorage(actual.data);
+          if ((state.activityRelay?.toRawString() ?? null) !== activityRelay) return unavailable();
           const classes = [0, 1, 2].map(kind => {
             const result = observed.results[kind + 1];
             if (result.kind !== 'getter' || result.address !== pin.address || result.exitCode !== 0) return unavailable();
