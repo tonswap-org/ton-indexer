@@ -1,10 +1,18 @@
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
 import { isPlatformActivityNotice } from './spotEvidenceIdentity';
 import { beginCell, Cell, loadMessage, storeShardAccount, storeStateInit, type ShardAccount } from '@ton/core';
-import type { ChainHead, ChainSource } from '../data/dataSource';
+import type { AccountStateResponse, ChainHead, ChainSource } from '../data/dataSource';
 import { assertFreshHeadTime } from '../data/freshHead';
 import { activeOrderAccount, orderShard, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { canonicalPhysicalMessage, createPhysicalEvidenceReader, type PhysicalBoundary, type PhysicalEvidenceStore, type PhysicalGap } from './physicalEvidence';
+
+/** A canonical wallet can be discovered before any transfer deploys it. Only a
+ * proven empty account at the requested head may be omitted as an optional seed. */
+export function isProvenAbsentWallet(state: AccountStateResponse, head: ChainHead): boolean {
+  return !state.shardAccountBoc && state.provenAbsent === true && !!state.anchor && state.anchor.genUtime <= head.utime
+    && state.accountState === 'uninitialized' && state.balance === '0' && state.codeBoc === null && state.dataBoc === null
+    && state.lastTxLt === undefined && state.lastTxHash === undefined;
+}
 
 export const PRODUCT_EVIDENCE_LIMITS = Object.freeze({ accounts: 16, history: 256, transactions: 256, newTransactions: 64,
   edges: 1024, gaps: 256, bytes: 8 * 1024 * 1024 });

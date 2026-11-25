@@ -9,7 +9,7 @@ import { activeOrderAccount, orderShard, verifyOrderTransaction } from '../order
 import { publicPoolIdentity, verifyPoolEvidenceIdentity } from './poolOperationEvidence';
 import { assertPoolIdentity } from './spotOperationEvidence';
 import type { PhysicalEvidenceStore } from './physicalEvidence';
-import { boundProductResponse, collectProductPhysicalGraph, productAddress, productCell, productDispatch, productUint, ProductEvidenceError, requireProduct, type ProductDispatch, type ProductPhysicalGraph } from './productEvidence';
+import { boundProductResponse, collectProductPhysicalGraph, isProvenAbsentWallet, productAddress, productCell, productDispatch, productUint, ProductEvidenceError, requireProduct, type ProductDispatch, type ProductPhysicalGraph } from './productEvidence';
 import { launchAddress, launchCheck, readLaunchChild, readLaunchFactory, readLaunchSaleConfig, readLaunchTerms, readLaunchpadProjectToken, type LaunchIdentity } from './launchpadEvidenceState';
 const kinds=['create','contribute','supply','vest-supply','claim','finalize','cancel','discover','lp-seed','lp-release','vest-claim','vest-return','owed','wallet-mark','wallet-retry','holder-claim','archive-claim'] as const;
 export type LaunchpadAsset={root:string;masterCodeHash:string;walletCodeHash:string;amountRaw:string;recipient:string};
@@ -109,7 +109,14 @@ export async function readLaunchpadEvidenceContext(manifest:RuntimeReleaseManife
 export async function collectLaunchpadOperationEvidence(manifest:RuntimeReleaseManifest,source:ChainSource,store:PhysicalEvidenceStore,parsed:ReturnType<typeof readLaunchpadOperationRequest>,signal?:AbortSignal):Promise<CurrentLaunchpadOperationEvidence>{
   const context=await readLaunchpadEvidenceContext(manifest,source,parsed,signal),{head,request:p,pins,completeAccounts}=context;
   const includeAccounts=new Set<string>();
-  if(context.targetRole!==undefined)for(const slot of context.loaded.get(context.targetRole)?.slots.values()??[])if(slot.wallet)includeAccounts.add(slot.wallet);
+  if(context.targetRole!==undefined){
+    const slots=[...context.loaded.get(context.targetRole)?.slots.values()??[]];
+    await Promise.all(slots.map(async slot=>{
+      if(!slot.wallet)return;
+      if(p.kind==='discover'&&isProvenAbsentWallet(await source.getAccountState(slot.wallet,{at:head,signal}),head))return;
+      includeAccounts.add(slot.wallet);
+    }));
+  }
   for(const asset of p.assets){const identity=await context.wallets.identity(asset.root,asset.recipient,{at:head,signal});includeAccounts.add(identity.wallet);}
   let poolContext:{pool:string;identityManifest:RuntimeReleaseManifest;market:RuntimeReleaseManifest['spotMarkets'][number];poolWallets:readonly{root:string;wallet:string}[]}|null=null;
   if(p.kind==='lp-seed'||p.kind==='lp-release'){

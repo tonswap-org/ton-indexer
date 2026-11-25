@@ -11,7 +11,7 @@ import { currentDlmmPoolBinding } from '../ledger/currentDlmmPhysical';
 import { collectProductExecutionGraph } from './productExecutionEvidence';
 import type { PhysicalEvidenceStore } from './physicalEvidence';
 import { ProductEvidenceError, requireProduct, productUint, productAddress, productCell, productDispatch,
-  collectProductPhysicalGraph, boundProductResponse, type ProductDispatch, type ProductPhysicalGraph } from './productEvidence';
+  collectProductPhysicalGraph, isProvenAbsentWallet, boundProductResponse, type ProductDispatch, type ProductPhysicalGraph } from './productEvidence';
 
 export type CurrentPoolEvidenceRequest = {
   network: ChainSource['network']; releaseId: string; manifestHash: string; kind: 'add'|'farm-create'|'farm-action'|'remove'|'owed';
@@ -118,8 +118,7 @@ export async function readPoolEvidenceContext(manifest: RuntimeReleaseManifest, 
   const absent=new Set<string>();
   await Promise.all([...poolWallets,...ownerWallets].map(async w=>{
     const s=await source.getAccountState(w.wallet,{at:head,signal});
-    if(!s.shardAccountBoc&&s.provenAbsent===true&&s.anchor&&s.anchor.genUtime<=head.utime&&s.accountState==='uninitialized'
-      &&s.balance==='0'&&s.codeBoc===null&&s.dataBoc===null&&s.lastTxLt===undefined&&s.lastTxHash===undefined)absent.add(w.wallet);
+    if(isProvenAbsentWallet(s,head))absent.add(w.wallet);
   }));
   return {head,market,identityManifest,t3:tokens[0]!,x:tokens[1]!,poolWallets,ownerWallet,ownerWallets,absent,pins:new Map([[request.pool,manifest.templates.DlmmPool]]),completeAccounts:[request.pool,...poolWallets.map(w=>w.wallet).filter(w=>!absent.has(w)),...(request.sourceWallet?[request.sourceWallet]:[])]};
 }
