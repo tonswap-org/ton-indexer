@@ -340,6 +340,8 @@ REST request errors use the flat body: `{ "error": "safe explanation", "code": "
 
 Wallet receipt readers use `GET /api/indexer/v1/accounts/{addr}/original-transactions?limit=32` under the manifest's indexer mount. The read accepts 1–50 original transactions and an optional inclusive `lt` and base64 `hash` pair. Without a cursor it reads the account's chain head. Each row contains the original transaction BOC in `data`, checked against the account and predecessor chain. Responses are release-bound and uncached.
 
+When a peer reports that it cannot serve an archive read, later historical reads prefer other ready peers for one minute. Current reads retain their usual peer order. Every request still uses its configured attempt limit and deadline.
+
 Run `npm run test:fresh-read`, `npx tsx src/scripts/service-deadline-test.ts`, `npx tsx src/scripts/error-contract-test.ts`, `npx tsx src/scripts/transaction-evidence-test.ts` and `npx tsx src/scripts/jsonrpc-anchor-test.ts` for these boundaries.
 
 ## Durable account ledger

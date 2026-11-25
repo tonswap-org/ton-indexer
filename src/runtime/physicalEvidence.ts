@@ -60,6 +60,7 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
     if (!state.shardAccountBoc) throw new ChainReadError('upstream_unavailable');
     const shard = orderShard(state.shardAccountBoc, account).shard, rows: PhysicalBoundary[] = [], gaps: PhysicalGap[] = [];
     let lt = shard.lastTransactionLt, hash = boundaryHash(shard.lastTransactionHash), expected = orderCell(state.shardAccountBoc), stopped = false;
+    let latestSeqno = head.seqno;
     while (lt > 0n && rows.length < limit) {
       options.signal?.throwIfAborted();
       if (rows.length % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); options.signal?.throwIfAborted(); }
@@ -70,7 +71,7 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
           remaining--;
           const cursor = { lt: lt.toString(), hash: Buffer.from(hash, 'hex').toString('base64') };
           const cell = await original(account, cursor);
-          const located = await findTransactionState(source, account, cursor, head.seqno,
+          const located = await findTransactionState(source, account, cursor, latestSeqno,
             { signal: options.signal, transactionTime: loadTransaction(cell.beginParse()).now });
           if (!located) throw new ChainReadError('upstream_unavailable');
           const exact = located.state.replayBoundary ? located.state : await source.getAccountStateAtTransaction(account, cursor, located.seqno, { signal: options.signal });
@@ -82,9 +83,10 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
           await store.retain(evidence, located.seqno); boundary = { evidence, seqno: located.seqno };
         }
         const checked = verifyOrderTransaction(boundary.evidence);
-        if (checked.tx.lt !== lt || checked.hash !== hash || checked.tx.now > head.utime || boundary.seqno > head.seqno
+        if (checked.tx.lt !== lt || checked.hash !== hash || checked.tx.now > head.utime || boundary.seqno > latestSeqno
           || !orderCell(boundary.evidence.afterShardAccountBoc).equals(expected)) throw new ChainReadError('upstream_unavailable');
         rows.push(boundary); lt = checked.tx.prevTransactionLt; hash = boundaryHash(checked.tx.prevTransactionHash);
+        latestSeqno = boundary.seqno;
         expected = orderCell(boundary.evidence.beforeShardAccountBoc);
         if (stop?.(boundary)) { stopped = true; break; }
       } catch (error) {

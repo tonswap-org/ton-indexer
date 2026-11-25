@@ -114,13 +114,13 @@ export class LiteClientDataSource implements ChainSource {
   private get client(): LiteClient { return this.currentLane().client; }
   private async call<T>(fn: (client: LiteClient) => Promise<T>): Promise<T> { this.ensure(); return fn(this.client); }
   private async queryLite<T>(fn: () => Promise<T>): Promise<T> { this.ensure(); return fn(); }
-  private async scope<T>(options: { signal?: AbortSignal; at?: ChainHead }, run: (signal: AbortSignal) => Promise<T>, timeout = 5_000): Promise<T> {
+  private async scope<T>(options: { signal?: AbortSignal; at?: ChainHead; archive?: boolean }, run: (signal: AbortSignal) => Promise<T>, timeout = 5_000): Promise<T> {
     const controller = new AbortController();
     const cancelTimer = afterIo(timeout, () => controller.abort(new ChainReadError('upstream_timeout')));
     const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : [])]);
     try {
       if (signal.aborted) throw new ChainReadError('upstream_timeout');
-      return await this.ensure().withOptions({ signal, awaitSeqno: options.at?.seqno }, () => new Promise<T>((resolve, reject) => {
+      return await this.ensure().withOptions({ signal, awaitSeqno: options.at?.seqno, archive: options.archive }, () => new Promise<T>((resolve, reject) => {
         const abort = () => { cleanup(); reject(new ChainReadError('upstream_timeout')); };
         const cleanup = () => signal.removeEventListener('abort', abort);
         signal.addEventListener('abort', abort, { once: true });
@@ -349,13 +349,13 @@ export class LiteClientDataSource implements ChainSource {
     return options.lane === 'fresh' ? this.lane.run('fresh', run) : run();
   }
   async getMasterchainSeqnoAtTime(utime: number, options: { signal?: AbortSignal } = {}): Promise<number> {
-    return this.scope(options, async () => {
+    return this.scope({ ...options, archive: true }, async () => {
       const block = await this.call(client => client.lookupBlockByUtime({ workchain: -1, shard: '-9223372036854775808', utime }));
       return freshMasterchainBlock(block.id).seqno;
     });
   }
   async getAccountStateAtSeqno(address: string, seqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
-    return this.scope(options, async signal => this.ensure().withOptions({ signal, awaitSeqno: seqno }, async () => {
+    return this.scope({ ...options, archive: true }, async signal => this.ensure().withOptions({ signal, awaitSeqno: seqno }, async () => {
       if (!Number.isSafeInteger(seqno) || seqno < 1) throw new Error('Invalid archival block');
       const header = await this.lookupMasterchainBlock(seqno);
       const proof = Cell.fromBoc(header.headerProof);
@@ -365,7 +365,7 @@ export class LiteClientDataSource implements ChainSource {
     }));
   }
   async getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
-    return this.scope(options, signal => this.ensure().withOptions({ signal, awaitSeqno: containingSeqno },
+    return this.scope({ ...options, archive: true }, signal => this.ensure().withOptions({ signal, awaitSeqno: containingSeqno },
       () => this.readAccountStateAtTransaction(address, cursor, containingSeqno, signal)), 30_000);
   }
   private async readAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, signal: AbortSignal): Promise<AccountStateResponse> {
@@ -476,7 +476,7 @@ export class LiteClientDataSource implements ChainSource {
   }
 
   async getTransactions(address: string, limit: number, lt?: string, hash?: string, options: { signal?: AbortSignal } = {}): Promise<RawTransaction[]> {
-    return this.scope(options, signal => this.readTransactions(address, limit, lt, hash, signal));
+    return this.scope({ ...options, archive: !!lt && !!hash }, signal => this.readTransactions(address, limit, lt, hash, signal));
   }
   private async readTransactions(address: string, limit: number, lt: string | undefined, hash: string | undefined, signal: AbortSignal): Promise<RawTransaction[]> {
     const parsed = Address.parse(address);
