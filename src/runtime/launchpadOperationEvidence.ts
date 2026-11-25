@@ -106,6 +106,12 @@ export async function readLaunchpadEvidenceContext(manifest:RuntimeReleaseManife
   if(parsed.owedSlot!==null){const slot=loaded.get(targetRole!)?.slots.get(parsed.owedSlot);launchCheck(slot&&p.assets.some(a=>a.root===slot.master&&a.recipient===p.owner));}
   return{head,request:p,factory,children,targetRole,pins,completeAccounts,terms,loaded,t3,project,wallets};
 }
+/** Only these canonical wallets can be unrelated to the requested transfer.
+ * Actual causal destinations and the request's asset wallets remain mandatory. */
+export function canOmitAbsentLaunchpadWallet(kind: CurrentLaunchpadEvidenceRequest['kind'], master: string, t3Root: string): boolean {
+  return kind === 'discover' || (kind === 'supply' && master === t3Root);
+}
+
 export async function collectLaunchpadOperationEvidence(manifest:RuntimeReleaseManifest,source:ChainSource,store:PhysicalEvidenceStore,parsed:ReturnType<typeof readLaunchpadOperationRequest>,signal?:AbortSignal):Promise<CurrentLaunchpadOperationEvidence>{
   const context=await readLaunchpadEvidenceContext(manifest,source,parsed,signal),{head,request:p,pins,completeAccounts}=context;
   const includeAccounts=new Set<string>();
@@ -113,7 +119,8 @@ export async function collectLaunchpadOperationEvidence(manifest:RuntimeReleaseM
     const slots=[...context.loaded.get(context.targetRole)?.slots.values()??[]];
     await Promise.all(slots.map(async slot=>{
       if(!slot.wallet)return;
-      if(p.kind==='discover'&&isProvenAbsentWallet(await source.getAccountState(slot.wallet,{at:head,signal}),head))return;
+      if(canOmitAbsentLaunchpadWallet(p.kind,slot.master,context.t3.root)
+        && isProvenAbsentWallet(await source.getAccountState(slot.wallet,{at:head,signal}),head))return;
       includeAccounts.add(slot.wallet);
     }));
   }
