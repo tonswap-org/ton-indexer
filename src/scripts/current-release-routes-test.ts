@@ -93,7 +93,9 @@ async function main() {
         factory: { address: request.factory, codeBoc: '', dataBoc: '' }, order: { address: request.order, codeBoc: '', dataBoc: '' }, absentAccounts: [],
         wallets: { ownerPay: request.owner, ownerReceive: request.owner, orderPay: request.order, poolPay: request.pool, poolReceive: request.pool } };
   } };
-  const service = {  } as IndexerService;
+  const service = { async readFresh() {
+    return { network: 'testnet', readContext: { source: 'lite', head, queriedAt: Date.now() }, results: [] };
+  } } as unknown as IndexerService;
   const app = Fastify();
   registerRoutes(app, { network: 'testnet' }, service, undefined, undefined, undefined, undefined, bundle.contracts, bundle.metadata, { source, orders });
   const path = `/api/indexer/v1/config-prices?masterchainSeqno=100&blockRootHash=${head.rootHashHex}`;
@@ -122,7 +124,19 @@ async function main() {
     for (const value of ['wrongHead', 'invalid', 'timeout'] as const) {
       mode = value; check(await app.inject(path), value === 'timeout' ? 504 : 503, value === 'timeout' ? 'upstream_timeout' : 'upstream_unavailable');
     }
+    const withPrices = { method: 'POST' as const, url: '/api/indexer/v1/readFresh',
+      payload: { calls: [{ kind: 'account', address: '0:' + '0'.repeat(64) }], includeFundingPrices: true } };
+    const beforeInline = headReads;
+    mode = 'ok';
+    const priced = await app.inject(withPrices);
+    check(priced, 200);
+    assert.deepEqual(priced.json().fundingPrices, first.json());
+    assert.equal(headReads, beforeInline, 'the config is pinned to the original account batch even if the tip moves');
+    mode = 'wrongHead';
+    check(await app.inject(withPrices), 503, 'upstream_unavailable');
+    check(await app.inject({ ...withPrices, payload: { ...withPrices.payload, includeFundingPrices: 'yes' } }), 400, 'invalid_fresh_read');
     mode = 'ok'; head.utime -= 31; const reads = configReads;
+    check(await app.inject(withPrices), 503, 'upstream_unavailable');
     check(await app.inject(path), 503, 'upstream_unavailable'); assert.equal(configReads, reads); head.utime += 31;
     check(await app.inject('/api/indexer/v1/orders/open?limit=100'), 200);
     for (const query of ['?cursor=', '?limit=0', '?limit=101', '?limit=01', '?limit=100&limit=100', '?other=1'])

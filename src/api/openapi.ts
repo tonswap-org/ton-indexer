@@ -112,7 +112,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
         },
         FreshReadRequest: {
           type: 'object', additionalProperties: false, required: ['calls'],
-          properties: { calls: { type: 'array', minItems: 1, maxItems: 32, items: { oneOf: [
+          properties: { includeFundingPrices: { const: true }, calls: { type: 'array', minItems: 1, maxItems: 32, items: { oneOf: [
             { type: 'object', additionalProperties: false, required: ['kind', 'address'],
               properties: { kind: { const: 'account' }, address: { type: 'string' } } },
             { type: 'object', additionalProperties: false, required: ['kind', 'address', 'method'],
@@ -123,6 +123,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
         FreshReadResponse: {
           type: 'object', required: ['network', 'release', 'readContext', 'results'],
           properties: {
+            fundingPrices: { $ref: '#/components/schemas/ConfigPricesResponse' },
             network: { type: 'string', enum: ['testnet', 'mainnet', 'localnet'] },
             release: { type: 'object', required: ['releaseId', 'manifestHash'], properties: {
               releaseId: { type: 'string' }, manifestHash: { type: 'string', pattern: '^[a-f0-9]{64}$' } } },

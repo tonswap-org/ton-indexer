@@ -28,7 +28,7 @@ import { buildDocsHtml } from './docsHtml';
 import { publicIndexerPath } from './publicMount';
 import { installErrorHandlers, sendError, sendFailure } from './errors';
 import { requestDeadline, ROUTE_DEADLINE_MS } from './deadline';
-import { ChainReadError, type ChainSource, type TonBlockIdExt } from '../data/dataSource';
+import { ChainReadError, type ChainSource, type ChainHead, type TonBlockIdExt } from '../data/dataSource';
 import type { BalanceService } from '../balances/balanceService';
 import { BalanceStreamCapacityError, type BalanceStreamHub } from '../balances/balanceStream';
 import { BalanceStreamAdmission, BalanceStreamWriter } from './balanceStreamTransport';
@@ -277,6 +277,17 @@ const classifyRateLimitBucket = (url: string) => {
   }
   return 'default' as const;
 };
+
+async function fundingPricesAt(source: ChainSource, head: ChainHead, release: { releaseId: string; manifestHash: string }, signal: AbortSignal) {
+  assertFreshHeadTime(head.utime);
+  const config = await source.getConfig({ at: head, signal });
+  if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex', 'utime'] as const).some(key => config.head[key] !== head[key]))
+    throw new ChainReadError('upstream_unavailable');
+  const basechain = currentJettonConfigPrices(config.configBoc, head.utime);
+  assertFreshHeadTime(head.utime);
+  return { schema: 'tonswap-config-prices-v1', releaseId: release.releaseId, manifestHash: release.manifestHash,
+    asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex }, basechain };
+}
 
 export const registerRoutes = (
   app: FastifyInstance,
@@ -840,12 +851,7 @@ export const registerRoutes = (
       const head = await runtime.source.head({ signal }); assertFreshHeadTime(head.utime);
       if (head.seqno !== Number(query.masterchainSeqno) || head.rootHashHex !== query.blockRootHash)
         return sendError(reply, 409, 'head_mismatch', 'The chain head changed. Refresh the current read.');
-      const config = await runtime.source.getConfig({ at: head, signal });
-      if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex', 'utime'] as const).some(key => config.head[key] !== head[key]))
-        throw new ChainReadError('upstream_unavailable');
-      const basechain = currentJettonConfigPrices(config.configBoc, head.utime); assertFreshHeadTime(head.utime);
-      return { schema: 'tonswap-config-prices-v1', releaseId: nativeRuntime.releaseId, manifestHash: nativeRuntime.manifestHash,
-        asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex }, basechain };
+      return await fundingPricesAt(runtime.source, head, nativeRuntime, signal);
     } catch (error) {
       runtime.logger?.warn('current config prices unavailable', { error: errorDiagnostic(error) });
       if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current network prices are unavailable.' });
@@ -971,7 +977,8 @@ export const registerRoutes = (
     reply.header('cache-control', 'no-store');
     const body = asRecord(request.body);
     const rawCalls = body?.calls;
-    if (!body || Object.keys(body).some(key => key !== 'calls') || !Array.isArray(rawCalls)
+    if (!body || Object.keys(body).some(key => key !== 'calls' && key !== 'includeFundingPrices')
+      || ('includeFundingPrices' in body && body.includeFundingPrices !== true) || !Array.isArray(rawCalls)
       || rawCalls.length < 1 || rawCalls.length > FRESH_READ_MAX_CALLS)
       return sendError(reply, 400, 'invalid_fresh_read', 'Use 1 to 32 current chain read calls.');
     const calls: FreshReadCall[] = [];
@@ -998,8 +1005,15 @@ export const registerRoutes = (
       return sendError(reply, 503, 'upstream_unavailable', 'Fresh chain read unavailable.');
     const startedAt = Date.now();
     try {
-      const response = await service.readFresh(calls, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.fresh) });
-      return { ...response, release: { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash } };
+      const signal = requestDeadline(request, ROUTE_DEADLINE_MS.fresh);
+      const response = await service.readFresh(calls, { signal });
+      const release = { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash };
+      if (body.includeFundingPrices === true) {
+        if (!runtime.source) throw new ChainReadError('upstream_unavailable');
+        const fundingPrices = await fundingPricesAt(runtime.source, response.readContext.head, release, signal);
+        return { ...response, release, fundingPrices };
+      }
+      return { ...response, release };
     } catch (error) {
       runtime.logger?.warn('fresh chain read unavailable', { elapsedMs: Date.now() - startedAt, calls: calls.length,
         releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, error: errorDiagnostic(error) });

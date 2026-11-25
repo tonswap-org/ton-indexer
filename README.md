@@ -316,6 +316,8 @@ isolation and eviction regressions.
 
 `POST /api/indexer/v1/readFresh` accepts 1–32 account/getter calls and executes them at one exact masterchain boundary. Its `readContext` contains `source: "lite"`, the complete head including `utime`, and the server query-start timestamp `queriedAt`. Account results contain the authenticated shard block and its creation time in `anchor`. The response also carries the current native release ID and manifest hash. No persisted account projection supplies a current chain read. Partial, wrong-network and wrong-block batches fail; actual getter VM exits remain outcomes. Current Perps intake and funding getters use this same pinned batch; later asynchronous contract execution remains separate.
 
+Funding reviews may set `includeFundingPrices` to `true` on the same request. The response then includes `fundingPrices` for the exact masterchain block used by every account and getter. The indexer checks the complete config block identity and its freshness before returning the batch. A failed config read fails the entire priced request.
+
 Current metadata must have a canonical block time within 30 seconds of local
 time, at most five seconds ahead, and a consistent peer clock. Stale or lagging
 heads consume the same bounded peer budget; dependent head queries carry the
