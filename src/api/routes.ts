@@ -20,6 +20,7 @@ import {
   governanceSnapshotQuerySchema,
   marketCandleParamsSchema,
   marketCandleQuerySchema,
+  originalTransactionQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
@@ -367,6 +368,7 @@ export const registerRoutes = (
       openapi: '/api/indexer/v1/openapi.json',
       balances: '/api/indexer/v1/accounts/{addr}/balances',
       transactions: '/api/indexer/v1/accounts/{addr}/txs',
+      ...(freshReads ? { originalTransactions: '/api/indexer/v1/accounts/{addr}/original-transactions' } : {}),
       state: '/api/indexer/v1/accounts/{addr}/state',
       runGetMethod: '/api/indexer/v1/runGetMethod',
       ...(freshReads ? { readFresh: '/api/indexer/v1/readFresh' } : {}),
@@ -1215,6 +1217,26 @@ export const registerRoutes = (
   };
 
   app.get('/api/indexer/v1/stream/balances', handleBalanceStream);
+
+  app.get(
+    '/api/indexer/v1/accounts/:addr/original-transactions',
+    { schema: { params: addressParamsSchema, querystring: originalTransactionQuerySchema } },
+    async (request, reply) => {
+      reply.header('cache-control', 'no-store');
+      const { addr } = request.params as { addr: string };
+      const { limit, lt, hash } = request.query as { limit: number; lt?: string; hash?: string };
+      if (!nativeRuntime) return sendError(reply, 503, 'upstream_unavailable', 'The current release identity is unavailable.');
+      if (!isValidAddress(addr)) return sendError(reply, 400, 'invalid_address', 'invalid address');
+      if (lt && (BigInt(lt) >= (1n << 64n) || !hash || !isValidHashBase64(hash))) {
+        return sendError(reply, 400, 'invalid_cursor', 'invalid original transaction cursor');
+      }
+      try {
+        return await service.getTransactionEvidence(addr, limit, lt, hash, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
+      } catch (error) {
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Original transaction history is unavailable.' });
+      }
+    }
+  );
 
   app.get(
     '/api/indexer/v1/accounts/:addr/txs',

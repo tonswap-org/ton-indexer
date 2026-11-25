@@ -348,6 +348,12 @@ export class LiteClientDataSource implements ChainSource {
     // Everything this read does, including its head, runs on the fresh lane's connections and health.
     return options.lane === 'fresh' ? this.lane.run('fresh', run) : run();
   }
+  async getMasterchainSeqnoAtTime(utime: number, options: { signal?: AbortSignal } = {}): Promise<number> {
+    return this.scope(options, async () => {
+      const block = await this.call(client => client.lookupBlockByUtime({ workchain: -1, shard: '-9223372036854775808', utime }));
+      return freshMasterchainBlock(block.id).seqno;
+    });
+  }
   async getAccountStateAtSeqno(address: string, seqno: number, options: { signal?: AbortSignal } = {}): Promise<AccountStateResponse> {
     return this.scope(options, async signal => this.ensure().withOptions({ signal, awaitSeqno: seqno }, async () => {
       if (!Number.isSafeInteger(seqno) || seqno < 1) throw new Error('Invalid archival block');

@@ -234,6 +234,8 @@ export interface ChainSource {
   getRecoveryProofHistory?(anchor: ChainHead, options?: ReadOptions): Promise<RecoveryProofHistory>;
   runGetMethod(address: string, method: string, args?: TupleItem[], options?: ReadOptions): Promise<{ exitCode: number; stack: TupleItem[] }>;
   getAccountStateAtSeqno(address: string, seqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
+  /** Search hint only. Account membership and exact transaction cursors are verified separately. */
+  getMasterchainSeqnoAtTime?(utime: number, options?: { signal?: AbortSignal }): Promise<number>;
   getAccountStateAtTransaction(address: string, cursor: TransactionCursor, containingSeqno: number, options?: { signal?: AbortSignal }): Promise<AccountStateResponse>;
   getTransactions(address: string, limit: number, lt: string, hash: string, options?: { signal?: AbortSignal }): Promise<RawTransaction[]>;
   sendMessage(boc: Buffer, options?: { signal?: AbortSignal }): Promise<void>;

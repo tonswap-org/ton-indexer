@@ -16,6 +16,18 @@ export const txQuerySchema = {
   },
 };
 
+export const originalTransactionQuerySchema = {
+  type: 'object',
+  propertyNames: { enum: ['limit', 'lt', 'hash'] },
+  properties: {
+    limit: { type: 'integer', minimum: 1, maximum: 50 },
+    lt: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' },
+    hash: { type: 'string', maxLength: 44 },
+  },
+  required: ['limit'],
+  dependencies: { lt: ['hash'], hash: ['lt'] },
+};
+
 export const marketCandleParamsSchema = {
   type: 'object',
   properties: {

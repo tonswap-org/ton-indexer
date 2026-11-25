@@ -1,4 +1,4 @@
-import { Address, Cell, beginCell, loadCommonMessageInfo, loadStateInit, storeMessage } from '@ton/core';
+import { Address, Cell, beginCell, loadCommonMessageInfo, loadStateInit, loadTransaction, storeMessage } from '@ton/core';
 import { ChainReadError, type AccountStateResponse, type ChainHead, type ChainSource } from '../data/dataSource';
 import { decodeOriginalTransaction } from '../data/transactionEvidence';
 import { findTransactionState, type LedgerStateSnapshot } from '../ledger/archive';
@@ -39,6 +39,12 @@ export function canonicalPhysicalMessage(value: Cell): Cell {
 export function createPhysicalEvidenceReader(source: ChainSource, store: PhysicalEvidenceStore, head: ChainHead,
   options: { signal?: AbortSignal; newTransactions: number }) {
   let remaining = options.newTransactions;
+  const original = async (account: string, cursor: { lt: string; hash: string }) => {
+    const page = await source.getTransactions(account, 1, cursor.lt, cursor.hash, { signal: options.signal });
+    const cell = page.length === 1 && page[0].rawBoc ? orderCell(page[0].rawBoc) : undefined;
+    if (!cell || cell.hash().toString('base64') !== cursor.hash) throw new ChainReadError('upstream_unavailable');
+    return cell;
+  };
   const current = async (account: string) => {
     options.signal?.throwIfAborted();
     const state = await source.getAccountState(account, { at: head, signal: options.signal });
@@ -63,14 +69,13 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
           if (remaining <= 0) { gaps.push({ code: 'archive_work_limit', account, lt: lt.toString() }); break; }
           remaining--;
           const cursor = { lt: lt.toString(), hash: Buffer.from(hash, 'hex').toString('base64') };
-          const page = await source.getTransactions(account, 1, cursor.lt, cursor.hash, { signal: options.signal });
-          if (page.length !== 1 || !page[0].rawBoc || Cell.fromBase64(page[0].rawBoc).hash().toString('hex') !== hash)
-            throw new ChainReadError('upstream_unavailable');
-          const located = await findTransactionState(source, account, cursor, head.seqno, { signal: options.signal });
+          const cell = await original(account, cursor);
+          const located = await findTransactionState(source, account, cursor, head.seqno,
+            { signal: options.signal, transactionTime: loadTransaction(cell.beginParse()).now });
           if (!located) throw new ChainReadError('upstream_unavailable');
           const exact = located.state.replayBoundary ? located.state : await source.getAccountStateAtTransaction(account, cursor, located.seqno, { signal: options.signal });
           const proof = exact.replayBoundary;
-          if (!proof || !orderCell(proof.transactionBoc).equals(orderCell(page[0].rawBoc))) throw new ChainReadError('upstream_unavailable');
+          if (!proof || !orderCell(proof.transactionBoc).equals(cell)) throw new ChainReadError('upstream_unavailable');
           const evidence = { account, transactionBoc: proof.transactionBoc, beforeShardAccountBoc: proof.beforeShardAccountBoc, afterShardAccountBoc: proof.afterShardAccountBoc };
           verifyOrderTransaction(evidence);
           if (!orderCell(evidence.afterShardAccountBoc).equals(expected)) throw new ChainReadError('upstream_unavailable');
@@ -98,7 +103,9 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
       if (remaining <= 0) throw new ChainReadError('upstream_unavailable');
       remaining--;
       const cursor = { lt, hash: Buffer.from(hash, 'hex').toString('base64') };
-      const located = await findTransactionState(source, account, cursor, head.seqno, { signal: options.signal });
+      const cell = source.getMasterchainSeqnoAtTime ? await original(account, cursor).catch(() => undefined) : undefined;
+      const located = await findTransactionState(source, account, cursor, head.seqno, { signal: options.signal,
+        transactionTime: cell && loadTransaction(cell.beginParse()).now });
       if (!located) throw new ChainReadError('upstream_unavailable');
       const state = located.state.replayBoundary ? located.state : await source.getAccountStateAtTransaction(account, cursor, located.seqno, { signal: options.signal });
       if (!state.replayBoundary) throw new ChainReadError('upstream_unavailable');
