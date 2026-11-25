@@ -299,7 +299,7 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolExecutionEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
   installReleaseIdentity(app, config.network, registryMetadata);
@@ -390,6 +390,7 @@ export const registerRoutes = (
       ...(freshReads && runtime.orders?.orderWalletClaimEvidence ? { orderWalletClaimEvidence: '/api/indexer/v1/spot/order-wallet-claim-evidence' } : {}),
       ...(freshReads ? { accountStorage: '/api/indexer/v1/account-storage' } : {}),
       ...(freshReads && runtime.orders?.spotOperationEvidence ? { spotOperationEvidence: '/api/indexer/v1/spot/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.poolExecutionEvidence ? { poolExecutionEvidence: '/api/indexer/v1/pools/execution-evidence' } : {}),
       ...(freshReads && runtime.orders?.poolOperationEvidence ? { poolOperationEvidence: '/api/indexer/v1/pools/operation-evidence' } : {}),
       ...(freshReads && runtime.orders?.poolWalletClaimEvidence ? { poolWalletClaimEvidence: '/api/indexer/v1/pools/wallet-claim-evidence' } : {}),
       ...(freshReads && runtime.orders?.launchpadTokenEvidence ? { launchpadTokenEvidence: '/api/indexer/v1/launchpad/token-evidence' } : {}),
@@ -460,13 +461,18 @@ export const registerRoutes = (
 
   app.get('/api/indexer/v1/service-info', async () => serviceInfo);
 
-  app.post('/api/indexer/v1/pools/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+  for (const [path, method] of [
+    ['/api/indexer/v1/pools/operation-evidence', 'poolOperationEvidence'],
+    ['/api/indexer/v1/pools/execution-evidence', 'poolExecutionEvidence'],
+  ] as const) app.post(path, { bodyLimit: 192 * 1024 }, async (request, reply) => {
     reply.header('cache-control', 'no-store');
-    if (!nativeRuntime || !runtime.orders?.poolOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    if (!nativeRuntime || !runtime.orders?.[method]) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
     try {
       if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
       const parsed = readPoolOperationRequest(request.body, nativeRuntime);
-      return await runtime.orders.poolOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+      if (method === 'poolExecutionEvidence' && parsed.request.kind !== 'add' && parsed.request.kind !== 'remove')
+        return sendError(reply, 400, 'bad_request', 'Execution evidence requires an add or remove request.');
+      return await runtime.orders[method](parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
     } catch (error) {
       if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
       runtime.logger?.warn('current Pool evidence unavailable', { error: errorDiagnostic(error) });

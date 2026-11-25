@@ -6,12 +6,15 @@ import { createJettonWalletReader } from '../data/jettonWallet';
 import { activeOrderAccount, orderShard, verifyOrderTransaction } from '../orders/evidence';
 import { assertPoolIdentity } from './spotOperationEvidence';
 import { readLaunchpadProjectToken } from './launchpadEvidenceState';
+import { inspectPoolOperation } from '../ledger/currentDlmmProof';
+import { currentDlmmPoolBinding } from '../ledger/currentDlmmPhysical';
+import { collectProductExecutionGraph } from './productExecutionEvidence';
 import type { PhysicalEvidenceStore } from './physicalEvidence';
 import { ProductEvidenceError, requireProduct, productUint, productAddress, productCell, productDispatch,
   collectProductPhysicalGraph, boundProductResponse, type ProductDispatch, type ProductPhysicalGraph } from './productEvidence';
 
 export type CurrentPoolEvidenceRequest = {
-  network: string; releaseId: string; manifestHash: string; kind: 'add'|'farm-create'|'farm-action'|'remove'|'owed';
+  network: ChainSource['network']; releaseId: string; manifestHash: string; kind: 'add'|'farm-create'|'farm-action'|'remove'|'owed';
   owner: string; pool: string; side: 0|1; queryId: string; amountRaw: string; binId: number|null; farmId: string|null;
   action: number|null; sourceWallet: string|null; bodyBoc: string; bodyHash: string; valueNano: string; createdAt: number; dispatch: ProductDispatch;
 };
@@ -118,14 +121,55 @@ export async function readPoolEvidenceContext(manifest: RuntimeReleaseManifest, 
     if(!s.shardAccountBoc&&s.provenAbsent===true&&s.anchor&&s.anchor.genUtime<=head.utime&&s.accountState==='uninitialized'
       &&s.balance==='0'&&s.codeBoc===null&&s.dataBoc===null&&s.lastTxLt===undefined&&s.lastTxHash===undefined)absent.add(w.wallet);
   }));
-  return {head,market,identityManifest,poolWallets,ownerWallet,ownerWallets,absent,pins:new Map([[request.pool,manifest.templates.DlmmPool]]),completeAccounts:[request.pool,...poolWallets.map(w=>w.wallet).filter(w=>!absent.has(w)),...(request.sourceWallet?[request.sourceWallet]:[])]};
+  return {head,market,identityManifest,t3:tokens[0]!,x:tokens[1]!,poolWallets,ownerWallet,ownerWallets,absent,pins:new Map([[request.pool,manifest.templates.DlmmPool]]),completeAccounts:[request.pool,...poolWallets.map(w=>w.wallet).filter(w=>!absent.has(w)),...(request.sourceWallet?[request.sourceWallet]:[])]};
 }
+function verifyHistoricalPoolIdentity(graph: ProductPhysicalGraph, manifest: RuntimeReleaseManifest, context: Awaited<ReturnType<typeof readPoolEvidenceContext>>) {
+  const pool = context.market.pool;
+  try {
+    for (const row of graph.transactions.filter(row => row.account === pool)) {
+      const tx = verifyOrderTransaction(row);
+      for (const shard of [tx.before, tx.after]) {
+        if (shard.account?.storage.state.type === 'active') {
+          verifyPoolEvidenceIdentity(activeOrderAccount(shard, manifest.templates.DlmmPool).data, context.identityManifest, context);
+        }
+      }
+    }
+  } catch {
+    graph.coverage.complete = false;
+    graph.coverage.gaps.push({ code: 'pool_release_config_mismatch', account: pool });
+  }
+}
+
+export type CurrentPoolExecutionEvidence = Omit<CurrentPoolOperationEvidence, 'schema'> & { schema: 'tonswap-pool-execution-evidence-v1' };
+
+export async function collectPoolExecutionEvidence(manifest: RuntimeReleaseManifest, source: ChainSource, store: PhysicalEvidenceStore,
+  parsed: ReturnType<typeof readPoolOperationRequest>, signal?: AbortSignal): Promise<CurrentPoolExecutionEvidence> {
+  const { request, body, target } = parsed;
+  requireProduct(request.kind === 'add' || request.kind === 'remove');
+  const context = await readPoolEvidenceContext(manifest, source, parsed, signal);
+  const { head, pins, market, t3, x, identityManifest } = context;
+  const wallets = [ [request.owner, context.ownerWallets], [request.pool, context.poolWallets] ] as const;
+  const pool = { pool: request.pool, market, t3, x, wallets: wallets.flatMap(([owner, identities]) =>
+    identities.map(w => ({ owner, root: w.root, address: w.wallet, codeHash: w.walletCode.hash().toString('hex') }))) };
+  const binding = currentDlmmPoolBinding({ release: identityManifest, pools: [pool] }, request.pool, request.owner, request.side);
+  const graph = await collectProductExecutionGraph(source, store, head, {
+    owner: request.owner, target, body, dispatch: request.dispatch, pins, activity: { manifest, sources: [request.pool] },
+    provesExecution: rows => inspectPoolOperation(request, binding, rows).status === (request.kind === 'add' ? 'credited' : 'delivered')
+  }, signal);
+  verifyHistoricalPoolIdentity(graph, manifest, context);
+  signal?.throwIfAborted();
+  assertFreshHeadTime(head.utime);
+  return boundProductResponse<CurrentPoolExecutionEvidence>({ schema: 'tonswap-pool-execution-evidence-v1',
+    releaseId: manifest.releaseId, manifestHash: manifest.manifestHash,
+    asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex },
+    request: { kind: request.kind, owner: request.owner, bodyHash: request.bodyHash }, ...graph }, request.pool);
+}
+
 export async function collectPoolOperationEvidence(manifest: RuntimeReleaseManifest, source: ChainSource, store: PhysicalEvidenceStore, parsed: ReturnType<typeof readPoolOperationRequest>, signal?: AbortSignal): Promise<CurrentPoolOperationEvidence> {
   const {request}=parsed,context=await readPoolEvidenceContext(manifest,source,parsed,signal),{head,pins,completeAccounts}=context;
   const graph=await collectProductPhysicalGraph(source,store,head,{activity:{manifest,sources:[request.pool]},owner:request.owner,target:parsed.target,body:parsed.body,dispatch:request.dispatch,pins,completeAccounts,
     includeAccounts:context.ownerWallets.map(w=>w.wallet).filter(w=>!context.absent.has(w))},signal);
-  try {for(const row of graph.transactions)if(row.account===request.pool){const tx=verifyOrderTransaction(row);for(const shard of [tx.before,tx.after])if(shard.account?.storage.state.type==='active')verifyPoolEvidenceIdentity(activeOrderAccount(shard,manifest.templates.DlmmPool).data,context.identityManifest,context);}}
-  catch {graph.coverage.complete=false;graph.coverage.gaps.push({code:'pool_release_config_mismatch',account:request.pool});}
+  verifyHistoricalPoolIdentity(graph, manifest, context);
   signal?.throwIfAborted();assertFreshHeadTime(head.utime);
   return boundProductResponse<CurrentPoolOperationEvidence>({schema:'tonswap-pool-operation-evidence-v1',releaseId:manifest.releaseId,manifestHash:manifest.manifestHash,asOf:{masterchainSeqno:head.seqno,unixTime:head.utime,blockRootHash:head.rootHashHex},request:{kind:request.kind,owner:request.owner,bodyHash:request.bodyHash},...graph},request.pool);
 }

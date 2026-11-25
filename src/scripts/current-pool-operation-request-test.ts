@@ -59,8 +59,8 @@ async function run(){
   const legacy=beginCell().storeUint(0x464d4333,32).storeUint(42n,64).storeInt(0,32).storeUint(3600,32).endCell(),bad=poolRequestFixture('farm-create',0,{payload:legacy});assert.throws(()=>readPoolOperationRequest(bad.request,bad.manifest),ProductEvidenceError);count++;
   const {manifest,request}=poolRequestFixture(),bundle=buildRuntimeManifestBundle(manifest);let calls=0,unavailable=false;
   const collect=async({request}:any,signal?:AbortSignal)=>{calls++;assert(signal);if(unavailable)throw new ProductEvidenceError(503,'upstream_unavailable');return{schema:'tonswap-pool-operation-evidence-v1',releaseId:manifest.releaseId,manifestHash:manifest.manifestHash,asOf:{masterchainSeqno:1,unixTime:1800000000,blockRootHash:'1'.repeat(64)},request:{kind:request.kind,owner:request.owner,bodyHash:request.bodyHash},coverage:{complete:false,gaps:[{code:'original_request_unobserved',account:request.owner}]},transactions:[]};};
-  const app=Fastify();registerRoutes(app,{network:'testnet'},{} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,{source:{} as any,orders:{page:async()=>{throw Error();},poolOperationEvidence:collect as any,poolWalletClaimEvidence:collect as any}});
-  try{for(const name of ['operation-evidence','wallet-claim-evidence']){const url=`/api/indexer/v1/pools/${name}`;
+  const app=Fastify();registerRoutes(app,{network:'testnet'},{} as IndexerService,undefined,undefined,undefined,undefined,bundle.contracts,bundle.metadata,{source:{} as any,orders:{page:async()=>{throw Error();},poolExecutionEvidence:collect as any,poolOperationEvidence:collect as any,poolWalletClaimEvidence:collect as any}});
+  try{for(const name of ['operation-evidence','wallet-claim-evidence','execution-evidence']){const url=`/api/indexer/v1/pools/${name}`;
     for(let i=0;i<2;i++){const r=await app.inject({method:'POST',url,payload:request});assert.equal(r.statusCode,200,r.body);assert.equal(r.headers['cache-control'],'no-store');assert.equal(r.headers['x-tonswap-release'],manifest.manifestHash);}
     assert.equal((await app.inject({method:'POST',url:url+'?extra=1',payload:request})).statusCode,400);
     assert.equal((await app.inject({method:'POST',url,payload:{...request,extra:true}})).statusCode,400);
@@ -68,7 +68,7 @@ async function run(){
     assert.equal((await app.inject({method:'POST',url,payload:{...request,bodyBoc:'a'.repeat(192*1024)}})).statusCode,413);
     unavailable=true;assert.equal((await app.inject({method:'POST',url,payload:request})).statusCode,503);unavailable=false;
     assert((buildOpenApi({network:'testnet'} as any) as any).paths[url]);
-  }assert.equal(calls,6);const info=(await app.inject('/api/indexer/v1/service-info')).json();assert(info.endpoints.poolOperationEvidence&&info.endpoints.poolWalletClaimEvidence);}finally{await app.close();}
+  }const farm=poolRequestFixture('farm-create').request;assert.equal((await app.inject({method:'POST',url:'/api/indexer/v1/pools/execution-evidence',payload:farm})).statusCode,400);assert.equal(calls,9);const info=(await app.inject('/api/indexer/v1/service-info')).json();assert(info.endpoints.poolExecutionEvidence&&info.endpoints.poolOperationEvidence&&info.endpoints.poolWalletClaimEvidence);}finally{await app.close();}
   console.log('Current Pool API exact release/body fences, no-store/noncached reads, service discovery, bounds and typed refusals passed.');
   console.log(`${count} current Pool operation/wallet request assertions passed: five operations, both sides, exact wires, original owner dispatch, release/null/row/duration bounds.`);
 }

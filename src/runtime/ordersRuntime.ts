@@ -25,7 +25,7 @@ import { collectFaucetRecoveryEvidence, type CurrentFaucetRecoveryEvidence, type
 import { collectFaucetProofSession, type FaucetProofSessionEvidence, type readFaucetProofSessionRequest } from './t3ProofSession';
 import { collectLaunchpadOperationEvidence, type CurrentLaunchpadOperationEvidence, type readLaunchpadOperationRequest } from './launchpadOperationEvidence';
 import { collectLaunchpadSalesEvidence, type CurrentLaunchpadSalesEvidence, type CurrentLaunchpadSalesRequest } from './launchpadSalesEvidence';
-import { collectPoolOperationEvidence, type CurrentPoolOperationEvidence, type readPoolOperationRequest } from './poolOperationEvidence';
+import { collectPoolExecutionEvidence, type CurrentPoolExecutionEvidence, collectPoolOperationEvidence, type CurrentPoolOperationEvidence, type readPoolOperationRequest } from './poolOperationEvidence';
 import { collectPoolWalletClaimEvidence, type CurrentPoolWalletClaimEvidence, type readPoolWalletClaimRequest } from './poolWalletClaimEvidence';
 import { collectLaunchpadTokenEvidence, type CurrentLaunchpadTokenEvidence, type readLaunchpadTokenRequest } from './launchpadTokenEvidence';
 import { collectPerpsOperationEvidence, type CurrentPerpsOperationEvidence, type readPerpsOperationRequest } from './perpsOperationEvidence';
@@ -47,6 +47,7 @@ export type CurrentOrdersRuntime = { start(): void; stop(): Promise<void>; statu
   operationEvidence(request: ReturnType<typeof readT3OperationRequest>, signal?: AbortSignal): Promise<CurrentT3OperationEvidence>;
   walletClaimEvidence(request: ReturnType<typeof readT3WalletClaimRequest>, signal?: AbortSignal): Promise<CurrentT3WalletClaimEvidence>;
   orderWalletClaimEvidence(request: ReturnType<typeof readOrderWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentOrderWalletClaimEvidence>;
+  poolExecutionEvidence(request: ReturnType<typeof readPoolOperationRequest>, signal?: AbortSignal): Promise<CurrentPoolExecutionEvidence>;
   poolOperationEvidence(request: ReturnType<typeof readPoolOperationRequest>, signal?: AbortSignal): Promise<CurrentPoolOperationEvidence>;
   poolWalletClaimEvidence(request: ReturnType<typeof readPoolWalletClaimRequest>, signal?: AbortSignal): Promise<CurrentPoolWalletClaimEvidence>;
   launchpadTokenEvidence(request: ReturnType<typeof readLaunchpadTokenRequest>, signal?: AbortSignal): Promise<CurrentLaunchpadTokenEvidence>;
@@ -168,6 +169,10 @@ export function createOrdersRuntime(deps: RuntimeDeps, options: {
     spotOperationEvidence(request, signal) {
       return evidence((store, active) => collectSpotOperationEvidence(native, source, store, request, active),
         () => new SpotEvidenceError(503, 'upstream_unavailable'), signal);
+    },
+    poolExecutionEvidence(request, signal) {
+      return evidence((store, active) => collectPoolExecutionEvidence(native, source, store, request, active),
+        () => new ProductEvidenceError(503, 'upstream_unavailable'), signal);
     },
     poolOperationEvidence(request, signal) {
       return evidence((store, active) => collectPoolOperationEvidence(native, source, store, request, active),

@@ -54,6 +54,7 @@ export const currentReleaseSchemas = {
     transactions:{type:'array',maxItems:256,items:object({account:address,transactionBoc:{type:'string'},beforeShardAccountBoc:{type:'string'},afterShardAccountBoc:{type:'string'}})}}),
   CurrentPoolEvidenceRequest: object({...productRequestIdentity,kind:{enum:['add','farm-create','farm-action','remove','owed']},pool:address,side:{enum:[0,1]},queryId:uint,amountRaw:uint,
     binId:nullable({type:'integer',minimum:-2147483648,maximum:2147483647}),farmId:nullable(uint),action:nullable({type:'integer',minimum:1,maximum:5}),sourceWallet:nullable(address)}),
+  PoolExecutionEvidenceResponse: productEvidence('tonswap-pool-execution-evidence-v1',['add','remove']),
   PoolOperationEvidenceResponse: productEvidence('tonswap-pool-operation-evidence-v1',['add','farm-create','farm-action','remove','owed']),
 
   LaunchpadSalesEvidenceResponse: object({ schema:{const:'tonswap-launchpad-sales-v1'}, ...identity,
@@ -205,6 +206,11 @@ export const currentReleasePaths = {
     responses:{200:response('PoolWalletClaimEvidenceResponse','Current original evidence and explicit coverage'),400:error('Invalid exact native Pool request'),409:error('Release mismatch'),413:error('Request exceeds192KiB'),503:error('Original current evidence unavailable')},
   } },
 
+  '/api/indexer/v1/pools/execution-evidence': { post: {
+    summary:'Verify a credited deposit or delivered liquidity withdrawal',description:'The exact signed dispatch and contiguous authenticated history bind the original mint or removal and all required wallet credits. Incomplete evidence cannot establish refund, absence or payment.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentPoolEvidenceRequest'}}}},
+    responses:{200:response('PoolExecutionEvidenceResponse','Original positive proof or explicit gaps'),400:error('Invalid add or remove request'),409:error('Release mismatch'),413:error('Request exceeds 192 KiB'),503:error('Current evidence unavailable')},
+  } },
   '/api/indexer/v1/pools/operation-evidence': { post: {
     summary:'Read current Pool operation original physical evidence',description:'Exact current native one-bin add, farm create/action, bounded remove or owed claim and owner TON wallet dispatch. Canonical release pool and both token identities bind full original product/source histories and causal physical transfers. Maximum256 original transactions/8MiB, explicit gaps, shared live gate and no cache. Browser independently proves acceptance and physical delivery.',
     requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentPoolEvidenceRequest'}}}},
