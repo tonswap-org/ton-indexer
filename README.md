@@ -2038,6 +2038,12 @@ independently checks actual initial credit or an exact bounced supply reversal.
 The endpoint shares product work/byte limits, release header and no-cache policy.
 Run `npm run test:current-launchpad-token` and original native capture checks.
 
+`POST /api/indexer/v1/perps/execution-evidence` confirms an ordinary open or close from
+the signed dispatch and its original, successful causal transactions. The server authenticates
+current-to-dispatch account intervals and the browser independently verifies the engine
+and RiskVault accounting, collateral delivery and any payouts. An incomplete result
+leaves the full operation and recovery routes available.
+
 `POST /api/indexer/v1/perps/operation-evidence` accepts current open, increase,
 margin, close and funding requests with the exact owner TON dispatch. The current
 engine/RiskVault layouts, installed peers/market pools and canonical T3 wallets

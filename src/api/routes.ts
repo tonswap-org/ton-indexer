@@ -299,7 +299,7 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolExecutionEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsExecutionEvidence' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolExecutionEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
   installReleaseIdentity(app, config.network, registryMetadata);
@@ -394,6 +394,7 @@ export const registerRoutes = (
       ...(freshReads && runtime.orders?.poolOperationEvidence ? { poolOperationEvidence: '/api/indexer/v1/pools/operation-evidence' } : {}),
       ...(freshReads && runtime.orders?.poolWalletClaimEvidence ? { poolWalletClaimEvidence: '/api/indexer/v1/pools/wallet-claim-evidence' } : {}),
       ...(freshReads && runtime.orders?.launchpadTokenEvidence ? { launchpadTokenEvidence: '/api/indexer/v1/launchpad/token-evidence' } : {}),
+      ...(freshReads && runtime.orders?.perpsExecutionEvidence ? { perpsExecutionEvidence: '/api/indexer/v1/perps/execution-evidence' } : {}),
       ...(freshReads && runtime.orders?.perpsOperationEvidence ? { perpsOperationEvidence: '/api/indexer/v1/perps/operation-evidence' } : {}),
       ...(freshReads && runtime.orders?.perpsWalletClaimEvidence ? { perpsWalletClaimEvidence: '/api/indexer/v1/perps/wallet-claim-evidence' } : {}),
       ...(freshReads && runtime.orders?.walletTransferEvidence ? { walletTransferEvidence: '/api/indexer/v1/wallet/transfers/evidence' } : {}),
@@ -505,6 +506,20 @@ export const registerRoutes = (
       runtime.logger?.warn('current Launchpad discovery unavailable', { error: errorDiagnostic(error) });
       if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad discovery is unavailable.' });
       return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad discovery is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/perps/execution-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.perpsExecutionEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Perps execution evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPerpsOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.perpsExecutionEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Perps execution evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Perps execution evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Perps execution evidence is unavailable.');
     }
   });
   app.post('/api/indexer/v1/perps/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {

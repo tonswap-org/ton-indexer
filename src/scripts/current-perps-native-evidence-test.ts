@@ -6,7 +6,7 @@ import { boundaryState } from '../runtime/physicalEvidence';
 import { activeOrderAccount, verifyOrderTransaction, type OrderTransactionEvidence } from '../orders/evidence';
 import { runtimeManifestFixture } from './fixtures/runtimeManifest';
 import { readCurrentPerpsEngine, readCurrentPerpsRiskVault } from '../runtime/perpsEvidenceState';
-import { collectPerpsOperationEvidence, readPerpsOperationRequest } from '../runtime/perpsOperationEvidence';
+import { collectPerpsExecutionEvidence, collectPerpsOperationEvidence, readPerpsOperationRequest } from '../runtime/perpsOperationEvidence';
 import { collectPerpsWalletClaimEvidence } from '../runtime/perpsWalletClaimEvidence';
 import { originalProductCaptureAdapter } from './current-launchpad-native-evidence-test';
 
@@ -61,6 +61,17 @@ async function main() {
       if (mode !== '--state-only') {
         const a = c.head ? originalProductCaptureAdapter(c) : perpsOriginalAdapter(c); Date.now = () => a.head.utime * 1000;
         const operation = await collectPerpsOperationEvidence(manifest, a.source, a.store, parsed).catch(error => { console.error(file, a.control, a.refusedAccounts); throw error; }); assert(operation.coverage.complete, JSON.stringify(operation.coverage)); response = operation;
+        if (c.request.kind === 'open' || c.request.kind === 'close') {
+          const positive = await collectPerpsExecutionEvidence(manifest, a.source, a.store, parsed);
+          if (/^profit-plain-(open|close)-/.test(file)) assert(positive.coverage.complete, JSON.stringify(positive.coverage));
+          if (positive.coverage.complete) {
+            assert.equal(positive.schema, 'tonswap-perps-execution-evidence-v1');
+            assert(positive.transactions.every(row => verifyOrderTransaction(row).tx.lt >= BigInt(c.request.dispatch.lt)));
+          } else assert.equal(positive.transactions.length, 0);
+          const wrong = readPerpsOperationRequest({ ...c.request, dispatch: { ...c.request.dispatch, hash: '0'.repeat(64) } }, manifest);
+          const incomplete = await collectPerpsExecutionEvidence(manifest, a.source, a.store, wrong);
+          assert(!incomplete.coverage.complete && incomplete.transactions.length === 0);
+        }
         const recovery = await collectPerpsWalletClaimEvidence(manifest, a.source, a.store, parsed).catch(error => { console.error(file, a.control, a.refusedAccounts); throw error; }); assert(recovery.coverage.complete, JSON.stringify(recovery.coverage)); claims = recovery;
         a.control.missingAccount = c.request.engine; assert(!(await collectPerpsOperationEvidence(manifest, a.source, a.store, parsed)).coverage.complete); a.control.missingAccount = '';
         const wrong = readPerpsOperationRequest({ ...c.request, dispatch: { ...c.request.dispatch, hash: '0'.repeat(64) } }, manifest);

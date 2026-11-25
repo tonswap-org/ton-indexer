@@ -1,3 +1,5 @@
+import { collectProductExecutionGraph } from './productExecutionEvidence';
+import { currentPerpsBindingFromManifest, inspectNativePerpsEvidence } from '../ledger/currentPerpsProof';
 import { beginCell, type Cell } from '@ton/core';
 import type { RuntimeReleaseManifest } from '../config/runtimeManifest';
 import type { ChainSource } from '../data/dataSource';
@@ -49,9 +51,12 @@ export async function readPerpsEvidenceContext(manifest: RuntimeReleaseManifest,
   parsed: ReturnType<typeof readPerpsOperationRequest>, signal?: AbortSignal) {
   signal?.throwIfAborted(); perpsCheck(`ton:${source.network}` === manifest.network);
   const p = parsed.request, head = await source.head({ signal }); assertFreshHeadTime(head.utime);
-  const reader = createPhysicalEvidenceReader(source, store, head, { signal, newTransactions: PRODUCT_EVIDENCE_LIMITS.newTransactions });
-  const engine = readCurrentPerpsEngine(activeOrderAccount(orderShard((await reader.current(p.engine)).shardAccountBoc!, p.engine).shard, manifest.contracts.PerpsEngine!.codeHash).data, manifest);
-  const riskShard = orderShard((await reader.current(p.riskVault)).shardAccountBoc!, p.riskVault).shard;
+  const physical = createPhysicalEvidenceReader(source, store, head, { signal, newTransactions: PRODUCT_EVIDENCE_LIMITS.newTransactions });
+  const [engineAccount, riskAccount] = await Promise.all([physical.current(p.engine), physical.current(p.riskVault)]);
+  const reader = { ...physical, current: (account: string) => account === p.engine ? Promise.resolve(engineAccount)
+    : account === p.riskVault ? Promise.resolve(riskAccount) : physical.current(account) };
+  const engine = readCurrentPerpsEngine(activeOrderAccount(orderShard(engineAccount.shardAccountBoc!, p.engine).shard, manifest.contracts.PerpsEngine!.codeHash).data, manifest);
+  const riskShard = orderShard(riskAccount.shardAccountBoc!, p.riskVault).shard;
   const frozenRisk = riskShard.account?.storage.state.type === 'frozen';
   const risk = frozenRisk ? null : readCurrentPerpsRiskVault(activeOrderAccount(riskShard, manifest.contracts.RiskVault!.codeHash).data, manifest, true);
   perpsCheck(engine.pools.has(p.marketId)); const t3 = manifest.tokens.find(t => t.symbol === 'T3'); perpsCheck(t3 && t3.root === manifest.contracts.T3Hub?.address);
@@ -88,4 +93,29 @@ export async function collectPerpsOperationEvidence(manifest: RuntimeReleaseMani
   assertFreshHeadTime(c.head.utime); signal?.throwIfAborted(); return boundProductResponse<CurrentPerpsOperationEvidence>({ schema: 'tonswap-perps-operation-evidence-v1',
     releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, asOf: { masterchainSeqno: c.head.seqno, unixTime: c.head.utime, blockRootHash: c.head.rootHashHex },
     request: { kind: p.kind, owner: p.owner, bodyHash: p.bodyHash }, ...graph }, p.engine);
+}
+
+export type CurrentPerpsExecutionEvidence = Omit<CurrentPerpsOperationEvidence, 'schema'> & { schema: 'tonswap-perps-execution-evidence-v1' };
+
+/** Confirm an ordinary open or close only from its original wallet dispatch,
+ * collateral delivery, engine accounting, RiskVault execution and final effects. */
+export async function collectPerpsExecutionEvidence(manifest: RuntimeReleaseManifest, source: ChainSource, store: PhysicalEvidenceStore,
+  parsed: ReturnType<typeof readPerpsOperationRequest>, signal?: AbortSignal): Promise<CurrentPerpsExecutionEvidence> {
+  const p = parsed.request;
+  requireProduct(p.kind === 'open' || p.kind === 'close');
+  const c = await readPerpsEvidenceContext(manifest, source, store, parsed, signal);
+  const graph = await collectProductExecutionGraph(source, store, c.head, {
+    owner: p.owner, target: p.sourceWallet ?? p.engine, body: parsed.body, dispatch: p.dispatch,
+    pins: c.pins, reader: c.reader, activity: { manifest, sources: [p.engine] },
+    provesExecution(rows) {
+      if (c.allowFrozenPins.size) return false;
+      verifyPerpsEvidenceHistory(manifest, c, rows);
+      return inspectNativePerpsEvidence(p, currentPerpsBindingFromManifest(manifest), rows).status === 'confirmed';
+    },
+  }, signal);
+  const response = boundProductResponse<CurrentPerpsExecutionEvidence>({ schema: 'tonswap-perps-execution-evidence-v1',
+    releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, asOf: { masterchainSeqno: c.head.seqno,
+      unixTime: c.head.utime, blockRootHash: c.head.rootHashHex }, request: { kind: p.kind, owner: p.owner, bodyHash: p.bodyHash }, ...graph }, p.engine);
+  if (!response.coverage.complete) response.transactions = [];
+  return response;
 }
