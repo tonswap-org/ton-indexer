@@ -8,6 +8,10 @@ import type { PostgresOrderStore } from './orderStore';
 export type PhysicalGap = { code: string; account: string; lt?: string };
 export type PhysicalBoundary = { evidence: OrderTransactionEvidence; seqno: number };
 export type PhysicalEvidenceStore = Pick<PostgresOrderStore, 'evidenceBoundary' | 'retain'>;
+function transactionEvidence(account: string, proof: Omit<OrderTransactionEvidence, 'account'>): OrderTransactionEvidence {
+  return { account, transactionBoc: proof.transactionBoc, beforeShardAccountBoc: proof.beforeShardAccountBoc,
+    afterShardAccountBoc: proof.afterShardAccountBoc };
+}
 export const boundaryHash = (value: bigint) => value.toString(16).padStart(64, '0');
 export function boundaryState(account: string, boc: string, seqno: number): LedgerStateSnapshot {
   const shard = orderShard(boc, account).shard, storage = shard.account?.storage.state;
@@ -39,6 +43,11 @@ export function canonicalPhysicalMessage(value: Cell): Cell {
 export function createPhysicalEvidenceReader(source: ChainSource, store: PhysicalEvidenceStore, head: ChainHead,
   options: { signal?: AbortSignal; newTransactions: number }) {
   let remaining = options.newTransactions;
+  const retained = async (account: string, lt: string, hash: string) => {
+    const row = await store.evidenceBoundary(account, lt, hash);
+    // Older exact reads also stored the archive's replay block and config.
+    return row && { seqno: row.seqno, evidence: transactionEvidence(row.evidence.account, row.evidence) };
+  };
   const original = async (account: string, cursor: { lt: string; hash: string }) => {
     const page = await source.getTransactions(account, 1, cursor.lt, cursor.hash, { signal: options.signal });
     const cell = page.length === 1 && page[0].rawBoc ? orderCell(page[0].rawBoc) : undefined;
@@ -65,7 +74,7 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
       options.signal?.throwIfAborted();
       if (rows.length % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); options.signal?.throwIfAborted(); }
       try {
-        let boundary = await store.evidenceBoundary(account, lt.toString(), hash);
+        let boundary = await retained(account, lt.toString(), hash);
         if (!boundary) {
           if (remaining <= 0) { gaps.push({ code: 'archive_work_limit', account, lt: lt.toString() }); break; }
           remaining--;
@@ -77,7 +86,7 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
           const exact = located.state.replayBoundary ? located.state : await source.getAccountStateAtTransaction(account, cursor, located.seqno, { signal: options.signal });
           const proof = exact.replayBoundary;
           if (!proof || !orderCell(proof.transactionBoc).equals(cell)) throw new ChainReadError('upstream_unavailable');
-          const evidence = { account, transactionBoc: proof.transactionBoc, beforeShardAccountBoc: proof.beforeShardAccountBoc, afterShardAccountBoc: proof.afterShardAccountBoc };
+          const evidence = transactionEvidence(account, proof);
           verifyOrderTransaction(evidence);
           if (!orderCell(evidence.afterShardAccountBoc).equals(expected)) throw new ChainReadError('upstream_unavailable');
           await store.retain(evidence, located.seqno); boundary = { evidence, seqno: located.seqno };
@@ -100,7 +109,7 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
   const exact = async (account: string, lt: string, hash: string): Promise<PhysicalBoundary> => {
     options.signal?.throwIfAborted();
     if (!/^[1-9][0-9]*$/.test(lt) || !/^[0-9a-f]{64}$/.test(hash)) throw new ChainReadError('upstream_unavailable');
-    let boundary = await store.evidenceBoundary(account, lt, hash);
+    let boundary = await retained(account, lt, hash);
     if (!boundary) {
       if (remaining <= 0) throw new ChainReadError('upstream_unavailable');
       remaining--;
@@ -111,7 +120,7 @@ export function createPhysicalEvidenceReader(source: ChainSource, store: Physica
       if (!located) throw new ChainReadError('upstream_unavailable');
       const state = located.state.replayBoundary ? located.state : await source.getAccountStateAtTransaction(account, cursor, located.seqno, { signal: options.signal });
       if (!state.replayBoundary) throw new ChainReadError('upstream_unavailable');
-      boundary = { evidence: { account, ...state.replayBoundary }, seqno: located.seqno };
+      boundary = { evidence: transactionEvidence(account, state.replayBoundary), seqno: located.seqno };
       const verified = verifyOrderTransaction(boundary.evidence);
       if (String(verified.tx.lt) !== lt || verified.hash !== hash || verified.tx.now > head.utime || boundary.seqno > head.seqno)
         throw new ChainReadError('upstream_unavailable');
