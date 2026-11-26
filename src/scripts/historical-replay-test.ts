@@ -177,6 +177,16 @@ async function main() {
         assert.equal(recovered.seqno, 8102); assert.equal(retained.size, 1);
         assert.equal(Cell.fromBase64(recovered.evidence.transactionBoc).hash().toString('hex'), valid.hash);
         assert.equal(recovered.evidence.afterShardAccountBoc, snapshots.get(valid.lt)!.replayBoundary!.afterShardAccountBoc);
+        const original = snapshots.get(valid.lt)!.replayBoundary!;
+        const expected = { account, transactionBoc: original.transactionBoc, beforeShardAccountBoc: original.beforeShardAccountBoc,
+          afterShardAccountBoc: original.afterShardAccountBoc };
+        assert.deepEqual(recovered.evidence, expected);
+        const key = `${account}:${valid.lt}:${valid.hash}`;
+        assert.deepEqual(retained.get(key)!.evidence, expected);
+        retained.set(key, { evidence: { account, ...original }, seqno: recovered.seqno });
+        assert.deepEqual((await reader.exact(account, valid.lt, valid.hash)).evidence, expected);
+        const history = await reader.history(account, snapshots.get(valid.lt)!, 1, () => true);
+        assert.deepEqual(history.rows.map(row => row.evidence), [expected], 'historical and exact reads normalize legacy rows identically');
       }
     } finally { Date.now = now; }
   });

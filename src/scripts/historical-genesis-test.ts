@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Address, Cell, Dictionary, beginCell, loadShardAccount, loadTransaction, storeMessage, type Message } from '@ton/core';
+import { Address, Cell, Dictionary, beginCell, external, internal, loadShardAccount, loadTransaction, storeMessage, type Message } from '@ton/core';
 import { Executor, TreasuryContract } from '@ton/sandbox';
 import { createLiteChainSource } from '../data/liteClientSource';
 import { FakeLiteEngine, proofBlock, proofMasterchain, merkleProof, transactionAccountBlocks } from './support/fakeLiteEngine';
@@ -22,8 +22,8 @@ const blockFor = (tx: Cell) => {
 let checks = 0;
 async function main() {
   const executor = await Executor.create();
-  async function execute(before: Cell, lt: bigint, deploy: boolean) {
-    const message: Message = { info: { type: 'internal', ihrDisabled: true, bounce: false, bounced: false,
+  async function execute(before: Cell, lt: bigint, deploy: boolean, incoming?: Message) {
+    const message: Message = incoming ?? { info: { type: 'internal', ihrDisabled: true, bounce: false, bounced: false,
       src: sender, dest: address, value: { coins: 2_000_000_000n }, ihrFee: 0n, forwardFee: 0n, createdLt: lt - 1n, createdAt: now },
       ...(deploy ? { init: treasury.init } : {}), body: Cell.EMPTY };
     const original = await executor.runTransaction({ config: config.toBoc().toString('base64'), libs: null, verbosity: 'short',
@@ -42,6 +42,16 @@ async function main() {
   }
   const direct = await execute(empty, 1_000_000n, true);
   assert.equal(direct.replay.accountState, 'active'); checks++; console.log('PASS absent account deploy reproduces exact native transaction and retained boundary');
+  const dispatch = external({ to: address, body: treasury.createTransfer({
+    messages: [internal({ to: sender, value: 1_000_000n })],
+  }) });
+  const sent = await execute(direct.after, 4_000_000n, false, dispatch);
+  const credited = await execute(sent.after, 5_000_000n, false);
+  const linked = await replayHistoricalAccount({ ...credited.input, predecessor: direct.after,
+    steps: [...sent.input.steps, ...credited.input.steps] }, executor);
+  assert.equal(linked.shardAccountBoc, credited.replay.shardAccountBoc);
+  assert.equal(linked.replayBoundary!.beforeShardAccountBoc, sent.replay.shardAccountBoc);
+  checks++; console.log('PASS wallet external dispatch preceding an internal credit reproduces both original transaction commitments');
   const funded = await execute(empty, 2_000_000n, false);
   assert.equal(funded.replay.accountState, 'uninitialized');
   const initialized = await execute(funded.after, 3_000_000n, true);

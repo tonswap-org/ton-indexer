@@ -20,6 +20,7 @@ import {
   governanceSnapshotQuerySchema,
   marketCandleParamsSchema,
   marketCandleQuerySchema,
+  originalTransactionQuerySchema,
   txQuerySchema
 } from './schemas';
 import { buildOpenApi } from './openapi';
@@ -27,7 +28,7 @@ import { buildDocsHtml } from './docsHtml';
 import { publicIndexerPath } from './publicMount';
 import { installErrorHandlers, sendError, sendFailure } from './errors';
 import { requestDeadline, ROUTE_DEADLINE_MS } from './deadline';
-import { ChainReadError, type ChainSource, type TonBlockIdExt } from '../data/dataSource';
+import { ChainReadError, type ChainSource, type ChainHead, type TonBlockIdExt } from '../data/dataSource';
 import type { BalanceService } from '../balances/balanceService';
 import { BalanceStreamCapacityError, type BalanceStreamHub } from '../balances/balanceStream';
 import { BalanceStreamAdmission, BalanceStreamWriter } from './balanceStreamTransport';
@@ -277,6 +278,17 @@ const classifyRateLimitBucket = (url: string) => {
   return 'default' as const;
 };
 
+async function fundingPricesAt(source: ChainSource, head: ChainHead, release: { releaseId: string; manifestHash: string }, signal: AbortSignal) {
+  assertFreshHeadTime(head.utime);
+  const config = await source.getConfig({ at: head, signal });
+  if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex', 'utime'] as const).some(key => config.head[key] !== head[key]))
+    throw new ChainReadError('upstream_unavailable');
+  const basechain = currentJettonConfigPrices(config.configBoc, head.utime);
+  assertFreshHeadTime(head.utime);
+  return { schema: 'tonswap-config-prices-v1', releaseId: release.releaseId, manifestHash: release.manifestHash,
+    asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex }, basechain };
+}
+
 export const registerRoutes = (
   app: FastifyInstance,
   config: RoutesConfig,
@@ -287,7 +299,7 @@ export const registerRoutes = (
   rateLimiter?: RateLimiter,
   contracts?: Record<string, string>,
   registryMetadata?: RegistryMetadata,
-  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
+  runtime: { source?: ChainSource; orders?: Pick<CurrentOrdersRuntime, 'page'> & Partial<Pick<CurrentOrdersRuntime, 'operationEvidence' | 'walletClaimEvidence' | 'orderWalletClaimEvidence' | 'spotOperationEvidence' | 'optionsOperationEvidence' | 'faucetOperationEvidence' | 'optionsWalletClaimEvidence' | 'faucetRecoveryEvidence' | 'faucetProofSession' | 'launchpadOperationEvidence' | 'launchpadWalletClaimEvidence' | 'owedEvidence' | 'owedOperationEvidence' | 'owedWalletClaimEvidence' | 'launchpadOwedArchiveEvidence' | 'launchpadHolderRecoveryEvidence' | 'launchpadHolderProofSession' | 'launchpadSales' | 'perpsExecutionEvidence' | 'perpsOperationEvidence' | 'perpsWalletClaimEvidence' | 'walletTransferEvidence' | 'launchpadTokenEvidence' | 'poolExecutionEvidence' | 'poolOperationEvidence' | 'poolWalletClaimEvidence'>>; balances?: Pick<BalanceService, 'read'>; streams?: Pick<BalanceStreamHub, 'subscribe'>; metrics?: RuntimeMetrics; logger?: Logger } = {}
 ) => {
   installErrorHandlers(app);
   installReleaseIdentity(app, config.network, registryMetadata);
@@ -367,6 +379,7 @@ export const registerRoutes = (
       openapi: '/api/indexer/v1/openapi.json',
       balances: '/api/indexer/v1/accounts/{addr}/balances',
       transactions: '/api/indexer/v1/accounts/{addr}/txs',
+      ...(freshReads ? { originalTransactions: '/api/indexer/v1/accounts/{addr}/original-transactions' } : {}),
       state: '/api/indexer/v1/accounts/{addr}/state',
       runGetMethod: '/api/indexer/v1/runGetMethod',
       ...(freshReads ? { readFresh: '/api/indexer/v1/readFresh' } : {}),
@@ -377,9 +390,11 @@ export const registerRoutes = (
       ...(freshReads && runtime.orders?.orderWalletClaimEvidence ? { orderWalletClaimEvidence: '/api/indexer/v1/spot/order-wallet-claim-evidence' } : {}),
       ...(freshReads ? { accountStorage: '/api/indexer/v1/account-storage' } : {}),
       ...(freshReads && runtime.orders?.spotOperationEvidence ? { spotOperationEvidence: '/api/indexer/v1/spot/operation-evidence' } : {}),
+      ...(freshReads && runtime.orders?.poolExecutionEvidence ? { poolExecutionEvidence: '/api/indexer/v1/pools/execution-evidence' } : {}),
       ...(freshReads && runtime.orders?.poolOperationEvidence ? { poolOperationEvidence: '/api/indexer/v1/pools/operation-evidence' } : {}),
       ...(freshReads && runtime.orders?.poolWalletClaimEvidence ? { poolWalletClaimEvidence: '/api/indexer/v1/pools/wallet-claim-evidence' } : {}),
       ...(freshReads && runtime.orders?.launchpadTokenEvidence ? { launchpadTokenEvidence: '/api/indexer/v1/launchpad/token-evidence' } : {}),
+      ...(freshReads && runtime.orders?.perpsExecutionEvidence ? { perpsExecutionEvidence: '/api/indexer/v1/perps/execution-evidence' } : {}),
       ...(freshReads && runtime.orders?.perpsOperationEvidence ? { perpsOperationEvidence: '/api/indexer/v1/perps/operation-evidence' } : {}),
       ...(freshReads && runtime.orders?.perpsWalletClaimEvidence ? { perpsWalletClaimEvidence: '/api/indexer/v1/perps/wallet-claim-evidence' } : {}),
       ...(freshReads && runtime.orders?.walletTransferEvidence ? { walletTransferEvidence: '/api/indexer/v1/wallet/transfers/evidence' } : {}),
@@ -447,13 +462,18 @@ export const registerRoutes = (
 
   app.get('/api/indexer/v1/service-info', async () => serviceInfo);
 
-  app.post('/api/indexer/v1/pools/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+  for (const [path, method] of [
+    ['/api/indexer/v1/pools/operation-evidence', 'poolOperationEvidence'],
+    ['/api/indexer/v1/pools/execution-evidence', 'poolExecutionEvidence'],
+  ] as const) app.post(path, { bodyLimit: 192 * 1024 }, async (request, reply) => {
     reply.header('cache-control', 'no-store');
-    if (!nativeRuntime || !runtime.orders?.poolOperationEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
+    if (!nativeRuntime || !runtime.orders?.[method]) return sendError(reply, 503, 'upstream_unavailable', 'Current Pool evidence is unavailable.');
     try {
       if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
       const parsed = readPoolOperationRequest(request.body, nativeRuntime);
-      return await runtime.orders.poolOperationEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+      if (method === 'poolExecutionEvidence' && parsed.request.kind !== 'add' && parsed.request.kind !== 'remove')
+        return sendError(reply, 400, 'bad_request', 'Execution evidence requires an add or remove request.');
+      return await runtime.orders[method](parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
     } catch (error) {
       if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
       runtime.logger?.warn('current Pool evidence unavailable', { error: errorDiagnostic(error) });
@@ -486,6 +506,20 @@ export const registerRoutes = (
       runtime.logger?.warn('current Launchpad discovery unavailable', { error: errorDiagnostic(error) });
       if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Launchpad discovery is unavailable.' });
       return sendError(reply, 503, 'upstream_unavailable', 'Current Launchpad discovery is unavailable.');
+    }
+  });
+  app.post('/api/indexer/v1/perps/execution-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!nativeRuntime || !runtime.orders?.perpsExecutionEvidence) return sendError(reply, 503, 'upstream_unavailable', 'Current Perps execution evidence is unavailable.');
+    try {
+      if (Object.keys(asRecord(request.query) ?? {}).length) return sendError(reply, 400, 'bad_request', 'The evidence endpoint has no query parameters.');
+      const parsed = readPerpsOperationRequest(request.body, nativeRuntime);
+      return await runtime.orders.perpsExecutionEvidence(parsed, requestDeadline(request, ROUTE_DEADLINE_MS.fresh));
+    } catch (error) {
+      if (error instanceof ProductEvidenceError) return sendError(reply, error.status, error.code, error.message);
+      runtime.logger?.warn('current Perps execution evidence unavailable', { error: errorDiagnostic(error) });
+      if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current Perps execution evidence is unavailable.' });
+      return sendError(reply, 503, 'upstream_unavailable', 'Current Perps execution evidence is unavailable.');
     }
   });
   app.post('/api/indexer/v1/perps/operation-evidence', { bodyLimit: 192 * 1024 }, async (request, reply) => {
@@ -838,12 +872,7 @@ export const registerRoutes = (
       const head = await runtime.source.head({ signal }); assertFreshHeadTime(head.utime);
       if (head.seqno !== Number(query.masterchainSeqno) || head.rootHashHex !== query.blockRootHash)
         return sendError(reply, 409, 'head_mismatch', 'The chain head changed. Refresh the current read.');
-      const config = await runtime.source.getConfig({ at: head, signal });
-      if ((['workchain', 'shard', 'seqno', 'rootHashHex', 'fileHashHex', 'utime'] as const).some(key => config.head[key] !== head[key]))
-        throw new ChainReadError('upstream_unavailable');
-      const basechain = currentJettonConfigPrices(config.configBoc, head.utime); assertFreshHeadTime(head.utime);
-      return { schema: 'tonswap-config-prices-v1', releaseId: nativeRuntime.releaseId, manifestHash: nativeRuntime.manifestHash,
-        asOf: { masterchainSeqno: head.seqno, unixTime: head.utime, blockRootHash: head.rootHashHex }, basechain };
+      return await fundingPricesAt(runtime.source, head, nativeRuntime, signal);
     } catch (error) {
       runtime.logger?.warn('current config prices unavailable', { error: errorDiagnostic(error) });
       if (error instanceof ChainReadError) return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Current network prices are unavailable.' });
@@ -969,7 +998,8 @@ export const registerRoutes = (
     reply.header('cache-control', 'no-store');
     const body = asRecord(request.body);
     const rawCalls = body?.calls;
-    if (!body || Object.keys(body).some(key => key !== 'calls') || !Array.isArray(rawCalls)
+    if (!body || Object.keys(body).some(key => key !== 'calls' && key !== 'includeFundingPrices')
+      || ('includeFundingPrices' in body && body.includeFundingPrices !== true) || !Array.isArray(rawCalls)
       || rawCalls.length < 1 || rawCalls.length > FRESH_READ_MAX_CALLS)
       return sendError(reply, 400, 'invalid_fresh_read', 'Use 1 to 32 current chain read calls.');
     const calls: FreshReadCall[] = [];
@@ -996,8 +1026,15 @@ export const registerRoutes = (
       return sendError(reply, 503, 'upstream_unavailable', 'Fresh chain read unavailable.');
     const startedAt = Date.now();
     try {
-      const response = await service.readFresh(calls, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.fresh) });
-      return { ...response, release: { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash } };
+      const signal = requestDeadline(request, ROUTE_DEADLINE_MS.fresh);
+      const response = await service.readFresh(calls, { signal });
+      const release = { releaseId: manifest.releaseId, manifestHash: manifest.manifestHash };
+      if (body.includeFundingPrices === true) {
+        if (!runtime.source) throw new ChainReadError('upstream_unavailable');
+        const fundingPrices = await fundingPricesAt(runtime.source, response.readContext.head, release, signal);
+        return { ...response, release, fundingPrices };
+      }
+      return { ...response, release };
     } catch (error) {
       runtime.logger?.warn('fresh chain read unavailable', { elapsedMs: Date.now() - startedAt, calls: calls.length,
         releaseId: manifest.releaseId, manifestHash: manifest.manifestHash, error: errorDiagnostic(error) });
@@ -1215,6 +1252,26 @@ export const registerRoutes = (
   };
 
   app.get('/api/indexer/v1/stream/balances', handleBalanceStream);
+
+  app.get(
+    '/api/indexer/v1/accounts/:addr/original-transactions',
+    { schema: { params: addressParamsSchema, querystring: originalTransactionQuerySchema } },
+    async (request, reply) => {
+      reply.header('cache-control', 'no-store');
+      const { addr } = request.params as { addr: string };
+      const { limit, lt, hash } = request.query as { limit: number; lt?: string; hash?: string };
+      if (!nativeRuntime) return sendError(reply, 503, 'upstream_unavailable', 'The current release identity is unavailable.');
+      if (!isValidAddress(addr)) return sendError(reply, 400, 'invalid_address', 'invalid address');
+      if (lt && (BigInt(lt) >= (1n << 64n) || !hash || !isValidHashBase64(hash))) {
+        return sendError(reply, 400, 'invalid_cursor', 'invalid original transaction cursor');
+      }
+      try {
+        return await service.getTransactionEvidence(addr, limit, lt, hash, { signal: requestDeadline(request, ROUTE_DEADLINE_MS.rpc) });
+      } catch (error) {
+        return sendFailure(reply, error, { code: 'upstream_unavailable', message: 'Original transaction history is unavailable.' });
+      }
+    }
+  );
 
   app.get(
     '/api/indexer/v1/accounts/:addr/txs',

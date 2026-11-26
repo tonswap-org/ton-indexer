@@ -113,6 +113,23 @@ async function main() {
 
   // Pruned history ("lt not in db") is answered the same way by every non-archival peer. Counting it
   // as a peer failure benched the whole healthy pool and left current reads with no peer at all.
+  const historyPeers = Array.from({ length: 4 }, (_, index) => new FakeLiteEngine(async request => {
+    if (request.current) return 77;
+    if (index === 3) return 11;
+    throw new LiteServerAnswerError(651, 'cannot find block: lt not in db');
+  }));
+  const historyPool = new BoundedLiteEngine(historyPeers, { timeoutMs: 1000, attemptTimeoutMs: 400, maxAttempts: 2 });
+  const readArchive = () => historyPool.withOptions({ archive: true }, () =>
+    historyPool.withOptions({ awaitSeqno: 1 }, () => historyPool.query(method, {})));
+  try {
+    await assert.rejects(readArchive(), BoundedLiteQueryError);
+    assert.deepEqual(historyPeers.map(peer => peer.requests.length), [1, 1, 0, 0]);
+    assert.equal(await historyPool.query(method, { current: true }), 77);
+    assert.equal(historyPeers[0].requests.length, 2, 'archive misses preserve current-read eligibility');
+    assert.equal(await readArchive(), 11, 'a subsequent bounded read reaches the peer retaining the original');
+    assert.deepEqual(historyPeers.map(peer => peer.requests.length), [2, 1, 1, 1]);
+    assert.ok(historyPool.health().every(peer => !peer.open && peer.failures === 0));
+  } finally { historyPool.close(); }
   const pruned = new FakeLiteEngine(async () => { throw new LiteServerAnswerError(651, 'cannot find block: lt not in db'); });
   const archival = new FakeLiteEngine(async () => 11);
   const answering = new BoundedLiteEngine([pruned, archival]);

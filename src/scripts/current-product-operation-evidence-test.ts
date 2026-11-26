@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { isProvenAbsentWallet } from '../runtime/productEvidence';
+import type { AccountStateResponse, ChainHead } from '../data/dataSource';
 import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import Fastify from 'fastify';
@@ -40,6 +42,14 @@ export function faucetRequestFixture() {
   return {manifest,request,body};
 }
 async function main() {
+  const observedHead = { utime: 100 } as ChainHead;
+  const emptyWallet = { provenAbsent: true, anchor: { genUtime: 100 }, accountState: 'uninitialized',
+    balance: '0', codeBoc: null, dataBoc: null } as AccountStateResponse;
+  assert(isProvenAbsentWallet(emptyWallet, observedHead));
+  for (const change of [{ provenAbsent: false }, { anchor: undefined }, { anchor: { genUtime: 101 } }, { accountState: 'frozen' },
+    { shardAccountBoc: 'unexpected' }, { lastTxLt: '10' }, { lastTxHash: 'retained' }, { balance: '1' }, { codeBoc: 'code' }, { dataBoc: undefined }]) {
+    assert(!isProvenAbsentWallet({ ...emptyWallet, ...change } as AccountStateResponse, observedHead));
+  }
   for(const kind of ['buy','fund','withdraw','payout','owed'] as const) {
     const {request,manifest}=optionsRequestFixture(kind);assert.equal(readOptionsOperationRequest(request,manifest).request.kind,kind);
     for(const change of [{extra:true},{bodyHash:'0'.repeat(64)},{owner:'-1:'+'1'.repeat(64)},{dispatch:{...request.dispatch,lt:'0'}},

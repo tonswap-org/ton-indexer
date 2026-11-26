@@ -49,7 +49,22 @@ async function main() {
   probes.length = 0;
   assert.equal((await findTransactionState({...archival, head: async () => { throw Error('must retain captured head'); }}, 'account', {lt: '50', hash: hash(50)}, 910))?.seqno, 900);
   assert(probes.every(seq => seq <= 910), 'replay stays within the immutable captured head');
+  for (const hint of [898, 900, 902]) {
+    probes.length = 0;
+    const located = await findTransactionState({ ...archival, getMasterchainSeqnoAtTime: async time => {
+      assert.equal(time, 12345); return hint;
+    } }, 'account', { lt: '50', hash: hash(50) }, 1000, { transactionTime: 12345 });
+    assert.equal(located?.seqno, 900);
+    assert.ok(probes.length <= 5 && probes.every(seq => seq >= 896 && seq <= 902), 'nearby hints bound archival reads');
+  }
+  const misleadingHint = { ...archival, getMasterchainSeqnoAtTime: async () => 9999 };
+  probes.length = 0;
+  assert.equal((await findTransactionState(misleadingHint, 'account', { lt: '50', hash: hash(50) }, 910,
+    { transactionTime: 12345 }))?.seqno, 900);
+  assert.ok(probes.every(seq => seq <= 910));
   wrongReplay = true;
+  assert.equal(await findTransactionState({ ...archival, getMasterchainSeqnoAtTime: async () => 900 }, 'account',
+    { lt: '50', hash: hash(50) }, 910, { transactionTime: 12345 }), null, 'a correct hint cannot authenticate an incorrect transaction hash');
   assert.equal(await findTransactionState(archival, 'account', {lt: '50', hash: hash(50)}), null, 'incorrect replay hash is never interpolated');
   assert.equal(await findTransactionState({...archival, getAccountStateAtTransaction: async () => { throw Error('archive unavailable'); }}, 'account', {lt: '50', hash: hash(50)}), null);
   const db = new PGlite();

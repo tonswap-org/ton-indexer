@@ -12,6 +12,7 @@ import { MemoryStore } from '../store/memoryStore';
 import { loadConfig } from '../config';
 import { loadOpcodes } from '../utils/opcodes';
 import { registerRoutes } from '../api/routes';
+import { runtimeMetadataFixture } from './fixtures/runtimeManifest';
 
 export async function runTransactionEvidenceTests() {
   let checks = 0;
@@ -129,12 +130,13 @@ export async function runTransactionEvidenceTests() {
         (error: any) => error.code === 'upstream_unavailable' && /workchain/.test(error.cause?.message));
     } finally { await source.close(); }
   });
-  await test('real service plus both HTTP routes return decodable BOCs, honor cap, and never read summary caches', async () => {
+  await test('RPC and release-bound REST routes return original BOCs without reading summary caches', async () => {
     const config = { ...loadConfig(), network: 'testnet' as const, initialHistoryTimeoutMs: 10000 };
     const service = new IndexerService(config, new MemoryStore(config), makeSource(), loadOpcodes(), []);
     service.getTransactions = async () => { throw Error('summary cache is not evidence'); };
     service.getTransactionsByCursor = async () => { throw Error('summary cursor is not evidence'); };
-    const app = fastify({ logger: false }); registerRoutes(app, config, service); await app.ready();
+    const metadata = runtimeMetadataFixture();
+    const app = fastify({ logger: false }); registerRoutes(app, config, service, undefined, undefined, undefined, undefined, {}, metadata); await app.ready();
     try {
       for (const url of ['/jsonRPC', '/api/v2/jsonRPC']) {
         const response = await app.inject({ method: 'POST', url, payload: { id: 'original', jsonrpc: '2.0', method: 'getTransactions', params: { address: owner.address.toRawString(), limit: 999 } } });
@@ -143,6 +145,25 @@ export async function runTransactionEvidenceTests() {
           const cell = Cell.fromBase64(row.data); const tx = loadTransaction(cell.beginParse());
           assert.ok(cell.equals(emitted[index].raw)); assert.equal(tx.lt.toString(), row.transaction_id.lt); assert.equal(tx.hash().toString('base64'), row.transaction_id.hash);
         });
+      }
+      const url = `/api/indexer/v1/accounts/${owner.address.toRawString()}/original-transactions`;
+      const headers = { 'x-tonswap-release': metadata.manifestHash! };
+      const start = page[15];
+      const query = { limit: '8', lt: start.lt, hash: start.hash };
+      const result = await app.inject({ method: 'GET', url, query, headers });
+      assert.equal(result.statusCode, 200);
+      assert.equal(result.headers['x-tonswap-release'], metadata.manifestHash);
+      assert.equal(result.headers['cache-control'], 'no-store');
+      assert.deepEqual(result.json().map((tx: { data: string }) => tx.data), page.slice(15, 23).map(tx => tx.rawBoc));
+      const first = await app.inject({ method: 'GET', url, query: { limit: '1' }, headers });
+      assert.equal(first.json()[0].data, head.rawBoc);
+      const wrongRelease = await app.inject({ method: 'GET', url, query, headers: { 'x-tonswap-release': 'b'.repeat(64) } });
+      assert.equal(wrongRelease.statusCode, 409);
+      const invalidQueries: Record<string, string>[] = [{ lt: start.lt }, { hash: start.hash },
+        { lt: start.lt, hash: '?' }, { lt: (1n << 64n).toString(), hash: start.hash }, { limit: '51' }];
+      for (const invalid of invalidQueries) {
+        const rejected = await app.inject({ method: 'GET', url, query: { limit: '1', ...invalid }, headers });
+        assert.equal(rejected.statusCode, 400);
       }
     } finally { await app.close(); }
   });

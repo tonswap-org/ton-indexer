@@ -45,11 +45,12 @@ async function main() {
   const read = (signal?: AbortSignal) => { assert(signal); reads++; if (unavailable) throw new ProductEvidenceError(503, 'upstream_unavailable'); };
   registerRoutes(app, { network: 'testnet' }, {  } as IndexerService,
     undefined, undefined, undefined, undefined, bundle.contracts, bundle.metadata, { source: {} as any, orders: { page: async () => { throw Error(); },
+      perpsExecutionEvidence: async (_p, signal) => { read(signal); return { schema: 'tonswap-perps-execution-evidence-v1', ...common, transactions: [] }; },
       perpsOperationEvidence: async (_p, signal) => { read(signal); return { schema: 'tonswap-perps-operation-evidence-v1', ...common, transactions: [] }; },
       perpsWalletClaimEvidence: async (_p, signal) => { read(signal); return { schema: 'tonswap-perps-wallet-claim-evidence-v1', ...common, wallets: [] }; }
     } });
   try {
-    for (const [path, endpoint] of [['operation-evidence','perpsOperationEvidence'],['wallet-claim-evidence','perpsWalletClaimEvidence']]) {
+    for (const [path, endpoint] of [['execution-evidence','perpsExecutionEvidence'],['operation-evidence','perpsOperationEvidence'],['wallet-claim-evidence','perpsWalletClaimEvidence']]) {
       const url = '/api/indexer/v1/perps/' + path;
       for (let i = 0; i < 2; i++) { const r = await app.inject({ method: 'POST', url, payload: request }); assert.equal(r.statusCode, 200, r.body);
         assert.equal(r.headers['cache-control'], 'no-store'); assert.equal(r.headers['x-tonswap-release'], manifest.manifestHash); }
@@ -60,8 +61,8 @@ async function main() {
       unavailable = true; assert.equal((await app.inject({ method: 'POST', url, payload: request })).statusCode, 503); unavailable = false;
       assert.equal((await app.inject('/api/indexer/v1/service-info')).json().endpoints[endpoint], url); assert((buildOpenApi({ network: 'testnet' } as any) as any).paths[url]);
     }
-    assert.equal(reads, 6);
+    assert.equal(reads, 9);
   } finally { await app.close(); }
-  console.log(`Current Perps ${cases + 3} native request vectors and both API release/cache/size/error fences passed; native collector qualification remains separate.`);
+  console.log(`Current Perps ${cases + 3} native request vectors and three API release/cache/size/error fences passed; native collector qualification remains separate.`);
 }
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });

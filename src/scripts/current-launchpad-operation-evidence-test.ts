@@ -7,7 +7,7 @@ import { registerRoutes } from '../api/routes';
 import { buildOpenApi } from '../api/openapi';
 import type { IndexerService } from '../indexerService';
 import { ProductEvidenceError } from '../runtime/productEvidence';
-import { readLaunchpadOperationRequest,type CurrentLaunchpadEvidenceRequest } from '../runtime/launchpadOperationEvidence';
+import { canOmitAbsentLaunchpadWallet,readLaunchpadOperationRequest,type CurrentLaunchpadEvidenceRequest } from '../runtime/launchpadOperationEvidence';
 import { readLaunchpadWalletClaimRequest } from '../runtime/launchpadWalletClaimEvidence';
 export function launchpadRequestFixture(kind:CurrentLaunchpadEvidenceRequest['kind']='create'){
   const manifest=runtimeManifestFixture(),owner=runtimeAddress(900),sale=runtimeAddress(901),lp=runtimeAddress(902),vesting=runtimeAddress(903),sourceWallet=runtimeAddress(904);
@@ -37,6 +37,16 @@ export function launchpadRequestFixture(kind:CurrentLaunchpadEvidenceRequest['ki
   return{manifest,request,body};
 }
 async function main(){
+  // An initial inventory deposit must be provable before the first T3 contribution.
+  const t3Root=runtimeAddress(905), projectRoot=runtimeAddress(906);
+  assert(canOmitAbsentLaunchpadWallet('supply',t3Root,t3Root));
+  assert(!canOmitAbsentLaunchpadWallet('supply',projectRoot,t3Root));
+  for(const kind of ['contribute','claim','owed','vest-supply','lp-seed'] as const) {
+    assert(!canOmitAbsentLaunchpadWallet(kind,t3Root,t3Root));
+    assert(!canOmitAbsentLaunchpadWallet(kind,projectRoot,t3Root));
+  }
+  assert(canOmitAbsentLaunchpadWallet('discover',t3Root,t3Root));
+  assert(canOmitAbsentLaunchpadWallet('discover',projectRoot,t3Root));
   for(const kind of ['create','contribute','supply','vest-supply','claim','finalize','cancel','discover','lp-seed','lp-release','vest-claim','vest-return','owed','wallet-mark','wallet-retry','holder-claim','archive-claim'] as const){
     const {manifest,request}=launchpadRequestFixture(kind);assert.equal(readLaunchpadOperationRequest(request,manifest).request.kind,kind);
     assert.equal(readLaunchpadWalletClaimRequest,readLaunchpadOperationRequest);

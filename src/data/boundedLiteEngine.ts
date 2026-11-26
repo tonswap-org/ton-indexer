@@ -8,7 +8,7 @@ import { Codecs, Functions } from 'ton-lite-client/dist/schema';
 import { TLReadBuffer, TLWriteBuffer, type TLFunction } from 'ton-tl';
 import { ChainReadError } from './dataSource';
 
-export type LiteQueryOptions = { timeout?: number; awaitSeqno?: number; signal?: AbortSignal;
+export type LiteQueryOptions = { timeout?: number; awaitSeqno?: number; signal?: AbortSignal; archive?: boolean;
   validate?: (value: unknown, peer: number) => void };
 const context = new AsyncLocalStorage<LiteQueryOptions>();
 const cancelled = () => new ChainReadError('upstream_timeout');
@@ -172,7 +172,7 @@ export class AbortableLitePeer extends EventEmitter implements LiteEngine {
   isReady() { return this.ready && !this.closed; }
 }
 
-type PeerState = { failures: number; latencyMs: number | null; until: number; probing: boolean };
+type PeerState = { failures: number; latencyMs: number | null; until: number; probing: boolean; archiveMissUntil: number };
 type Limits = { timeoutMs: number; attemptTimeoutMs: number; maxAttempts: number };
 
 /** One deadline and bounded hedging budget for each complete wire query. */
@@ -187,23 +187,26 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
     super();
     if (!engines.length) throw new Error('No liteserver endpoints configured');
     if (Object.values(options).some(value => !Number.isSafeInteger(value) || value <= 0)) throw new Error('Liteserver retry limits must be positive integers');
-    this.peers = engines.map(() => ({ failures: 0, latencyMs: null, until: 0, probing: false }));
+    this.peers = engines.map(() => ({ failures: 0, latencyMs: null, until: 0, probing: false, archiveMissUntil: 0 }));
     for (const engine of engines) {
       engine.on('connect', () => this.emit('connect'));
       engine.on('ready', () => this.emit('ready'));
       engine.on('error', () => {});
     }
   }
-  withOptions<T>(options: LiteQueryOptions, run: () => Promise<T>): Promise<T> { return context.run(options, run); }
+  withOptions<T>(options: LiteQueryOptions, run: () => Promise<T>): Promise<T> {
+    return context.run({ ...options, archive: options.archive ?? context.getStore()?.archive }, run);
+  }
   health() {
     return this.peers.map((peer, index) => ({ index, ready: !this.closed && this.engines[index].isReady() && !this.engines[index].isClosed(),
       open: peer.until > performance.now() || peer.probing, failures: peer.failures, latencyMs: peer.latencyMs }));
   }
-  private candidates(used: Set<number>): number[] {
+  private candidates(used: Set<number>, archive: boolean): number[] {
     const now = performance.now();
     return this.peers.map((_, index) => index).filter(index => !used.has(index) && !this.engines[index].isClosed()
       && this.engines[index].isReady() && this.peers[index].until <= now && !this.peers[index].probing)
-      .sort((a, b) => this.peers[a].failures - this.peers[b].failures
+      .sort((a, b) => Number(archive && this.peers[a].archiveMissUntil > now) - Number(archive && this.peers[b].archiveMissUntil > now)
+        || this.peers[a].failures - this.peers[b].failures
         || (this.peers[a].latencyMs ?? 500) - (this.peers[b].latencyMs ?? 500) || a - b);
   }
   async query<REQ, RES>(f: TLFunction<REQ, RES>, req: REQ, supplied: LiteQueryOptions = {}): Promise<RES> {
@@ -228,6 +231,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
     // whose first transport attempt may already have reached the network.
     const send = (req as { kind?: string }).kind === 'liteServer.sendMessage';
     const maxAttempts = send ? 1 : this.options.maxAttempts;
+    const archive = !send && args.archive === true;
     const controllers = new Set<AbortController>();
     const attempt = async (index: number): Promise<RES> => {
       attempts++; used.add(index);
@@ -256,6 +260,9 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
           // An answer, not a fault: the peer stays healthy and its circuit closed. Its latency is
           // not sampled, since an error answer says nothing about what a served query costs.
           ok = true; state.failures = 0; state.until = 0;
+          // A healthy peer can serve current blocks while lacking older history.
+          // Let later bounded archive reads reach the rest of the configured pool.
+          if (archive) state.archiveMissUntil = performance.now() + 60_000;
         }
         if (cause instanceof UnusableLiteAnswer || cause instanceof LiteServerAnswerError) {
           answered.add(index);
@@ -274,10 +281,10 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
     };
     try {
       while (!signal.aborted && attempts < maxAttempts && Math.floor(deadline - performance.now()) >= 1) {
-        let available = this.candidates(used);
+        let available = this.candidates(used, archive);
         if (!available.length && used.size) {
           used.clear(); for (const index of answered) used.add(index);
-          available = this.candidates(used);
+          available = this.candidates(used, archive);
         }
         if (!available.length) {
           if (answered.size) break;
@@ -303,7 +310,7 @@ export class BoundedLiteEngine extends EventEmitter implements LiteEngine {
           ]);
           if (initial.kind === 'value') return initial.value;
           if (initial.kind === 'error') continue;
-          const second = this.candidates(used)[0];
+          const second = this.candidates(used, archive)[0];
           if (signal.aborted || second === undefined || this.hedges >= 8) return await primary;
           hedged = true; this.hedges++;
           try { return await Promise.any([primary, attempt(second)]); }

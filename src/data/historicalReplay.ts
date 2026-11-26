@@ -98,7 +98,7 @@ export async function replayHistoricalAccount(input: {
         tx.prevTransactionLt !== before.lastTransactionLt ||
         tx.prevTransactionHash !== before.lastTransactionHash ||
         !tx.stateUpdate.oldHash.equals(shardAccount.refs[0].hash()) ||
-        tx.description.type !== 'generic' || tx.inMessage?.info.type !== 'internal' ||
+        tx.description.type !== 'generic' || !tx.inMessage || tx.inMessage.info.type === 'external-out' ||
         !tx.inMessage.info.dest.equals(input.address) ||
         !blockContainsExecutedTransaction(step.block, step.transaction, input.address)) {
       throw new Error('Historical replay original account/transaction binding mismatch.');

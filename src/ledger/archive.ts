@@ -9,7 +9,7 @@ export type LedgerStateSnapshot = {
   seqno: number;
   state: AccountStateResponse;
 };
-type ArchiveSource = Pick<ChainSource, 'head' | 'getAccountStateAtSeqno' | 'getAccountStateAtTransaction'>;
+type ArchiveSource = Pick<ChainSource, 'head' | 'getAccountStateAtSeqno' | 'getAccountStateAtTransaction' | 'getMasterchainSeqnoAtTime'>;
 const unavailable = new WeakMap<ArchiveSource, Map<string, { seqno: number; expiresAt: number }>>();
 /** A boundary is usable only if its account last-transaction hash is exact.
  * Intermediate states require authenticated replay, never interpolation. */
@@ -18,7 +18,7 @@ export async function findTransactionState(
   account: string,
   cursor: TransactionCursor,
   headSeqno?: number,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; transactionTime?: number } = {},
 ): Promise<LedgerStateSnapshot | null> {
   if (!/^(0|[1-9][0-9]*)$/.test(cursor.lt))
     return null;
@@ -62,18 +62,32 @@ export async function findTransactionState(
         candidate.state.lastTxHash && canonicalLedgerHash(candidate.state.lastTxHash) === canonicalLedgerHash(cursor.hash) ? candidate : null;
     }
     const target = BigInt(cursor.lt);
-    // Bracket from the recent head. A recent transaction must not require an
-    // unrelated ancient archive merely because the chain is many years old.
-    let high = head, low = 0;
-    let candidate: LedgerStateSnapshot | null = { seqno: head, state: await read(head) };
-    if (BigInt(candidate.state.lastTxLt ?? '0') < target) return null;
-    for (let distance = 1; high > 0; distance *= 2) {
-      const seqno = Math.max(0, head - distance);
-      const state = await read(seqno);
-      if (BigInt(state.lastTxLt ?? '0') < target) { low = seqno + 1; break; }
-      candidate = { seqno, state };
-      high = seqno;
-      if (seqno === 0) break;
+    // Without a timestamp hint, recent transactions only need the recent archive.
+    let start = head;
+    if (options.transactionTime !== undefined && source.getMasterchainSeqnoAtTime) {
+      const hint = await source.getMasterchainSeqnoAtTime(options.transactionTime, options).catch(() => undefined);
+      if (hint !== undefined && Number.isSafeInteger(hint) && hint > 0 && hint <= head) start = hint;
+    }
+    let high = start, low = 0;
+    let candidate: LedgerStateSnapshot | null = { seqno: start, state: await read(start) };
+    // A shard transaction can appear in a later masterchain block. Expand in
+    // either direction from the time hint, always inside the captured head.
+    if (BigInt(candidate.state.lastTxLt ?? '0') < target) {
+      for (let distance = 1; high < head; distance *= 2) {
+        low = high + 1; high = Math.min(head, start + distance);
+        candidate = { seqno: high, state: await read(high) };
+        if (BigInt(candidate.state.lastTxLt ?? '0') >= target) break;
+      }
+      if (BigInt(candidate.state.lastTxLt ?? '0') < target) return null;
+    } else {
+      for (let distance = 1; high > 0; distance *= 2) {
+        const seqno = Math.max(0, start - distance);
+        const state = await read(seqno);
+        if (BigInt(state.lastTxLt ?? '0') < target) { low = seqno + 1; break; }
+        candidate = { seqno, state };
+        high = seqno;
+        if (seqno === 0) break;
+      }
     }
     while (low < high) {
       const seqno = Math.floor((low + high) / 2);

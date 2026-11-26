@@ -316,6 +316,8 @@ isolation and eviction regressions.
 
 `POST /api/indexer/v1/readFresh` accepts 1–32 account/getter calls and executes them at one exact masterchain boundary. Its `readContext` contains `source: "lite"`, the complete head including `utime`, and the server query-start timestamp `queriedAt`. Account results contain the authenticated shard block and its creation time in `anchor`. The response also carries the current native release ID and manifest hash. No persisted account projection supplies a current chain read. Partial, wrong-network and wrong-block batches fail; actual getter VM exits remain outcomes. Current Perps intake and funding getters use this same pinned batch; later asynchronous contract execution remains separate.
 
+Funding reviews may set `includeFundingPrices` to `true` on the same request. The response then includes `fundingPrices` for the exact masterchain block used by every account and getter. The indexer checks the complete config block identity and its freshness before returning the batch. A failed config read fails the entire priced request.
+
 Current metadata must have a canonical block time within 30 seconds of local
 time, at most five seconds ahead, and a consistent peer clock. Stale or lagging
 heads consume the same bounded peer budget; dependent head queries carry the
@@ -338,7 +340,11 @@ REST request errors use the flat body: `{ "error": "safe explanation", "code": "
 
 `/jsonRPC` and `/api/v2/jsonRPC` use the same configured chain source. Masterchain responses use real head hashes; account responses use the actual shard anchor and chain creation time. Missing anchors never become wall-clock timestamps or fabricated blocks. Only explicit unused accounts receive a zero transaction cursor. `sendBoc` and `sendBocReturnHash` send one validated BOC through that source when `INDEXER_ENABLE_WRITE_RPC=true`; other writes and external JSON-RPC forwarding are unavailable.
 
-Run `npm run test:fresh-read`, `npx tsx src/scripts/service-deadline-test.ts`, `npx tsx src/scripts/error-contract-test.ts` and `npx tsx src/scripts/jsonrpc-anchor-test.ts` for these boundaries.
+Wallet receipt readers use `GET /api/indexer/v1/accounts/{addr}/original-transactions?limit=32` under the manifest's indexer mount. The read accepts 1–50 original transactions and an optional inclusive `lt` and base64 `hash` pair. Without a cursor it reads the account's chain head. Each row contains the original transaction BOC in `data`, checked against the account and predecessor chain. Responses are release-bound and uncached.
+
+When a peer reports that it cannot serve an archive read, later historical reads prefer other ready peers for one minute. Current reads retain their usual peer order. Every request still uses its configured attempt limit and deadline.
+
+Run `npm run test:fresh-read`, `npx tsx src/scripts/service-deadline-test.ts`, `npx tsx src/scripts/error-contract-test.ts`, `npx tsx src/scripts/transaction-evidence-test.ts` and `npx tsx src/scripts/jsonrpc-anchor-test.ts` for these boundaries.
 
 ## Durable account ledger
 
@@ -1025,8 +1031,9 @@ by that block's masterchain reference. The pinned production dependency
 `@ton/sandbox@0.45.0` executes these inputs locally; every reconstructed full
 transaction Cell and new Account hash must equal the chain commitments. No
 current state, default configuration, replacement request, or broadcast is used.
-Basechain internal transactions are supported; missing library/context inputs,
-external/ticktock transactions, longer segments, and any replay mismatch remain
+Basechain ordinary transactions with internal or external inbound messages are
+supported, including the original wallet dispatch in a multi-transaction block.
+Missing library/context inputs, ticktock transactions, longer segments, and any replay mismatch remain
 unavailable. Existing qualified code, custody, request and economic checks still
 apply. Install with `npm ci`, build with `npm run build`, and run the offline
 original-transaction regression with `npm run test:historical-replay` (also part
@@ -2030,6 +2037,12 @@ the complete original root/wallet histories and causal mint graph. The browser
 independently checks actual initial credit or an exact bounced supply reversal.
 The endpoint shares product work/byte limits, release header and no-cache policy.
 Run `npm run test:current-launchpad-token` and original native capture checks.
+
+`POST /api/indexer/v1/perps/execution-evidence` confirms an ordinary open or close from
+the signed dispatch and its original, successful causal transactions. The server authenticates
+current-to-dispatch account intervals and the browser independently verifies the engine
+and RiskVault accounting, collateral delivery and any payouts. An incomplete result
+leaves the full operation and recovery routes available.
 
 `POST /api/indexer/v1/perps/operation-evidence` accepts current open, increase,
 margin, close and funding requests with the exact owner TON dispatch. The current

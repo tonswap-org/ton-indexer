@@ -41,6 +41,7 @@ export const currentReleaseSchemas = {
   OwedOperationEvidenceResponse: object({...productEvidence('tonswap-owed-operation-evidence-v1',['direct','archive']).properties,request:object({kind:{enum:['direct','archive']},owner:address,holder:address,slot:owedRequest.slot,bodyHash:hash})}),
   OwedWalletClaimEvidenceResponse: object({schema:{const:'tonswap-owed-wallet-claim-evidence-v1'},...identity,request:object({kind:{enum:['direct','archive']},owner:address,holder:address,slot:owedRequest.slot,bodyHash:hash}),coverage:object({complete:{type:'boolean'},gaps:{type:'array',maxItems:256,items:gap}}),wallet:pinnedAccount,claims:currentWalletClaims}),
   CurrentPerpsEvidenceRequest: object({...productRequestIdentity,kind:{enum:['open','increase','addMargin','removeMargin','close','funding']},engine:address,riskVault:address,marketId:{type:'integer',minimum:1,maximum:4},queryId:uint,gen:nullable(uint),depositRaw:uint,sourceWallet:nullable(address)}),
+  PerpsExecutionEvidenceResponse: productEvidence('tonswap-perps-execution-evidence-v1',['open','close']),
   PerpsOperationEvidenceResponse: productEvidence('tonswap-perps-operation-evidence-v1',['open','increase','addMargin','removeMargin','close','funding']),
   PerpsWalletClaimEvidenceResponse: object({schema:{const:'tonswap-perps-wallet-claim-evidence-v1'},...identity,request:object({kind:{enum:['open','increase','addMargin','removeMargin','close','funding']},owner:address,bodyHash:hash}),
     coverage:object({complete:{type:'boolean'},gaps:{type:'array',maxItems:256,items:gap}}),wallets:{type:'array',maxItems:3,items:object({role:{enum:['engine','risk-vault','owner']},wallet:pinnedAccount,claims:currentWalletClaims})}}),
@@ -54,6 +55,7 @@ export const currentReleaseSchemas = {
     transactions:{type:'array',maxItems:256,items:object({account:address,transactionBoc:{type:'string'},beforeShardAccountBoc:{type:'string'},afterShardAccountBoc:{type:'string'}})}}),
   CurrentPoolEvidenceRequest: object({...productRequestIdentity,kind:{enum:['add','farm-create','farm-action','remove','owed']},pool:address,side:{enum:[0,1]},queryId:uint,amountRaw:uint,
     binId:nullable({type:'integer',minimum:-2147483648,maximum:2147483647}),farmId:nullable(uint),action:nullable({type:'integer',minimum:1,maximum:5}),sourceWallet:nullable(address)}),
+  PoolExecutionEvidenceResponse: productEvidence('tonswap-pool-execution-evidence-v1',['add','remove']),
   PoolOperationEvidenceResponse: productEvidence('tonswap-pool-operation-evidence-v1',['add','farm-create','farm-action','remove','owed']),
 
   LaunchpadSalesEvidenceResponse: object({ schema:{const:'tonswap-launchpad-sales-v1'}, ...identity,
@@ -205,6 +207,11 @@ export const currentReleasePaths = {
     responses:{200:response('PoolWalletClaimEvidenceResponse','Current original evidence and explicit coverage'),400:error('Invalid exact native Pool request'),409:error('Release mismatch'),413:error('Request exceeds192KiB'),503:error('Original current evidence unavailable')},
   } },
 
+  '/api/indexer/v1/pools/execution-evidence': { post: {
+    summary:'Verify a credited deposit or delivered liquidity withdrawal',description:'The exact signed dispatch and contiguous authenticated history bind the original mint or removal and all required wallet credits. Incomplete evidence cannot establish refund, absence or payment.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentPoolEvidenceRequest'}}}},
+    responses:{200:response('PoolExecutionEvidenceResponse','Original positive proof or explicit gaps'),400:error('Invalid add or remove request'),409:error('Release mismatch'),413:error('Request exceeds 192 KiB'),503:error('Current evidence unavailable')},
+  } },
   '/api/indexer/v1/pools/operation-evidence': { post: {
     summary:'Read current Pool operation original physical evidence',description:'Exact current native one-bin add, farm create/action, bounded remove or owed claim and owner TON wallet dispatch. Canonical release pool and both token identities bind full original product/source histories and causal physical transfers. Maximum256 original transactions/8MiB, explicit gaps, shared live gate and no cache. Browser independently proves acceptance and physical delivery.',
     requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentPoolEvidenceRequest'}}}},
@@ -223,6 +230,12 @@ export const currentReleasePaths = {
     description:'Read-only. Exact original T3 faucet claim, immutable nonce, installed proof code and optional retained full masterchain anchor derive the native proof address/config. The current holder recovery endpoint first authenticates the original command and failure. Original lite-server account/shard/masterchain proofs and current prev-block membership support native verification; synthetic anchors or a hash list never substitute for proof cells. At most four original transaction BOCs advance the on-chain cursor per request. Sessions keep their anchor until explicitly reanchored. Shared live request cap, exact release header, no completed cache, 192 KiB request and 8 MiB response bounds. This endpoint does not send messages or certify token delivery.',
     requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentFaucetProofSessionRequest'}}}},
     responses:{200:response('FaucetProofSessionResponse','Original native proof-session prerequisites for one bounded step'),400:error('Invalid exact session request or code pin'),409:error('Original claim release mismatch'),413:error('Request exceeds 192 KiB'),503:error('Authenticated current or historical proof unavailable')},
+  } },
+  '/api/indexer/v1/perps/execution-evidence': { post: {
+    summary:'Read original settled Perps execution evidence',
+    description:'Returns original transaction and account state cells only for a positively verified open or close. The collector authenticates the signed dispatch and successful causal deliveries at a fresh head. The client independently verifies engine, RiskVault, collateral and payouts. Other outcomes use the operation evidence endpoint.',
+    requestBody:{required:true,content:{'application/json':{schema:{$ref:'#/components/schemas/CurrentPerpsEvidenceRequest'}}}},
+    responses:{200:response('PerpsExecutionEvidenceResponse','Original evidence and explicit coverage'),400:error('Invalid exact request'),409:error('Release mismatch'),413:error('Request exceeds192KiB'),503:error('Original evidence unavailable')},
   } },
   '/api/indexer/v1/perps/operation-evidence': { post: {
     summary:'Read original current Perps operation evidence',

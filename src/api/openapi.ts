@@ -112,7 +112,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
         },
         FreshReadRequest: {
           type: 'object', additionalProperties: false, required: ['calls'],
-          properties: { calls: { type: 'array', minItems: 1, maxItems: 32, items: { oneOf: [
+          properties: { includeFundingPrices: { const: true }, calls: { type: 'array', minItems: 1, maxItems: 32, items: { oneOf: [
             { type: 'object', additionalProperties: false, required: ['kind', 'address'],
               properties: { kind: { const: 'account' }, address: { type: 'string' } } },
             { type: 'object', additionalProperties: false, required: ['kind', 'address', 'method'],
@@ -123,6 +123,7 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
         FreshReadResponse: {
           type: 'object', required: ['network', 'release', 'readContext', 'results'],
           properties: {
+            fundingPrices: { $ref: '#/components/schemas/ConfigPricesResponse' },
             network: { type: 'string', enum: ['testnet', 'mainnet', 'localnet'] },
             release: { type: 'object', required: ['releaseId', 'manifestHash'], properties: {
               releaseId: { type: 'string' }, manifestHash: { type: 'string', pattern: '^[a-f0-9]{64}$' } } },
@@ -588,6 +589,26 @@ export const buildOpenApi = (config: ServiceMetadataConfig, metadata?: RegistryM
               description: 'Bad request',
               content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
             },
+          },
+        },
+      },
+      '/api/indexer/v1/accounts/{addr}/original-transactions': {
+        get: {
+          summary: 'Original account transactions',
+          description: 'Reads the original transaction BOCs in descending order. An optional paired logical time and base64 transaction hash select an inclusive cursor.',
+          parameters: [
+            { $ref: '#/components/parameters/addr' },
+            { name: 'limit', in: 'query', required: true, schema: { type: 'integer', minimum: 1, maximum: 50 } },
+            { name: 'lt', in: 'query', schema: { type: 'string', pattern: '^[1-9][0-9]{0,19}$' } },
+            { name: 'hash', in: 'query', schema: { type: 'string', maxLength: 44 } },
+          ],
+          responses: {
+            200: { description: 'Toncenter-compatible rows containing the original base64 BOC in data and its transaction_id.', content: {
+              'application/json': { schema: { type: 'array', items: { type: 'object', required: ['data', 'transaction_id'],
+                properties: { data: { type: 'string' }, transaction_id: { type: 'object' } } } } },
+            } },
+            400: { description: 'Invalid address, limit or cursor.' },
+            503: { description: 'Original transaction history is unavailable.' },
           },
         },
       },
